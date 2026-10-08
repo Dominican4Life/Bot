@@ -164,6 +164,7 @@ class AppModule(val app: Application) : InjektModule {
         // KMK: anime
         addSingletonFactory { eu.kanade.tachiyomi.animeextension.AnimeExtensionManager(app) }
         addSingletonFactory { eu.kanade.tachiyomi.animeextension.AnimeSourceManager(get()) }
+        addSingletonFactory { eu.kanade.tachiyomi.data.anime.AnimeRepository(get()) }
 
         addSingletonFactory { DownloadProvider(app) }
         addSingletonFactory { DownloadManager(app) }

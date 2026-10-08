@@ -63,7 +63,6 @@ import eu.kanade.tachiyomi.extension.model.Extension
 import eu.kanade.tachiyomi.extension.model.InstallStep
 import eu.kanade.tachiyomi.ui.browse.anime.AnimeBrowseScreenModel
 import eu.kanade.tachiyomi.util.system.LocaleHelper
-import eu.kanade.tachiyomi.util.system.toast
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.components.FastScrollLazyColumn
@@ -140,6 +139,7 @@ fun AnimeSourcesPane(
     contentPadding: PaddingValues,
     onSearch: (String?) -> Unit,
     onTogglePin: (Long) -> Unit,
+    onClickSource: (Long) -> Unit,
 ) {
     val context = LocalContext.current
     val extensionManager = remember { Injekt.get<AnimeExtensionManager>() }
@@ -169,7 +169,7 @@ fun AnimeSourcesPane(
                     },
                     title = source.name,
                     subtitle = LocaleHelper.getSourceDisplayName(source.lang, context),
-                    onClick = { context.toast(KMR.strings.anime_source_browse_coming) },
+                    onClick = { onClickSource(source.id) },
                     onLongClick = { onTogglePin(source.id) },
                     action = {
                         IconButton(onClick = { onTogglePin(source.id) }) {

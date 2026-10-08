@@ -263,4 +263,15 @@
     <string name="anime_extension_repos">Repos</string>
     <string name="anime_available">Available</string>
     <string name="anime_migrate_coming">Anime migration will be available once anime can be added to your library</string>
+    <string name="anime_episodes_count">%1$d episodes</string>
+    <string name="anime_episode_number">Episode %1$s</string>
+    <string name="anime_seasons">Seasons</string>
+    <string name="anime_no_episodes">No episodes found</string>
+    <string name="anime_choose_video">Choose video</string>
+    <string name="anime_loading_videos">Loading videos…</string>
+    <string name="anime_no_videos">No videos found for this episode</string>
+    <string name="anime_no_player">No video player app found. Install one (like mpv or VLC) to play episodes.</string>
+    <string name="anime_source_not_loaded">This anime\'s source isn\'t installed</string>
+    <string name="anime_library_empty">Your anime library is empty. Add anime from Browse.</string>
+    <string name="library_switch_type">Switch between manga and anime</string>
 </resources>

@@ -121,6 +121,7 @@ data object BrowseTab : Tab {
                 contentPadding = padding,
                 onSearch = animeScreenModel::searchSources,
                 onTogglePin = animeScreenModel::togglePin,
+                onClickSource = { navigator.push(eu.kanade.tachiyomi.ui.anime.source.AnimeSourceScreen(it)) },
             )
         }
         val animeExtensions: @Composable (PaddingValues) -> Unit = { padding ->

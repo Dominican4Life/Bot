@@ -29,6 +29,8 @@ import cafe.adriel.voyager.navigator.Navigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import cafe.adriel.voyager.navigator.tab.LocalTabNavigator
 import cafe.adriel.voyager.navigator.tab.TabOptions
+import eu.kanade.domain.source.service.SourcePreferences
+import eu.kanade.presentation.anime.AnimeLibraryContent
 import eu.kanade.presentation.category.components.ChangeCategoryDialog
 import eu.kanade.presentation.library.DeleteLibraryMangaDialog
 import eu.kanade.presentation.library.LibrarySettingsDialog
@@ -46,6 +48,7 @@ import eu.kanade.tachiyomi.data.connections.discord.DiscordScreen
 import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
 import eu.kanade.tachiyomi.data.sync.SyncDataJob
+import eu.kanade.tachiyomi.ui.anime.AnimeScreen
 import eu.kanade.tachiyomi.ui.browse.source.SourcesScreen
 import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchScreen
 import eu.kanade.tachiyomi.ui.category.CategoryScreen
@@ -82,6 +85,7 @@ import tachiyomi.presentation.core.screens.EmptyScreen
 import tachiyomi.presentation.core.screens.EmptyScreenAction
 import tachiyomi.presentation.core.screens.LoadingScreen
 import tachiyomi.source.local.isLocal
+import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
@@ -143,6 +147,11 @@ data object LibraryTab : Tab {
             started
         }
 
+        // KMK -->
+        val showAnimePref = remember { Injekt.get<SourcePreferences>().libraryShowAnime() }
+        val showAnime by showAnimePref.collectAsState()
+        // KMK <--
+
         Scaffold(
             topBar = { scrollBehavior ->
                 val title = state.getToolbarTitle(
@@ -191,6 +200,10 @@ data object LibraryTab : Tab {
                     },
                     // For scroll overlay when no tab
                     scrollBehavior = scrollBehavior.takeIf { !state.showCategoryTabs },
+                    // KMK -->
+                    showingAnime = showAnime,
+                    onClickSwitchType = { showAnimePref.set(!showAnime) },
+                    // KMK <--
                 )
             },
             bottomBar = {
@@ -282,6 +295,16 @@ data object LibraryTab : Tab {
             },
             snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         ) { contentPadding ->
+            // KMK -->
+            if (showAnime) {
+                AnimeLibraryContent(
+                    contentPadding = contentPadding,
+                    searchQuery = state.searchQuery,
+                    onClickAnime = { navigator.push(AnimeScreen(it.id)) },
+                )
+                return@Scaffold
+            }
+            // KMK <--
             when {
                 state.isLoading -> {
                     LoadingScreen(Modifier.padding(contentPadding))

@@ -23,6 +23,9 @@ class SourcePreferences(
     /** Pinned anime source ids */
     fun animePinnedSources() = preferenceStore.getStringSet("anime_pinned_catalogues", emptySet())
 
+    /** Library shows the anime library instead of manga */
+    fun libraryShowAnime() = preferenceStore.getBoolean("pref_library_show_anime", false)
+
     /** Which preview panels open on the first tap of a cover: [PREVIEW_PANELS_LEFT], [PREVIEW_PANELS_BOTH] or [PREVIEW_PANELS_NONE] */
     fun browsePreviewPanels() = preferenceStore.getInt("pref_browse_preview_panels", PREVIEW_PANELS_BOTH)
     // KMK <--
