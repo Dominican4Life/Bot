@@ -45,7 +45,14 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          ./gradlew assemblePreview --stacktrace 2>&1 | tee build.log
+          # JitPack downloads are flaky, so retry a few times before giving up
+          for attempt in 1 2 3; do
+            if ./gradlew assemblePreview --stacktrace 2>&1 | tee build.log; then exit 0; fi
+            if ! grep -q "Could not resolve\|Could not find\|Could not GET\|Read timed out" build.log; then exit 1; fi
+            echo "Dependency download failed, retrying ($attempt)..."
+            sleep 20
+          done
+          exit 1
 
       # Surface compile errors as annotations so they are readable without downloading logs
       - name: Report build errors
