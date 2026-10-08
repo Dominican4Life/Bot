@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.BuildConfig
+import eu.kanade.tachiyomi.data.backup.AnimeBackupHelper
 import eu.kanade.tachiyomi.data.backup.BackupFileValidator
 import eu.kanade.tachiyomi.data.backup.create.creators.CategoriesBackupCreator
 import eu.kanade.tachiyomi.data.backup.create.creators.ExtensionStoresBackupCreator
@@ -110,6 +111,12 @@ class BackupCreator(
 
                 // KMK -->
                 backupFeeds = backupFeeds(options),
+                backupAnime = if (options.libraryEntries) AnimeBackupHelper().createAnime() else emptyList(),
+                backupAnimeExtensionStores = if (options.extensionStores) {
+                    AnimeBackupHelper().createStores()
+                } else {
+                    emptyList()
+                },
                 // KMK <--
             )
 

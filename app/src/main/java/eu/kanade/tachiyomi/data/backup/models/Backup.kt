@@ -17,5 +17,8 @@ data class Backup(
     // KMK -->
     // Global Popular/Latest feeds
     @ProtoNumber(610) var backupFeeds: List<BackupFeed> = emptyList(),
+    // Anime (merged from Anikku)
+    @ProtoNumber(700) var backupAnime: List<BackupAnime> = emptyList(),
+    @ProtoNumber(701) var backupAnimeExtensionStores: List<BackupExtensionStore> = emptyList(),
     // KMK <--
 )

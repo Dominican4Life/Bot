@@ -53,6 +53,10 @@ object Notifications {
      */
     const val CHANNEL_NEW_CHAPTERS = "new_chapters_channel"
     const val ID_NEW_CHAPTERS = -301
+    // KMK -->
+    const val ID_NEW_EPISODES = -1801
+    const val ID_ANIME_LIBRARY_PROGRESS = -1802
+    // KMK <--
     const val GROUP_NEW_CHAPTERS = "eu.kanade.tachiyomi.NEW_CHAPTERS"
 
     /**

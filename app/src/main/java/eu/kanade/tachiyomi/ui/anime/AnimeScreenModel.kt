@@ -173,6 +173,7 @@ class AnimeScreenModel(
                     mutableState.update { it.copy(videoDialog = VideoDialog.Empty(episode)) }
                 } else {
                     markSeen(episode)
+                    repository.upsertHistory(episode.id, System.currentTimeMillis())
                     onReady(resolved)
                 }
             } catch (e: Throwable) {

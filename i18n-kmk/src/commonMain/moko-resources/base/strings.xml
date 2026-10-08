@@ -275,4 +275,11 @@
     <string name="anime_library_empty">Your anime library is empty. Add anime from Browse.</string>
     <string name="library_switch_type">Switch between manga and anime</string>
     <string name="pref_player_summary">Anime player, gestures, subtitles, audio</string>
+    <string name="anime_updating_library">Updating anime library</string>
+    <string name="anime_no_history">No anime watched yet</string>
+    <string name="anime_no_updates">No new episodes yet. Add anime to your library to see new episodes here.</string>
+    <string name="anime_resume_episode">Resume</string>
+    <string name="anime_clear_history">Clear anime history</string>
+    <string name="anime_clear_history_confirm">Remove all anime from your watch history?</string>
+    <string name="anime_remove_history_confirm">Remove this anime from your watch history?</string>
 </resources>

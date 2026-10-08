@@ -155,6 +155,8 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
         }
 
         // KMK -->
+        // Anime in the library are checked alongside manga
+        eu.kanade.tachiyomi.data.anime.AnimeLibraryUpdateJob.startNow(context)
         libraryUpdateStatus.start()
 
         deleteLibraryUpdateErrors.cleanUnrelevantMangaErrors()

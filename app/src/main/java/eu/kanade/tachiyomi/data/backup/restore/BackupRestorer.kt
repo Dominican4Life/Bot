@@ -84,6 +84,9 @@ class BackupRestorer(
 
         if (options.libraryEntries) {
             restoreAmount += backup.backupManga.size
+            // KMK -->
+            restoreAmount += backup.backupAnime.size
+            // KMK <--
         }
         if (options.categories) {
             restoreAmount += 1
@@ -129,6 +132,14 @@ class BackupRestorer(
             if (options.extensionStores) {
                 restoreExtensionStores(backup.backupExtensionStores)
             }
+            // KMK -->
+            if (options.libraryEntries) {
+                restoreAnime(backup.backupAnime)
+            }
+            if (options.extensionStores) {
+                restoreAnimeExtensionStores(backup.backupAnimeExtensionStores)
+            }
+            // KMK <--
 
             // TODO: optionally trigger online library + tracker update
         }
@@ -277,6 +288,38 @@ class BackupRestorer(
                 }
             }
     }
+
+    // KMK -->
+    private fun CoroutineScope.restoreAnime(backupAnime: List<eu.kanade.tachiyomi.data.backup.models.BackupAnime>) =
+        launch {
+            val helper = eu.kanade.tachiyomi.data.backup.AnimeBackupHelper()
+            backupAnime.forEach {
+                ensureActive()
+                try {
+                    helper.restoreAnime(it)
+                } catch (e: Exception) {
+                    errors.add(Date() to "${it.title} [anime]: ${e.message}")
+                }
+                restoreProgress += 1
+                with(notifier) {
+                    showRestoreProgress(it.title, restoreProgress, restoreAmount, isSync)
+                        .show(Notifications.ID_RESTORE_PROGRESS)
+                }
+            }
+        }
+
+    private fun CoroutineScope.restoreAnimeExtensionStores(stores: List<BackupExtensionStore>) = launch {
+        val helper = eu.kanade.tachiyomi.data.backup.AnimeBackupHelper()
+        stores.forEach {
+            ensureActive()
+            try {
+                helper.restoreStore(it)
+            } catch (e: Exception) {
+                errors.add(Date() to "Error adding anime extension store: ${it.name} : ${e.message}")
+            }
+        }
+    }
+    // KMK <--
 
     private fun writeErrorLog(): File {
         try {

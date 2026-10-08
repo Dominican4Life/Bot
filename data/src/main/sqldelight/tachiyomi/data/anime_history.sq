@@ -1,0 +1,46 @@
+-- KMK: anime watch history (merged from Anikku)
+CREATE TABLE anime_history(
+    _id INTEGER NOT NULL PRIMARY KEY,
+    episode_id INTEGER NOT NULL UNIQUE,
+    last_seen INTEGER NOT NULL,
+    FOREIGN KEY(episode_id) REFERENCES episodes (_id)
+    ON DELETE CASCADE
+);
+
+CREATE INDEX kmk_anime_history_episode_id_index ON anime_history(episode_id);
+
+upsert:
+INSERT INTO anime_history(episode_id, last_seen)
+VALUES (:episodeId, :lastSeen)
+ON CONFLICT(episode_id)
+DO UPDATE SET last_seen = :lastSeen
+WHERE episode_id = :episodeId;
+
+getHistory:
+SELECT
+    A._id AS animeId,
+    A.source,
+    A.title,
+    A.thumbnail_url,
+    A.favorite,
+    E._id AS episodeId,
+    E.name AS episodeName,
+    E.episode_number,
+    E.last_second_seen,
+    E.total_seconds,
+    H.last_seen
+FROM anime_history H
+JOIN episodes E ON H.episode_id = E._id
+JOIN animes A ON E.anime_id = A._id
+WHERE H.last_seen > 0
+ORDER BY H.last_seen DESC;
+
+getAll:
+SELECT H.episode_id, H.last_seen FROM anime_history H;
+
+removeByAnimeId:
+DELETE FROM anime_history
+WHERE episode_id IN (SELECT _id FROM episodes WHERE anime_id = :animeId);
+
+removeAll:
+DELETE FROM anime_history;

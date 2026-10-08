@@ -2253,8 +2253,9 @@ class PlayerViewModel @JvmOverloads constructor(
      * Saves this [episode] last seen history if incognito mode isn't on.
      */
     private suspend fun saveEpisodeHistory(episode: Episode) {
-        // KMK: anime history comes with the Updates/History split
-    
+        if (!incognitoMode) {
+            animeRepository.upsertHistory(episode.id!!, System.currentTimeMillis())
+        }
     }
 
     /**

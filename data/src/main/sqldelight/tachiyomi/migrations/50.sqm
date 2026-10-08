@@ -1,0 +1,10 @@
+-- KMK: anime watch history
+CREATE TABLE anime_history(
+    _id INTEGER NOT NULL PRIMARY KEY,
+    episode_id INTEGER NOT NULL UNIQUE,
+    last_seen INTEGER NOT NULL,
+    FOREIGN KEY(episode_id) REFERENCES episodes (_id)
+    ON DELETE CASCADE
+);
+
+CREATE INDEX kmk_anime_history_episode_id_index ON anime_history(episode_id);

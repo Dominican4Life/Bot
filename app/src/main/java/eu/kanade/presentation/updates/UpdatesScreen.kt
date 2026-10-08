@@ -102,7 +102,13 @@ fun UpdateScreen(
             )
         },
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
-    ) { contentPadding ->
+    ) { outerPadding ->
+        // KMK --> manga updates on the left, anime on the right
+        eu.kanade.presentation.browse.anime.MangaAnimeSplit(
+            contentPadding = outerPadding,
+            anime = { padding -> eu.kanade.presentation.anime.AnimeUpdatesPane(contentPadding = padding) },
+            manga = { contentPadding ->
+        // KMK <--
         when {
             state.isLoading -> LoadingScreen(Modifier.padding(contentPadding))
             state.items.isEmpty() -> EmptyScreen(
@@ -161,6 +167,10 @@ fun UpdateScreen(
                 }
             }
         }
+        // KMK -->
+            },
+        )
+        // KMK <--
     }
 }
 

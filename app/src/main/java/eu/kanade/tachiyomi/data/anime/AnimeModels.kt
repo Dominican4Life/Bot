@@ -83,3 +83,36 @@ data class Episode(
 
 internal fun String?.toGenreList(): List<String>? =
     this?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }?.distinct()?.takeIf { it.isNotEmpty() }
+
+/** KMK: One row of the anime watch history (latest episode watched per anime). */
+@Immutable
+data class AnimeHistoryItem(
+    val animeId: Long,
+    val source: Long,
+    val title: String,
+    val thumbnailUrl: String?,
+    val favorite: Boolean,
+    val episodeId: Long,
+    val episodeName: String,
+    val episodeNumber: Double,
+    val lastSecondSeen: Long,
+    val totalSeconds: Long,
+    val lastSeen: Long,
+)
+
+/** KMK: A new episode of an anime in the library. */
+@Immutable
+data class AnimeUpdateItem(
+    val animeId: Long,
+    val source: Long,
+    val title: String,
+    val thumbnailUrl: String?,
+    val episodeId: Long,
+    val episodeName: String,
+    val episodeNumber: Double,
+    val seen: Boolean,
+    val bookmark: Boolean,
+    val lastSecondSeen: Long,
+    val totalSeconds: Long,
+    val dateFetch: Long,
+)

@@ -107,7 +107,15 @@ fun HistoryScreen(
             }
         },
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
-    ) { contentPadding ->
+    ) { outerPadding ->
+        // KMK --> manga history on the left, anime on the right
+        eu.kanade.presentation.browse.anime.MangaAnimeSplit(
+            contentPadding = outerPadding,
+            anime = { padding ->
+                eu.kanade.presentation.anime.AnimeHistoryPane(contentPadding = padding, searchQuery = state.searchQuery)
+            },
+            manga = { contentPadding ->
+        // KMK <--
         state.list.let {
             // KMK -->
             if (state.isLoading) {
@@ -145,6 +153,10 @@ fun HistoryScreen(
                 )
             }
         }
+        // KMK -->
+            },
+        )
+        // KMK <--
     }
 }
 

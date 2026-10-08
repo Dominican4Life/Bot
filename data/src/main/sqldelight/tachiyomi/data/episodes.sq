@@ -63,3 +63,26 @@ UPDATE episodes SET
     last_second_seen = coalesce(:lastSecondSeen, last_second_seen),
     total_seconds = coalesce(:totalSeconds, total_seconds)
 WHERE _id = :id;
+
+getUpdates:
+SELECT
+    A._id AS animeId,
+    A.source,
+    A.title,
+    A.thumbnail_url,
+    E._id AS episodeId,
+    E.name AS episodeName,
+    E.episode_number,
+    E.seen,
+    E.bookmark,
+    E.last_second_seen,
+    E.total_seconds,
+    E.date_fetch
+FROM episodes E
+JOIN animes A ON E.anime_id = A._id
+WHERE A.favorite = 1 AND E.date_fetch > A.date_added AND E.date_fetch > :after
+ORDER BY E.date_fetch DESC
+LIMIT :limit;
+
+getByUrl:
+SELECT * FROM episodes WHERE anime_id = :animeId AND url = :url LIMIT 1;
