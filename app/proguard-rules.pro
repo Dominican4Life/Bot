@@ -318,4 +318,5 @@
 
 # KMK --> anime player (mpv)
 -keep class is.xyz.mpv.** { *; }
+-keep class com.arthenica.** { public protected *; }
 # KMK <--

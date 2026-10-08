@@ -129,6 +129,8 @@ android {
                 "libavformat",
                 "libavutil",
                 "libc++_shared",
+                "libffmpegkit",
+                "libffmpegkit_abidetect",
                 "libmpv",
                 "libplayer",
                 "libpostproc",
@@ -203,6 +205,8 @@ dependencies {
     implementation(projects.i18nAnk)
     // Anime player (from AniZen)
     implementation(aniyomilibs.aniyomi.mpv)
+    implementation(aniyomilibs.ffmpeg.kit)
+    implementation(aniyomilibs.arthenica.smartexceptions)
     implementation(aniyomilibs.seeker)
     implementation(aniyomilibs.compose.constraintlayout)
     implementation(aniyomilibs.mediasession)

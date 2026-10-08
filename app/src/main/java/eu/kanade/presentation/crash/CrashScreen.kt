@@ -1,6 +1,15 @@
 package eu.kanade.presentation.crash
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import androidx.compose.foundation.background
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.unit.dp
+import eu.kanade.tachiyomi.util.system.toast
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -50,12 +59,28 @@ fun CrashScreen(
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.surfaceVariant),
         ) {
-            Text(
-                text = exception.toString(),
-                modifier = Modifier
-                    .padding(all = MaterialTheme.padding.small),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            // KMK --> selectable, with a copy button
+            SelectionContainer {
+                Text(
+                    text = exception.toString(),
+                    modifier = Modifier
+                        .padding(all = MaterialTheme.padding.small)
+                        .padding(end = 40.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            IconButton(
+                onClick = {
+                    val text = exception?.stackTraceToString() ?: exception.toString()
+                    val clipboard = context.getSystemService(ClipboardManager::class.java)
+                    clipboard?.setPrimaryClip(ClipData.newPlainText("Crash log", text))
+                    context.toast(MR.strings.copied_to_clipboard_plain)
+                },
+                modifier = Modifier.align(Alignment.TopEnd),
+            ) {
+                Icon(Icons.Outlined.ContentCopy, contentDescription = stringResource(MR.strings.action_copy_to_clipboard))
+            }
+            // KMK <--
         }
     }
 }

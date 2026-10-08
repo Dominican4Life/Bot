@@ -1,5 +1,7 @@
 # KMK: libraries for the anime player (from AniZen/Anikku)
 [versions]
+ffmpeg-kit = "1.18"
+arthenica-smartexceptions = "0.2.1"
 aniyomi-mpv-lib = "v0.1.16"
 constraint-layout = "1.1.1"
 media = "1.7.1"
@@ -7,6 +9,9 @@ seeker = "1.2.2"
 truetypeparser = "2.1.4"
 
 [libraries]
+# mpv needs ffmpeg's native libraries (libavcodec etc.), which ship in ffmpeg-kit
+ffmpeg-kit = { module = "com.github.jmir1:ffmpeg-kit", version.ref = "ffmpeg-kit" }
+arthenica-smartexceptions = { module = "com.arthenica:smart-exception-java", version.ref = "arthenica-smartexceptions" }
 aniyomi-mpv = { module = "com.github.salmanbappi:aniyomi-mpv-lib", version.ref = "aniyomi-mpv-lib" }
 compose-constraintlayout = { module = "androidx.constraintlayout:constraintlayout-compose", version.ref = "constraint-layout" }
 mediasession = { module = "androidx.media:media", version.ref = "media" }
