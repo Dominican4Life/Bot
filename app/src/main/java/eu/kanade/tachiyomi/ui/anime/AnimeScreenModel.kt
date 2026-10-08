@@ -38,6 +38,7 @@ class AnimeScreenModel(
         private set
 
     private var refreshJob: Job? = null
+    private var seedColorUrl: String? = null
     private var videoJob: Job? = null
 
     init {
@@ -45,6 +46,13 @@ class AnimeScreenModel(
             combine(repository.subscribeAnime(animeId), repository.subscribeEpisodes(animeId)) { anime, episodes ->
                 anime to episodes
             }.collect { (anime, episodes) ->
+                // KMK: theme color from the cover, like the manga details page
+                if (anime != null && anime.thumbnailUrl != seedColorUrl) {
+                    seedColorUrl = anime.thumbnailUrl
+                    eu.kanade.presentation.anime.loadAnimeSeedColor(anime) { color ->
+                        mutableState.update { it.copy(seedColor = color) }
+                    }
+                }
                 mutableState.update { state ->
                     state.copy(
                         anime = anime,
@@ -254,5 +262,13 @@ class AnimeScreenModel(
         val isRefreshing: Boolean = false,
         val error: String? = null,
         val videoDialog: VideoDialog? = null,
-    )
+        val seedColor: androidx.compose.ui.graphics.Color? = null,
+    ) {
+        /** The episode the Start/Resume button plays: the first unwatched one, oldest first */
+        val nextEpisode: Episode?
+            get() = episodes.sortedByDescending { it.sourceOrder }.firstOrNull { !it.seen }
+
+        val hasStarted: Boolean
+            get() = episodes.any { it.seen || it.lastSecondSeen > 0 }
+    }
 }

@@ -99,6 +99,100 @@ class AnimeSourceScreenModel(
         }
     }
 
+    // KMK --> preview panel: first tap on a cover shows its episodes on the left, like manga browsing
+    private val _preview = kotlinx.coroutines.flow.MutableStateFlow(Preview())
+    val preview: kotlinx.coroutines.flow.StateFlow<Preview> = _preview
+    private var previewJob: Job? = null
+    private var previewRefreshJob: Job? = null
+
+    fun selectPreview(anime: Anime) {
+        previewJob?.cancel()
+        previewRefreshJob?.cancel()
+        _preview.value = Preview(anime = anime, panelOpen = true, loading = true)
+        eu.kanade.presentation.anime.loadAnimeSeedColor(anime) { color ->
+            _preview.update { if (it.anime?.id == anime.id) it.copy(seedColor = color) else it }
+        }
+        previewJob = screenModelScope.launchIO {
+            kotlinx.coroutines.flow.combine(
+                repository.subscribeAnime(anime.id),
+                repository.subscribeEpisodes(anime.id),
+            ) { a, eps -> a to eps }.collect { (a, eps) ->
+                _preview.update {
+                    it.copy(
+                        anime = a ?: it.anime,
+                        episodes = if (a?.sortAscending == true) {
+                            eps.sortedByDescending { e -> e.sourceOrder }
+                        } else {
+                            eps.sortedBy { e -> e.sourceOrder }
+                        },
+                    )
+                }
+            }
+        }
+        val source = source ?: return
+        previewRefreshJob = screenModelScope.launchIO {
+            try {
+                val current = repository.getAnime(anime.id) ?: anime
+                if (!current.initialized || repository.getEpisodes(anime.id).isEmpty()) {
+                    repository.refreshFromSource(current, source)
+                }
+                _preview.update { if (it.anime?.id == anime.id) it.copy(loading = false) else it }
+            } catch (e: Throwable) {
+                if (e is CancellationException) throw e
+                logcat(LogPriority.ERROR, e)
+                _preview.update {
+                    if (it.anime?.id == anime.id) it.copy(loading = false, error = e.message ?: e.javaClass.simpleName) else it
+                }
+            }
+        }
+    }
+
+    fun clearPreview() {
+        previewJob?.cancel()
+        previewRefreshJob?.cancel()
+        _preview.value = Preview()
+    }
+
+    fun closePreviewPanel() {
+        _preview.update { it.copy(panelOpen = false) }
+    }
+
+    fun toggleFavorite(anime: Anime) {
+        screenModelScope.launchIO {
+            val current = repository.getAnime(anime.id) ?: anime
+            repository.setFavorite(current, !current.favorite)
+            val updated = repository.getAnime(anime.id) ?: return@launchIO
+            mutableState.update { state -> state.copy(items = state.items.map { if (it.id == updated.id) updated else it }) }
+        }
+    }
+
+    fun toggleSeen(episode: eu.kanade.tachiyomi.data.anime.Episode) {
+        screenModelScope.launchIO { repository.setSeen(listOf(episode), !episode.seen) }
+    }
+
+    fun toggleBookmark(episode: eu.kanade.tachiyomi.data.anime.Episode) {
+        screenModelScope.launchIO { repository.setBookmark(episode, !episode.bookmark) }
+    }
+
+    fun toggleEpisodeSort() {
+        val anime = _preview.value.anime ?: return
+        screenModelScope.launchIO {
+            val current = repository.getAnime(anime.id) ?: return@launchIO
+            repository.setEpisodeFlags(current, current.episodeFlags xor Anime.SORT_ASCENDING)
+        }
+    }
+
+    @Immutable
+    data class Preview(
+        val anime: Anime? = null,
+        val panelOpen: Boolean = false,
+        val episodes: List<eu.kanade.tachiyomi.data.anime.Episode> = emptyList(),
+        val loading: Boolean = false,
+        val error: String? = null,
+        val seedColor: androidx.compose.ui.graphics.Color? = null,
+    )
+    // KMK <--
+
     sealed interface Listing {
         data object Popular : Listing
         data object Latest : Listing

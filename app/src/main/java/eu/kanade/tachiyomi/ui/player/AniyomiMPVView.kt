@@ -100,7 +100,7 @@ class AniyomiMPVView(context: Context, attributes: AttributeSet?) : BaseMPVView(
         if (decoderPreferences.useYUV420P().get()) {
             mpv?.setOptionString("vf", "format=yuv420p")
         }
-        mpv?.setOptionString("msg-level", "all=warn")
+        mpv?.setOptionString("msg-level", "all=v")
 
         mpv?.setPropertyBoolean("input-default-bindings", true)
 

@@ -64,10 +64,14 @@ fun BrowseSourceToolbar(
     /** Which preview panels open on the first tap of a cover (SourcePreferences.PREVIEW_PANELS_*), null to hide */
     previewPanels: Int? = null,
     onPreviewPanelsChange: (Int) -> Unit = {},
+    /** Title when there is no manga [source] (anime sources) */
+    titleOverride: String? = null,
+    showBulkSelection: Boolean = true,
+    showIncognito: Boolean = true,
     // KMK <--
 ) {
     // Avoid capturing unstable source in actions lambda
-    val title = source?.name
+    val title = titleOverride ?: source?.name
     val isLocalSource = source is LocalSource
 
     var selectingDisplayMode by remember { mutableStateOf(false) }
@@ -97,13 +101,15 @@ fun BrowseSourceToolbar(
                             )
                         }
                         // KMK -->
-                        add(bulkSelectionButton(isRunning, toggleSelectionMode))
-                        add(
-                            AppBar.OverflowAction(
-                                title = stringResource(MR.strings.pref_incognito_mode),
-                                onClick = onToggleIncognito,
-                            ),
-                        )
+                        if (showBulkSelection) add(bulkSelectionButton(isRunning, toggleSelectionMode))
+                        if (showIncognito) {
+                            add(
+                                AppBar.OverflowAction(
+                                    title = stringResource(MR.strings.pref_incognito_mode),
+                                    onClick = onToggleIncognito,
+                                ),
+                            )
+                        }
                         // KMK <--
                         if (isLocalSource) {
                             add(

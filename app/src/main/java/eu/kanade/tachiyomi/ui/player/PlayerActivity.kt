@@ -263,6 +263,9 @@ class PlayerActivity : BaseActivity() {
         // long as this player lives.
         mpvConfig.onPlayerCreated()
         // ANK <--
+        // KMK -->
+        PlayerDebugLog.clear()
+        // KMK <--
 
         setupPlayerMPV()
         setupPlayerAudio()
@@ -694,7 +697,20 @@ class PlayerActivity : BaseActivity() {
             "pause" -> {
                 window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             }
-            "eof-reached" -> endFile(value)
+            "eof-reached" -> {
+                // KMK -->
+                if (value) {
+                    val pos = viewModel.pos.value ?: 0
+                    val duration = viewModel.duration.value ?: 0
+                    PlayerDebugLog.add("player", "Reached the end at $pos s of $duration s")
+                    if (pos < 15) {
+                        showPlaybackProblem("The video ended right after it started ($pos s of $duration s).")
+                        return
+                    }
+                }
+                // KMK <--
+                endFile(value)
+            }
         }
     }
 
@@ -738,6 +754,12 @@ class PlayerActivity : BaseActivity() {
                 // ANZ <--
             }
             MPV.mpvEvent.MPV_EVENT_END_FILE -> {
+                // KMK -->
+                PlayerDebugLog.add(
+                    "player",
+                    "End of file: ${node.asMap()?.entries?.joinToString { "${it.key}=${it.value.asString() ?: it.value}" }}",
+                )
+                // KMK <--
                 val errorNode = node.asMap()?.get("file_error") ?: return
                 var errorMessage = errorNode.asString() ?: "Error: File ended"
 
@@ -749,6 +771,9 @@ class PlayerActivity : BaseActivity() {
 
                 logcat(LogPriority.ERROR) { errorMessage }
                 showToast(errorMessage)
+                // KMK -->
+                showPlaybackProblem(errorMessage)
+                // KMK <--
 
                 viewModel.setCurrentVideoError()
 
@@ -1104,6 +1129,9 @@ class PlayerActivity : BaseActivity() {
         if (video == null) return
 
         viewModel.setIsStopped(false)
+        // KMK -->
+        PlayerDebugLog.add("player", "Loading video '${video.videoTitle}': ${video.videoUrl}")
+        // KMK <--
         setHttpOptions(video)
 
         if (viewModel.isLoadingEpisode.value) {
@@ -1214,6 +1242,9 @@ class PlayerActivity : BaseActivity() {
         }.joinToString(",")
 
         mpv.setOptionString("http-header-fields", httpHeaderString)
+        // KMK -->
+        PlayerDebugLog.add("player", "HTTP headers: ${headers.keys.joinToString()}")
+        // KMK <--
 
         // need to fix the cache
         // MPVLib.setOptionString("cache-on-disk", "yes")
@@ -1437,6 +1468,38 @@ class PlayerActivity : BaseActivity() {
             viewModel.changeEpisode(previous = false, autoPlay = true)
         }
     }
+
+    // KMK -->
+    private var problemDialogShown = false
+
+    /** Shows what went wrong with a button to copy the player log, so it can be sent for a fix */
+    private fun showPlaybackProblem(message: String) {
+        if (problemDialogShown || isFinishing) return
+        problemDialogShown = true
+        runOnUiThread {
+            android.app.AlertDialog.Builder(this)
+                .setTitle("Playback problem")
+                .setMessage("$message\n\nCopy the player log and send it so this can be fixed.")
+                .setPositiveButton("Copy log") { _, _ ->
+                    val clipboard = getSystemService(android.content.ClipboardManager::class.java)
+                    val text = buildString {
+                        appendLine("Anime: ${viewModel.currentAnime.value?.title}")
+                        appendLine("Episode: ${viewModel.currentEpisode.value?.name}")
+                        appendLine("Source: ${viewModel.currentSource.value?.name} (${viewModel.currentSource.value?.id})")
+                        appendLine(message)
+                        appendLine()
+                        append(PlayerDebugLog.text())
+                    }
+                    clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("Player log", text))
+                    toast(MR.strings.copied_to_clipboard_plain)
+                    problemDialogShown = false
+                }
+                .setNegativeButton(MR.strings.action_close.let { stringResource(it) }) { _, _ -> problemDialogShown = false }
+                .setOnCancelListener { problemDialogShown = false }
+                .show()
+        }
+    }
+    // KMK <--
 
     // ANZ -->
     fun setCustomVideoAspect(ratio: Double, label: String) {

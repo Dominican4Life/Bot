@@ -212,8 +212,22 @@ class MangaCoverFetcher(
         }
     }
 
+    // KMK -->
+    private val animeSourceLazy = lazy {
+        if (sourceLazy.value != null) return@lazy null
+        val id = mangaCover.sourceId
+        runCatching {
+            uy.kohesive.injekt.Injekt.get<eu.kanade.tachiyomi.animeextension.AnimeSourceManager>().get(id)
+                as? eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
+        }.getOrNull()
+    }
+
+    private fun animeSource() = animeSourceLazy.value
+    // KMK <--
+
     private suspend fun executeNetworkRequest(): Response {
-        val client = sourceLazy.value?.client ?: callFactoryLazy.value
+        // KMK: anime covers use their anime source's client and headers
+        val client = sourceLazy.value?.client ?: animeSource()?.client ?: callFactoryLazy.value
         val response = client.newCall(newRequest()).await()
         if (!response.isSuccessful && response.code != HTTP_NOT_MODIFIED) {
             response.close()
@@ -226,7 +240,7 @@ class MangaCoverFetcher(
         val request = Request.Builder().apply {
             url(url!!)
 
-            val sourceHeaders = sourceLazy.value?.headers
+            val sourceHeaders = sourceLazy.value?.headers ?: animeSource()?.headers
             if (sourceHeaders != null) {
                 headers(sourceHeaders)
             }

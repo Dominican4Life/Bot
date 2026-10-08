@@ -60,6 +60,27 @@ fun BrowsePreviewInfoHeader(
     onSearch: (query: String, global: Boolean) -> Unit,
 ) {
     val sourceName = remember(source) { source.getNameForMangaInfo() }
+    BrowsePreviewInfoHeader(
+        manga = manga,
+        sourceName = sourceName,
+        onAddToLibrary = onAddToLibrary,
+        onWebView = onWebView,
+        onOpenDetails = onOpenDetails,
+        onSearch = onSearch,
+    )
+}
+
+/** KMK: Same header for anime, which come from anime sources */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun BrowsePreviewInfoHeader(
+    manga: Manga,
+    sourceName: String,
+    onAddToLibrary: () -> Unit,
+    onWebView: () -> Unit,
+    onOpenDetails: () -> Unit,
+    onSearch: (query: String, global: Boolean) -> Unit,
+) {
     Column(modifier = Modifier.fillMaxWidth()) {
         // Title, author, status (no cover image)
         Column(

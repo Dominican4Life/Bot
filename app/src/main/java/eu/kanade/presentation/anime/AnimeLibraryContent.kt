@@ -13,9 +13,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
+import eu.kanade.presentation.library.components.CommonMangaItemDefaults
+import eu.kanade.presentation.library.components.MangaComfortableGridItem
+import eu.kanade.presentation.library.components.MangaCompactGridItem
+import eu.kanade.presentation.library.components.MangaListItem
 import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
 import eu.kanade.tachiyomi.data.anime.Anime
 import eu.kanade.tachiyomi.data.anime.AnimeRepository
+import tachiyomi.domain.library.model.LibraryDisplayMode
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.components.FastScrollLazyVerticalGrid
@@ -58,23 +63,46 @@ fun AnimeLibraryContent(
         )
         return
     }
+    // Same items and display mode as the manga library
+    val displayMode by remember { libraryPreferences.displayMode() }.collectAsState()
     FastScrollLazyVerticalGrid(
-        columns = if (columns > 0) GridCells.Fixed(columns) else GridCells.Adaptive(128.dp),
+        columns = when {
+            displayMode == LibraryDisplayMode.List -> GridCells.Fixed(1)
+            columns > 0 -> GridCells.Fixed(columns)
+            else -> GridCells.Adaptive(128.dp)
+        },
         contentPadding = PaddingValues(
             start = 8.dp,
             end = 8.dp,
             top = contentPadding.calculateTopPadding() + 8.dp,
             bottom = contentPadding.calculateBottomPadding() + 8.dp,
         ),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridVerticalSpacer),
+        horizontalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridHorizontalSpacer),
     ) {
         items(filtered, key = { it.id }) { anime ->
-            AnimeGridItem(
-                anime = anime.copy(favorite = false),
-                source = sourceManager.get(anime.source),
-                onClick = { onClickAnime(anime) },
-            )
+            when (displayMode) {
+                LibraryDisplayMode.List -> MangaListItem(
+                    coverData = anime.asMangaCover(),
+                    title = anime.title,
+                    onClick = { onClickAnime(anime) },
+                    onLongClick = { onClickAnime(anime) },
+                    badge = {},
+                )
+                LibraryDisplayMode.CompactGrid, LibraryDisplayMode.CoverOnlyGrid -> MangaCompactGridItem(
+                    coverData = anime.asMangaCover(),
+                    title = anime.title.takeIf { displayMode == LibraryDisplayMode.CompactGrid },
+                    onClick = { onClickAnime(anime) },
+                    onLongClick = { onClickAnime(anime) },
+                )
+                else -> MangaComfortableGridItem(
+                    coverData = anime.asMangaCover(),
+                    title = anime.title,
+                    onClick = { onClickAnime(anime) },
+                    onLongClick = { onClickAnime(anime) },
+                    usePanoramaCover = displayMode == LibraryDisplayMode.ComfortableGridPanorama,
+                )
+            }
         }
     }
 }

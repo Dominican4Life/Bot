@@ -57,6 +57,9 @@ class PlayerObserver(val activity: PlayerActivity) :
             else -> LogPriority.VERBOSE
         }
         logcat("mpv/$prefix", logPriority) { text }
+        // KMK -->
+        if (level <= 50) PlayerDebugLog.add("mpv/$prefix", text.trimEnd())
+        // KMK <--
     }
 
     var httpError: String? = null
