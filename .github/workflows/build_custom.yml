@@ -42,7 +42,20 @@ jobs:
           cp .github/custom-debug.keystore ~/.android/debug.keystore
 
       - name: Build app
-        run: ./gradlew assemblePreview
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew assemblePreview --stacktrace 2>&1 | tee build.log
+
+      # Surface compile errors as annotations so they are readable without downloading logs
+      - name: Report build errors
+        if: failure()
+        shell: bash
+        run: |
+          grep -E "^e: |What went wrong|^> |error:|Exception" -A4 build.log | head -150 > errors.txt || true
+          if [ ! -s errors.txt ]; then tail -80 build.log > errors.txt; fi
+          body=$(sed 's/%/%25/g' errors.txt | sed ':a;N;$!ba;s/\n/%0A/g')
+          echo "::error title=Build errors::${body}"
 
       - name: Upload APKs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
