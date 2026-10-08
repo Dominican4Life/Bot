@@ -96,6 +96,9 @@ fun ReaderAppBars(
     dualPageSplitEnabled: Boolean,
     doublePages: Boolean,
     onClickChapterList: () -> Unit,
+    // KMK -->
+    onClickPageGrid: () -> Unit,
+    // KMK <--
     onClickPageLayout: () -> Unit,
     onClickShiftPage: () -> Unit,
     // SY <--
@@ -269,6 +272,9 @@ fun ReaderAppBars(
                     dualPageSplitEnabled = dualPageSplitEnabled,
                     doublePages = doublePages,
                     onClickChapterList = onClickChapterList,
+                    // KMK -->
+                    onClickPageGrid = onClickPageGrid,
+                    // KMK <--
                     onClickWebView = onOpenInWebView,
                     onClickBrowser = onOpenInBrowser,
                     onClickShare = onShare,

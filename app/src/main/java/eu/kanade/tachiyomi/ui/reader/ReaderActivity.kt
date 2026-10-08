@@ -68,9 +68,10 @@ import eu.kanade.domain.manga.model.readingMode
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.presentation.reader.DisplayRefreshHost
 import eu.kanade.presentation.reader.OrientationSelectDialog
-import eu.kanade.presentation.reader.ReaderChapterSideSheet
+import eu.kanade.presentation.reader.ReaderChapterListSheet
 import eu.kanade.presentation.reader.ReaderContentOverlay
 import eu.kanade.presentation.reader.ReaderPageActionsDialog
+import eu.kanade.presentation.reader.ReaderPageGridSheet
 import eu.kanade.presentation.reader.ReaderPageIndicator
 import eu.kanade.presentation.reader.ReadingModeSelectDialog
 import eu.kanade.presentation.reader.appbars.NavBarType
@@ -453,7 +454,7 @@ class ReaderActivity : BaseActivity() {
                         mutableStateOf(viewModel.getChapters().toImmutableList())
                     }
                     // KMK -->
-                    ReaderChapterSideSheet(
+                    ReaderChapterListSheet(
                         onDismissRequest = onDismissRequest,
                         screenModel = settingsScreenModel,
                         chapters = chapters,
@@ -474,12 +475,20 @@ class ReaderActivity : BaseActivity() {
                         onDownloadAction = { chapter, action ->
                             viewModel.handleDownloadAction(chapter, action)
                         },
+                    )
+                    // KMK <--
+                }
+
+                // KMK -->
+                is ReaderViewModel.Dialog.PageGrid -> {
+                    ReaderPageGridSheet(
+                        onDismissRequest = onDismissRequest,
                         currentChapter = state.currentChapter,
                         currentPage = state.currentPage,
                         onClickPage = this@ReaderActivity::moveToPageIndex,
                     )
-                    // KMK <--
                 }
+                // KMK <--
 
                 ReaderViewModel.Dialog.AutoScrollHelp -> AlertDialog(
                     onDismissRequest = onDismissRequest,
@@ -747,6 +756,9 @@ class ReaderActivity : BaseActivity() {
             dualPageSplitEnabled = dualPageSplitPaged,
             doublePages = state.doublePages,
             onClickChapterList = viewModel::openChapterListDialog,
+            // KMK -->
+            onClickPageGrid = viewModel::openPageGridDialog,
+            // KMK <--
             onClickPageLayout = {
                 if (readerPreferences.pageLayout().get() == PagerConfig.PageLayout.AUTOMATIC) {
                     (viewModel.state.value.viewer as? PagerViewer)?.config?.let { config ->

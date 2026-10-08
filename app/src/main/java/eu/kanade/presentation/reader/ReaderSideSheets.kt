@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -44,12 +45,9 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.FormatListBulleted
 import androidx.compose.material.icons.outlined.BrokenImage
 import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilledTonalIconToggleButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -94,19 +92,12 @@ import tachiyomi.presentation.core.i18n.stringResource
 import kotlin.math.roundToInt
 
 /**
- * KMK: Reader chapter menu that slides in from the right edge of the screen.
- *
- * It has two views, switched with the icons at the top:
- *  - a list of all chapters (same as the old centered dialog)
- *  - a grid with a preview of every page in the chapter currently being read
+ * KMK: Reader menus that slide in from the side of the screen, like Usagi.
+ *  - [ReaderChapterListSheet]: the list of chapters, slides in from the left.
+ *  - [ReaderPageGridSheet]: thumbnails of every page in the current chapter, slides in from the right.
  */
-private enum class SideSheetTab { Chapters, Pages }
-
-/** Remembers the last used view for as long as the app is alive. */
-private var lastSideSheetTab = SideSheetTab.Chapters
-
 @Composable
-fun ReaderChapterSideSheet(
+fun ReaderChapterListSheet(
     onDismissRequest: () -> Unit,
     screenModel: ReaderSettingsScreenModel,
     chapters: ImmutableList<ReaderChapterItem>,
@@ -114,14 +105,64 @@ fun ReaderChapterSideSheet(
     onBookmark: (Chapter) -> Unit,
     dateRelativeTime: Boolean,
     onDownloadAction: ((Chapter, ChapterDownloadAction) -> Unit)?,
+) {
+    ReaderSideSheet(
+        onDismissRequest = onDismissRequest,
+        fromStart = true,
+        title = stringResource(MR.strings.chapters),
+    ) { dismiss ->
+        ChapterListContent(
+            screenModel = screenModel,
+            chapters = chapters,
+            onClickChapter = {
+                onClickChapter(it)
+                dismiss()
+            },
+            onBookmark = onBookmark,
+            dateRelativeTime = dateRelativeTime,
+            onDownloadAction = onDownloadAction,
+            modifier = Modifier.fillMaxSize(),
+        )
+    }
+}
+
+@Composable
+fun ReaderPageGridSheet(
+    onDismissRequest: () -> Unit,
     currentChapter: ReaderChapter?,
     currentPage: Int,
     onClickPage: (pageIndex: Int) -> Unit,
 ) {
+    ReaderSideSheet(
+        onDismissRequest = onDismissRequest,
+        fromStart = false,
+        title = stringResource(KMR.strings.reader_pages),
+    ) { dismiss ->
+        PageGridContent(
+            chapter = currentChapter,
+            currentPage = currentPage,
+            onClickPage = {
+                onClickPage(it)
+                dismiss()
+            },
+        )
+    }
+}
+
+/**
+ * A panel that slides in from the left ([fromStart]) or right edge, over a dimmed background.
+ * Closes by tapping outside, pressing back, the X button, or swiping it back towards its edge.
+ */
+@Composable
+private fun ReaderSideSheet(
+    onDismissRequest: () -> Unit,
+    fromStart: Boolean,
+    title: String,
+    content: @Composable (dismiss: () -> Unit) -> Unit,
+) {
     val scope = rememberCoroutineScope()
     val visibleState = remember { MutableTransitionState(false) }
     var dismissing by remember { mutableStateOf(false) }
-    var tab by remember { mutableStateOf(lastSideSheetTab) }
 
     LaunchedEffect(Unit) { visibleState.targetState = true }
 
@@ -139,6 +180,9 @@ fun ReaderChapterSideSheet(
 
     BackHandler(onBack = animateDismiss)
 
+    // +1 slides towards the right edge, -1 towards the left edge
+    val direction = if (fromStart) -1 else 1
+
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val sheetWidth = if (maxWidth < 600.dp) {
             maxWidth * 0.88f
@@ -147,6 +191,7 @@ fun ReaderChapterSideSheet(
             (maxWidth * 0.27f).coerceIn(300.dp, 380.dp)
         }
         val sheetWidthPx = with(LocalDensity.current) { sheetWidth.toPx() }
+        // Distance the sheet has been dragged towards its edge (always >= 0)
         var dragOffset by remember { mutableFloatStateOf(0f) }
 
         // Scrim
@@ -169,23 +214,23 @@ fun ReaderChapterSideSheet(
 
         AnimatedVisibility(
             visibleState = visibleState,
-            enter = slideInHorizontally { it },
-            exit = slideOutHorizontally { it },
-            modifier = Modifier.align(Alignment.CenterEnd),
+            enter = slideInHorizontally { it * direction },
+            exit = slideOutHorizontally { it * direction },
+            modifier = Modifier.align(if (fromStart) Alignment.CenterStart else Alignment.CenterEnd),
         ) {
             Surface(
                 modifier = Modifier
-                    .offset { IntOffset(dragOffset.roundToInt(), 0) }
+                    .offset { IntOffset((dragOffset * direction).roundToInt(), 0) }
                     .width(sheetWidth)
                     .fillMaxHeight()
-                    // Swipe the sheet to the right to close it
+                    // Swipe the sheet back towards its edge to close it
                     .draggable(
                         orientation = Orientation.Horizontal,
                         state = rememberDraggableState { delta ->
-                            dragOffset = (dragOffset + delta).coerceIn(0f, sheetWidthPx)
+                            dragOffset = (dragOffset + delta * direction).coerceIn(0f, sheetWidthPx)
                         },
                         onDragStopped = { velocity ->
-                            if (dragOffset > sheetWidthPx * 0.3f || velocity > 1500f) {
+                            if (dragOffset > sheetWidthPx * 0.3f || velocity * direction > 1500f) {
                                 animateDismiss()
                             } else {
                                 scope.launch {
@@ -196,7 +241,11 @@ fun ReaderChapterSideSheet(
                             }
                         },
                     ),
-                shape = RoundedCornerShape(topStart = 28.dp, bottomStart = 28.dp),
+                shape = if (fromStart) {
+                    RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp)
+                } else {
+                    RoundedCornerShape(topStart = 28.dp, bottomStart = 28.dp)
+                },
                 color = MaterialTheme.colorScheme.surfaceContainerLow,
                 tonalElevation = 1.dp,
                 shadowElevation = 8.dp,
@@ -207,89 +256,34 @@ fun ReaderChapterSideSheet(
                         .windowInsetsPadding(
                             WindowInsets.statusBars
                                 .union(WindowInsets.navigationBars)
-                                .only(WindowInsetsSides.Vertical + WindowInsetsSides.End),
+                                .union(WindowInsets.displayCutout)
+                                .only(
+                                    WindowInsetsSides.Vertical +
+                                        if (fromStart) WindowInsetsSides.Start else WindowInsetsSides.End,
+                                ),
                         ),
                 ) {
-                    SideSheetHeader(
-                        tab = tab,
-                        onTabChange = {
-                            tab = it
-                            lastSideSheetTab = it
-                        },
-                        onClose = animateDismiss,
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+                    ) {
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.titleLarge,
+                            modifier = Modifier.weight(1f),
+                        )
+                        IconButton(onClick = animateDismiss) {
+                            Icon(
+                                imageVector = Icons.Outlined.Close,
+                                contentDescription = stringResource(MR.strings.action_close),
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    }
                     HorizontalDivider()
 
-                    when (tab) {
-                        SideSheetTab.Chapters -> ChapterListContent(
-                            screenModel = screenModel,
-                            chapters = chapters,
-                            onClickChapter = {
-                                onClickChapter(it)
-                                animateDismiss()
-                            },
-                            onBookmark = onBookmark,
-                            dateRelativeTime = dateRelativeTime,
-                            onDownloadAction = onDownloadAction,
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                        SideSheetTab.Pages -> PageGridContent(
-                            chapter = currentChapter,
-                            currentPage = currentPage,
-                            onClickPage = {
-                                onClickPage(it)
-                                animateDismiss()
-                            },
-                        )
-                    }
+                    content(animateDismiss)
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SideSheetHeader(
-    tab: SideSheetTab,
-    onTabChange: (SideSheetTab) -> Unit,
-    onClose: () -> Unit,
-) {
-    Column(modifier = Modifier.padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 8.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = stringResource(MR.strings.chapters),
-                style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.weight(1f),
-            )
-            IconButton(onClick = onClose) {
-                Icon(
-                    imageVector = Icons.Outlined.Close,
-                    contentDescription = stringResource(MR.strings.action_close),
-                    tint = MaterialTheme.colorScheme.primary,
-                )
-            }
-        }
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.padding(top = 4.dp),
-        ) {
-            FilledTonalIconToggleButton(
-                checked = tab == SideSheetTab.Chapters,
-                onCheckedChange = { onTabChange(SideSheetTab.Chapters) },
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Outlined.FormatListBulleted,
-                    contentDescription = stringResource(KMR.strings.reader_chapter_list_view),
-                )
-            }
-            FilledTonalIconToggleButton(
-                checked = tab == SideSheetTab.Pages,
-                onCheckedChange = { onTabChange(SideSheetTab.Pages) },
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.GridView,
-                    contentDescription = stringResource(KMR.strings.reader_page_grid_view),
-                )
             }
         }
     }

@@ -1129,6 +1129,12 @@ class ReaderViewModel @JvmOverloads constructor(
         mutableState.update { it.copy(dialog = Dialog.ChapterList) }
     }
 
+    // KMK -->
+    fun openPageGridDialog() {
+        mutableState.update { it.copy(dialog = Dialog.PageGrid) }
+    }
+    // KMK <--
+
     fun setDoublePages(doublePages: Boolean) {
         mutableState.update { it.copy(doublePages = doublePages) }
     }
@@ -1513,6 +1519,10 @@ class ReaderViewModel @JvmOverloads constructor(
 
         // SY -->
         data object ChapterList : Dialog
+
+        // KMK -->
+        data object PageGrid : Dialog
+        // KMK <--
         // SY <--
 
         data class PageActions(
