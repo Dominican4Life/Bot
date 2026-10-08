@@ -334,10 +334,16 @@ class ExtensionManager(
      */
     fun setInstalling(downloadId: Long) {
         installer.updateInstallStep(downloadId, InstallStep.Installing)
+        // KMK: the install service/activity are shared with anime extensions
+        Injekt.get<eu.kanade.tachiyomi.animeextension.AnimeExtensionManager>()
+            .updateInstallStep(downloadId, InstallStep.Installing)
     }
 
     fun updateInstallStep(downloadId: Long, step: InstallStep) {
         installer.updateInstallStep(downloadId, step)
+        // KMK -->
+        Injekt.get<eu.kanade.tachiyomi.animeextension.AnimeExtensionManager>().updateInstallStep(downloadId, step)
+        // KMK <--
     }
 
     /**

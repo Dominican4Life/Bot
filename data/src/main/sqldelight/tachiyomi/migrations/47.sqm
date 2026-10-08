@@ -1,0 +1,13 @@
+import kotlin.Boolean;
+
+-- KMK: repos for anime (Aniyomi) extensions, kept separate from manga extension stores
+CREATE TABLE anime_extension_store(
+    index_url TEXT NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    badge_label TEXT NOT NULL,
+    signing_key TEXT NOT NULL,
+    contact_website TEXT NOT NULL,
+    contact_discord TEXT,
+    is_legacy INTEGER AS Boolean NOT NULL,
+    extension_list_url TEXT
+);

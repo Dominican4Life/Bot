@@ -47,6 +47,9 @@ dependencies {
 
     implementation(libs.jsoup)
 
+    // KMK: anime torrent server client
+    implementation(libs.injekt)
+
     // Sort
     implementation(libs.natural.comparator)
 

@@ -148,7 +148,7 @@ fun SourcesScreen(
                 listState = lazyListState,
                 searchQuery = state.searchQuery,
                 onChangeSearchQuery = onChangeSearchQuery,
-                placeholderText = stringResource(KMR.strings.action_search_for_source),
+                placeholderText = stringResource(KMR.strings.browse_search_manga_sources),
                 modifier = Modifier
                     .background(MaterialTheme.colorScheme.background)
                     .padding(

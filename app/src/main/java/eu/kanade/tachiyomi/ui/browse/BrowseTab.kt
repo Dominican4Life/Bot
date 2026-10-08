@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.ui.browse
 import androidx.compose.animation.graphics.res.animatedVectorResource
 import androidx.compose.animation.graphics.res.rememberAnimatedVectorPainter
 import androidx.compose.animation.graphics.vector.AnimatedImageVector
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -12,16 +13,25 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
 import cafe.adriel.voyager.core.model.rememberScreenModel
+import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.Navigator
+import cafe.adriel.voyager.navigator.currentOrThrow
 import cafe.adriel.voyager.navigator.tab.LocalTabNavigator
 import cafe.adriel.voyager.navigator.tab.TabOptions
 import eu.kanade.core.preference.asState
 import eu.kanade.domain.ui.UiPreferences
+import eu.kanade.presentation.browse.anime.AnimeExtensionsPane
+import eu.kanade.presentation.browse.anime.AnimeMigratePane
+import eu.kanade.presentation.browse.anime.AnimeSourcesPane
+import eu.kanade.presentation.browse.anime.MangaAnimeSplit
+import eu.kanade.presentation.components.TabContent
 import eu.kanade.presentation.components.TabbedScreen
+import eu.kanade.presentation.more.settings.screen.browse.ExtensionStoresScreen
 import eu.kanade.presentation.util.Tab
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.connections.discord.DiscordRPCService
 import eu.kanade.tachiyomi.data.connections.discord.DiscordScreen
+import eu.kanade.tachiyomi.ui.browse.anime.AnimeBrowseScreenModel
 import eu.kanade.tachiyomi.ui.browse.extension.ExtensionsScreenModel
 import eu.kanade.tachiyomi.ui.browse.extension.extensionsTab
 import eu.kanade.tachiyomi.ui.browse.feed.FeedScreenModel
@@ -84,13 +94,56 @@ data object BrowseTab : Tab {
         val bulkFavoriteScreenModel = rememberScreenModel { BulkFavoriteScreenModel() }
         // KMK <--
 
+        // KMK -->
+        // Anime half of Browse (merged from Anikku): manga on the left, anime on the right
+        val navigator = LocalNavigator.currentOrThrow
+        val animeScreenModel = rememberScreenModel { AnimeBrowseScreenModel() }
+        val animeState by animeScreenModel.state.collectAsState()
+
+        fun TabContent.withAnime(anime: @Composable (PaddingValues) -> Unit): TabContent {
+            val mangaContent = content
+            return copy(
+                content = { contentPadding, snackbarHostState ->
+                    MangaAnimeSplit(
+                        contentPadding = contentPadding,
+                        manga = { padding -> mangaContent(padding, snackbarHostState) },
+                        anime = anime,
+                    )
+                },
+            )
+        }
+
+        val animeSources: @Composable (PaddingValues) -> Unit = { padding ->
+            AnimeSourcesPane(
+                state = animeState,
+                contentPadding = padding,
+                onSearch = animeScreenModel::searchSources,
+            )
+        }
+        val animeExtensions: @Composable (PaddingValues) -> Unit = { padding ->
+            AnimeExtensionsPane(
+                state = animeState,
+                contentPadding = padding,
+                onSearch = animeScreenModel::searchExtensions,
+                onRefresh = animeScreenModel::refreshExtensions,
+                onOpenRepos = { navigator.push(ExtensionStoresScreen(anime = true)) },
+                onInstall = animeScreenModel::install,
+                onUpdate = animeScreenModel::update,
+                onUninstall = animeScreenModel::uninstall,
+                onTrust = animeScreenModel::trust,
+                onCancel = animeScreenModel::cancelInstall,
+            )
+        }
+        val animeMigrate: @Composable (PaddingValues) -> Unit = { padding -> AnimeMigratePane(padding) }
+        // KMK <--
+
         // SY -->
         val tabs = when {
             hideFeedTab ->
                 persistentListOf(
-                    sourcesTab(),
-                    extensionsTab(extensionsScreenModel),
-                    migrateSourceTab(),
+                    sourcesTab().withAnime(animeSources),
+                    extensionsTab(extensionsScreenModel).withAnime(animeExtensions),
+                    migrateSourceTab().withAnime(animeMigrate),
                 )
 
             feedTabInFront ->
@@ -101,22 +154,22 @@ data object BrowseTab : Tab {
                         bulkFavoriteScreenModel,
                         // KMK <--
                     ),
-                    sourcesTab(),
-                    extensionsTab(extensionsScreenModel),
-                    migrateSourceTab(),
+                    sourcesTab().withAnime(animeSources),
+                    extensionsTab(extensionsScreenModel).withAnime(animeExtensions),
+                    migrateSourceTab().withAnime(animeMigrate),
                 )
 
             else ->
                 persistentListOf(
-                    sourcesTab(),
+                    sourcesTab().withAnime(animeSources),
                     feedTab(
                         // KMK -->
                         feedScreenModel,
                         bulkFavoriteScreenModel,
                         // KMK <--
                     ),
-                    extensionsTab(extensionsScreenModel),
-                    migrateSourceTab(),
+                    extensionsTab(extensionsScreenModel).withAnime(animeExtensions),
+                    migrateSourceTab().withAnime(animeMigrate),
                 )
         }
         // SY <--

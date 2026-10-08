@@ -201,6 +201,10 @@ class DomainModule : InjektModule {
 
         addSingletonFactory { ExtensionStoreService(get(), get(), get()) }
         addSingletonFactory<ExtensionStoreRepository> { ExtensionStoreRepositoryImpl(get(), get()) }
+        // KMK: anime extension repos
+        addSingletonFactory<mihon.domain.extension.repository.AnimeExtensionStoreRepository> {
+            mihon.data.extension.repository.AnimeExtensionStoreRepositoryImpl(get(), get())
+        }
         addFactory { AddExtensionStore(get()) }
         addFactory { GetExtensionStoreCountAsFlow(get()) }
         addFactory { GetExtensionStores(get()) }

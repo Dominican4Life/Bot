@@ -244,4 +244,16 @@
     <string name="browse_page_previews_unavailable">Page previews aren\'t available for this source</string>
     <string name="reader_page_grid_view">All pages in this chapter</string>
     <string name="reader_chapter_not_loaded">This chapter\'s pages aren\'t loaded yet</string>
+    <!-- Anime (merged from Anikku) -->
+    <string name="browse_manga">Manga</string>
+    <string name="browse_anime">Anime</string>
+    <string name="browse_search_manga_sources">Search manga sources</string>
+    <string name="browse_search_anime_sources">Search anime sources</string>
+    <string name="browse_search_anime_extensions">Search anime extensions</string>
+    <string name="anime_no_sources">No anime sources yet. Add an anime repo and install anime extensions from the Extensions tab.</string>
+    <string name="anime_no_extensions">No anime extensions yet. Tap Repos to add an anime extension repo.</string>
+    <string name="anime_source_browse_coming">Browsing anime sources is coming in the next update</string>
+    <string name="anime_extension_repos">Repos</string>
+    <string name="anime_available">Available</string>
+    <string name="anime_migrate_coming">Anime migration will be available once anime can be added to your library</string>
 </resources>

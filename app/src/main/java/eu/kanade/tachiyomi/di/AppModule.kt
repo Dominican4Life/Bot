@@ -161,6 +161,9 @@ class AppModule(val app: Application) : InjektModule {
 
         addSingletonFactory<SourceManager> { AndroidSourceManager(app, get(), get()) }
         addSingletonFactory { ExtensionManager(app) }
+        // KMK: anime
+        addSingletonFactory { eu.kanade.tachiyomi.animeextension.AnimeExtensionManager(app) }
+        addSingletonFactory { eu.kanade.tachiyomi.animeextension.AnimeSourceManager(get()) }
 
         addSingletonFactory { DownloadProvider(app) }
         addSingletonFactory { DownloadManager(app) }
@@ -197,6 +200,9 @@ class AppModule(val app: Application) : InjektModule {
             get<NetworkHelper>()
 
             get<SourceManager>()
+
+            // KMK: anime extensions
+            get<eu.kanade.tachiyomi.animeextension.AnimeSourceManager>()
 
             get<Database>()
 

@@ -21,6 +21,10 @@ import tachiyomi.presentation.core.screens.LoadingScreen
 
 class ExtensionStoresScreen(
     private val url: String? = null,
+    // KMK -->
+    /** Show the anime (Aniyomi) extension repos */
+    private val anime: Boolean = false,
+    // KMK <--
 ) : Screen() {
 
     @Composable
@@ -28,7 +32,7 @@ class ExtensionStoresScreen(
         val context = LocalContext.current
         val navigator = LocalNavigator.currentOrThrow
 
-        val screenModel = rememberScreenModel { ExtensionStoresScreenModel() }
+        val screenModel = rememberScreenModel { ExtensionStoresScreenModel(anime = anime) }
         val state by screenModel.state.collectAsState()
 
         LaunchedEffect(url) {

@@ -4,6 +4,7 @@ import androidx.compose.runtime.Immutable
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
 import eu.kanade.domain.source.service.SourcePreferences
+import eu.kanade.tachiyomi.animeextension.AnimeExtensionManager
 import eu.kanade.tachiyomi.extension.ExtensionManager
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.launchIn
@@ -14,15 +15,26 @@ import mihon.domain.extension.interactor.GetExtensionStores
 import mihon.domain.extension.interactor.RemoveExtensionStore
 import mihon.domain.extension.interactor.UpdateExtensionStores
 import mihon.domain.extension.model.ExtensionStore
+import mihon.domain.extension.repository.AnimeExtensionStoreRepository
+import mihon.domain.extension.repository.ExtensionStoreRepository
 import tachiyomi.core.common.util.lang.launchIO
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
 class ExtensionStoresScreenModel(
-    private val getExtensionStores: GetExtensionStores = Injekt.get(),
-    private val addExtensionStore: AddExtensionStore = Injekt.get(),
-    private val removeExtensionStore: RemoveExtensionStore = Injekt.get(),
-    private val updateExtensionStores: UpdateExtensionStores = Injekt.get(),
+    // KMK -->
+    /** Manage the anime (Aniyomi) extension repos instead of the manga ones */
+    private val anime: Boolean = false,
+    private val storeRepository: ExtensionStoreRepository = if (anime) {
+        Injekt.get<AnimeExtensionStoreRepository>()
+    } else {
+        Injekt.get<ExtensionStoreRepository>()
+    },
+    private val getExtensionStores: GetExtensionStores = GetExtensionStores(storeRepository),
+    private val addExtensionStore: AddExtensionStore = AddExtensionStore(storeRepository),
+    private val removeExtensionStore: RemoveExtensionStore = RemoveExtensionStore(storeRepository),
+    private val updateExtensionStores: UpdateExtensionStores = UpdateExtensionStores(storeRepository),
+    // KMK <--
     private val extensionManager: ExtensionManager = Injekt.get(),
     // KMK -->
     private val sourcePreferences: SourcePreferences = Injekt.get(),
@@ -92,7 +104,7 @@ class ExtensionStoresScreenModel(
             }
             addExtensionStore(indexUrl)
                 .onSuccess {
-                    extensionManager.findAvailableExtensions()
+                    findAvailableExtensions()
                     dismissDialog()
                 }
                 .onFailure { throwable ->
@@ -138,7 +150,7 @@ class ExtensionStoresScreenModel(
         // KMK <--
         screenModelScope.launchIO {
             removeExtensionStore(indexUrl)
-            extensionManager.findAvailableExtensions()
+            findAvailableExtensions()
         }
     }
 
@@ -163,6 +175,16 @@ class ExtensionStoresScreenModel(
 
     fun refreshExtensionList() {
         screenModelScope.launchIO {
+            findAvailableExtensions()
+        }
+    }
+    // KMK <--
+
+    // KMK -->
+    private suspend fun findAvailableExtensions() {
+        if (anime) {
+            Injekt.get<AnimeExtensionManager>().findAvailableExtensions()
+        } else {
             extensionManager.findAvailableExtensions()
         }
     }

@@ -82,6 +82,8 @@ class PreferenceModule(val app: Application) : InjektModule {
         }
         // AM (CONNECTIONS) -->
         addSingletonFactory { ConnectionsPreferences(get()) }
+        // KMK: anime torrent server
+        addSingletonFactory { eu.kanade.tachiyomi.torrentServer.TorrentServerPreferences(get()) }
         // <-- AM (CONNECTIONS)
 
         addSingletonFactory {
