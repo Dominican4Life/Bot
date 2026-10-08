@@ -52,7 +52,7 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          grep -E "^e: |What went wrong|^> |error:|Exception" -A4 build.log | head -150 > errors.txt || true
+          { grep -E "^e: |^ERROR|FAILED$" build.log; grep -A20 "What went wrong" build.log; } | head -120 > errors.txt || true
           if [ ! -s errors.txt ]; then tail -80 build.log > errors.txt; fi
           body=$(sed 's/%/%25/g' errors.txt | sed ':a;N;$!ba;s/\n/%0A/g')
           echo "::error title=Build errors::${body}"
