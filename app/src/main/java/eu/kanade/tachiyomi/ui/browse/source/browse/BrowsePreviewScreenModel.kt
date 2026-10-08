@@ -83,10 +83,13 @@ class BrowsePreviewScreenModel(
 
     val httpSource: HttpSource? = source as? HttpSource
 
-    /** Selects a cover and opens both panels */
-    fun select(manga: Manga) {
+    /**
+     * Selects a cover and opens the panels.
+     * @param showPages also open the right (pages) panel, otherwise only the left (chapters) one
+     */
+    fun select(manga: Manga, showPages: Boolean = true) {
         if (state.value.manga?.id == manga.id) {
-            mutableState.update { it.copy(chapterPanelOpen = true, pagePanelOpen = true) }
+            mutableState.update { it.copy(chapterPanelOpen = true, pagePanelOpen = showPages) }
             return
         }
         cancelAll()
@@ -94,7 +97,7 @@ class BrowsePreviewScreenModel(
             State(
                 manga = manga,
                 chapterPanelOpen = true,
-                pagePanelOpen = true,
+                pagePanelOpen = showPages,
                 chaptersLoading = true,
             )
         }
@@ -156,7 +159,7 @@ class BrowsePreviewScreenModel(
 
         // Refresh the chapter list from the source
         jobs += screenModelScope.launchIO {
-            val result = updateMangaFromRemote(source = source, manga = manga, fetchChapters = true)
+            val result = updateMangaFromRemote(source = source, manga = manga, fetchDetails = true, fetchChapters = true)
             mutableState.update {
                 if (it.manga?.id != manga.id) {
                     it
@@ -209,11 +212,11 @@ class BrowsePreviewScreenModel(
                 pages = null,
                 pagesLoading = true,
                 pagesError = null,
-                pagePanelOpen = true,
             )
         }
         val httpSource = httpSource
-        if (httpSource == null) {
+        // Don't download page previews when the pages panel isn't shown
+        if (httpSource == null || !state.value.pagePanelOpen) {
             mutableState.update { it.copy(pagesLoading = false) }
             return
         }
@@ -373,6 +376,12 @@ class BrowsePreviewScreenModel(
             cancelAll()
             mutableState.update { State() }
         }
+    }
+
+    /** Closes both panels and removes the highlight from the cover */
+    fun clear() {
+        cancelAll()
+        mutableState.update { State() }
     }
 
     private fun cancelAll() {

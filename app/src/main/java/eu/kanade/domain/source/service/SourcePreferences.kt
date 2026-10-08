@@ -19,6 +19,9 @@ class SourcePreferences(
     fun browsePortraitColumns() = preferenceStore.getInt("pref_browse_columns_portrait_key", -1)
 
     fun browseLandscapeColumns() = preferenceStore.getInt("pref_browse_columns_landscape_key", -1)
+
+    /** Which preview panels open on the first tap of a cover: [PREVIEW_PANELS_LEFT], [PREVIEW_PANELS_BOTH] or [PREVIEW_PANELS_NONE] */
+    fun browsePreviewPanels() = preferenceStore.getInt("pref_browse_preview_panels", PREVIEW_PANELS_BOTH)
     // KMK <--
 
     fun sourceDisplayMode() = preferenceStore.getObjectFromString(
@@ -154,6 +157,10 @@ class SourcePreferences(
 
     companion object {
         const val PINNED_SOURCES_PREF_KEY = "pinned_catalogues"
+
+        const val PREVIEW_PANELS_LEFT = 0
+        const val PREVIEW_PANELS_BOTH = 1
+        const val PREVIEW_PANELS_NONE = 2
     }
     // KMK <--
 }

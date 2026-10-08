@@ -1,11 +1,17 @@
 package eu.kanade.presentation.browse.components
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.ViewModule
+import androidx.compose.material3.FilledTonalIconToggleButton
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarScrollBehavior
@@ -14,8 +20,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarActions
 import eu.kanade.presentation.components.AppBarTitle
@@ -53,6 +61,9 @@ fun BrowseSourceToolbar(
     /** Covers per row shown in the display menu slider (0 = auto), or null to hide the slider */
     columns: Int? = null,
     onColumnsChange: (Int) -> Unit = {},
+    /** Which preview panels open on the first tap of a cover (SourcePreferences.PREVIEW_PANELS_*), null to hide */
+    previewPanels: Int? = null,
+    onPreviewPanelsChange: (Int) -> Unit = {},
     // KMK <--
 ) {
     // Avoid capturing unstable source in actions lambda
@@ -174,6 +185,35 @@ fun BrowseSourceToolbar(
                             onChange = onColumnsChange,
                             pillColor = MaterialTheme.colorScheme.surfaceContainerHighest,
                         )
+                    }
+                }
+                if (previewPanels != null) {
+                    HorizontalDivider()
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.width(300.dp).padding(vertical = 8.dp),
+                    ) {
+                        Text(
+                            text = stringResource(KMR.strings.browse_panels),
+                            style = MaterialTheme.typography.titleSmall,
+                        )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                            modifier = Modifier.padding(top = 8.dp),
+                        ) {
+                            listOf(
+                                Triple(SourcePreferences.PREVIEW_PANELS_LEFT, PanelIcons.LeftOnly, KMR.strings.browse_panels_left),
+                                Triple(SourcePreferences.PREVIEW_PANELS_BOTH, PanelIcons.Both, KMR.strings.browse_panels_both),
+                                Triple(SourcePreferences.PREVIEW_PANELS_NONE, PanelIcons.None, KMR.strings.browse_panels_none),
+                            ).forEach { (mode, icon, label) ->
+                                FilledTonalIconToggleButton(
+                                    checked = previewPanels == mode,
+                                    onCheckedChange = { onPreviewPanelsChange(mode) },
+                                ) {
+                                    Icon(imageVector = icon, contentDescription = stringResource(label))
+                                }
+                            }
+                        }
                     }
                 }
                 // KMK <--

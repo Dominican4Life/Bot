@@ -34,6 +34,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -79,6 +80,7 @@ import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.components.material.DISABLED_ALPHA
 import tachiyomi.presentation.core.components.material.SECONDARY_ALPHA
+import tachiyomi.presentation.core.i18n.pluralStringResource
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.selectedBackground
 import uy.kohesive.injekt.Injekt
@@ -103,6 +105,8 @@ fun BrowseChapterPanel(
     onDownloadAction: (DownloadAction?) -> Unit,
     onOpenFilters: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Manga details shown above the chapter list, like the left side of the details page */
+    infoHeader: @Composable (Manga) -> Unit = {},
 ) {
     SlidingSidePanel(
         visible = state.chapterPanelOpen,
@@ -111,6 +115,8 @@ fun BrowseChapterPanel(
         onClose = onClose,
         modifier = modifier,
         applyTopInset = false,
+        showClose = false,
+        squareTop = true,
         actions = {
             var showDownloadMenu by remember { mutableStateOf(false) }
             Box {
@@ -154,33 +160,44 @@ fun BrowseChapterPanel(
             }
         },
     ) {
-        state.manga?.let {
-            Text(
-                text = it.title,
-                style = MaterialTheme.typography.titleSmall,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 4.dp),
-            )
-        }
-        when {
-            state.chapters.isEmpty() && state.chaptersLoading -> CenteredBox { CircularProgressIndicator() }
-            state.chapters.isEmpty() -> CenteredBox {
-                Text(
-                    text = state.chaptersError ?: stringResource(MR.strings.no_chapters_error),
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(24.dp),
-                )
-            }
-            else -> key(state.manga?.id) {
-                val listState = rememberLazyListState()
-                val showNumber = state.manga?.displayMode == Manga.CHAPTER_DISPLAY_NUMBER
-                LazyColumn(
-                    state = listState,
-                    contentPadding = PaddingValues(vertical = 8.dp),
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    items(items = state.chapters, key = { it.chapter.id }) { item ->
+        key(state.manga?.id) {
+            val listState = rememberLazyListState()
+            val showNumber = state.manga?.displayMode == Manga.CHAPTER_DISPLAY_NUMBER
+            LazyColumn(
+                state = listState,
+                contentPadding = PaddingValues(bottom = 8.dp),
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                state.manga?.let { manga ->
+                    item(key = "info") { infoHeader(manga) }
+                    item(key = "chapters-header") {
+                        HorizontalDivider()
+                        Text(
+                            text = pluralStringResource(
+                                MR.plurals.manga_num_chapters,
+                                state.chapters.size,
+                                state.chapters.size,
+                            ),
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
+                        )
+                    }
+                }
+                when {
+                    state.chapters.isEmpty() && state.chaptersLoading -> item(key = "loading") {
+                        Box(
+                            modifier = Modifier.fillMaxWidth().padding(24.dp),
+                            contentAlignment = Alignment.Center,
+                        ) { CircularProgressIndicator() }
+                    }
+                    state.chapters.isEmpty() -> item(key = "empty") {
+                        Text(
+                            text = state.chaptersError ?: stringResource(MR.strings.no_chapters_error),
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(24.dp),
+                        )
+                    }
+                    else -> items(items = state.chapters, key = { it.chapter.id }) { item ->
                         val chapter = item.chapter
                         BrowseChapterRow(
                             item = item,
@@ -345,6 +362,8 @@ fun BrowsePagePanel(
         onClose = onClose,
         modifier = modifier,
         applyTopInset = false,
+        showClose = false,
+        squareTop = true,
     ) {
         val chapter = state.selectedChapter
         if (chapter != null) {

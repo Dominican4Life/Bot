@@ -173,6 +173,10 @@ fun SlidingSidePanel(
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
     applyTopInset: Boolean = true,
+    /** Show the X close button in the header */
+    showClose: Boolean = true,
+    /** Square corner on the top edge next to the screen's middle (when docked below a toolbar row) */
+    squareTop: Boolean = false,
     /** Extra buttons shown in the header, left of the X */
     actions: @Composable RowScope.() -> Unit = {},
     content: @Composable () -> Unit,
@@ -196,9 +200,9 @@ fun SlidingSidePanel(
                     // Keep touches on the panel from reaching the reader underneath
                     .pointerInput(Unit) {},
                 shape = if (fromStart) {
-                    RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp)
+                    RoundedCornerShape(topEnd = if (squareTop) 0.dp else 28.dp, bottomEnd = 28.dp)
                 } else {
-                    RoundedCornerShape(topStart = 28.dp, bottomStart = 28.dp)
+                    RoundedCornerShape(topStart = if (squareTop) 0.dp else 28.dp, bottomStart = 28.dp)
                 },
                 color = MaterialTheme.colorScheme.surfaceContainerLow,
                 tonalElevation = 1.dp,
@@ -228,12 +232,14 @@ fun SlidingSidePanel(
                             modifier = Modifier.weight(1f),
                         )
                         actions()
-                        IconButton(onClick = onClose) {
-                            Icon(
-                                imageVector = Icons.Outlined.Close,
-                                contentDescription = stringResource(MR.strings.action_close),
-                                tint = MaterialTheme.colorScheme.primary,
-                            )
+                        if (showClose) {
+                            IconButton(onClick = onClose) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Close,
+                                    contentDescription = stringResource(MR.strings.action_close),
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                            }
                         }
                     }
                     HorizontalDivider()

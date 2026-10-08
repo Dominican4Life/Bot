@@ -49,10 +49,13 @@ import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.core.util.ifSourcesLoaded
+import eu.kanade.domain.manga.model.toSManga
+import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.presentation.browse.BrowseSourceContent
 import eu.kanade.presentation.browse.MissingSourceScreen
 import eu.kanade.presentation.browse.components.BrowseChapterPanel
 import eu.kanade.presentation.browse.components.BrowsePagePanel
+import eu.kanade.presentation.browse.components.BrowsePreviewInfoHeader
 import eu.kanade.presentation.browse.components.BrowseSourceToolbar
 import eu.kanade.presentation.browse.components.BulkFavoriteDialogs
 import eu.kanade.presentation.browse.components.RemoveMangaDialog
@@ -74,6 +77,7 @@ import eu.kanade.tachiyomi.ui.browse.BulkFavoriteScreenModel
 import eu.kanade.tachiyomi.ui.browse.extension.details.SourcePreferencesScreen
 import eu.kanade.tachiyomi.ui.browse.source.SourcesScreen
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreenModel.Listing
+import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchScreen
 import eu.kanade.tachiyomi.ui.category.CategoryScreen
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
@@ -93,6 +97,7 @@ import mihon.feature.migration.dialog.MigrateMangaDialog
 import mihon.presentation.core.util.collectAsLazyPagingItems
 import tachiyomi.core.common.Constants
 import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.model.StubSource
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
@@ -193,6 +198,26 @@ data class BrowseSourceScreen(
         val previewScreenModel = rememberScreenModel { BrowsePreviewScreenModel(screenModel.source) }
         val previewState by previewScreenModel.state.collectAsState()
         val previewEnabled = smartSearchConfig == null
+        // Which panels open on the first tap of a cover (set from the display menu)
+        val previewPanelsPreference = remember { Injekt.get<SourcePreferences>().browsePreviewPanels() }
+        val previewPanels by previewPanelsPreference.collectAsState()
+        // Without close buttons, back closes the panels
+        BackHandler(enabled = previewState.manga != null && !bulkFavoriteState.selectionMode) {
+            previewScreenModel.clear()
+        }
+        // Same as long-pressing a cover: add to or remove from the library
+        val toggleFavorite: (Manga) -> Unit = { manga ->
+            scope.launchIO {
+                val duplicates = screenModel.getDuplicateLibraryManga(manga)
+                when {
+                    manga.favorite -> screenModel.setDialog(BrowseSourceScreenModel.Dialog.RemoveManga(manga))
+                    duplicates.isNotEmpty() -> screenModel.setDialog(
+                        BrowseSourceScreenModel.Dialog.AddDuplicateManga(manga, duplicates),
+                    )
+                    else -> screenModel.addFavorite(manga)
+                }
+            }
+        }
         var showChapterSettings by remember { mutableStateOf(false) }
         var showScanlatorFilter by remember { mutableStateOf(false) }
 
@@ -277,6 +302,18 @@ data class BrowseSourceScreen(
                                 toggleSelectionMode = bulkFavoriteScreenModel::toggleSelectionMode,
                                 isRunning = bulkFavoriteState.isRunning,
                                 columns = columnCount,
+                                previewPanels = previewPanels.takeIf { previewEnabled },
+                                onPreviewPanelsChange = { mode ->
+                                    previewPanelsPreference.set(mode)
+                                    val selected = previewScreenModel.state.value.manga
+                                    when {
+                                        mode == SourcePreferences.PREVIEW_PANELS_NONE -> previewScreenModel.clear()
+                                        selected != null -> previewScreenModel.select(
+                                            selected,
+                                            showPages = mode == SourcePreferences.PREVIEW_PANELS_BOTH,
+                                        )
+                                    }
+                                },
                                 onColumnsChange = columnsPreference::set,
                                 // KMK <--
                             )
@@ -416,9 +453,16 @@ data class BrowseSourceScreen(
                             // KMK -->
                             if (bulkFavoriteState.selectionMode) {
                                 bulkFavoriteScreenModel.toggleSelection(manga)
-                            } else if (previewEnabled && previewScreenModel.state.value.manga?.id != manga.id) {
+                            } else if (
+                                previewEnabled &&
+                                previewPanels != SourcePreferences.PREVIEW_PANELS_NONE &&
+                                previewScreenModel.state.value.manga?.id != manga.id
+                            ) {
                                 // First tap: highlight and preview. Second tap on the same cover: open it.
-                                previewScreenModel.select(manga)
+                                previewScreenModel.select(
+                                    manga,
+                                    showPages = previewPanels == SourcePreferences.PREVIEW_PANELS_BOTH,
+                                )
                             } else {
                                 // KMK <--
                                 navigator.push(
@@ -441,16 +485,7 @@ data class BrowseSourceScreen(
                                 navigator.push(MangaScreen(manga.id, true))
                             } else {
                                 // KMK <--
-                                scope.launchIO {
-                                    val duplicates = screenModel.getDuplicateLibraryManga(manga)
-                                    when {
-                                        manga.favorite -> screenModel.setDialog(BrowseSourceScreenModel.Dialog.RemoveManga(manga))
-                                        duplicates.isNotEmpty() -> screenModel.setDialog(
-                                            BrowseSourceScreenModel.Dialog.AddDuplicateManga(manga, duplicates),
-                                        )
-                                        else -> screenModel.addFavorite(manga)
-                                    }
-                                }
+                                toggleFavorite(manga)
                             }
                         },
                         // KMK -->
@@ -481,6 +516,30 @@ data class BrowseSourceScreen(
                             onChapterDownloadAction = previewScreenModel::runChapterDownloadAction,
                             onDownloadAction = previewScreenModel::runDownloadAction,
                             onOpenFilters = { showChapterSettings = true },
+                            infoHeader = { manga ->
+                                BrowsePreviewInfoHeader(
+                                    manga = manga,
+                                    source = screenModel.source,
+                                    onAddToLibrary = { toggleFavorite(manga) },
+                                    onWebView = {
+                                        val url = (screenModel.source as? HttpSource)
+                                            ?.let { runCatching { it.getMangaUrl(manga.toSManga()) }.getOrNull() }
+                                        if (url != null) {
+                                            navigator.push(
+                                                WebViewScreen(url = url, initialTitle = manga.title, sourceId = manga.source),
+                                            )
+                                        }
+                                    },
+                                    onOpenDetails = { navigator.push(MangaScreen(manga.id, fromSource = true)) },
+                                    onSearch = { query, global ->
+                                        if (global) {
+                                            navigator.push(GlobalSearchScreen(query))
+                                        } else {
+                                            screenModel.search(query)
+                                        }
+                                    },
+                                )
+                            },
                         )
                         BrowsePagePanel(
                             state = previewState,
