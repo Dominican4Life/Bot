@@ -1126,12 +1126,22 @@ class ReaderViewModel @JvmOverloads constructor(
     }
 
     fun openChapterListDialog() {
-        mutableState.update { it.copy(dialog = Dialog.ChapterList) }
+        // KMK -->
+        mutableState.update { it.copy(chapterListPanelOpen = true) }
+        // KMK <--
     }
 
     // KMK -->
-    fun openPageGridDialog() {
-        mutableState.update { it.copy(dialog = Dialog.PageGrid) }
+    fun closeChapterListPanel() {
+        mutableState.update { it.copy(chapterListPanelOpen = false) }
+    }
+
+    fun openPageGridPanel() {
+        mutableState.update { it.copy(pageGridPanelOpen = true) }
+    }
+
+    fun closePageGridPanel() {
+        mutableState.update { it.copy(pageGridPanelOpen = false) }
     }
     // KMK <--
 
@@ -1503,6 +1513,11 @@ class ReaderViewModel @JvmOverloads constructor(
         val isAutoScrollEnabled: Boolean = false,
         val ehAutoscrollFreq: String = "",
         // SY <--
+        // KMK -->
+        /** Side panels stay open (independently of each other) until closed with their X button */
+        val chapterListPanelOpen: Boolean = false,
+        val pageGridPanelOpen: Boolean = false,
+        // KMK <--
     ) {
         val currentChapter: ReaderChapter?
             get() = viewerChapters?.currChapter
@@ -1518,11 +1533,6 @@ class ReaderViewModel @JvmOverloads constructor(
         data object OrientationModeSelect : Dialog
 
         // SY -->
-        data object ChapterList : Dialog
-
-        // KMK -->
-        data object PageGrid : Dialog
-        // KMK <--
         // SY <--
 
         data class PageActions(

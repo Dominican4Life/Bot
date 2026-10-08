@@ -39,7 +39,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -68,10 +68,10 @@ import eu.kanade.domain.manga.model.readingMode
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.presentation.reader.DisplayRefreshHost
 import eu.kanade.presentation.reader.OrientationSelectDialog
-import eu.kanade.presentation.reader.ReaderChapterListSheet
+import eu.kanade.presentation.reader.ReaderChapterListPanel
 import eu.kanade.presentation.reader.ReaderContentOverlay
 import eu.kanade.presentation.reader.ReaderPageActionsDialog
-import eu.kanade.presentation.reader.ReaderPageGridSheet
+import eu.kanade.presentation.reader.ReaderPageGridPanel
 import eu.kanade.presentation.reader.ReaderPageIndicator
 import eu.kanade.presentation.reader.ReadingModeSelectDialog
 import eu.kanade.presentation.reader.appbars.NavBarType
@@ -114,6 +114,7 @@ import eu.kanade.tachiyomi.util.view.setComposeContent
 import exh.source.isEhBasedSource
 import exh.util.defaultReaderType
 import exh.util.mangaType
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentSetOf
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.collections.immutable.toImmutableSet
@@ -351,6 +352,45 @@ class ReaderActivity : BaseActivity() {
                 ContentOverlay(state = state)
 
                 AppBars(state = state)
+
+                // KMK -->
+                // Side panels: chapters on the left, pages on the right. Both can be open at the same
+                // time and they stay open while reading until closed with their X button.
+                var chapterListVersion by remember { mutableIntStateOf(0) }
+                val panelChapters = remember(
+                    state.chapterListPanelOpen,
+                    state.currentChapter?.chapter?.id,
+                    chapterListVersion,
+                ) {
+                    if (state.chapterListPanelOpen) {
+                        viewModel.getChapters().toImmutableList()
+                    } else {
+                        persistentListOf()
+                    }
+                }
+                ReaderChapterListPanel(
+                    visible = state.chapterListPanelOpen,
+                    onClose = viewModel::closeChapterListPanel,
+                    screenModel = settingsScreenModel,
+                    chapters = panelChapters,
+                    onClickChapter = viewModel::loadNewChapterFromDialog,
+                    onBookmark = { chapter ->
+                        viewModel.toggleBookmark(chapter.id, !chapter.bookmark)
+                        chapterListVersion++
+                    },
+                    dateRelativeTime = state.dateRelativeTime,
+                    onDownloadAction = { chapter, action ->
+                        viewModel.handleDownloadAction(chapter, action)
+                    },
+                )
+                ReaderPageGridPanel(
+                    visible = state.pageGridPanelOpen,
+                    onClose = viewModel::closePageGridPanel,
+                    currentChapter = state.currentChapter,
+                    currentPage = state.currentPage,
+                    onClickPage = this@ReaderActivity::moveToPageIndex,
+                )
+                // KMK <--
             }
 
             // KMK -->
@@ -448,47 +488,6 @@ class ReaderActivity : BaseActivity() {
                         hasExtraPage = (state.dialog as? ReaderViewModel.Dialog.PageActions)?.extraPage != null,
                     )
                 }
-
-                is ReaderViewModel.Dialog.ChapterList -> {
-                    var chapters by remember {
-                        mutableStateOf(viewModel.getChapters().toImmutableList())
-                    }
-                    // KMK -->
-                    ReaderChapterListSheet(
-                        onDismissRequest = onDismissRequest,
-                        screenModel = settingsScreenModel,
-                        chapters = chapters,
-                        onClickChapter = {
-                            viewModel.loadNewChapterFromDialog(it)
-                        },
-                        onBookmark = { chapter ->
-                            viewModel.toggleBookmark(chapter.id, !chapter.bookmark)
-                            chapters = chapters.map {
-                                if (it.chapter.id == chapter.id) {
-                                    it.copy(chapter = chapter.copy(bookmark = !chapter.bookmark))
-                                } else {
-                                    it
-                                }
-                            }.toImmutableList()
-                        },
-                        dateRelativeTime = state.dateRelativeTime,
-                        onDownloadAction = { chapter, action ->
-                            viewModel.handleDownloadAction(chapter, action)
-                        },
-                    )
-                    // KMK <--
-                }
-
-                // KMK -->
-                is ReaderViewModel.Dialog.PageGrid -> {
-                    ReaderPageGridSheet(
-                        onDismissRequest = onDismissRequest,
-                        currentChapter = state.currentChapter,
-                        currentPage = state.currentPage,
-                        onClickPage = this@ReaderActivity::moveToPageIndex,
-                    )
-                }
-                // KMK <--
 
                 ReaderViewModel.Dialog.AutoScrollHelp -> AlertDialog(
                     onDismissRequest = onDismissRequest,
@@ -757,7 +756,7 @@ class ReaderActivity : BaseActivity() {
             doublePages = state.doublePages,
             onClickChapterList = viewModel::openChapterListDialog,
             // KMK -->
-            onClickPageGrid = viewModel::openPageGridDialog,
+            onClickPageGrid = viewModel::openPageGridPanel,
             // KMK <--
             onClickPageLayout = {
                 if (readerPreferences.pageLayout().get() == PagerConfig.PageLayout.AUTOMATIC) {

@@ -1,20 +1,12 @@
 package eu.kanade.presentation.reader
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.MutableTransitionState
-import androidx.compose.animation.core.animate
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.Orientation
-import androidx.compose.foundation.gestures.draggable
-import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -30,7 +22,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.only
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
@@ -58,21 +49,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
@@ -84,163 +71,117 @@ import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
 import kotlinx.collections.immutable.ImmutableList
-import kotlinx.coroutines.launch
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.i18n.stringResource
-import kotlin.math.roundToInt
 
 /**
- * KMK: Reader menus that slide in from the side of the screen, like Usagi.
- *  - [ReaderChapterListSheet]: the list of chapters, slides in from the left.
- *  - [ReaderPageGridSheet]: thumbnails of every page in the current chapter, slides in from the right.
+ * KMK: Reader panels that slide in from the side of the screen, like Usagi.
+ *  - [ReaderChapterListPanel]: the list of chapters, on the left.
+ *  - [ReaderPageGridPanel]: thumbnails of every page in the current chapter, on the right.
+ *
+ * They are not dialogs: the reader stays usable while they are shown, both can be open at the same
+ * time, and they only close with their X button.
  */
 @Composable
-fun ReaderChapterListSheet(
-    onDismissRequest: () -> Unit,
+fun ReaderChapterListPanel(
+    visible: Boolean,
+    onClose: () -> Unit,
     screenModel: ReaderSettingsScreenModel,
     chapters: ImmutableList<ReaderChapterItem>,
     onClickChapter: (Chapter) -> Unit,
     onBookmark: (Chapter) -> Unit,
     dateRelativeTime: Boolean,
     onDownloadAction: ((Chapter, ChapterDownloadAction) -> Unit)?,
+    modifier: Modifier = Modifier,
 ) {
-    ReaderSideSheet(
-        onDismissRequest = onDismissRequest,
+    ReaderSidePanel(
+        visible = visible,
         fromStart = true,
         title = stringResource(MR.strings.chapters),
-    ) { dismiss ->
-        ChapterListContent(
-            screenModel = screenModel,
-            chapters = chapters,
-            onClickChapter = {
-                onClickChapter(it)
-                dismiss()
-            },
-            onBookmark = onBookmark,
-            dateRelativeTime = dateRelativeTime,
-            onDownloadAction = onDownloadAction,
-            modifier = Modifier.fillMaxSize(),
-        )
+        onClose = onClose,
+        modifier = modifier,
+    ) {
+        // Re-create the list when the current chapter changes so it scrolls to it
+        key(chapters.firstOrNull { it.isCurrent }?.chapter?.id) {
+            ChapterListContent(
+                screenModel = screenModel,
+                chapters = chapters,
+                onClickChapter = onClickChapter,
+                onBookmark = onBookmark,
+                dateRelativeTime = dateRelativeTime,
+                onDownloadAction = onDownloadAction,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
     }
 }
 
 @Composable
-fun ReaderPageGridSheet(
-    onDismissRequest: () -> Unit,
+fun ReaderPageGridPanel(
+    visible: Boolean,
+    onClose: () -> Unit,
     currentChapter: ReaderChapter?,
     currentPage: Int,
     onClickPage: (pageIndex: Int) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    ReaderSideSheet(
-        onDismissRequest = onDismissRequest,
+    ReaderSidePanel(
+        visible = visible,
         fromStart = false,
         title = stringResource(KMR.strings.reader_pages),
-    ) { dismiss ->
-        PageGridContent(
-            chapter = currentChapter,
-            currentPage = currentPage,
-            onClickPage = {
-                onClickPage(it)
-                dismiss()
-            },
-        )
+        onClose = onClose,
+        modifier = modifier,
+    ) {
+        // Start fresh (scrolled to the current page) whenever another chapter is opened
+        key(currentChapter?.chapter?.id) {
+            PageGridContent(
+                chapter = currentChapter,
+                currentPage = currentPage,
+                onClickPage = onClickPage,
+            )
+        }
     }
 }
 
 /**
- * A panel that slides in from the left ([fromStart]) or right edge, over a dimmed background.
- * Closes by tapping outside, pressing back, the X button, or swiping it back towards its edge.
+ * A panel docked to the left ([fromStart]) or right edge that slides in and out.
+ * Must be placed in a full-screen Box.
  */
 @Composable
-private fun ReaderSideSheet(
-    onDismissRequest: () -> Unit,
+private fun ReaderSidePanel(
+    visible: Boolean,
     fromStart: Boolean,
     title: String,
-    content: @Composable (dismiss: () -> Unit) -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
 ) {
-    val scope = rememberCoroutineScope()
-    val visibleState = remember { MutableTransitionState(false) }
-    var dismissing by remember { mutableStateOf(false) }
-
-    LaunchedEffect(Unit) { visibleState.targetState = true }
-
-    val animateDismiss: () -> Unit = {
-        dismissing = true
-        visibleState.targetState = false
-    }
-
-    // Only tell the caller after the slide-out animation has finished
-    LaunchedEffect(dismissing, visibleState.isIdle, visibleState.currentState) {
-        if (dismissing && visibleState.isIdle && !visibleState.currentState) {
-            onDismissRequest()
-        }
-    }
-
-    BackHandler(onBack = animateDismiss)
-
     // +1 slides towards the right edge, -1 towards the left edge
     val direction = if (fromStart) -1 else 1
 
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val sheetWidth = if (maxWidth < 600.dp) {
-            maxWidth * 0.88f
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val panelWidth = if (maxWidth < 600.dp) {
+            // On phones leave room so both panels can be open at once
+            maxWidth * 0.48f
         } else {
             // Narrow drawer like Usagi: about a quarter of a tablet screen
             (maxWidth * 0.27f).coerceIn(300.dp, 380.dp)
         }
-        val sheetWidthPx = with(LocalDensity.current) { sheetWidth.toPx() }
-        // Distance the sheet has been dragged towards its edge (always >= 0)
-        var dragOffset by remember { mutableFloatStateOf(0f) }
-
-        // Scrim
-        AnimatedVisibility(
-            visibleState = visibleState,
-            enter = fadeIn(),
-            exit = fadeOut(),
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.4f))
-                    .clickable(
-                        interactionSource = null,
-                        indication = null,
-                        onClick = animateDismiss,
-                    ),
-            )
-        }
 
         AnimatedVisibility(
-            visibleState = visibleState,
+            visible = visible,
             enter = slideInHorizontally { it * direction },
             exit = slideOutHorizontally { it * direction },
             modifier = Modifier.align(if (fromStart) Alignment.CenterStart else Alignment.CenterEnd),
         ) {
             Surface(
                 modifier = Modifier
-                    .offset { IntOffset((dragOffset * direction).roundToInt(), 0) }
-                    .width(sheetWidth)
+                    .width(panelWidth)
                     .fillMaxHeight()
-                    // Swipe the sheet back towards its edge to close it
-                    .draggable(
-                        orientation = Orientation.Horizontal,
-                        state = rememberDraggableState { delta ->
-                            dragOffset = (dragOffset + delta * direction).coerceIn(0f, sheetWidthPx)
-                        },
-                        onDragStopped = { velocity ->
-                            if (dragOffset > sheetWidthPx * 0.3f || velocity * direction > 1500f) {
-                                animateDismiss()
-                            } else {
-                                scope.launch {
-                                    animate(initialValue = dragOffset, targetValue = 0f) { value, _ ->
-                                        dragOffset = value
-                                    }
-                                }
-                            }
-                        },
-                    ),
+                    // Keep touches on the panel from reaching the reader underneath
+                    .pointerInput(Unit) {},
                 shape = if (fromStart) {
                     RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp)
                 } else {
@@ -272,7 +213,7 @@ private fun ReaderSideSheet(
                             style = MaterialTheme.typography.titleLarge,
                             modifier = Modifier.weight(1f),
                         )
-                        IconButton(onClick = animateDismiss) {
+                        IconButton(onClick = onClose) {
                             Icon(
                                 imageVector = Icons.Outlined.Close,
                                 contentDescription = stringResource(MR.strings.action_close),
@@ -282,7 +223,7 @@ private fun ReaderSideSheet(
                     }
                     HorizontalDivider()
 
-                    content(animateDismiss)
+                    content()
                 }
             }
         }
@@ -327,6 +268,16 @@ private fun PageGridContent(
         val gridState = rememberLazyGridState(
             initialFirstVisibleItemIndex = (currentPage - 1).coerceIn(0, pages.lastIndex),
         )
+        // Keep the current page in view as you read
+        LaunchedEffect(currentPage) {
+            val index = (currentPage - 1).coerceIn(0, pages.lastIndex)
+            val visibleItems = gridState.layoutInfo.visibleItemsInfo
+            val shown = visibleItems.isNotEmpty() &&
+                visibleItems.any { it.index == index } &&
+                visibleItems.first().index != index &&
+                visibleItems.last().index != index
+            if (!shown) gridState.animateScrollToItem(index)
+        }
         LazyVerticalGrid(
             columns = GridCells.Fixed(3),
             state = gridState,
