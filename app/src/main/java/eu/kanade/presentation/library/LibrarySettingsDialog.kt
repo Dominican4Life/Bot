@@ -344,7 +344,8 @@ private fun ColumnScope.DisplayPage(
         val columns by columnPreference.collectAsState()
         SliderItem(
             value = columns,
-            valueRange = 0..10,
+            // KMK: up to 15 covers per row
+            valueRange = 0..15,
             label = stringResource(MR.strings.pref_library_columns),
             valueString = if (columns > 0) {
                 columns.toString()

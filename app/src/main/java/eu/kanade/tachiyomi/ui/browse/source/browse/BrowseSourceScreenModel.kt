@@ -242,14 +242,35 @@ open class BrowseSourceScreenModel(
         .stateIn(ioCoroutineScope, SharingStarted.Lazily, emptyFlow())
 
     fun getColumnsPreference(orientation: Int): GridCells {
-        val isLandscape = orientation == Configuration.ORIENTATION_LANDSCAPE
-        val columns = if (isLandscape) {
+        // KMK -->
+        return columnsToGridCells(resolveBrowseColumns(browseColumnsPreference(orientation).get(), orientation))
+        // KMK <--
+    }
+
+    // KMK -->
+    private val browseSourcePreferences = sourcePreferences
+
+    /** Covers-per-row setting for browsing sources (-1 = follow the library setting, 0 = auto) */
+    fun browseColumnsPreference(orientation: Int) = if (orientation == Configuration.ORIENTATION_LANDSCAPE) {
+        browseSourcePreferences.browseLandscapeColumns()
+    } else {
+        browseSourcePreferences.browsePortraitColumns()
+    }
+
+    /** Turns the stored browse value into an actual column count (0 = auto) */
+    fun resolveBrowseColumns(value: Int, orientation: Int): Int {
+        if (value >= 0) return value
+        return if (orientation == Configuration.ORIENTATION_LANDSCAPE) {
             libraryPreferences.landscapeColumns()
         } else {
             libraryPreferences.portraitColumns()
         }.get()
+    }
+
+    fun columnsToGridCells(columns: Int): GridCells {
         return if (columns == 0) GridCells.Adaptive(128.dp) else GridCells.Fixed(columns)
     }
+    // KMK <--
 
     // SY -->
     open fun Flow<Manga>.combineMetadata(metadata: RaisedSearchMetadata?): Flow<Pair<Manga, RaisedSearchMetadata?>> {

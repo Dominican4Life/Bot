@@ -60,6 +60,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
@@ -96,7 +97,7 @@ fun ReaderChapterListPanel(
     onDownloadAction: ((Chapter, ChapterDownloadAction) -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
-    ReaderSidePanel(
+    SlidingSidePanel(
         visible = visible,
         fromStart = true,
         title = stringResource(MR.strings.chapters),
@@ -127,7 +128,7 @@ fun ReaderPageGridPanel(
     onClickPage: (pageIndex: Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    ReaderSidePanel(
+    SlidingSidePanel(
         visible = visible,
         fromStart = false,
         title = stringResource(KMR.strings.reader_pages),
@@ -146,29 +147,38 @@ fun ReaderPageGridPanel(
 }
 
 /**
+ * Width of a [SlidingSidePanel] inside a container of [containerWidth].
+ */
+fun sidePanelWidth(containerWidth: Dp): Dp {
+    return if (containerWidth < 600.dp) {
+        // On phones leave room so both panels can be open at once
+        containerWidth * 0.48f
+    } else {
+        // Narrow drawer like Usagi: about a quarter of a tablet screen
+        (containerWidth * 0.27f).coerceIn(300.dp, 380.dp)
+    }
+}
+
+/**
  * A panel docked to the left ([fromStart]) or right edge that slides in and out.
- * Must be placed in a full-screen Box.
+ * Fills the height of its container. Set [applyTopInset] to false when the container already
+ * starts below the status bar (e.g. below a toolbar).
  */
 @Composable
-private fun ReaderSidePanel(
+fun SlidingSidePanel(
     visible: Boolean,
     fromStart: Boolean,
     title: String,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
+    applyTopInset: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     // +1 slides towards the right edge, -1 towards the left edge
     val direction = if (fromStart) -1 else 1
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
-        val panelWidth = if (maxWidth < 600.dp) {
-            // On phones leave room so both panels can be open at once
-            maxWidth * 0.48f
-        } else {
-            // Narrow drawer like Usagi: about a quarter of a tablet screen
-            (maxWidth * 0.27f).coerceIn(300.dp, 380.dp)
-        }
+        val panelWidth = sidePanelWidth(maxWidth)
 
         AnimatedVisibility(
             visible = visible,
@@ -199,7 +209,8 @@ private fun ReaderSidePanel(
                                 .union(WindowInsets.navigationBars)
                                 .union(WindowInsets.displayCutout)
                                 .only(
-                                    WindowInsetsSides.Vertical +
+                                    (if (applyTopInset) WindowInsetsSides.Top else WindowInsetsSides.Bottom) +
+                                        WindowInsetsSides.Bottom +
                                         if (fromStart) WindowInsetsSides.Start else WindowInsetsSides.End,
                                 ),
                         ),

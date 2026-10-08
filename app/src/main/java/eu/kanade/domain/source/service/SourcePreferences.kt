@@ -14,6 +14,13 @@ class SourcePreferences(
     private val preferenceStore: PreferenceStore,
 ) {
 
+    // KMK -->
+    /** Covers per row while browsing a source. -1 = same as library, 0 = auto */
+    fun browsePortraitColumns() = preferenceStore.getInt("pref_browse_columns_portrait_key", -1)
+
+    fun browseLandscapeColumns() = preferenceStore.getInt("pref_browse_columns_landscape_key", -1)
+    // KMK <--
+
     fun sourceDisplayMode() = preferenceStore.getObjectFromString(
         "pref_display_mode_catalogue",
         LibraryDisplayMode.default,

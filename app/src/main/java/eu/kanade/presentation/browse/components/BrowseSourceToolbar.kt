@@ -1,8 +1,12 @@
 package eu.kanade.presentation.browse.components
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.ViewModule
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.runtime.Composable
@@ -10,6 +14,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarActions
 import eu.kanade.presentation.components.AppBarTitle
@@ -21,6 +27,7 @@ import kotlinx.collections.immutable.persistentListOf
 import tachiyomi.domain.library.model.LibraryDisplayMode
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
+import tachiyomi.presentation.core.components.SliderItem
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.source.local.LocalSource
 
@@ -43,6 +50,9 @@ fun BrowseSourceToolbar(
     // KMK -->
     toggleSelectionMode: () -> Unit,
     isRunning: Boolean,
+    /** Covers per row shown in the display menu slider (0 = auto), or null to hide the slider */
+    columns: Int? = null,
+    onColumnsChange: (Int) -> Unit = {},
     // KMK <--
 ) {
     // Avoid capturing unstable source in actions lambda
@@ -148,6 +158,25 @@ fun BrowseSourceToolbar(
                     selectingDisplayMode = false
                     onDisplayModeChange(LibraryDisplayMode.List)
                 }
+                // KMK -->
+                if (columns != null && displayMode != LibraryDisplayMode.List) {
+                    HorizontalDivider()
+                    Box(modifier = Modifier.width(300.dp)) {
+                        SliderItem(
+                            value = columns,
+                            valueRange = 0..15,
+                            label = stringResource(MR.strings.pref_library_columns),
+                            valueString = if (columns > 0) {
+                                columns.toString()
+                            } else {
+                                stringResource(MR.strings.label_auto)
+                            },
+                            onChange = onColumnsChange,
+                            pillColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                        )
+                    }
+                }
+                // KMK <--
             }
         },
         scrollBehavior = scrollBehavior,

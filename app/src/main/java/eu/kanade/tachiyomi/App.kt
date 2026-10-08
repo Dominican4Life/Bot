@@ -54,6 +54,8 @@ import eu.kanade.tachiyomi.data.coil.PagePreviewFetcher
 import eu.kanade.tachiyomi.data.coil.PagePreviewKeyer
 import eu.kanade.tachiyomi.data.coil.ReaderPageFetcher
 import eu.kanade.tachiyomi.data.coil.ReaderPageKeyer
+import eu.kanade.tachiyomi.data.coil.SourcePageFetcher
+import eu.kanade.tachiyomi.data.coil.SourcePageKeyer
 import eu.kanade.tachiyomi.data.coil.TachiyomiImageDecoder
 import eu.kanade.tachiyomi.data.connections.discord.DiscordRPCService
 import eu.kanade.tachiyomi.data.notification.Notifications
@@ -278,6 +280,8 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
                 // KMK -->
                 add(ReaderPageKeyer())
                 add(ReaderPageFetcher.Factory())
+                add(SourcePageKeyer())
+                add(SourcePageFetcher.Factory())
                 // KMK <--
             }
 

@@ -1,11 +1,18 @@
 package eu.kanade.tachiyomi.ui.browse.source.browse
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -33,13 +40,17 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.core.util.ifSourcesLoaded
 import eu.kanade.presentation.browse.BrowseSourceContent
 import eu.kanade.presentation.browse.MissingSourceScreen
+import eu.kanade.presentation.browse.components.BrowseChapterPanel
+import eu.kanade.presentation.browse.components.BrowsePagePanel
 import eu.kanade.presentation.browse.components.BrowseSourceToolbar
 import eu.kanade.presentation.browse.components.BulkFavoriteDialogs
 import eu.kanade.presentation.browse.components.RemoveMangaDialog
@@ -49,6 +60,7 @@ import eu.kanade.presentation.category.components.ChangeCategoryDialog
 import eu.kanade.presentation.components.BulkSelectionToolbar
 import eu.kanade.presentation.manga.DuplicateMangaDialog
 import eu.kanade.presentation.more.settings.screen.SettingsEhScreen
+import eu.kanade.presentation.reader.sidePanelWidth
 import eu.kanade.presentation.util.AssistContentScreen
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.source.ConfigurableSource
@@ -59,6 +71,7 @@ import eu.kanade.tachiyomi.ui.browse.source.SourcesScreen
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreenModel.Listing
 import eu.kanade.tachiyomi.ui.category.CategoryScreen
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
+import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
 import eu.kanade.tachiyomi.util.system.toast
 import exh.md.follows.MangaDexFollowsScreen
@@ -81,6 +94,7 @@ import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.LoadingScreen
+import tachiyomi.presentation.core.util.collectAsState
 import tachiyomi.source.local.LocalSource
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -168,6 +182,17 @@ data class BrowseSourceScreen(
         BackHandler(enabled = bulkFavoriteState.selectionMode) {
             bulkFavoriteScreenModel.backHandler()
         }
+
+        // Tapping a cover highlights it and opens the chapter (left) and page (right) preview panels
+        val previewScreenModel = rememberScreenModel { BrowsePreviewScreenModel(screenModel.source) }
+        val previewState by previewScreenModel.state.collectAsState()
+        val previewEnabled = smartSearchConfig == null
+
+        // Covers per row, adjustable from the display mode menu
+        val orientation = LocalConfiguration.current.orientation
+        val columnsPreference = remember(orientation) { screenModel.browseColumnsPreference(orientation) }
+        val columnsValue by columnsPreference.collectAsState()
+        val columnCount = screenModel.resolveBrowseColumns(columnsValue, orientation)
         // KMK <--
 
         LaunchedEffect(screenModel.source) {
@@ -239,6 +264,8 @@ data class BrowseSourceScreen(
                             // KMK -->
                             toggleSelectionMode = bulkFavoriteScreenModel::toggleSelectionMode,
                             isRunning = bulkFavoriteState.isRunning,
+                            columns = columnCount,
+                            onColumnsChange = columnsPreference::set,
                             // KMK <--
                         )
                     }
@@ -340,61 +367,118 @@ data class BrowseSourceScreen(
             },
             snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         ) { paddingValues ->
-            BrowseSourceContent(
-                source = screenModel.source,
-                mangaList = mangaList,
-                columns = screenModel.getColumnsPreference(LocalConfiguration.current.orientation),
-                // SY -->
-                ehentaiBrowseDisplayMode = screenModel.ehentaiBrowseDisplayMode,
-                // SY <--
-                displayMode = screenModel.displayMode,
-                snackbarHostState = snackbarHostState,
-                contentPadding = paddingValues,
-                onWebViewClick = onWebViewClick,
-                onHelpClick = { uriHandler.openUri(Constants.URL_HELP) },
-                onLocalSourceHelpClick = onHelpClick,
-                onMangaClick = { manga ->
-                    // KMK -->
-                    if (bulkFavoriteState.selectionMode) {
-                        bulkFavoriteScreenModel.toggleSelection(manga)
-                    } else {
-                        // KMK <--
-                        navigator.push(
-                            MangaScreen(
-                                mangaId = manga.id,
-                                // KMK -->
-                                // Finding the entry to be merged to, so we don't want to expand description
-                                // so that user can see the `Merge to another` button
-                                fromSource = smartSearchConfig == null,
-                                // KMK <--
-                                smartSearchConfig = smartSearchConfig,
-                            ),
-                        )
-                    }
-                },
-                onMangaLongClick = { manga ->
-                    // KMK -->
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    if (bulkFavoriteState.selectionMode) {
-                        navigator.push(MangaScreen(manga.id, true))
-                    } else {
-                        // KMK <--
-                        scope.launchIO {
-                            val duplicates = screenModel.getDuplicateLibraryManga(manga)
-                            when {
-                                manga.favorite -> screenModel.setDialog(BrowseSourceScreenModel.Dialog.RemoveManga(manga))
-                                duplicates.isNotEmpty() -> screenModel.setDialog(
-                                    BrowseSourceScreenModel.Dialog.AddDuplicateManga(manga, duplicates),
-                                )
-                                else -> screenModel.addFavorite(manga)
+            // KMK -->
+            val layoutDirection = LocalLayoutDirection.current
+            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                // Shrink the grid to the space between the open panels so no cover is hidden behind them
+                val panelWidth = sidePanelWidth(maxWidth)
+                val startPadding by animateDpAsState(
+                    if (previewState.chapterPanelOpen) panelWidth else 0.dp,
+                    label = "browseStartPadding",
+                )
+                val endPadding by animateDpAsState(
+                    if (previewState.pagePanelOpen) panelWidth else 0.dp,
+                    label = "browseEndPadding",
+                )
+                val gridPadding = PaddingValues(
+                    top = paddingValues.calculateTopPadding(),
+                    bottom = paddingValues.calculateBottomPadding(),
+                    start = paddingValues.calculateStartPadding(layoutDirection) + startPadding,
+                    end = paddingValues.calculateEndPadding(layoutDirection) + endPadding,
+                )
+                // KMK <--
+                BrowseSourceContent(
+                    source = screenModel.source,
+                    mangaList = mangaList,
+                    columns = screenModel.columnsToGridCells(columnCount),
+                    // SY -->
+                    ehentaiBrowseDisplayMode = screenModel.ehentaiBrowseDisplayMode,
+                    // SY <--
+                    displayMode = screenModel.displayMode,
+                    snackbarHostState = snackbarHostState,
+                    contentPadding = gridPadding,
+                    onWebViewClick = onWebViewClick,
+                    onHelpClick = { uriHandler.openUri(Constants.URL_HELP) },
+                    onLocalSourceHelpClick = onHelpClick,
+                    onMangaClick = { manga ->
+                        // KMK -->
+                        if (bulkFavoriteState.selectionMode) {
+                            bulkFavoriteScreenModel.toggleSelection(manga)
+                        } else if (previewEnabled && previewScreenModel.state.value.manga?.id != manga.id) {
+                            // First tap: highlight and preview. Second tap on the same cover: open it.
+                            previewScreenModel.select(manga)
+                        } else {
+                            // KMK <--
+                            navigator.push(
+                                MangaScreen(
+                                    mangaId = manga.id,
+                                    // KMK -->
+                                    // Finding the entry to be merged to, so we don't want to expand description
+                                    // so that user can see the `Merge to another` button
+                                    fromSource = smartSearchConfig == null,
+                                    // KMK <--
+                                    smartSearchConfig = smartSearchConfig,
+                                ),
+                            )
+                        }
+                    },
+                    onMangaLongClick = { manga ->
+                        // KMK -->
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        if (bulkFavoriteState.selectionMode) {
+                            navigator.push(MangaScreen(manga.id, true))
+                        } else {
+                            // KMK <--
+                            scope.launchIO {
+                                val duplicates = screenModel.getDuplicateLibraryManga(manga)
+                                when {
+                                    manga.favorite -> screenModel.setDialog(BrowseSourceScreenModel.Dialog.RemoveManga(manga))
+                                    duplicates.isNotEmpty() -> screenModel.setDialog(
+                                        BrowseSourceScreenModel.Dialog.AddDuplicateManga(manga, duplicates),
+                                    )
+                                    else -> screenModel.addFavorite(manga)
+                                }
                             }
                         }
-                    }
-                },
+                    },
+                    // KMK -->
+                    selection = if (bulkFavoriteState.selectionMode) {
+                        bulkFavoriteState.selection
+                    } else {
+                        listOfNotNull(previewState.manga)
+                    },
+                    // KMK <--
+                )
+
                 // KMK -->
-                selection = bulkFavoriteState.selection,
-                // KMK <--
-            )
+                // The panels start below the toolbar and the Popular / Latest / Filter row
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(top = paddingValues.calculateTopPadding()),
+                ) {
+                    BrowseChapterPanel(
+                        state = previewState,
+                        onClose = previewScreenModel::closeChapterPanel,
+                        onSelectChapter = previewScreenModel::selectChapter,
+                        onOpenChapter = { chapter ->
+                            context.startActivity(ReaderActivity.newIntent(context, chapter.mangaId, chapter.id))
+                        },
+                    )
+                    BrowsePagePanel(
+                        state = previewState,
+                        source = previewScreenModel.httpSource,
+                        onClose = previewScreenModel::closePagePanel,
+                        onRetry = { previewState.selectedChapter?.let(previewScreenModel::selectChapter) },
+                        onOpenPage = { chapter, pageIndex ->
+                            context.startActivity(
+                                ReaderActivity.newIntent(context, chapter.mangaId, chapter.id, pageIndex),
+                            )
+                        },
+                    )
+                }
+            }
+            // KMK <--
         }
 
         val onDismissRequest = { screenModel.setDialog(null) }

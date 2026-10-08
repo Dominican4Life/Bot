@@ -240,6 +240,7 @@
     <string name="pref_discord_show_discord_button_summary">Displays a button to join the Discord server</string>
     <!-- Reader chapter side sheet -->
     <string name="reader_pages">Pages</string>
+    <string name="browse_page_previews_unavailable">Page previews aren\'t available for this source</string>
     <string name="reader_page_grid_view">All pages in this chapter</string>
     <string name="reader_chapter_not_loaded">This chapter\'s pages aren\'t loaded yet</string>
 </resources>
