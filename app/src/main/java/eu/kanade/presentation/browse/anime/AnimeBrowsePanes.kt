@@ -6,6 +6,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.calculateEndPadding
@@ -19,6 +20,7 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Dangerous
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Extension
@@ -34,6 +36,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -47,6 +50,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -54,7 +58,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
 import coil3.compose.AsyncImage
+import eu.kanade.presentation.browse.ExtensionHeader
 import eu.kanade.presentation.components.SourcesSearchBox
+import eu.kanade.presentation.manga.components.DotSeparatorNoSpaceText
 import eu.kanade.presentation.util.isTabletUi
 import eu.kanade.tachiyomi.animeextension.AnimeExtensionManager
 import eu.kanade.tachiyomi.animeextension.model.AnimeExtension
@@ -66,7 +72,9 @@ import eu.kanade.tachiyomi.util.system.LocaleHelper
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.components.FastScrollLazyColumn
+import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.icons.FlagEmoji
 import tachiyomi.presentation.core.util.secondaryItemAlpha
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -218,7 +226,6 @@ fun AnimeExtensionsPane(
     onOpenDetails: (AnimeExtension) -> Unit,
     onOpenWebView: (Extension.Available) -> Unit,
 ) {
-    val context = LocalContext.current
     Column(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
         ExtensionsPaneHeader(
             searchQuery = state.extensionQuery,
@@ -240,19 +247,24 @@ fun AnimeExtensionsPane(
         val installedTitle = stringResource(MR.strings.ext_installed)
         val untrustedTitle = stringResource(MR.strings.ext_untrusted)
         val availableTitle = stringResource(KMR.strings.anime_available)
+        val hasUpdates = state.filteredUpdates.isNotEmpty()
+        val hasInstalled = state.filteredInstalled.isNotEmpty()
+        val hasUntrusted = state.filteredUntrusted.isNotEmpty()
         FastScrollLazyColumn(modifier = Modifier.fillMaxSize()) {
-            section(updatesTitle, state.filteredUpdates) { ext ->
+            section(updatesTitle, state.filteredUpdates, first = true) { ext ->
                 InstalledRow(ext, state.installSteps[ext.pkgName], onUpdate, onUninstall, onCancel, onOpenDetails)
             }
-            section(installedTitle, state.filteredInstalled) { ext ->
+            section(installedTitle, state.filteredInstalled, first = !hasUpdates) { ext ->
                 InstalledRow(ext, state.installSteps[ext.pkgName], onUpdate, onUninstall, onCancel, onOpenDetails)
             }
-            section(untrustedTitle, state.filteredUntrusted) { ext ->
+            section(untrustedTitle, state.filteredUntrusted, first = !hasUpdates && !hasInstalled) { ext ->
                 PaneRow(
-                    icon = { AnimeIcon(drawable = null, url = null) },
+                    icon = { UntrustedIcon() },
                     title = ext.name,
-                    subtitle = listOfNotNull(ext.versionName, ext.storeName).joinToString(" • "),
-                    subtitleWarning = stringResource(MR.strings.ext_untrusted),
+                    lang = ext.lang,
+                    version = ext.versionName,
+                    store = ext.storeName,
+                    warning = stringResource(MR.strings.ext_untrusted),
                     onLongClick = { onUninstall(ext.pkgName) },
                     action = {
                         IconButton(onClick = { onTrust(ext) }) {
@@ -261,17 +273,19 @@ fun AnimeExtensionsPane(
                     },
                 )
             }
-            section(availableTitle, state.filteredAvailable) { ext ->
+            section(
+                availableTitle,
+                state.filteredAvailable,
+                first = !hasUpdates && !hasInstalled && !hasUntrusted,
+            ) { ext ->
                 val step = state.installSteps[ext.pkgName]
                 PaneRow(
                     icon = { AnimeIcon(drawable = null, url = ext.iconUrl) },
                     title = ext.name,
-                    subtitle = listOfNotNull(
-                        LocaleHelper.getSourceDisplayName(ext.lang, context),
-                        ext.versionName,
-                        stringResource(MR.strings.ext_nsfw_short).takeIf { ext.isNsfw },
-                        ext.storeName,
-                    ).joinToString(" • "),
+                    lang = ext.lang,
+                    version = ext.versionName,
+                    store = ext.storeName,
+                    warning = stringResource(MR.strings.ext_nsfw_short).takeIf { ext.isNsfw },
                     onLongClick = { onInstall(ext) },
                     action = {
                         StepActions(
@@ -340,9 +354,20 @@ fun AnimeMigratePane(contentPadding: PaddingValues) {
     }
 }
 
-private fun <T> LazyListScope.section(title: String, items: List<T>, row: @Composable (T) -> Unit) {
+/** Manga-style section: divider between sections, then the same header the manga extension list uses */
+private fun <T> LazyListScope.section(
+    title: String,
+    items: List<T>,
+    first: Boolean,
+    row: @Composable (T) -> Unit,
+) {
     if (items.isEmpty()) return
-    item(key = "section-$title") { SectionHeader(title) }
+    item(key = "section-$title") {
+        Column {
+            if (!first) HorizontalDivider(modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium))
+            ExtensionHeader(text = title)
+        }
+    }
     items(items) { row(it) }
 }
 
@@ -355,17 +380,17 @@ private fun InstalledRow(
     onCancel: (String, String) -> Unit,
     onOpenDetails: (AnimeExtension) -> Unit,
 ) {
-    val context = LocalContext.current
     PaneRow(
         icon = { AnimeIcon(drawable = ext.icon, url = null) },
         title = ext.name,
-        subtitle = listOfNotNull(
-            LocaleHelper.getSourceDisplayName(ext.lang, context),
-            ext.versionName,
-            stringResource(MR.strings.ext_nsfw_short).takeIf { ext.isNsfw },
-            ext.storeName,
-        ).joinToString(" • "),
-        subtitleWarning = stringResource(MR.strings.ext_obsolete).takeIf { ext.isObsolete },
+        lang = ext.lang,
+        version = ext.versionName,
+        store = ext.storeName,
+        warning = when {
+            ext.isObsolete -> stringResource(MR.strings.ext_obsolete)
+            ext.isNsfw -> stringResource(MR.strings.ext_nsfw_short)
+            else -> null
+        },
         onClick = { onOpenDetails(ext) },
         onLongClick = { onUninstall(ext.pkgName) },
         action = {
@@ -409,52 +434,87 @@ private fun StepActions(
     }
 }
 
+/** Same layout and text style as the manga extension rows */
 @Composable
 private fun PaneRow(
     icon: @Composable () -> Unit,
     title: String,
-    subtitle: String?,
-    subtitleWarning: String? = null,
+    lang: String? = null,
+    version: String? = null,
+    store: String? = null,
+    warning: String? = null,
+    subtitle: String? = null,
     onClick: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
     action: @Composable () -> Unit = {},
 ) {
+    val context = LocalContext.current
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
         modifier = Modifier
             .fillMaxWidth()
             .combinedClickable(
                 onClick = { onClick?.invoke() },
                 onLongClick = onLongClick,
             )
-            .padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+            .padding(horizontal = MaterialTheme.padding.medium, vertical = MaterialTheme.padding.small),
     ) {
-        icon()
-        Column(modifier = Modifier.weight(1f)) {
+        Box(modifier = Modifier.size(40.dp), contentAlignment = Alignment.Center) { icon() }
+        Column(modifier = Modifier.weight(1f).padding(start = MaterialTheme.padding.medium)) {
             Text(text = title, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Row {
-                if (!subtitle.isNullOrBlank()) {
-                    Text(
-                        text = subtitle,
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.secondaryItemAlpha(),
-                    )
-                }
-                if (subtitleWarning != null) {
-                    Text(
-                        text = (if (subtitle.isNullOrBlank()) "" else " • ") + subtitleWarning.uppercase(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                        maxLines = 1,
-                    )
+            if (subtitle != null) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.secondaryItemAlpha(),
+                )
+                return@Column
+            }
+            FlowRow(
+                modifier = Modifier.secondaryItemAlpha(),
+                horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.extraSmall),
+            ) {
+                ProvideTextStyle(value = MaterialTheme.typography.bodySmall) {
+                    var shown = false
+                    if (!lang.isNullOrEmpty()) {
+                        shown = true
+                        Text(
+                            text = FlagEmoji.getEmojiLangFlag(lang) + " " +
+                                LocaleHelper.getSourceDisplayName(lang, context),
+                        )
+                    }
+                    if (!version.isNullOrEmpty()) {
+                        if (shown) DotSeparatorNoSpaceText()
+                        Text(text = version)
+                    }
+                    Text(text = store?.let { "@$it" } ?: "(?)")
+                    if (warning != null) {
+                        DotSeparatorNoSpaceText()
+                        Text(
+                            text = warning.uppercase(),
+                            color = MaterialTheme.colorScheme.error,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically) { action() }
     }
+}
+
+/** Red stop sign, like untrusted manga extensions */
+@Composable
+private fun UntrustedIcon() {
+    Image(
+        imageVector = Icons.Filled.Dangerous,
+        contentDescription = null,
+        colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.error),
+        modifier = Modifier.size(40.dp),
+    )
 }
 
 @Composable

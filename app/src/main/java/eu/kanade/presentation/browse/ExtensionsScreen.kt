@@ -26,6 +26,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.Surface
@@ -181,6 +182,10 @@ private fun ExtensionContent(
                 contentType = "header",
                 key = "extensionHeader-${header.hashCode()}",
             ) {
+                // KMK: a line between sections
+                if (header != state.items.keys.firstOrNull()) {
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium))
+                }
                 when (header) {
                     is ExtensionUiModel.Header.Resource -> {
                         val action: @Composable RowScope.() -> Unit =
@@ -549,7 +554,7 @@ private fun ExtensionHeader(
 }
 
 @Composable
-private fun ExtensionHeader(
+internal fun ExtensionHeader(
     text: String,
     modifier: Modifier = Modifier,
     action: @Composable RowScope.() -> Unit = {},

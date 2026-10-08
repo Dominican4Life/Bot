@@ -39,7 +39,7 @@ class AnimeSourceScreenModel(
         if (listing == state.value.listing && state.value.items.isNotEmpty()) return
         loadJob?.cancel()
         mutableState.update {
-            it.copy(listing = listing, items = emptyList(), page = 0, hasNextPage = true, error = null)
+            it.copy(listing = listing, items = emptyList(), page = 0, hasNextPage = true, error = null, isLoading = false)
         }
         loadNextPage()
     }
@@ -59,7 +59,7 @@ class AnimeSourceScreenModel(
     private fun setListingForce(listing: Listing) {
         loadJob?.cancel()
         mutableState.update {
-            it.copy(listing = listing, items = emptyList(), page = 0, hasNextPage = true, error = null)
+            it.copy(listing = listing, items = emptyList(), page = 0, hasNextPage = true, error = null, isLoading = false)
         }
         loadNextPage()
     }

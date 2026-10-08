@@ -121,7 +121,14 @@ data object BrowseTab : Tab {
                 contentPadding = padding,
                 onSearch = animeScreenModel::searchSources,
                 onTogglePin = animeScreenModel::togglePin,
-                onClickSource = { navigator.push(eu.kanade.tachiyomi.ui.anime.source.AnimeSourceScreen(it)) },
+                onClickSource = {
+                    // Same as manga: the source home page (Latest + Browse) when "Replace latest button" is on
+                    if (Injekt.get<eu.kanade.domain.ui.UiPreferences>().useNewSourceNavigation().get()) {
+                        navigator.push(eu.kanade.tachiyomi.ui.anime.source.AnimeSourceFeedScreen(it))
+                    } else {
+                        navigator.push(eu.kanade.tachiyomi.ui.anime.source.AnimeSourceScreen(it))
+                    }
+                },
             )
         }
         val animeExtensions: @Composable (PaddingValues) -> Unit = { padding ->

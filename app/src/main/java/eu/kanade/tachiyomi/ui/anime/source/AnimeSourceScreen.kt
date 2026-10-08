@@ -45,6 +45,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.neverEqualPolicy
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -103,6 +104,9 @@ import uy.kohesive.injekt.api.get
 class AnimeSourceScreen(
     private val sourceId: Long,
     private val initialQuery: String? = null,
+    // KMK: opened from the source home page
+    private val initialLatest: Boolean = false,
+    private val openFilters: Boolean = false,
 ) : Screen() {
 
     @Composable
@@ -116,10 +120,13 @@ class AnimeSourceScreen(
         val source = screenModel.source
 
         var searchQuery by rememberSaveable { mutableStateOf(initialQuery) }
-        var showFilters by remember { mutableStateOf(false) }
+        var showFilters by rememberSaveable { mutableStateOf(openFilters) }
 
         LaunchedEffect(Unit) {
-            if (!initialQuery.isNullOrBlank()) screenModel.search(initialQuery)
+            when {
+                !initialQuery.isNullOrBlank() -> screenModel.search(initialQuery)
+                initialLatest -> screenModel.setListing(AnimeSourceScreenModel.Listing.Latest)
+            }
         }
 
         val sourcePreferences = remember { Injekt.get<SourcePreferences>() }
@@ -298,7 +305,10 @@ class AnimeSourceScreen(
             }
 
             if (showFilters) {
-                val mangaFilters = remember(state.filters) { state.filters.toMangaFilterList() }
+                // Rebuilt after every change so the sheet redraws with the new choices
+                var mangaFilters by remember(state.filters) {
+                    mutableStateOf(state.filters.toMangaFilterList(), neverEqualPolicy())
+                }
                 SourceFilterDialog(
                     onDismissRequest = { showFilters = false },
                     filters = mangaFilters,
@@ -310,7 +320,10 @@ class AnimeSourceScreen(
                         showFilters = false
                         screenModel.search(searchQuery.orEmpty())
                     },
-                    onUpdate = { mangaFilters.writeBackToAnime() },
+                    onUpdate = {
+                        mangaFilters.writeBackToAnime()
+                        mangaFilters = state.filters.toMangaFilterList()
+                    },
                     startExpanded = false,
                     savedSearches = persistentListOf(),
                     onSave = {},

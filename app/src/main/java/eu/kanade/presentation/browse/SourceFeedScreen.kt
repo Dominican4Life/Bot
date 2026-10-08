@@ -320,6 +320,8 @@ fun SourceFeedToolbar(
     onSortFeedClick: (() -> Unit)?,
     toggleSelectionMode: () -> Unit,
     isRunning: Boolean,
+    showBulkSelection: Boolean = true,
+    showIncognito: Boolean = true,
     // KMK <--
 ) {
     SearchToolbar(
@@ -337,7 +339,7 @@ fun SourceFeedToolbar(
         actions = {
             AppBarActions(
                 actions = persistentListOf<AppBar.AppBarAction>().builder().apply {
-                    add(bulkSelectionButton(isRunning, toggleSelectionMode))
+                    if (showBulkSelection) add(bulkSelectionButton(isRunning, toggleSelectionMode))
 
                     onWebViewClick?.let { func ->
                         add(
@@ -350,12 +352,14 @@ fun SourceFeedToolbar(
                     }
 
                     // KMK -->
-                    add(
-                        AppBar.OverflowAction(
-                            title = stringResource(MR.strings.pref_incognito_mode),
-                            onClick = onToggleIncognito,
-                        ),
-                    )
+                    if (showIncognito) {
+                        add(
+                            AppBar.OverflowAction(
+                                title = stringResource(MR.strings.pref_incognito_mode),
+                                onClick = onToggleIncognito,
+                            ),
+                        )
+                    }
                     // KMK <--
 
                     onSortFeedClick?.let { func ->

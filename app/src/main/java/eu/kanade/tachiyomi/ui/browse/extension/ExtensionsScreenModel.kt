@@ -92,9 +92,14 @@ class ExtensionsScreenModel(
                         // KMK -->
                         .filter { !nsfwOnly || it.extension.isNsfw }
                     // KMK <--
-                    if (installed.isNotEmpty() || untrusted.isNotEmpty()) {
-                        put(ExtensionUiModel.Header.Resource(MR.strings.ext_installed), installed + untrusted)
+                    // KMK --> untrusted in their own section, like the anime side
+                    if (installed.isNotEmpty()) {
+                        put(ExtensionUiModel.Header.Resource(MR.strings.ext_installed), installed)
                     }
+                    if (untrusted.isNotEmpty()) {
+                        put(ExtensionUiModel.Header.Resource(MR.strings.ext_untrusted), untrusted)
+                    }
+                    // KMK <--
 
                     val languagesWithExtensions = _available
                         .filter(predicate)
@@ -111,12 +116,7 @@ class ExtensionsScreenModel(
                         putAll(languagesWithExtensions)
                     }
 
-                    // KMK -->
-                    // Show "More..." header if no available extensions
-                    if (_available.isEmpty()) {
-                        put(ExtensionUiModel.Header.Resource(KMR.strings.extensions_page_more), emptyList())
-                    }
-                    // KMK <--
+                    // KMK: no "More extensions / Add extension store" footer, the Repos button is at the top
                 }
             }
                 .collectLatest { items ->
