@@ -18,25 +18,25 @@ WHERE episode_id = :episodeId;
 
 getHistory:
 SELECT
-    A._id AS animeId,
-    A.source,
-    A.title,
-    A.thumbnail_url,
-    A.favorite,
-    E._id AS episodeId,
-    E.name AS episodeName,
-    E.episode_number,
-    E.last_second_seen,
-    E.total_seconds,
-    H.last_seen
-FROM anime_history H
-JOIN episodes E ON H.episode_id = E._id
-JOIN animes A ON E.anime_id = A._id
-WHERE H.last_seen > 0
-ORDER BY H.last_seen DESC;
+    an._id AS animeId,
+    an.source,
+    an.title,
+    an.thumbnail_url,
+    an.favorite,
+    ep._id AS episodeId,
+    ep.name AS episodeName,
+    ep.episode_number,
+    ep.last_second_seen,
+    ep.total_seconds,
+    hi.last_seen
+FROM anime_history hi
+JOIN episodes ep ON hi.episode_id = ep._id
+JOIN animes an ON ep.anime_id = an._id
+WHERE hi.last_seen > 0
+ORDER BY hi.last_seen DESC;
 
 getAll:
-SELECT H.episode_id, H.last_seen FROM anime_history H;
+SELECT hi.episode_id, hi.last_seen FROM anime_history hi;
 
 removeByAnimeId:
 DELETE FROM anime_history

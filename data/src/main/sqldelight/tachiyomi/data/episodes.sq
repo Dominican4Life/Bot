@@ -66,22 +66,22 @@ WHERE _id = :id;
 
 getUpdates:
 SELECT
-    A._id AS animeId,
-    A.source,
-    A.title,
-    A.thumbnail_url,
-    E._id AS episodeId,
-    E.name AS episodeName,
-    E.episode_number,
-    E.seen,
-    E.bookmark,
-    E.last_second_seen,
-    E.total_seconds,
-    E.date_fetch
-FROM episodes E
-JOIN animes A ON E.anime_id = A._id
-WHERE A.favorite = 1 AND E.date_fetch > A.date_added AND E.date_fetch > :after
-ORDER BY E.date_fetch DESC
+    an._id AS animeId,
+    an.source,
+    an.title,
+    an.thumbnail_url,
+    ep._id AS episodeId,
+    ep.name AS episodeName,
+    ep.episode_number,
+    ep.seen,
+    ep.bookmark,
+    ep.last_second_seen,
+    ep.total_seconds,
+    ep.date_fetch
+FROM episodes ep
+JOIN animes an ON ep.anime_id = an._id
+WHERE an.favorite = 1 AND ep.date_fetch > an.date_added AND ep.date_fetch > :after
+ORDER BY ep.date_fetch DESC
 LIMIT :limit;
 
 getByUrl:
