@@ -76,7 +76,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.min
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
@@ -144,7 +143,8 @@ fun ReaderChapterSideSheet(
         val sheetWidth = if (maxWidth < 600.dp) {
             maxWidth * 0.88f
         } else {
-            min(420.dp, maxWidth * 0.4f)
+            // Narrow drawer like Usagi: about a quarter of a tablet screen
+            (maxWidth * 0.27f).coerceIn(300.dp, 380.dp)
         }
         val sheetWidthPx = with(LocalDensity.current) { sheetWidth.toPx() }
         var dragOffset by remember { mutableFloatStateOf(0f) }
@@ -334,7 +334,7 @@ private fun PageGridContent(
             initialFirstVisibleItemIndex = (currentPage - 1).coerceIn(0, pages.lastIndex),
         )
         LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 104.dp),
+            columns = GridCells.Fixed(3),
             state = gridState,
             contentPadding = PaddingValues(12.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
