@@ -82,6 +82,7 @@ class AnimeRelatedScreen(private val animeId: Long) : Screen() {
                             title = anime.title,
                             onClick = { navigator.push(AnimeScreen(anime.id)) },
                             onLongClick = { navigator.push(AnimeScreen(anime.id)) },
+                            usePanoramaCover = false,
                         )
                     }
                 }
