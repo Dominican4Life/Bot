@@ -46,6 +46,8 @@ import eu.kanade.tachiyomi.core.security.PrivacyPreferences
 import eu.kanade.tachiyomi.crash.CrashActivity
 import eu.kanade.tachiyomi.crash.GlobalExceptionHandler
 import eu.kanade.tachiyomi.data.coil.BufferedSourceFetcher
+import eu.kanade.tachiyomi.data.coil.LocalPageFetcher
+import eu.kanade.tachiyomi.data.coil.LocalPageKeyer
 import eu.kanade.tachiyomi.data.coil.MangaCoverFetcher
 import eu.kanade.tachiyomi.data.coil.MangaCoverKeyer
 import eu.kanade.tachiyomi.data.coil.MangaCoverMetadata
@@ -282,6 +284,8 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
                 add(ReaderPageFetcher.Factory())
                 add(SourcePageKeyer())
                 add(SourcePageFetcher.Factory())
+                add(LocalPageKeyer())
+                add(LocalPageFetcher.Factory())
                 // KMK <--
             }
 

@@ -382,7 +382,26 @@ fun BrowsePagePanel(
             )
         }
         val pages = state.pages
+        val localPages = state.localPages
         when {
+            // KMK: downloaded chapters show their pages from the files, even without the source
+            chapter != null && localPages != null -> key(chapter.id, "local") {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(3),
+                    contentPadding = PaddingValues(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    itemsIndexed(items = localPages, key = { index, _ -> "local-page-$index" }) { index, page ->
+                        PageThumbnailBox(
+                            model = page,
+                            number = index + 1,
+                            onClick = { onOpenPage(chapter, index) },
+                        )
+                    }
+                }
+            }
             source == null -> CenteredBox {
                 Text(
                     text = stringResource(KMR.strings.browse_page_previews_unavailable),
@@ -432,6 +451,20 @@ private fun SourcePageThumbnailItem(
     page: Page,
     onClick: () -> Unit,
 ) {
+    PageThumbnailBox(
+        model = remember(source.id, chapterUrl, page.index) { SourcePageThumbnail(source, chapterUrl, page) },
+        number = page.number,
+        onClick = onClick,
+    )
+}
+
+/** One page tile: the image (from the source or a download) with its number in the corner */
+@Composable
+private fun PageThumbnailBox(
+    model: Any,
+    number: Int,
+    onClick: () -> Unit,
+) {
     val context = LocalContext.current
     val shape = RoundedCornerShape(10.dp)
     Box(
@@ -444,9 +477,9 @@ private fun SourcePageThumbnailItem(
         contentAlignment = Alignment.Center,
     ) {
         AsyncImage(
-            model = remember(source.id, chapterUrl, page.index) {
+            model = remember(model) {
                 ImageRequest.Builder(context)
-                    .data(SourcePageThumbnail(source, chapterUrl, page))
+                    .data(model)
                     .crossfade(true)
                     .build()
             },
@@ -466,7 +499,7 @@ private fun SourcePageThumbnailItem(
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                text = page.number.toString(),
+                text = number.toString(),
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold,
                 color = Color.White,

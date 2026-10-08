@@ -20,13 +20,16 @@ import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.presentation.manga.DownloadAction
 import eu.kanade.presentation.manga.components.ChapterDownloadAction
 import eu.kanade.tachiyomi.data.cache.ChapterCache
+import eu.kanade.tachiyomi.data.coil.LocalPageThumbnail
 import eu.kanade.tachiyomi.data.coil.getBestColor
 import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
+import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
 import eu.kanade.tachiyomi.util.system.getBitmapOrNull
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -34,9 +37,12 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import logcat.LogPriority
+import mihon.core.archive.archiveReader
 import mihon.domain.source.interactor.UpdateMangaFromRemote
+import tachiyomi.core.common.preference.TriState
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.launchNonCancellable
+import tachiyomi.core.common.util.system.ImageUtil
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.interactor.SetMangaDefaultChapterFlags
 import tachiyomi.domain.chapter.interactor.UpdateChapter
@@ -47,7 +53,6 @@ import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.interactor.GetMangaWithChapters
 import tachiyomi.domain.manga.interactor.SetMangaChapterFlags
 import tachiyomi.domain.manga.model.Manga
-import tachiyomi.core.common.preference.TriState
 import tachiyomi.domain.manga.model.applyFilter
 import tachiyomi.domain.manga.model.asMangaCover
 import tachiyomi.source.local.isLocal
@@ -76,6 +81,7 @@ class BrowsePreviewScreenModel(
     private val getExcludedScanlators: GetExcludedScanlators = Injekt.get(),
     private val setExcludedScanlators: SetExcludedScanlators = Injekt.get(),
     private val uiPreferences: UiPreferences = Injekt.get(),
+    private val downloadProvider: DownloadProvider = Injekt.get(),
 ) : StateScreenModel<BrowsePreviewScreenModel.State>(State()) {
 
     private val jobs = mutableListOf<Job>()
@@ -215,12 +221,34 @@ class BrowsePreviewScreenModel(
             )
         }
         val httpSource = httpSource
-        // Don't download page previews when the pages panel isn't shown
-        if (httpSource == null || !state.value.pagePanelOpen) {
-            mutableState.update { it.copy(pagesLoading = false) }
+        if (!state.value.pagePanelOpen) {
+            mutableState.update { it.copy(pagesLoading = false, localPages = null) }
             return
         }
         pagesJob = screenModelScope.launchIO {
+            // KMK: a downloaded chapter shows its pages from the files, without contacting the site
+            val local = runCatching { localPages(chapter) }
+                .onFailure { logcat(LogPriority.WARN, it) { "Couldn't read downloaded pages" } }
+                .getOrNull()
+            if (!local.isNullOrEmpty()) {
+                mutableState.update {
+                    if (it.selectedChapterId != chapter.id) {
+                        it
+                    } else {
+                        it.copy(
+                            pages = local.map { page -> Page(page.index) },
+                            localPages = local,
+                            pagesLoading = false,
+                        )
+                    }
+                }
+                return@launchIO
+            }
+            mutableState.update { it.copy(localPages = null) }
+            if (httpSource == null) {
+                mutableState.update { it.copy(pagesLoading = false) }
+                return@launchIO
+            }
             try {
                 val pages = try {
                     chapterCache.getPageListFromCache(chapter)
@@ -357,6 +385,40 @@ class BrowsePreviewScreenModel(
 
     fun setExcludedScanlators(excluded: Set<String>) = withManga { setExcludedScanlators.await(it.id, excluded) }
 
+    /** Pages of a downloaded chapter (a folder of images or a CBZ), or null when it isn't downloaded */
+    private fun localPages(chapter: Chapter): List<LocalPageThumbnail>? {
+        val manga = state.value.manga ?: return null
+        val downloaded = downloadManager.isChapterDownloaded(
+            chapter.name,
+            chapter.scanlator,
+            chapter.url,
+            manga.ogTitle,
+            source.id,
+        )
+        if (!downloaded) return null
+        val dir = downloadProvider.findChapterDir(chapter.name, chapter.scanlator, chapter.url, manga.ogTitle, source)
+            ?: return null
+        val context = Injekt.get<Application>()
+        return if (dir.isFile) {
+            dir.archiveReader(context).use { reader ->
+                reader.useEntries { entries ->
+                    entries
+                        .filter { it.isFile && ImageUtil.isImage(it.name) { reader.getInputStream(it.name)!! } }
+                        .map { it.name }
+                        .toList()
+                }
+            }
+                .sortedWith { a, b -> a.compareToCaseInsensitiveNaturalOrder(b) }
+                .mapIndexed { index, name ->
+                    LocalPageThumbnail(chapter.id, index, archiveUri = dir.uri, entryName = name)
+                }
+        } else {
+            downloadManager.buildPageList(source, manga, chapter).map { page ->
+                LocalPageThumbnail(chapter.id, page.index, fileUri = page.uri)
+            }
+        }
+    }
+
     // Panels
 
     fun closeChapterPanel() {
@@ -415,6 +477,8 @@ class BrowsePreviewScreenModel(
         val excludedScanlators: Set<String> = emptySet(),
         val selectedChapterId: Long? = null,
         val pages: List<Page>? = null,
+        /** Set when the selected chapter is downloaded: its pages come from the files */
+        val localPages: List<LocalPageThumbnail>? = null,
         val pagesLoading: Boolean = false,
         val pagesError: String? = null,
     ) {
