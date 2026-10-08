@@ -79,7 +79,6 @@ fun MoreScreen(
     onClickLibraryUpdateErrors: () -> Unit,
     // KMK <--
 ) {
-    val uriHandler = LocalUriHandler.current
     // SY -->
     val exhPreferences = remember { Injekt.get<ExhPreferences>() }
     val delegateSourcePreferences = remember { Injekt.get<DelegateSourcePreferences>() }
