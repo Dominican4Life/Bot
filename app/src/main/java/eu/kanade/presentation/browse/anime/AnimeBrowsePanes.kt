@@ -2,11 +2,6 @@ package eu.kanade.presentation.browse.anime
 
 import android.graphics.drawable.Drawable
 import androidx.compose.foundation.Image
-import androidx.compose.material.icons.outlined.VerifiedUser
-import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material.icons.outlined.Public
-import androidx.compose.material.icons.outlined.GetApp
-import androidx.compose.material.icons.outlined.Close
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,13 +15,19 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Extension
+import androidx.compose.material.icons.outlined.GetApp
+import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -55,7 +56,9 @@ import androidx.core.graphics.drawable.toBitmap
 import coil3.compose.AsyncImage
 import eu.kanade.presentation.components.SourcesSearchBox
 import eu.kanade.presentation.util.isTabletUi
+import eu.kanade.tachiyomi.animeextension.AnimeExtensionManager
 import eu.kanade.tachiyomi.animeextension.model.AnimeExtension
+import eu.kanade.tachiyomi.animesource.AnimeCatalogueSource
 import eu.kanade.tachiyomi.extension.model.Extension
 import eu.kanade.tachiyomi.extension.model.InstallStep
 import eu.kanade.tachiyomi.ui.browse.anime.AnimeBrowseScreenModel
@@ -63,8 +66,11 @@ import eu.kanade.tachiyomi.util.system.LocaleHelper
 import eu.kanade.tachiyomi.util.system.toast
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
+import tachiyomi.presentation.core.components.FastScrollLazyColumn
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.secondaryItemAlpha
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 /**
  * KMK: Shows manga on the left and anime on the right on tablets. On narrow screens it shows one at a
@@ -133,8 +139,10 @@ fun AnimeSourcesPane(
     state: AnimeBrowseScreenModel.State,
     contentPadding: PaddingValues,
     onSearch: (String?) -> Unit,
+    onTogglePin: (Long) -> Unit,
 ) {
     val context = LocalContext.current
+    val extensionManager = remember { Injekt.get<AnimeExtensionManager>() }
     Column(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
         SourcesSearchBox(
             searchQuery = state.sourceQuery,
@@ -147,19 +155,48 @@ fun AnimeSourcesPane(
             EmptyMessage(stringResource(KMR.strings.anime_no_sources))
             return@Column
         }
-        LazyColumn(modifier = Modifier.fillMaxSize()) {
+        val pinnedTitle = stringResource(MR.strings.pinned_sources)
+        val pinned = sources.filter { it.id.toString() in state.pinnedSources }
+        FastScrollLazyColumn(modifier = Modifier.fillMaxSize()) {
+            val row: @Composable (AnimeCatalogueSource) -> Unit = { source ->
+                val isPinned = source.id.toString() in state.pinnedSources
+                PaneRow(
+                    icon = {
+                        AnimeIcon(
+                            drawable = remember(source.id) { extensionManager.getAppIconForSource(source.id) },
+                            url = null,
+                        )
+                    },
+                    title = source.name,
+                    subtitle = LocaleHelper.getSourceDisplayName(source.lang, context),
+                    onClick = { context.toast(KMR.strings.anime_source_browse_coming) },
+                    onLongClick = { onTogglePin(source.id) },
+                    action = {
+                        IconButton(onClick = { onTogglePin(source.id) }) {
+                            Icon(
+                                imageVector = if (isPinned) Icons.Filled.PushPin else Icons.Outlined.PushPin,
+                                contentDescription = stringResource(
+                                    if (isPinned) MR.strings.action_unpin else MR.strings.action_pin,
+                                ),
+                                tint = if (isPinned) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                            )
+                        }
+                    },
+                )
+            }
+            if (pinned.isNotEmpty()) {
+                item(key = "header-pinned") { SectionHeader(pinnedTitle) }
+                items(pinned, key = { "anime-pinned-${it.id}" }) { row(it) }
+            }
             sources.groupBy { it.lang }.forEach { (lang, langSources) ->
                 item(key = "header-$lang") {
                     SectionHeader(LocaleHelper.getSourceDisplayName(lang, context))
                 }
-                items(langSources, key = { "anime-source-${it.id}" }) { source ->
-                    PaneRow(
-                        icon = { AnimeIcon(drawable = null, url = null) },
-                        title = source.name,
-                        subtitle = LocaleHelper.getSourceDisplayName(source.lang, context),
-                        onClick = { context.toast(KMR.strings.anime_source_browse_coming) },
-                    )
-                }
+                items(langSources, key = { "anime-source-${it.id}" }) { row(it) }
             }
         }
     }
@@ -203,7 +240,7 @@ fun AnimeExtensionsPane(
         val installedTitle = stringResource(MR.strings.ext_installed)
         val untrustedTitle = stringResource(MR.strings.ext_untrusted)
         val availableTitle = stringResource(KMR.strings.anime_available)
-        LazyColumn(modifier = Modifier.fillMaxSize()) {
+        FastScrollLazyColumn(modifier = Modifier.fillMaxSize()) {
             section(updatesTitle, state.filteredUpdates) { ext ->
                 InstalledRow(ext, state.installSteps[ext.pkgName], onUpdate, onUninstall, onCancel, onOpenDetails)
             }

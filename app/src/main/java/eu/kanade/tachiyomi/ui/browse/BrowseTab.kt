@@ -120,6 +120,7 @@ data object BrowseTab : Tab {
                 state = animeState,
                 contentPadding = padding,
                 onSearch = animeScreenModel::searchSources,
+                onTogglePin = animeScreenModel::togglePin,
             )
         }
         val animeExtensions: @Composable (PaddingValues) -> Unit = { padding ->

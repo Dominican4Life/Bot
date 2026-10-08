@@ -117,48 +117,7 @@ fun BrowseChapterPanel(
         applyTopInset = false,
         showClose = false,
         squareTop = true,
-        actions = {
-            var showDownloadMenu by remember { mutableStateOf(false) }
-            Box {
-                IconButton(onClick = { showDownloadMenu = true }, enabled = state.manga != null) {
-                    Icon(
-                        imageVector = Icons.Outlined.Download,
-                        contentDescription = stringResource(MR.strings.manga_download),
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                }
-                DropdownMenu(
-                    expanded = showDownloadMenu,
-                    onDismissRequest = { showDownloadMenu = false },
-                ) {
-                    listOf(
-                        DownloadAction.UNREAD_CHAPTERS to stringResource(MR.strings.download_unread),
-                        null to stringResource(KMR.strings.browse_download_all_chapters),
-                        DownloadAction.BOOKMARKED_CHAPTERS to stringResource(MR.strings.download_bookmarked),
-                    ).forEach { (action, label) ->
-                        DropdownMenuItem(
-                            text = { Text(text = label) },
-                            onClick = {
-                                showDownloadMenu = false
-                                onDownloadAction(action)
-                            },
-                        )
-                    }
-                }
-            }
-            val filterActive = state.manga?.chaptersFiltered() == true || state.scanlatorFilterActive
-            IconButton(onClick = onOpenFilters, enabled = state.manga != null) {
-                Icon(
-                    imageVector = Icons.Outlined.FilterList,
-                    contentDescription = stringResource(MR.strings.action_filter),
-                    tint = if (filterActive) {
-                        MaterialTheme.colorScheme.tertiary
-                    } else {
-                        MaterialTheme.colorScheme.primary
-                    },
-                )
-            }
-        },
+        showHeader = false,
     ) {
         key(state.manga?.id) {
             val listState = rememberLazyListState()
@@ -172,15 +131,61 @@ fun BrowseChapterPanel(
                     item(key = "info") { infoHeader(manga) }
                     item(key = "chapters-header") {
                         HorizontalDivider()
-                        Text(
-                            text = pluralStringResource(
-                                MR.plurals.manga_num_chapters,
-                                state.chapters.size,
-                                state.chapters.size,
-                            ),
-                            style = MaterialTheme.typography.titleMedium,
-                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
+                        // Chapter count with the download and filter buttons, right above the list
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(start = 16.dp, end = 4.dp, top = 4.dp),
+                        ) {
+                            Text(
+                                text = pluralStringResource(
+                                    MR.plurals.manga_num_chapters,
+                                    state.chapters.size,
+                                    state.chapters.size,
+                                ),
+                                style = MaterialTheme.typography.titleMedium,
+                                modifier = Modifier.weight(1f),
+                            )
+                    var showDownloadMenu by remember { mutableStateOf(false) }
+                    Box {
+                        IconButton(onClick = { showDownloadMenu = true }, enabled = state.manga != null) {
+                            Icon(
+                                imageVector = Icons.Outlined.Download,
+                                contentDescription = stringResource(MR.strings.manga_download),
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = showDownloadMenu,
+                            onDismissRequest = { showDownloadMenu = false },
+                        ) {
+                            listOf(
+                                DownloadAction.UNREAD_CHAPTERS to stringResource(MR.strings.download_unread),
+                                null to stringResource(KMR.strings.browse_download_all_chapters),
+                                DownloadAction.BOOKMARKED_CHAPTERS to stringResource(MR.strings.download_bookmarked),
+                            ).forEach { (action, label) ->
+                                DropdownMenuItem(
+                                    text = { Text(text = label) },
+                                    onClick = {
+                                        showDownloadMenu = false
+                                        onDownloadAction(action)
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    val filterActive = state.manga?.chaptersFiltered() == true || state.scanlatorFilterActive
+                    IconButton(onClick = onOpenFilters, enabled = state.manga != null) {
+                        Icon(
+                            imageVector = Icons.Outlined.FilterList,
+                            contentDescription = stringResource(MR.strings.action_filter),
+                            tint = if (filterActive) {
+                                MaterialTheme.colorScheme.tertiary
+                            } else {
+                                MaterialTheme.colorScheme.primary
+                            },
                         )
+                    }
+                        }
                     }
                 }
                 when {
@@ -364,6 +369,7 @@ fun BrowsePagePanel(
         applyTopInset = false,
         showClose = false,
         squareTop = true,
+        showHeader = false,
     ) {
         val chapter = state.selectedChapter
         if (chapter != null) {

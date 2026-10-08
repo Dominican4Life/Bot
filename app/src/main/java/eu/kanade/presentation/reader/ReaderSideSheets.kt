@@ -179,6 +179,8 @@ fun SlidingSidePanel(
     squareTop: Boolean = false,
     /** Extra buttons shown in the header, left of the X */
     actions: @Composable RowScope.() -> Unit = {},
+    /** Show the title bar at the top of the panel */
+    showHeader: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     // +1 slides towards the right edge, -1 towards the left edge
@@ -222,6 +224,7 @@ fun SlidingSidePanel(
                                 ),
                         ),
                 ) {
+                    if (showHeader) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
@@ -243,6 +246,7 @@ fun SlidingSidePanel(
                         }
                     }
                     HorizontalDivider()
+                    }
 
                     content()
                 }

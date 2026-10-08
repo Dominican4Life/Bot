@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.ui.browse.anime
 import androidx.compose.runtime.Immutable
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
+import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.tachiyomi.animeextension.AnimeExtensionManager
 import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
 import eu.kanade.tachiyomi.animeextension.model.AnimeExtension
@@ -13,6 +14,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.update
 import tachiyomi.core.common.util.lang.launchIO
@@ -24,6 +27,7 @@ import uy.kohesive.injekt.api.get
  */
 class AnimeBrowseScreenModel(
     private val extensionManager: AnimeExtensionManager = Injekt.get(),
+    private val sourcePreferences: SourcePreferences = Injekt.get(),
     sourceManager: AnimeSourceManager = Injekt.get(),
 ) : StateScreenModel<AnimeBrowseScreenModel.State>(State()) {
 
@@ -53,6 +57,7 @@ class AnimeBrowseScreenModel(
             }.collectLatest { newState ->
                 mutableState.update {
                     newState.copy(
+                        pinnedSources = it.pinnedSources,
                         sourceQuery = it.sourceQuery,
                         extensionQuery = it.extensionQuery,
                         isRefreshing = it.isRefreshing,
@@ -60,7 +65,16 @@ class AnimeBrowseScreenModel(
                 }
             }
         }
+        sourcePreferences.animePinnedSources().changes()
+            .onEach { pinned -> mutableState.update { it.copy(pinnedSources = pinned) } }
+            .launchIn(screenModelScope)
         refreshExtensions()
+    }
+
+    fun togglePin(sourceId: Long) {
+        val key = sourceId.toString()
+        val pref = sourcePreferences.animePinnedSources()
+        pref.set(if (key in pref.get()) pref.get() - key else pref.get() + key)
     }
 
     fun refreshExtensions() {
@@ -118,6 +132,7 @@ class AnimeBrowseScreenModel(
         val sourceQuery: String? = null,
         val extensionQuery: String? = null,
         val isRefreshing: Boolean = false,
+        val pinnedSources: Set<String> = emptySet(),
     ) {
         val filteredSources: List<AnimeCatalogueSource>
             get() = sourceQuery?.takeIf { it.isNotBlank() }

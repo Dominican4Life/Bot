@@ -250,6 +250,8 @@
     <string name="reader_chapter_not_loaded">This chapter\'s pages aren\'t loaded yet</string>
     <!-- Anime (merged from Anikku) -->
     <string name="browse_manga">Manga</string>
+    <string name="browse_description">Description</string>
+    <string name="browse_tags">Tags</string>
     <string name="browse_anime">Anime</string>
     <string name="browse_search_manga_sources">Search manga sources</string>
     <string name="browse_search_anime_sources">Search anime sources</string>
