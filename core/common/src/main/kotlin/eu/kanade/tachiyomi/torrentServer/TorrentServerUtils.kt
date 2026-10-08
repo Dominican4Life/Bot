@@ -19,7 +19,8 @@ object TorrentServerUtils {
     private val animeTrackers = preferences.trackers().get().split("\n").joinToString(",\n")
 
     fun setTrackersList() {
-        torrServer.TorrServer.addTrackers(animeTrackers)
+        // KMK: the native TorrServer library is added together with the video player
+        logcat(LogPriority.DEBUG) { "Torrent trackers: $animeTrackers" }
     }
 
     fun getTorrentPlayLink(torr: Torrent, index: Int): String {
