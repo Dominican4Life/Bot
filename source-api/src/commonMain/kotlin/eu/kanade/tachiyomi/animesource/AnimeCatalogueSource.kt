@@ -152,9 +152,21 @@ interface AnimeCatalogueSource : AnimeSource {
         runCatching { fetchRelatedAnimeList(anime) }
             .onSuccess { if (it.isNotEmpty()) pushResults(Pair("", it), false) }
             .onFailure { e ->
-                logcat(LogPriority.ERROR, e) { "## getRelatedAnimeListByExtension: $e" }
+                // KMK: extensions-lib 17 sources give named groups instead
+                val relations = runCatching { getRelatedAnimeList(anime) }.getOrDefault(emptyList())
+                if (relations.isEmpty()) {
+                    logcat(LogPriority.ERROR, e) { "## getRelatedAnimeListByExtension: $e" }
+                }
+                relations.filter { it.animes.isNotEmpty() }.forEach { pushResults(Pair(it.name, it.animes), false) }
             }
     }
+
+    /**
+     * Related anime grouped by relation (sequel, same studio, ...).
+     * @since extensions-lib 17
+     */
+    suspend fun getRelatedAnimeList(anime: SAnime): List<eu.kanade.tachiyomi.animesource.model.AnimeRelation> =
+        emptyList()
     suspend fun getRelatedMangaListByExtension(
         manga: SAnime,
         pushResults: suspend (relatedManga: Pair<String, List<SAnime>>, completed: Boolean) -> Unit,
