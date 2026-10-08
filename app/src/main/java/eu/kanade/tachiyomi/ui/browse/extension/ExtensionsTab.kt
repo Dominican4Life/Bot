@@ -1,6 +1,11 @@
 package eu.kanade.tachiyomi.ui.browse.extension
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined._18UpRating
 import androidx.compose.material3.AlertDialog
@@ -14,10 +19,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.browse.ExtensionScreen
+import eu.kanade.presentation.browse.anime.ExtensionsPaneHeader
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.TabContent
 import eu.kanade.presentation.more.settings.screen.browse.ExtensionStoresScreen
@@ -43,7 +51,8 @@ fun extensionsTab(
     return TabContent(
         titleRes = MR.strings.label_extensions,
         badgeNumber = state.updates.takeIf { it > 0 },
-        searchEnabled = true,
+        // KMK: search moved into the manga extensions pane
+        searchEnabled = false,
         actions = persistentListOf(
             // KMK -->
             AppBar.Action(
@@ -52,27 +61,36 @@ fun extensionsTab(
                 iconTint = if (state.nsfwOnly) MaterialTheme.colorScheme.error else LocalContentColor.current,
                 onClick = { extensionsScreenModel.toggleNsfwOnly() },
             ),
-            AppBar.OverflowAction(
-                title = stringResource(MR.strings.action_webview_refresh),
-                onClick = extensionsScreenModel::findAvailableExtensions,
-            ),
             // KMK <--
             AppBar.OverflowAction(
                 title = stringResource(MR.strings.action_filter),
                 onClick = { navigator.push(ExtensionFilterScreen()) },
-            ),
-            AppBar.OverflowAction(
-                title = stringResource(MR.strings.extensionStores),
-                onClick = { navigator.push(ExtensionStoresScreen()) },
             ),
         ),
         content = { contentPadding, _ ->
             BackHandler(enabled = state.searchQuery != null) {
                 extensionsScreenModel.search(null)
             }
+            // KMK -->
+            // Search, Repos and refresh live above the list, same as the anime side
+            val layoutDirection = LocalLayoutDirection.current
+            Column(modifier = Modifier.padding(top = contentPadding.calculateTopPadding())) {
+                ExtensionsPaneHeader(
+                    searchQuery = state.searchQuery,
+                    onSearch = extensionsScreenModel::search,
+                    placeholder = stringResource(KMR.strings.browse_search_manga_extensions),
+                    isRefreshing = state.isRefreshing,
+                    onRefresh = extensionsScreenModel::findAvailableExtensions,
+                    onOpenRepos = { navigator.push(ExtensionStoresScreen()) },
+                )
             ExtensionScreen(
                 state = state,
-                contentPadding = contentPadding,
+                contentPadding = PaddingValues(
+                    start = contentPadding.calculateStartPadding(layoutDirection),
+                    end = contentPadding.calculateEndPadding(layoutDirection),
+                    bottom = contentPadding.calculateBottomPadding(),
+                ),
+                // KMK <--
                 searchQuery = state.searchQuery,
                 onLongClickItem = { extension ->
                     when (extension) {
@@ -106,6 +124,9 @@ fun extensionsTab(
                 onUpdateExtension = extensionsScreenModel::updateExtension,
                 onRefresh = extensionsScreenModel::findAvailableExtensions,
             )
+            // KMK -->
+            }
+            // KMK <--
 
             privateExtensionToUninstall?.let { extension ->
                 ExtensionUninstallConfirmation(

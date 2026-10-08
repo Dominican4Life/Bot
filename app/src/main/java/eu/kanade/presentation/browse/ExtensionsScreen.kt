@@ -99,7 +99,8 @@ fun ExtensionScreen(
     PullRefresh(
         refreshing = state.isRefreshing,
         onRefresh = onRefresh,
-        enabled = !state.isLoading,
+        // KMK: refresh is a button in the pane header instead of pull-to-refresh
+        enabled = false,
     ) {
         when {
             state.isLoading -> LoadingScreen(Modifier.padding(contentPadding))

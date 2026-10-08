@@ -176,25 +176,14 @@ fun AnimeExtensionsPane(
 ) {
     val context = LocalContext.current
     Column(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 8.dp),
-        ) {
-            SourcesSearchBox(
-                searchQuery = state.extensionQuery,
-                onChangeSearchQuery = onSearch,
-                placeholderText = stringResource(KMR.strings.browse_search_anime_extensions),
-                modifier = Modifier.weight(1f),
-            )
-            TextButton(onClick = onOpenRepos) { Text(stringResource(KMR.strings.anime_extension_repos)) }
-            if (state.isRefreshing) {
-                CircularProgressIndicator(modifier = Modifier.padding(12.dp).size(24.dp), strokeWidth = 2.dp)
-            } else {
-                IconButton(onClick = onRefresh) {
-                    Icon(Icons.Outlined.Refresh, contentDescription = stringResource(MR.strings.action_webview_refresh))
-                }
-            }
-        }
+        ExtensionsPaneHeader(
+            searchQuery = state.extensionQuery,
+            onSearch = onSearch,
+            placeholder = stringResource(KMR.strings.browse_search_anime_extensions),
+            isRefreshing = state.isRefreshing,
+            onRefresh = onRefresh,
+            onOpenRepos = onOpenRepos,
+        )
 
         val nothing = state.updates.isEmpty() && state.installed.isEmpty() &&
             state.untrusted.isEmpty() && state.available.isEmpty()
@@ -247,6 +236,40 @@ fun AnimeExtensionsPane(
                         )
                     },
                 )
+            }
+        }
+    }
+}
+
+/**
+ * Search bar with Repos and refresh buttons, shown above both the manga and anime extension lists.
+ */
+@Composable
+fun ExtensionsPaneHeader(
+    searchQuery: String?,
+    onSearch: (String?) -> Unit,
+    placeholder: String,
+    isRefreshing: Boolean,
+    onRefresh: () -> Unit,
+    onOpenRepos: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier.padding(start = 16.dp, end = 8.dp, top = 8.dp),
+    ) {
+        SourcesSearchBox(
+            searchQuery = searchQuery,
+            onChangeSearchQuery = onSearch,
+            placeholderText = placeholder,
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(onClick = onOpenRepos) { Text(stringResource(KMR.strings.anime_extension_repos)) }
+        if (isRefreshing) {
+            CircularProgressIndicator(modifier = Modifier.padding(12.dp).size(24.dp), strokeWidth = 2.dp)
+        } else {
+            IconButton(onClick = onRefresh) {
+                Icon(Icons.Outlined.Refresh, contentDescription = stringResource(MR.strings.action_webview_refresh))
             }
         }
     }
