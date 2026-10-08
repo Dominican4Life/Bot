@@ -46,11 +46,14 @@ jobs:
         run: |
           set -o pipefail
           # JitPack downloads are flaky, so retry a few times before giving up
-          for attempt in 1 2 3; do
-            if ./gradlew assemblePreview --stacktrace 2>&1 | tee build.log; then exit 0; fi
+          extra=""
+          for attempt in 1 2 3 4; do
+            if ./gradlew assemblePreview --stacktrace $extra 2>&1 | tee build.log; then exit 0; fi
+            # Gradle remembers failed downloads, so force it to try again
+            extra="--refresh-dependencies"
             if ! grep -q "Could not resolve\|Could not find\|Could not GET\|Read timed out" build.log; then exit 1; fi
             echo "Dependency download failed, retrying ($attempt)..."
-            sleep 20
+            sleep 45
           done
           exit 1
 
