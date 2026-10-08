@@ -212,6 +212,12 @@ class MainActivity : BaseActivity() {
             return
         }
 
+        // KMK --> copy the anime player's mpv scripts, fonts and shaders
+        if (isLaunch) {
+            uy.kohesive.injekt.Injekt.get<animiru.feature.mpvfiles.MpvConfig>().copyFiles()
+        }
+        // KMK <--
+
         // SY -->
         @Suppress("KotlinConstantConditions")
         val hasDebugOverlay = (isDebugBuildType || BuildConfig.BUILD_TYPE == "releaseTest")

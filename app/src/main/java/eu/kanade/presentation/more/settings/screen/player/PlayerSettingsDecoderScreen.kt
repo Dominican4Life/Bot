@@ -1,0 +1,100 @@
+package eu.kanade.presentation.more.settings.screen.player
+
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import eu.kanade.presentation.more.settings.Preference
+import eu.kanade.presentation.more.settings.screen.SearchableSettings
+import eu.kanade.tachiyomi.ui.player.Debanding
+import eu.kanade.tachiyomi.ui.player.settings.DecoderPreferences
+import kotlinx.collections.immutable.toImmutableMap
+import tachiyomi.i18n.MR
+import tachiyomi.i18n.ank.AMR
+import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.util.collectAsState
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
+
+object PlayerSettingsDecoderScreen : SearchableSettings {
+
+    @ReadOnlyComposable
+    @Composable
+    override fun getTitleRes() = AMR.strings.pref_player_decoder
+
+    @Composable
+    override fun getPreferences(): List<Preference> {
+        val decoderPreferences = remember { Injekt.get<DecoderPreferences>() }
+
+        val tryHw = decoderPreferences.tryHWDecoding()
+        val useGpuNext = decoderPreferences.gpuNext()
+        val debanding = decoderPreferences.videoDebanding()
+        val yuv420p = decoderPreferences.useYUV420P()
+        val highQualityScaling = decoderPreferences.highQualityScaling()
+        val smoothMotion = decoderPreferences.smoothMotion()
+        val smoothMotionValue by smoothMotion.collectAsState()
+        val interpolationMode = decoderPreferences.interpolationMode()
+        val interpolationFPSLimit = decoderPreferences.interpolationFPSLimit()
+        val interpolationFPSLimitValue by interpolationFPSLimit.collectAsState()
+        val adaptiveScaling = decoderPreferences.adaptiveShaderScaling()
+
+        return listOf(
+            Preference.PreferenceItem.SwitchPreference(
+                preference = tryHw,
+                title = stringResource(AMR.strings.pref_try_hw),
+            ),
+            Preference.PreferenceItem.SwitchPreference(
+                preference = useGpuNext,
+                title = stringResource(AMR.strings.pref_gpu_next_title),
+                subtitle = stringResource(AMR.strings.pref_gpu_next_subtitle),
+            ),
+            Preference.PreferenceItem.ListPreference(
+                preference = debanding,
+                title = stringResource(AMR.strings.pref_debanding_title),
+                entries = Debanding.entries.associateWith {
+                    it.name
+                }.toImmutableMap(),
+            ),
+            Preference.PreferenceItem.SwitchPreference(
+                preference = highQualityScaling,
+                title = stringResource(AMR.strings.pref_high_quality_scaling),
+                subtitle = stringResource(AMR.strings.pref_high_quality_scaling_summary),
+            ),
+            Preference.PreferenceItem.SwitchPreference(
+                preference = smoothMotion,
+                title = stringResource(AMR.strings.pref_interpolation),
+                subtitle = stringResource(AMR.strings.pref_interpolation_summary),
+            ),
+            Preference.PreferenceItem.ListPreference(
+                preference = interpolationMode,
+                title = "Smooth Motion Mode",
+                subtitle = "Select the algorithm used for smoothness",
+                entries = eu.kanade.tachiyomi.ui.player.settings.InterpolationMode.entries.associateWith {
+                    it.title
+                }.toImmutableMap(),
+                enabled = smoothMotionValue,
+            ),
+            Preference.PreferenceItem.SliderPreference(
+                value = interpolationFPSLimitValue,
+                valueRange = 0..144,
+                title = "Smooth Motion FPS Limit",
+                subtitle = if (interpolationFPSLimitValue == 0) "Auto (Matches Display)" else "$interpolationFPSLimitValue FPS",
+                enabled = smoothMotionValue,
+                onValueChanged = {
+                    interpolationFPSLimit.set(it)
+                    true
+                },
+            ),
+            Preference.PreferenceItem.SwitchPreference(
+                preference = adaptiveScaling,
+                title = stringResource(AMR.strings.pref_ai_performance_intelligence),
+                subtitle = stringResource(AMR.strings.pref_ai_performance_intelligence_summary),
+            ),
+            Preference.PreferenceItem.SwitchPreference(
+                preference = yuv420p,
+                title = stringResource(AMR.strings.pref_use_yuv420p_title),
+                subtitle = stringResource(AMR.strings.pref_use_yuv420p_subtitle),
+            ),
+        )
+    }
+}

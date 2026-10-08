@@ -71,6 +71,8 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.data.anime.Episode
+import eu.kanade.tachiyomi.ui.player.PlayerActivity
+import eu.kanade.tachiyomi.ui.player.settings.PlayerPreferences
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
 import eu.kanade.tachiyomi.util.system.toast
 import tachiyomi.i18n.MR
@@ -80,6 +82,8 @@ import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.LoadingScreen
 import tachiyomi.presentation.core.util.secondaryItemAlpha
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import java.text.DateFormat
 import java.util.Date
 
@@ -96,6 +100,7 @@ class AnimeScreen(private val animeId: Long) : Screen() {
         val screenModel = rememberScreenModel { AnimeScreenModel(animeId) }
         val state by screenModel.state.collectAsState()
         val anime = state.anime
+        val playerPreferences = remember { Injekt.get<PlayerPreferences>() }
 
         Scaffold(
             topBar = { scrollBehavior ->
@@ -278,7 +283,16 @@ class AnimeScreen(private val animeId: Long) : Screen() {
                         items(state.episodes, key = { "ep-${it.id}" }) { episode ->
                             EpisodeRow(
                                 episode = episode,
-                                onClick = { screenModel.loadVideos(episode) },
+                                onClick = {
+                                    // KMK: built-in player unless the outside player is chosen in settings
+                                    if (playerPreferences.alwaysUseExternalPlayer().get()) {
+                                        screenModel.loadVideos(episode)
+                                    } else {
+                                        context.startActivity(
+                                            PlayerActivity.newIntent(context, episode.animeId, episode.id),
+                                        )
+                                    }
+                                },
                                 onToggleSeen = { screenModel.toggleSeen(episode) },
                                 onToggleBookmark = { screenModel.toggleBookmark(episode) },
                             )

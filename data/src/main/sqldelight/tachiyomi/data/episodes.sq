@@ -54,3 +54,12 @@ UPDATE episodes SET last_second_seen = :lastSecondSeen, total_seconds = :totalSe
 
 deleteById:
 DELETE FROM episodes WHERE _id = :id;
+
+updatePartial:
+UPDATE episodes SET
+    seen = coalesce(:seen, seen),
+    bookmark = coalesce(:bookmark, bookmark),
+    fillermark = coalesce(:fillermark, fillermark),
+    last_second_seen = coalesce(:lastSecondSeen, last_second_seen),
+    total_seconds = coalesce(:totalSeconds, total_seconds)
+WHERE _id = :id;

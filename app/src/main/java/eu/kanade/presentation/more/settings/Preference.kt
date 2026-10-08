@@ -131,6 +131,39 @@ sealed class Preference {
         /**
          * A [PreferenceItem] that shows a EditText in the dialog.
          */
+        // KMK --> anime player settings (from AniZen)
+        /**
+         * An edit text preference whose dialog shows an explanation, and which accepts an empty value.
+         */
+        data class EditTextInfoPreference(
+            val preference: PreferenceData<String>,
+            val dialogSubtitle: String?,
+            override val title: String,
+            override val subtitle: String? = "%s",
+            override val enabled: Boolean = true,
+            override val onValueChanged: suspend (value: String) -> Boolean = { true },
+        ) : PreferenceItem<String, Boolean>() {
+            override val icon: ImageVector? = null
+        }
+
+        /**
+         * A multi-line editor for an mpv config file (mpv.conf, input.conf).
+         * The player writes the file from this value when it starts.
+         */
+        data class MPVConfPreference(
+            val preference: PreferenceData<String>,
+            val scope: kotlinx.coroutines.CoroutineScope,
+            val context: android.content.Context,
+            val fileName: String? = null,
+            override val title: String,
+            override val subtitle: String? = null,
+            override val enabled: Boolean = true,
+            override val onValueChanged: suspend (value: String) -> Boolean = { true },
+        ) : PreferenceItem<String, Boolean>() {
+            override val icon: ImageVector? = null
+        }
+        // KMK <--
+
         data class EditTextPreference(
             val preference: PreferenceData<String>,
             override val title: String,

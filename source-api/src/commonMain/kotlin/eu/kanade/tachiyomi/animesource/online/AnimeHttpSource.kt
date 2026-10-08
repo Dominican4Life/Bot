@@ -470,6 +470,25 @@ abstract class AnimeHttpSource : AnimeCatalogueSource {
      * @param video the video information.
      * @return the resolved video, or null on failure
      */
+    // KMK --> seek bar thumbnails (from AniZen)
+    /**
+     * Returns the seek bar preview tiles for a video, or null if the source has none.
+     */
+    open suspend fun getVideoThumbnails(video: Video): eu.kanade.tachiyomi.animesource.model.ThumbnailInfo? {
+        return null
+    }
+
+    /**
+     * Fetch and decode an image tile used by the thumbnail preview.
+     */
+    open suspend fun getImageTile(url: String): android.graphics.Bitmap? {
+        return client.newCall(GET(url, headers)).execute().use { response ->
+            if (!response.isSuccessful) return@use null
+            response.body.byteStream().use { android.graphics.BitmapFactory.decodeStream(it) }
+        }
+    }
+    // KMK <--
+
     open suspend fun resolveVideo(video: Video): Video? {
         return video
     }

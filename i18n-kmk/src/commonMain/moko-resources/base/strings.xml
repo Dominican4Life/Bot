@@ -274,4 +274,5 @@
     <string name="anime_source_not_loaded">This anime\'s source isn\'t installed</string>
     <string name="anime_library_empty">Your anime library is empty. Add anime from Browse.</string>
     <string name="library_switch_type">Switch between manga and anime</string>
+    <string name="pref_player_summary">Anime player, gestures, subtitles, audio</string>
 </resources>

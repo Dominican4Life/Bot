@@ -112,6 +112,27 @@ class AnimeRepository(
         handler.await { episodesQueries.setBookmark(bookmark, episode.id) }
     }
 
+    /** Updates only the given fields of an episode (used by the player) */
+    suspend fun updateEpisode(
+        id: Long,
+        seen: Boolean? = null,
+        bookmark: Boolean? = null,
+        fillermark: Boolean? = null,
+        lastSecondSeen: Long? = null,
+        totalSeconds: Long? = null,
+    ) {
+        handler.await {
+            episodesQueries.updatePartial(
+                seen = seen,
+                bookmark = bookmark,
+                fillermark = fillermark,
+                lastSecondSeen = lastSecondSeen,
+                totalSeconds = totalSeconds,
+                id = id,
+            )
+        }
+    }
+
     /**
      * Saves the episodes from the source: adds new ones, updates changed ones and removes the ones the source
      * no longer has. Keeps seen/bookmark/progress of existing episodes.

@@ -55,6 +55,7 @@ import tachiyomi.source.local.image.LocalCoverManager
 import tachiyomi.source.local.io.LocalSourceFileSystem
 import uy.kohesive.injekt.api.InjektModule
 import uy.kohesive.injekt.api.InjektRegistrar
+import uy.kohesive.injekt.api.addFactory
 import uy.kohesive.injekt.api.addSingleton
 import uy.kohesive.injekt.api.addSingletonFactory
 import uy.kohesive.injekt.api.get
@@ -165,6 +166,26 @@ class AppModule(val app: Application) : InjektModule {
         addSingletonFactory { eu.kanade.tachiyomi.animeextension.AnimeExtensionManager(app) }
         addSingletonFactory { eu.kanade.tachiyomi.animeextension.AnimeSourceManager(get()) }
         addSingletonFactory { eu.kanade.tachiyomi.data.anime.AnimeRepository(get()) }
+        // Anime player (from AniZen)
+        addSingletonFactory { eu.kanade.tachiyomi.ui.player.settings.PlayerPreferences(get()) }
+        addSingletonFactory { eu.kanade.tachiyomi.ui.player.settings.GesturePreferences(get()) }
+        addSingletonFactory { eu.kanade.tachiyomi.ui.player.settings.DecoderPreferences(get()) }
+        addSingletonFactory { eu.kanade.tachiyomi.ui.player.settings.SubtitlePreferences(get()) }
+        addSingletonFactory { eu.kanade.tachiyomi.ui.player.settings.AudioPreferences(get()) }
+        addSingletonFactory { eu.kanade.tachiyomi.ui.player.settings.AdvancedPlayerPreferences(get()) }
+        addSingletonFactory<tachiyomi.domain.custombuttons.repository.CustomButtonRepository> {
+            tachiyomi.data.custombutton.CustomButtonRepositoryImpl(get())
+        }
+        addFactory { tachiyomi.domain.custombuttons.interactor.CreateCustomButton(get()) }
+        addFactory { tachiyomi.domain.custombuttons.interactor.DeleteCustomButton(get()) }
+        addFactory { tachiyomi.domain.custombuttons.interactor.GetCustomButtons(get()) }
+        addFactory { tachiyomi.domain.custombuttons.interactor.UpdateCustomButton(get()) }
+        addFactory { tachiyomi.domain.custombuttons.interactor.ReorderCustomButton(get()) }
+        addFactory { tachiyomi.domain.custombuttons.interactor.ToggleFavoriteCustomButton(get()) }
+        addFactory { eu.kanade.tachiyomi.ui.player.domain.TrackSelect(get(), get()) }
+        addSingletonFactory { eu.kanade.tachiyomi.ui.player.domain.AudioManager(app) }
+        addSingletonFactory { eu.kanade.tachiyomi.ui.player.domain.BrightnessManager(app) }
+        addSingletonFactory { animiru.feature.mpvfiles.MpvConfig(app, get(), get(), get()) }
 
         addSingletonFactory { DownloadProvider(app) }
         addSingletonFactory { DownloadManager(app) }

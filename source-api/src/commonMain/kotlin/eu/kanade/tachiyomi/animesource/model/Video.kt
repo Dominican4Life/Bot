@@ -2,8 +2,6 @@ package eu.kanade.tachiyomi.animesource.model
 
 import android.net.Uri
 import androidx.compose.runtime.Stable
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.Headers
@@ -56,7 +54,7 @@ data class Video(
         get() = videoPageUrl
 
     // TODO(16): Remove after ext lib bump
-    private var videoPageUrl: String = ""
+    var videoPageUrl: String = ""
 
     // TODO(16): Remove after ext lib bump
     constructor(
@@ -86,22 +84,16 @@ data class Video(
         headers: Headers? = null,
     ) : this(url, quality, videoUrl, headers)
 
+    // KMK: plain status like AniZen's player expects
     @kotlinx.serialization.Transient
-    private val _statusFlow = MutableStateFlow<State>(State.Queue)
+    @Volatile
+    var status: State = State.QUEUE
 
-    @kotlinx.serialization.Transient
-    val statusFlow = _statusFlow.asStateFlow()
-    var status: State
-        get() = _statusFlow.value
-        set(value) {
-            _statusFlow.value = value
-        }
-
-    sealed interface State {
-        data object Queue : State
-        data object LoadVideo : State
-        data object Ready : State
-        data class Error(val error: Throwable) : State
+    enum class State {
+        QUEUE,
+        LOAD_VIDEO,
+        READY,
+        ERROR,
     }
 
     companion object {

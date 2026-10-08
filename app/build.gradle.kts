@@ -122,6 +122,19 @@ android {
                 "libimagedecoder",
                 "libquickjs",
                 "libsqlite3x",
+                // KMK: anime player
+                "libavcodec",
+                "libavdevice",
+                "libavfilter",
+                "libavformat",
+                "libavutil",
+                "libc++_shared",
+                "libmpv",
+                "libplayer",
+                "libpostproc",
+                "libswresample",
+                "libswscale",
+                "libxml2",
             )
                 .map { "**/$it.so" }
         }
@@ -187,6 +200,13 @@ dependencies {
     implementation(projects.i18n)
     // KMK -->
     implementation(projects.i18nKmk)
+    implementation(projects.i18nAnk)
+    // Anime player (from AniZen)
+    implementation(aniyomilibs.aniyomi.mpv)
+    implementation(aniyomilibs.seeker)
+    implementation(aniyomilibs.compose.constraintlayout)
+    implementation(aniyomilibs.mediasession)
+    implementation(aniyomilibs.truetypeparser)
     // KMK <--
     // SY -->
     implementation(projects.i18nSy)

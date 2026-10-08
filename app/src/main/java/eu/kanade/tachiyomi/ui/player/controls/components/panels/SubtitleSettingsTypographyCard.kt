@@ -1,0 +1,391 @@
+/*
+ * Copyright 2024 Abdallah Mehiz
+ * https://github.com/abdallahmehiz/mpvKt
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package eu.kanade.tachiyomi.ui.player.controls.components.panels
+
+import android.annotation.SuppressLint
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BorderColor
+import androidx.compose.material.icons.filled.BorderStyle
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.FormatBold
+import androidx.compose.material.icons.filled.FormatClear
+import androidx.compose.material.icons.filled.FormatColorText
+import androidx.compose.material.icons.filled.FormatItalic
+import androidx.compose.material.icons.filled.FormatSize
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconToggleButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.dp
+import com.yubyf.truetypeparser.TTFFile
+import androidx.compose.ui.platform.LocalContext
+import dev.icerock.moko.resources.StringResource
+import eu.kanade.presentation.components.DropdownMenu
+import eu.kanade.presentation.player.components.ExpandableCard
+import eu.kanade.presentation.player.components.ExposedTextDropDownMenu
+import eu.kanade.presentation.player.components.SliderItem
+import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.ui.player.PlayerActivity
+import eu.kanade.tachiyomi.ui.player.controls.CARDS_MAX_WIDTH
+import eu.kanade.tachiyomi.ui.player.controls.panelCardsColors
+import eu.kanade.tachiyomi.ui.player.settings.SubtitleJustification
+import eu.kanade.tachiyomi.ui.player.settings.SubtitlePreferences
+import `is`.xyz.mpv.MPV
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import tachiyomi.core.common.preference.deleteAndGet
+import tachiyomi.domain.storage.service.StorageManager
+import kotlinx.collections.immutable.toImmutableList
+import tachiyomi.i18n.MR
+import tachiyomi.i18n.ank.AMR
+import tachiyomi.presentation.core.components.material.padding
+import tachiyomi.presentation.core.i18n.stringResource
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
+
+@SuppressLint("MutableCollectionMutableState")
+// ANZ -->
+@Composable
+fun SubtitleSettingsTypographyCard(
+    modifier: Modifier = Modifier,
+    mpv: MPV? = (LocalContext.current as? PlayerActivity)?.viewModel?.mpv,
+) {
+    val preferences = remember { Injekt.get<SubtitlePreferences>() }
+    val storageManager = remember { Injekt.get<StorageManager>() }
+    var isExpanded by remember { mutableStateOf(true) }
+
+    val fontsDir = storageManager.getFontsDirectory()
+    val fonts by remember { mutableStateOf(mutableListOf(preferences.subtitleFont().defaultValue())) }
+    var fontsLoadingIndicator: (@Composable () -> Unit)? by remember {
+        val indicator: (@Composable () -> Unit) = {
+            CircularProgressIndicator(Modifier.size(32.dp))
+        }
+        mutableStateOf(indicator)
+    }
+    LaunchedEffect(Unit) {
+        if (fontsDir == null) {
+            fontsLoadingIndicator = null
+            return@LaunchedEffect
+        }
+        withContext(Dispatchers.IO) {
+            fontsDir.listFiles()?.filter { file ->
+                file.name?.lowercase()?.matches(FONT_EXTENSION_REGEX) == true
+            }?.mapNotNull {
+                runCatching { TTFFile.open(it.openInputStream()).families.values.first() }.getOrNull()
+            }?.let {
+                fonts.addAll(
+                    it.distinct(),
+                )
+            }
+            fontsLoadingIndicator = null
+        }
+    }
+
+    ExpandableCard(
+        isExpanded = isExpanded,
+        onExpand = { isExpanded = !isExpanded },
+        title = {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.medium),
+            ) {
+                Icon(Icons.Default.FormatColorText, null)
+                Text(stringResource(AMR.strings.player_sheets_sub_typography_title))
+            }
+        },
+        modifier = modifier.widthIn(max = CARDS_MAX_WIDTH),
+        colors = panelCardsColors(),
+    ) {
+        Column {
+            var isBold by remember { mutableStateOf(mpv?.getPropertyBoolean("sub-bold") ?: false) }
+            var isItalic by remember { mutableStateOf(mpv?.getPropertyBoolean("sub-italic") ?: false) }
+            var justify by remember {
+                mutableStateOf(
+                    SubtitleJustification.entries.firstOrNull {
+                        it.value == mpv?.getPropertyString("sub-justify")
+                    } ?: SubtitleJustification.Auto,
+                )
+            }
+            var font by remember { mutableStateOf(mpv?.getPropertyString("sub-font") ?: "") }
+            var fontSize by remember {
+                mutableStateOf(mpv?.getPropertyInt("sub-font-size") ?: 55)
+            }
+            var borderStyle by remember {
+                mutableStateOf(
+                    SubtitlesBorderStyle.entries.firstOrNull { it.value == mpv?.getPropertyString("sub-border-style") } ?: SubtitlesBorderStyle.OutlineAndShadow,
+                )
+            }
+            var borderSize by remember {
+                mutableStateOf(
+                    mpv?.getPropertyInt("sub-border-size") ?: 3,
+                )
+            }
+            var shadowOffset by remember {
+                mutableStateOf(
+                    mpv?.getPropertyInt("sub-shadow-offset") ?: 0,
+                )
+            }
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(start = MaterialTheme.padding.extraSmall, end = MaterialTheme.padding.medium),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconToggleButton(
+                    checked = isBold,
+                    onCheckedChange = {
+                        isBold = it
+                        preferences.boldSubtitles().set(it)
+                        mpv?.setPropertyBoolean("sub-bold", it)
+                    },
+                ) {
+                    Icon(
+                        Icons.Default.FormatBold,
+                        null,
+                        modifier = Modifier.size(32.dp),
+                    )
+                }
+                IconToggleButton(
+                    checked = isItalic,
+                    onCheckedChange = {
+                        isItalic = it
+                        preferences.italicSubtitles().set(it)
+                        mpv?.setPropertyBoolean("sub-italic", it)
+                    },
+                ) {
+                    Icon(
+                        Icons.Default.FormatItalic,
+                        null,
+                        modifier = Modifier.size(32.dp),
+                    )
+                }
+                SubtitleJustification.entries.minus(SubtitleJustification.Auto).forEach { justification ->
+                    IconToggleButton(
+                        checked = justify == justification,
+                        onCheckedChange = {
+                            justify = justification
+                            mpv?.setPropertyBoolean("sub-ass-justify", it)
+                            if (it) {
+                                preferences.subtitleJustification().set(justification)
+                                mpv?.setPropertyString("sub-justify", justification.value)
+                            } else {
+                                preferences.subtitleJustification().set(SubtitleJustification.Auto)
+                                mpv?.setPropertyString("sub-justify", SubtitleJustification.Auto.value)
+                            }
+                        },
+                    ) {
+                        Icon(justification.icon, null)
+                    }
+                }
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = {
+                    resetTypography(mpv, preferences)
+                    isBold = mpv?.getPropertyBoolean("sub-bold") ?: false
+                    isItalic = mpv?.getPropertyBoolean("sub-italic") ?: false
+                    justify =
+                        SubtitleJustification.entries.firstOrNull { it.value == mpv?.getPropertyString("sub-justify") } ?: SubtitleJustification.Auto
+                    font = mpv?.getPropertyString("sub-font") ?: ""
+                    fontSize = mpv?.getPropertyInt("sub-font-size") ?: 55
+                    borderStyle =
+                        SubtitlesBorderStyle.entries.firstOrNull { it.value == mpv?.getPropertyString("sub-border-style") } ?: SubtitlesBorderStyle.OutlineAndShadow
+                    borderSize = mpv?.getPropertyInt("sub-border-size") ?: 3
+                    shadowOffset = mpv?.getPropertyInt("sub-shadow-offset") ?: 0
+                }) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.extraSmall),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Default.FormatClear, null)
+                        Text(stringResource(MR.strings.action_reset))
+                    }
+                }
+            }
+// ANZ <--
+            Row(
+                modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
+                horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.medium),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    painterResource(R.drawable.outline_brand_family_24),
+                    null,
+                    modifier = Modifier.size(32.dp),
+                )
+                ExposedTextDropDownMenu(
+                    selectedValue = font,
+                    options = fonts.toImmutableList(),
+                    label = stringResource(AMR.strings.player_sheets_sub_typography_font),
+                    onValueChangedEvent = {
+                        font = it
+                        preferences.subtitleFont().set(it)
+                        // ANZ -->
+                        mpv?.setPropertyString("sub-font", it)
+                        // ANZ <--
+                    },
+                    leadingIcon = fontsLoadingIndicator,
+                )
+            }
+            SliderItem(
+                label = stringResource(AMR.strings.player_sheets_sub_typography_font_size),
+                max = 100,
+                min = 1,
+                value = fontSize,
+                valueText = fontSize.toString(),
+                onChange = {
+                    fontSize = it
+                    preferences.subtitleFontSize().set(it)
+                    // ANZ -->
+                    mpv?.setPropertyInt("sub-font-size", it)
+                    // ANZ <--
+                },
+            ) {
+                Icon(Icons.Default.FormatSize, null)
+            }
+
+            var selectingBorderStyle by remember { mutableStateOf(false) }
+            Box {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(
+                            onClick = {
+                                selectingBorderStyle = !selectingBorderStyle
+                            },
+                        )
+                        .padding(
+                            horizontal = MaterialTheme.padding.medium,
+                            vertical = MaterialTheme.padding.small,
+                        ),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.large),
+                ) {
+                    Icon(Icons.Default.BorderStyle, null)
+                    Column {
+                        Text(
+                            text = stringResource(AMR.strings.player_sheets_sub_typography_border_style),
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                        Text(
+                            text = stringResource(borderStyle.titleRes),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                }
+                DropdownMenu(expanded = selectingBorderStyle, onDismissRequest = { selectingBorderStyle = false }) {
+                    SubtitlesBorderStyle.entries.map {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(it.titleRes)) },
+                            onClick = {
+                                borderStyle = it
+                                preferences.borderStyleSubtitles().set(it)
+                                // ANZ -->
+                                mpv?.setPropertyString("sub-border-style", it.value)
+                                // ANZ <--
+                                selectingBorderStyle = false
+                            },
+                            trailingIcon = {
+                                if (borderStyle == it) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = null,
+                                    )
+                                }
+                            },
+                        )
+                    }
+                }
+            }
+            SliderItem(
+                stringResource(AMR.strings.player_sheets_sub_typography_border_size),
+                value = borderSize,
+                valueText = borderSize.toString(),
+                onChange = {
+                    borderSize = it
+                    preferences.subtitleBorderSize().set(it)
+                    // ANZ -->
+                    mpv?.setPropertyInt("sub-border-size", it)
+                    // ANZ <--
+                },
+                max = 100,
+                icon = { Icon(Icons.Default.BorderColor, null) },
+            )
+            SliderItem(
+                stringResource(AMR.strings.player_sheets_subtitles_shadow_offset),
+                value = shadowOffset,
+                valueText = shadowOffset.toString(),
+                onChange = {
+                    shadowOffset = it
+                    preferences.shadowOffsetSubtitles().set(it)
+                    // ANZ -->
+                    mpv?.setPropertyInt("sub-shadow-offset", it)
+                    // ANZ <--
+                },
+                max = 100,
+                icon = { Icon(painterResource(R.drawable.sharp_shadow_24), null) },
+            )
+        }
+    }
+}
+
+private val FONT_EXTENSION_REGEX = Regex(""".*\.[ot]tf${'$'}""")
+
+// ANZ -->
+fun resetTypography(mpv: MPV?, preferences: SubtitlePreferences) {
+    mpv?.setPropertyBoolean("sub-bold", preferences.boldSubtitles().deleteAndGet())
+    mpv?.setPropertyBoolean("sub-italic", preferences.italicSubtitles().deleteAndGet())
+    mpv?.setPropertyString("sub-justify", preferences.subtitleJustification().deleteAndGet().value)
+    mpv?.setPropertyString("sub-font", preferences.subtitleFont().deleteAndGet())
+    mpv?.setPropertyInt("sub-font-size", preferences.subtitleFontSize().deleteAndGet())
+    mpv?.setPropertyInt("sub-outline-size", preferences.subtitleBorderSize().deleteAndGet())
+    mpv?.setPropertyInt("sub-shadow-offset", preferences.shadowOffsetSubtitles().deleteAndGet())
+    mpv?.setPropertyString("sub-border-style", preferences.borderStyleSubtitles().deleteAndGet().value)
+}
+// ANZ <--
+
+enum class SubtitlesBorderStyle(
+    val value: String,
+    val titleRes: StringResource,
+) {
+    OutlineAndShadow("outline-and-shadow", AMR.strings.player_sheets_subtitles_border_style_outline_and_shadow),
+    OpaqueBox("opaque-box", AMR.strings.player_sheets_subtitles_border_style_opaque_box),
+    BackgroundBox("background-box", AMR.strings.player_sheets_subtitles_border_style_background_box),
+}

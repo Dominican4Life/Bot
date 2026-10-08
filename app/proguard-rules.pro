@@ -315,3 +315,7 @@
 -dontwarn org.ietf.jgss.Oid
 -dontwarn com.google.re2j.Matcher
 -dontwarn com.google.re2j.Pattern
+
+# KMK --> anime player (mpv)
+-keep class is.xyz.mpv.** { *; }
+# KMK <--

@@ -173,6 +173,17 @@
                 android:resource="@xml/s_pen_actions" />
         </activity>
 
+        <!-- KMK: anime player (from AniZen) -->
+        <activity
+            android:name=".ui.player.PlayerActivity"
+            android:autoRemoveFromRecents="true"
+            android:configChanges="orientation|screenLayout|screenSize|smallestScreenSize|keyboardHidden|keyboard|uiMode"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:resizeableActivity="true"
+            android:supportsPictureInPicture="true"
+            android:theme="@style/Theme.Tachiyomi" />
+
         <activity
             android:name=".ui.security.UnlockActivity"
             android:exported="false"
