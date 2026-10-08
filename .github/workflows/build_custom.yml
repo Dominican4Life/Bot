@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -62,3 +62,23 @@ jobs:
         with:
           name: Komikku-preview-${{ github.sha }}
           path: app/build/outputs/apk/preview/*.apk
+
+      # Publish the APK as a release so it can be downloaded directly on the device
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="custom-r${{ github.run_number }}"
+          ls app/build/outputs/apk/preview/
+          for f in app/build/outputs/apk/preview/*.apk; do
+            abi=$(basename "$f" .apk | sed 's/^app-//; s/-preview.*//')
+            case "$abi" in arm64-v8a|universal) cp "$f" "Komikku-beta-${abi}-${tag}.apk" ;; esac
+          done
+          gh release create "$tag" \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "Komikku beta (reader side sheet) ${tag}" \
+            --notes "Built from branch ${{ github.ref_name }} at ${{ github.sha }}. Installs as Komikku beta next to the regular app." \
+            --prerelease \
+            Komikku-beta-*.apk
