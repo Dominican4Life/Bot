@@ -66,9 +66,9 @@ import eu.kanade.domain.base.BasePreferences
 import eu.kanade.domain.connections.service.ConnectionsPreferences
 import eu.kanade.domain.manga.model.readingMode
 import eu.kanade.domain.ui.UiPreferences
-import eu.kanade.presentation.reader.ChapterListDialog
 import eu.kanade.presentation.reader.DisplayRefreshHost
 import eu.kanade.presentation.reader.OrientationSelectDialog
+import eu.kanade.presentation.reader.ReaderChapterSideSheet
 import eu.kanade.presentation.reader.ReaderContentOverlay
 import eu.kanade.presentation.reader.ReaderPageActionsDialog
 import eu.kanade.presentation.reader.ReaderPageIndicator
@@ -452,13 +452,13 @@ class ReaderActivity : BaseActivity() {
                     var chapters by remember {
                         mutableStateOf(viewModel.getChapters().toImmutableList())
                     }
-                    ChapterListDialog(
+                    // KMK -->
+                    ReaderChapterSideSheet(
                         onDismissRequest = onDismissRequest,
                         screenModel = settingsScreenModel,
                         chapters = chapters,
                         onClickChapter = {
                             viewModel.loadNewChapterFromDialog(it)
-                            onDismissRequest()
                         },
                         onBookmark = { chapter ->
                             viewModel.toggleBookmark(chapter.id, !chapter.bookmark)
@@ -470,13 +470,15 @@ class ReaderActivity : BaseActivity() {
                                 }
                             }.toImmutableList()
                         },
-                        state.dateRelativeTime,
-                        // KMK -->
+                        dateRelativeTime = state.dateRelativeTime,
                         onDownloadAction = { chapter, action ->
                             viewModel.handleDownloadAction(chapter, action)
                         },
-                        // KMK <--
+                        currentChapter = state.currentChapter,
+                        currentPage = state.currentPage,
+                        onClickPage = this@ReaderActivity::moveToPageIndex,
                     )
+                    // KMK <--
                 }
 
                 ReaderViewModel.Dialog.AutoScrollHelp -> AlertDialog(

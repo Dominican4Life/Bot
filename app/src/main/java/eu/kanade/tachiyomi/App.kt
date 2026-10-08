@@ -52,6 +52,8 @@ import eu.kanade.tachiyomi.data.coil.MangaCoverMetadata
 import eu.kanade.tachiyomi.data.coil.MangaKeyer
 import eu.kanade.tachiyomi.data.coil.PagePreviewFetcher
 import eu.kanade.tachiyomi.data.coil.PagePreviewKeyer
+import eu.kanade.tachiyomi.data.coil.ReaderPageFetcher
+import eu.kanade.tachiyomi.data.coil.ReaderPageKeyer
 import eu.kanade.tachiyomi.data.coil.TachiyomiImageDecoder
 import eu.kanade.tachiyomi.data.connections.discord.DiscordRPCService
 import eu.kanade.tachiyomi.data.notification.Notifications
@@ -273,6 +275,10 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
                 add(PagePreviewKeyer())
                 add(PagePreviewFetcher.Factory(callFactoryLazy))
                 // SY <--
+                // KMK -->
+                add(ReaderPageKeyer())
+                add(ReaderPageFetcher.Factory())
+                // KMK <--
             }
 
             diskCache(

@@ -1,0 +1,51 @@
+name: Build custom APK
+
+# Builds the "preview" variant (app id app.komikku.beta), which installs next to the
+# regular Komikku app instead of replacing it.
+on:
+  push:
+    branches:
+      - 'feature/**'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build app
+    runs-on: 'ubuntu-24.04'
+
+    steps:
+      - name: Clone repo
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@1bcf9fb12cf4aa7d266a90ae39939e61372fe520 # v5.4.0
+        with:
+          java-version-file: .github/.java-version
+          distribution: temurin
+
+      - name: Set up gradle
+        uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6
+
+      # A fixed signing key so each new build can be installed as an update over the previous one
+      - name: Use fixed debug signing key
+        run: |
+          mkdir -p ~/.android
+          cp .github/custom-debug.keystore ~/.android/debug.keystore
+
+      - name: Build app
+        run: ./gradlew assemblePreview
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Komikku-preview-${{ github.sha }}
+          path: app/build/outputs/apk/preview/*.apk
