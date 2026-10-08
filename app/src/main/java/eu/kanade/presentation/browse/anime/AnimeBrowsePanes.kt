@@ -203,14 +203,18 @@ fun AnimeExtensionsPane(
             return@Column
         }
 
+        val updatesTitle = stringResource(MR.strings.ext_updates_pending)
+        val installedTitle = stringResource(MR.strings.ext_installed)
+        val untrustedTitle = stringResource(MR.strings.ext_untrusted)
+        val availableTitle = stringResource(KMR.strings.anime_available)
         LazyColumn(modifier = Modifier.fillMaxSize()) {
-            section(stringResource(MR.strings.ext_updates_pending), state.filteredUpdates) { ext ->
+            section(updatesTitle, state.filteredUpdates) { ext ->
                 InstalledRow(ext, state.installSteps[ext.pkgName], onUpdate, onUninstall, onCancel)
             }
-            section(stringResource(MR.strings.ext_installed), state.filteredInstalled) { ext ->
+            section(installedTitle, state.filteredInstalled) { ext ->
                 InstalledRow(ext, state.installSteps[ext.pkgName], onUpdate, onUninstall, onCancel)
             }
-            section(stringResource(MR.strings.ext_untrusted), state.filteredUntrusted) { ext ->
+            section(untrustedTitle, state.filteredUntrusted) { ext ->
                 PaneRow(
                     icon = { AnimeIcon(drawable = null, url = null) },
                     title = ext.name,
@@ -223,7 +227,7 @@ fun AnimeExtensionsPane(
                     },
                 )
             }
-            section(stringResource(KMR.strings.anime_available), state.filteredAvailable) { ext ->
+            section(availableTitle, state.filteredAvailable) { ext ->
                 val step = state.installSteps[ext.pkgName]
                 PaneRow(
                     icon = { AnimeIcon(drawable = null, url = ext.iconUrl) },
