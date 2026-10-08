@@ -6,6 +6,7 @@ import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.content.pm.PackageInfoCompat
+import dalvik.system.PathClassLoader
 import eu.kanade.domain.extension.interactor.TrustExtension
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.tachiyomi.animeextension.model.AnimeExtension
@@ -21,8 +22,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import logcat.LogPriority
-import mihon.domain.extension.repository.AnimeExtensionStoreRepository
 import mihon.domain.extension.model.ExtensionStore
+import mihon.domain.extension.repository.AnimeExtensionStoreRepository
 import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -64,6 +65,23 @@ internal object AnimeExtensionLoader {
     private const val METADATA_TORRENT = "tachiyomi.animeextension.torrent"
 
     // Same range as Anikku
+    private fun instantiateSources(className: String, classLoader: ClassLoader): List<AnimeSource> {
+        return when (val obj = Class.forName(className, false, classLoader).getDeclaredConstructor().newInstance()) {
+            is AnimeSource -> listOf(obj)
+            is AnimeSourceFactory -> try {
+                obj.createSources()
+            } catch (e: AbstractMethodError) {
+                // Factories built against a different lib version: find the list-returning method by hand
+                val method = obj.javaClass.methods.find { m ->
+                    m.parameterTypes.isEmpty() && List::class.java.isAssignableFrom(m.returnType)
+                } ?: throw e
+                @Suppress("UNCHECKED_CAST")
+                method.invoke(obj) as List<AnimeSource>
+            }
+            else -> throw Exception("Unknown source class type: ${obj.javaClass}")
+        }
+    }
+
     /** KMK: why the last extension failed to load, shown to the user after installing */
     @Volatile
     var lastError: String? = null
@@ -341,14 +359,21 @@ internal object AnimeExtensionLoader {
             }
             .flatMap {
                 try {
-                    when (val obj = Class.forName(it, false, classLoader).getDeclaredConstructor().newInstance()) {
-                        is AnimeSource -> listOf(obj)
-                        is AnimeSourceFactory -> obj.createSources()
-                        else -> throw Exception("Unknown source class type: ${obj.javaClass}")
+                    instantiateSources(it, classLoader)
+                } catch (e: LinkageError) {
+                    // KMK: newer extensions bundle their own Kotlin library. Loading them child-first then gives
+                    // "Class ... resolves differently in superclass ..."; load them parent-first instead (like AniZen).
+                    try {
+                        logcat(LogPriority.WARN, e) { "Retrying $extName with the parent-first class loader" }
+                        instantiateSources(it, PathClassLoader(appInfo.sourceDir, null, context.classLoader))
+                    } catch (e2: Throwable) {
+                        logcat(LogPriority.ERROR, e2) { "Extension load error: $extName ($it)" }
+                        lastError = "one of its sources failed to load (${e2.javaClass.simpleName}: ${e2.message})"
+                        return AnimeLoadResult.Error
                     }
                 } catch (e: Throwable) {
                     logcat(LogPriority.ERROR, e) { "Extension load error: $extName ($it)" }
-                    lastError = "one of its sources failed to load (${e.message})"
+                    lastError = "one of its sources failed to load (${e.javaClass.simpleName}: ${e.message})"
                     return AnimeLoadResult.Error
                 }
             }
