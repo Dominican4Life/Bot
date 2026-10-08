@@ -34,7 +34,10 @@ import eu.kanade.core.util.ifSourcesLoaded
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
+import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.data.preference.SharedPreferencesDataStore
+import eu.kanade.tachiyomi.animesource.sourcePreferences as animeSourcePreferences
 import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.sourcePreferences
 import eu.kanade.tachiyomi.widget.TachiyomiTextInputEditText.Companion.setIncognito
@@ -45,7 +48,11 @@ import tachiyomi.presentation.core.screens.LoadingScreen
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
-class SourcePreferencesScreen(val sourceId: Long) : Screen() {
+class SourcePreferencesScreen(
+    val sourceId: Long,
+    // KMK: settings of an anime source
+    val anime: Boolean = false,
+) : Screen() {
 
     @Composable
     override fun Content() {
@@ -60,7 +67,11 @@ class SourcePreferencesScreen(val sourceId: Long) : Screen() {
         Scaffold(
             topBar = {
                 AppBar(
-                    title = Injekt.get<SourceManager>().getOrStub(sourceId).toString(),
+                    title = if (anime) {
+                        Injekt.get<AnimeSourceManager>().get(sourceId)?.name.orEmpty()
+                    } else {
+                        Injekt.get<SourceManager>().getOrStub(sourceId).toString()
+                    },
                     navigateUp = navigator::pop,
                     scrollBehavior = it,
                 )
@@ -72,7 +83,7 @@ class SourcePreferencesScreen(val sourceId: Long) : Screen() {
                     .fillMaxSize()
                     .padding(contentPadding),
             ) {
-                add(it, SourcePreferencesFragment.getInstance(sourceId), null)
+                add(it, SourcePreferencesFragment.getInstance(sourceId, anime), null)
             }
         }
     }
@@ -133,6 +144,17 @@ class SourcePreferencesFragment : PreferenceFragmentCompat() {
 
     private fun populateScreen(): PreferenceScreen {
         val sourceId = requireArguments().getLong(SOURCE_ID)
+        // KMK -->
+        if (requireArguments().getBoolean(ANIME)) {
+            val animeScreen = preferenceManager.createPreferenceScreen(requireContext())
+            val animeSource = Injekt.get<AnimeSourceManager>().get(sourceId) as? ConfigurableAnimeSource
+                ?: return animeScreen
+            preferenceManager.preferenceDataStore = SharedPreferencesDataStore(animeSource.animeSourcePreferences())
+            animeSource.setupPreferenceScreen(animeScreen)
+            animeScreen.tidyUp()
+            return animeScreen
+        }
+        // KMK <--
         // SY -->
         val source = Injekt.get<SourceManager>()
             .getOrStub(sourceId)
@@ -155,7 +177,16 @@ class SourcePreferencesFragment : PreferenceFragmentCompat() {
             preferenceManager.preferenceDataStore = dataStore
 
             source.setupPreferenceScreen(sourceScreen)
-            sourceScreen.forEach { pref ->
+            sourceScreen.tidyUp()
+        }
+
+        return sourceScreen
+    }
+
+    // KMK: shared by manga and anime source settings
+    private fun PreferenceScreen.tidyUp() {
+        run {
+            forEach { pref ->
                 pref.isIconSpaceReserved = false
                 pref.isSingleLineTitle = false
                 if (pref is DialogPreference && pref.dialogTitle.isNullOrEmpty()) {
@@ -172,17 +203,17 @@ class SourcePreferencesFragment : PreferenceFragmentCompat() {
                 }
             }
         }
-
-        return sourceScreen
     }
 
     companion object {
         private const val SOURCE_ID = "source_id"
+        private const val ANIME = "anime"
 
-        fun getInstance(sourceId: Long): SourcePreferencesFragment {
+        fun getInstance(sourceId: Long, anime: Boolean = false): SourcePreferencesFragment {
             return SourcePreferencesFragment().apply {
                 arguments = Bundle().apply {
                     putLong(SOURCE_ID, sourceId)
+                    putBoolean(ANIME, anime)
                 }
             }
         }

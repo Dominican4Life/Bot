@@ -2,7 +2,12 @@ package eu.kanade.presentation.browse.anime
 
 import android.graphics.drawable.Drawable
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.outlined.VerifiedUser
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material.icons.outlined.GetApp
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -173,6 +178,8 @@ fun AnimeExtensionsPane(
     onUninstall: (String) -> Unit,
     onTrust: (Extension.Untrusted) -> Unit,
     onCancel: (pkgName: String, signatureHash: String) -> Unit,
+    onOpenDetails: (AnimeExtension) -> Unit,
+    onOpenWebView: (Extension.Available) -> Unit,
 ) {
     val context = LocalContext.current
     Column(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
@@ -198,20 +205,21 @@ fun AnimeExtensionsPane(
         val availableTitle = stringResource(KMR.strings.anime_available)
         LazyColumn(modifier = Modifier.fillMaxSize()) {
             section(updatesTitle, state.filteredUpdates) { ext ->
-                InstalledRow(ext, state.installSteps[ext.pkgName], onUpdate, onUninstall, onCancel)
+                InstalledRow(ext, state.installSteps[ext.pkgName], onUpdate, onUninstall, onCancel, onOpenDetails)
             }
             section(installedTitle, state.filteredInstalled) { ext ->
-                InstalledRow(ext, state.installSteps[ext.pkgName], onUpdate, onUninstall, onCancel)
+                InstalledRow(ext, state.installSteps[ext.pkgName], onUpdate, onUninstall, onCancel, onOpenDetails)
             }
             section(untrustedTitle, state.filteredUntrusted) { ext ->
                 PaneRow(
                     icon = { AnimeIcon(drawable = null, url = null) },
                     title = ext.name,
-                    subtitle = ext.versionName,
+                    subtitle = listOfNotNull(ext.versionName, ext.storeName).joinToString(" • "),
+                    subtitleWarning = stringResource(MR.strings.ext_untrusted),
+                    onLongClick = { onUninstall(ext.pkgName) },
                     action = {
-                        TextButton(onClick = { onTrust(ext) }) { Text(stringResource(MR.strings.ext_trust)) }
-                        TextButton(onClick = { onUninstall(ext.pkgName) }) {
-                            Text(stringResource(MR.strings.ext_uninstall))
+                        IconButton(onClick = { onTrust(ext) }) {
+                            Icon(Icons.Outlined.VerifiedUser, contentDescription = stringResource(MR.strings.ext_trust))
                         }
                     },
                 )
@@ -227,14 +235,27 @@ fun AnimeExtensionsPane(
                         stringResource(MR.strings.ext_nsfw_short).takeIf { ext.isNsfw },
                         ext.storeName,
                     ).joinToString(" • "),
+                    onLongClick = { onInstall(ext) },
                     action = {
-                        InstallAction(
+                        StepActions(
                             step = step,
-                            label = stringResource(MR.strings.ext_install),
-                            onClick = { onInstall(ext) },
+                            onRetry = { onInstall(ext) },
                             onCancel = { onCancel(ext.pkgName, ext.signatureHash) },
-                        )
+                        ) {
+                            if (ext.sources.any { it.baseUrl.isNotBlank() }) {
+                                IconButton(onClick = { onOpenWebView(ext) }) {
+                                    Icon(
+                                        Icons.Outlined.Public,
+                                        contentDescription = stringResource(MR.strings.action_open_in_web_view),
+                                    )
+                                }
+                            }
+                            IconButton(onClick = { onInstall(ext) }) {
+                                Icon(Icons.Outlined.GetApp, contentDescription = stringResource(MR.strings.ext_install))
+                            }
+                        }
                     },
+                )
                 )
             }
         }
@@ -296,6 +317,7 @@ private fun InstalledRow(
     onUpdate: (AnimeExtension) -> Unit,
     onUninstall: (String) -> Unit,
     onCancel: (String, String) -> Unit,
+    onOpenDetails: (AnimeExtension) -> Unit,
 ) {
     val context = LocalContext.current
     PaneRow(
@@ -305,44 +327,47 @@ private fun InstalledRow(
             LocaleHelper.getSourceDisplayName(ext.lang, context),
             ext.versionName,
             stringResource(MR.strings.ext_nsfw_short).takeIf { ext.isNsfw },
-            stringResource(MR.strings.ext_obsolete).takeIf { ext.isObsolete },
             ext.storeName,
         ).joinToString(" • "),
+        subtitleWarning = stringResource(MR.strings.ext_obsolete).takeIf { ext.isObsolete },
+        onClick = { onOpenDetails(ext) },
+        onLongClick = { onUninstall(ext.pkgName) },
         action = {
-            if (ext.hasUpdate) {
-                InstallAction(
-                    step = step,
-                    label = stringResource(MR.strings.ext_update),
-                    onClick = { onUpdate(ext) },
-                    onCancel = { onCancel(ext.pkgName, ext.signatureHash) },
-                )
-            }
-            if (step == null) {
-                TextButton(onClick = { onUninstall(ext.pkgName) }) { Text(stringResource(MR.strings.ext_uninstall)) }
+            StepActions(
+                step = step,
+                onRetry = { onUpdate(ext) },
+                onCancel = { onCancel(ext.pkgName, ext.signatureHash) },
+            ) {
+                IconButton(onClick = { onOpenDetails(ext) }) {
+                    Icon(Icons.Outlined.Settings, contentDescription = stringResource(MR.strings.action_settings))
+                }
+                if (ext.hasUpdate) {
+                    IconButton(onClick = { onUpdate(ext) }) {
+                        Icon(Icons.Outlined.GetApp, contentDescription = stringResource(MR.strings.ext_update))
+                    }
+                }
             }
         },
     )
 }
 
+/** Same buttons as the manga extension list: cancel while installing, retry on error, otherwise [idle] */
 @Composable
-private fun InstallAction(step: InstallStep?, label: String, onClick: () -> Unit, onCancel: () -> Unit) {
+private fun StepActions(
+    step: InstallStep?,
+    onRetry: () -> Unit,
+    onCancel: () -> Unit,
+    idle: @Composable () -> Unit,
+) {
     when (step) {
-        null, InstallStep.Idle, InstallStep.Error, InstallStep.Installed -> {
-            TextButton(onClick = onClick) { Text(label) }
+        null, InstallStep.Idle, InstallStep.Installed -> idle()
+        InstallStep.Error -> IconButton(onClick = onRetry) {
+            Icon(Icons.Outlined.Refresh, contentDescription = stringResource(MR.strings.action_retry))
         }
-        else -> {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = stringResource(
-                        when (step) {
-                            InstallStep.Downloading -> MR.strings.ext_downloading
-                            InstallStep.Installing -> MR.strings.ext_installing
-                            else -> MR.strings.ext_pending
-                        },
-                    ),
-                    style = MaterialTheme.typography.labelMedium,
-                )
-                TextButton(onClick = onCancel) { Text(stringResource(MR.strings.action_cancel)) }
+        else -> Row(verticalAlignment = Alignment.CenterVertically) {
+            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+            IconButton(onClick = onCancel) {
+                Icon(Icons.Outlined.Close, contentDescription = stringResource(MR.strings.action_cancel))
             }
         }
     }
@@ -353,7 +378,9 @@ private fun PaneRow(
     icon: @Composable () -> Unit,
     title: String,
     subtitle: String?,
+    subtitleWarning: String? = null,
     onClick: (() -> Unit)? = null,
+    onLongClick: (() -> Unit)? = null,
     action: @Composable () -> Unit = {},
 ) {
     Row(
@@ -361,23 +388,36 @@ private fun PaneRow(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .combinedClickable(
+                onClick = { onClick?.invoke() },
+                onLongClick = onLongClick,
+            )
+            .padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
     ) {
         icon()
         Column(modifier = Modifier.weight(1f)) {
             Text(text = title, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (!subtitle.isNullOrBlank()) {
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.secondaryItemAlpha(),
-                )
+            Row {
+                if (!subtitle.isNullOrBlank()) {
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.secondaryItemAlpha(),
+                    )
+                }
+                if (subtitleWarning != null) {
+                    Text(
+                        text = (if (subtitle.isNullOrBlank()) "" else " • ") + subtitleWarning.uppercase(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        maxLines = 1,
+                    )
+                }
             }
         }
-        action()
+        Row(verticalAlignment = Alignment.CenterVertically) { action() }
     }
 }
 

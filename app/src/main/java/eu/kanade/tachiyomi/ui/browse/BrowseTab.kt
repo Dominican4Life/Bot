@@ -32,6 +32,7 @@ import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.connections.discord.DiscordRPCService
 import eu.kanade.tachiyomi.data.connections.discord.DiscordScreen
 import eu.kanade.tachiyomi.ui.browse.anime.AnimeBrowseScreenModel
+import eu.kanade.tachiyomi.ui.browse.anime.AnimeExtensionDetailsScreen
 import eu.kanade.tachiyomi.ui.browse.extension.ExtensionsScreenModel
 import eu.kanade.tachiyomi.ui.browse.extension.extensionsTab
 import eu.kanade.tachiyomi.ui.browse.feed.FeedScreenModel
@@ -40,6 +41,7 @@ import eu.kanade.tachiyomi.ui.browse.migration.sources.migrateSourceTab
 import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchScreen
 import eu.kanade.tachiyomi.ui.browse.source.sourcesTab
 import eu.kanade.tachiyomi.ui.main.MainActivity
+import eu.kanade.tachiyomi.ui.webview.WebViewScreen
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
@@ -132,6 +134,12 @@ data object BrowseTab : Tab {
                 onUninstall = animeScreenModel::uninstall,
                 onTrust = animeScreenModel::trust,
                 onCancel = animeScreenModel::cancelInstall,
+                onOpenDetails = { navigator.push(AnimeExtensionDetailsScreen(it.pkgName)) },
+                onOpenWebView = { ext ->
+                    ext.sources.firstOrNull { it.baseUrl.isNotBlank() }?.let {
+                        navigator.push(WebViewScreen(url = it.baseUrl, initialTitle = it.name))
+                    }
+                },
             )
         }
         val animeMigrate: @Composable (PaddingValues) -> Unit = { padding -> AnimeMigratePane(padding) }
