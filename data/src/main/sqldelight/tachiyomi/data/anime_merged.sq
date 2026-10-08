@@ -1,0 +1,37 @@
+-- KMK: anime merged from several sources into one page. The root (merge_id) is listed as a member too.
+CREATE TABLE anime_merged(
+    _id INTEGER NOT NULL PRIMARY KEY,
+    merge_id INTEGER NOT NULL,
+    anime_id INTEGER NOT NULL,
+    position INTEGER NOT NULL,
+    UNIQUE (merge_id, anime_id),
+    FOREIGN KEY(merge_id) REFERENCES animes (_id)
+    ON DELETE CASCADE,
+    FOREIGN KEY(anime_id) REFERENCES animes (_id)
+    ON DELETE CASCADE
+);
+
+CREATE INDEX kmk_anime_merged_merge_id_index ON anime_merged(merge_id);
+
+getMembers:
+SELECT an.*
+FROM anime_merged am
+JOIN animes an ON an._id = am.anime_id
+WHERE am.merge_id = :mergeId
+ORDER BY am.position;
+
+getMergeIds:
+SELECT merge_id FROM anime_merged WHERE anime_id = :animeId AND merge_id != anime_id;
+
+insert:
+INSERT OR IGNORE INTO anime_merged(merge_id, anime_id, position)
+VALUES (:mergeId, :animeId, :position);
+
+removeMember:
+DELETE FROM anime_merged WHERE merge_id = :mergeId AND anime_id = :animeId;
+
+removeMerge:
+DELETE FROM anime_merged WHERE merge_id = :mergeId;
+
+countMembers:
+SELECT count(*) FROM anime_merged WHERE merge_id = :mergeId;

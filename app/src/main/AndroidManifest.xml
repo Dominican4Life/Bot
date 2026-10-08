@@ -84,6 +84,19 @@
                 <data android:host="add-repo" />
             </intent-filter>
 
+            <!-- KMK: deeplink to add an anime (Aniyomi) extension repo -->
+            <intent-filter android:label="@string/action_addExtensionStore">
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data android:scheme="aniyomi" />
+                <data android:scheme="anikku" />
+                <data android:scheme="animetail" />
+                <data android:host="add-repo" />
+            </intent-filter>
+
             <!-- Deeplink to add extension store -->
             <intent-filter android:label="@string/action_addExtensionStore">
                 <action android:name="android.intent.action.VIEW" />

@@ -95,6 +95,40 @@ class AnimeRepository(
         handler.await { animesQueries.setEpisodeFlags(flags, anime.id) }
     }
 
+    // Merging (KMK)
+
+    /** Every anime merged into [mergeId], the root first; empty when it isn't merged */
+    fun subscribeMergeMembers(mergeId: Long): Flow<List<Anime>> =
+        handler.subscribeToList { anime_mergedQueries.getMembers(mergeId, ::mapAnime) }
+
+    suspend fun getMergeMembers(mergeId: Long): List<Anime> =
+        handler.awaitList { anime_mergedQueries.getMembers(mergeId, ::mapAnime) }
+
+    /** Adds [others] to the page of [rootId] (they stay in the database as their own entries) */
+    suspend fun mergeInto(rootId: Long, others: List<Long>) {
+        handler.await(inTransaction = true) {
+            val start = anime_mergedQueries.countMembers(rootId).executeAsOne()
+            anime_mergedQueries.insert(rootId, rootId, 0)
+            others.filter { it != rootId }.forEachIndexed { index, id ->
+                anime_mergedQueries.insert(rootId, id, start + index + 1)
+            }
+        }
+    }
+
+    /** Takes one anime off a merged page; the merge ends when only the root is left */
+    suspend fun removeFromMerge(rootId: Long, animeId: Long) {
+        handler.await(inTransaction = true) {
+            if (animeId == rootId) {
+                anime_mergedQueries.removeMerge(rootId)
+            } else {
+                anime_mergedQueries.removeMember(rootId, animeId)
+                if (anime_mergedQueries.countMembers(rootId).executeAsOne() <= 1) {
+                    anime_mergedQueries.removeMerge(rootId)
+                }
+            }
+        }
+    }
+
     // Episodes
 
     suspend fun getEpisodes(animeId: Long): List<Episode> =

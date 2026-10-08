@@ -322,4 +322,14 @@
     <string name="anime_episodes_from_database">Episode list</string>
     <string name="anime_download_queue">Anime download queue</string>
     <string name="anime_download_queue_empty">No anime episodes are downloading</string>
+    <string name="anime_global_search">Search anime sources</string>
+    <string name="anime_merge_into">Merge into this anime?</string>
+    <string name="anime_merge_into_message">%1$s from %2$s will be added to this page. Its episodes show next to the others, labeled with their source.</string>
+    <string name="anime_merged">Merged</string>
+    <string name="anime_merge_settings_empty">This anime isn\'t merged with anything yet. Use Merge in the menu to add the same anime from another source.</string>
+    <string name="anime_merge_remove">Remove from merge</string>
+    <string name="anime_merge_open">Open</string>
+    <string name="anime_repo_moved">That repo has anime extensions, so it was added to the anime repos</string>
+    <string name="anime_ext_install_failed">Couldn\'t install %1$s: %2$s</string>
+    <string name="anime_ext_not_loaded">%1$s was installed but can\'t be used: %2$s</string>
 </resources>

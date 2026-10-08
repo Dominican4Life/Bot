@@ -30,6 +30,7 @@ import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.TravelExplore
 import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -152,6 +153,7 @@ fun AnimeSourcesPane(
     onTogglePin: (Long) -> Unit,
     onClickSource: (Long) -> Unit,
     onClickFilter: () -> Unit,
+    onClickGlobalSearch: () -> Unit,
 ) {
     val context = LocalContext.current
     val extensionManager = remember { Injekt.get<AnimeExtensionManager>() }
@@ -166,6 +168,12 @@ fun AnimeSourcesPane(
                 placeholderText = stringResource(KMR.strings.browse_search_anime_sources),
                 modifier = Modifier.weight(1f),
             )
+            IconButton(onClick = onClickGlobalSearch) {
+                Icon(
+                    imageVector = Icons.Outlined.TravelExplore,
+                    contentDescription = stringResource(MR.strings.action_global_search),
+                )
+            }
             // Anime sources filter (languages / single sources), like the manga one
             IconButton(onClick = onClickFilter) {
                 Icon(

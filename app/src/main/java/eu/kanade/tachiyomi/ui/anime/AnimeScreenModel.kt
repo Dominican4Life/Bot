@@ -51,6 +51,10 @@ class AnimeScreenModel(
     private val excludedScanlatorsPref = preferenceStore.getStringSet("anime_excluded_scanlators_$animeId", emptySet())
     private val notesPref = preferenceStore.getString("anime_notes_$animeId", "")
 
+    /** Source order, keeping each merged anime's episodes together in merge order */
+    private fun orderKey(episode: Episode): Long =
+        (state.value.memberOrder[episode.animeId] ?: 0).toLong() * 1_000_000L + episode.sourceOrder
+
     private data class Quad(val anime: Anime?, val episodes: List<Episode>, val excluded: Set<String>, val notes: String)
 
     private fun filterAndSort(anime: Anime, episodes: List<Episode>, excluded: Set<String>): List<Episode> {
@@ -63,7 +67,7 @@ class AnimeScreenModel(
             anime.unseenFilter.keep(!ep.seen) &&
                 anime.bookmarkedFilter.keep(ep.bookmark) &&
                 anime.fillermarkedFilter.keep(ep.fillermark) &&
-                anime.downloadedFilter.keep(downloadManager.isDownloaded(anime, ep)) &&
+                anime.downloadedFilter.keep(downloadManager.isDownloaded(state.value.animeOf(ep) ?: anime, ep)) &&
                 (ep.scanlator.isNullOrBlank() || ep.scanlator !in excluded)
         }
         // "Descending" is the default: newest first
@@ -72,7 +76,7 @@ class AnimeScreenModel(
             Anime.SORT_BY_NUMBER -> shown.sortedBy { it.episodeNumber }.let { if (descending) it.reversed() else it }
             Anime.SORT_BY_UPLOAD_DATE -> shown.sortedBy { it.dateUpload }.let { if (descending) it.reversed() else it }
             Anime.SORT_BY_ALPHABET -> shown.sortedBy { it.name.lowercase() }.let { if (descending) it.reversed() else it }
-            else -> shown.sortedBy { it.sourceOrder }.let { if (descending) it else it.reversed() }
+            else -> shown.sortedBy { orderKey(it) }.let { if (descending) it else it.reversed() }
         }
         return sorted
     }
@@ -83,9 +87,28 @@ class AnimeScreenModel(
 
     init {
         screenModelScope.launchIO {
+            // KMK: a merged page lists the episodes of every merged anime
+            val episodesFlow = repository.subscribeMergeMembers(animeId).flatMapLatest { members ->
+                mutableState.update { state ->
+                    state.copy(
+                        members = members,
+                        memberOrder = members.mapIndexed { index, a -> a.id to index }.toMap(),
+                        memberSources = if (members.size > 1) {
+                            members.associate { a -> a.id to (sourceManager.get(a.source)?.name ?: a.source.toString()) }
+                        } else {
+                            emptyMap()
+                        },
+                    )
+                }
+                if (members.size <= 1) {
+                    repository.subscribeEpisodes(animeId)
+                } else {
+                    combine(members.map { repository.subscribeEpisodes(it.id) }) { lists -> lists.flatMap { it } }
+                }
+            }
             combine(
                 repository.subscribeAnime(animeId),
-                repository.subscribeEpisodes(animeId),
+                episodesFlow,
                 excludedScanlatorsPref.changes(),
                 notesPref.changes(),
             ) { anime, episodes, excluded, notes ->
@@ -107,7 +130,9 @@ class AnimeScreenModel(
                         excludedScanlators = excluded,
                         notes = notes,
                         downloadedIds = anime?.let { a ->
-                            episodes.filter { downloadManager.isDownloaded(a, it) }.map { it.id }.toSet()
+                            episodes.filter { downloadManager.isDownloaded(state.animeOf(it) ?: a, it) }
+                                .map { it.id }
+                                .toSet()
                         } ?: emptySet(),
                         isLoaded = true,
                     )
@@ -136,7 +161,10 @@ class AnimeScreenModel(
                     state.copy(
                         activeDownloads = active,
                         downloadedIds = anime?.let { a ->
-                            state.allEpisodes.filter { downloadManager.isDownloaded(a, it) }.map { it.id }.toSet()
+                            state.allEpisodes
+                                .filter { downloadManager.isDownloaded(state.animeOf(it) ?: a, it) }
+                                .map { it.id }
+                                .toSet()
                         } ?: emptySet(),
                         episodes = anime?.let { filterAndSort(it, state.allEpisodes, state.excludedScanlators) }
                             ?: state.episodes,
@@ -177,6 +205,12 @@ class AnimeScreenModel(
             try {
                 val anime = repository.getAnime(animeId) ?: return@launchIO
                 repository.refreshFromSource(anime, source)
+                // KMK: merged anime refresh from their own sources too
+                state.value.members.filter { it.id != animeId }.forEach { member ->
+                    val memberSource = sourceManager.get(member.source) ?: return@forEach
+                    runCatching { repository.refreshFromSource(member, memberSource) }
+                        .onFailure { e -> logcat(LogPriority.WARN, e) { "Couldn't refresh ${member.title}" } }
+                }
                 val updated = repository.getAnime(animeId) ?: anime
                 if (updated.fetchType == FetchType.Seasons) {
                     val seasons = source.getSeasonList(updated.toSAnime())
@@ -269,13 +303,18 @@ class AnimeScreenModel(
     /** "Clear anime": removes downloaded files and/or the saved episodes (then fetches the list again) */
     fun clearAnime(deleteDownloads: Boolean, removeEpisodes: Boolean) {
         val anime = state.value.anime ?: return
-        if (deleteDownloads) downloadManager.deleteAnime(anime)
+        if (deleteDownloads) (state.value.members.ifEmpty { listOf(anime) }).forEach(downloadManager::deleteAnime)
         if (removeEpisodes) {
             screenModelScope.launchIO {
                 repository.deleteEpisodes(animeId)
                 refresh()
             }
         }
+    }
+
+    /** Takes [member] off this merged page */
+    fun removeFromMerge(member: Anime) {
+        screenModelScope.launchIO { repository.removeFromMerge(animeId, member.id) }
     }
 
     /** Toolbar download menu */
@@ -292,12 +331,13 @@ class AnimeScreenModel(
             DownloadAction.UNREAD_CHAPTERS -> unseen
             DownloadAction.BOOKMARKED_CHAPTERS -> inOrder.filter { it.bookmark }
         }
-        downloadManager.enqueue(anime, episodes)
+        episodes.groupBy { state.value.animeOf(it) ?: anime }
+            .forEach { (owner, list) -> downloadManager.enqueue(owner, list) }
     }
 
     /** The download button on an episode row */
     fun episodeDownloadAction(episode: Episode, action: ChapterDownloadAction) {
-        val anime = state.value.anime ?: return
+        val anime = state.value.animeOf(episode) ?: return
         when (action) {
             ChapterDownloadAction.START -> downloadManager.enqueue(anime, listOf(episode))
             ChapterDownloadAction.START_NOW -> downloadManager.enqueue(anime, listOf(episode), startNow = true)
@@ -428,6 +468,10 @@ class AnimeScreenModel(
         val excludedScanlators: Set<String> = emptySet(),
         val notes: String = "",
         val downloadedIds: Set<Long> = emptySet(),
+        val members: List<Anime> = emptyList(),
+        val memberOrder: Map<Long, Int> = emptyMap(),
+        /** Source name per merged anime id (empty when not merged) */
+        val memberSources: Map<Long, String> = emptyMap(),
         val activeDownloads: Map<Long, DownloadInfo> = emptyMap(),
     ) {
         fun downloadState(episode: Episode): Download.State = activeDownloads[episode.id]?.state
@@ -440,7 +484,15 @@ class AnimeScreenModel(
 
         /** The episode the Start/Resume button plays: the first unwatched one, oldest first */
         val nextEpisode: Episode?
-            get() = allEpisodes.sortedByDescending { it.sourceOrder }.firstOrNull { !it.seen }
+            get() = allEpisodes
+                .sortedWith(
+                    compareBy<Episode> { memberOrder[it.animeId] ?: 0 }.thenByDescending { it.sourceOrder },
+                )
+                .firstOrNull { !it.seen }
+
+        /** The anime an episode belongs to (another one when this page is merged) */
+        fun animeOf(episode: Episode): Anime? =
+            if (episode.animeId == anime?.id) anime else members.firstOrNull { it.id == episode.animeId } ?: anime
 
         val hasStarted: Boolean
             get() = allEpisodes.any { it.seen || it.lastSecondSeen > 0 }

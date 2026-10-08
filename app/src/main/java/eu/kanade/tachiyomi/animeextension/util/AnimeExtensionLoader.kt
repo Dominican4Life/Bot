@@ -64,6 +64,10 @@ internal object AnimeExtensionLoader {
     private const val METADATA_TORRENT = "tachiyomi.animeextension.torrent"
 
     // Same range as Anikku
+    /** KMK: why the last extension failed to load, shown to the user after installing */
+    @Volatile
+    var lastError: String? = null
+
     const val LIB_VERSION_MIN = 12
     const val LIB_VERSION_MAX = 16
 
@@ -201,6 +205,7 @@ internal object AnimeExtensionLoader {
         val extensionPackage = getExtensionInfoFromPkgName(context, pkgName)
         if (extensionPackage == null) {
             logcat(LogPriority.ERROR) { "Extension package is not found ($pkgName)" }
+            lastError = "the app couldn't find the installed package"
             return AnimeLoadResult.Error
         }
         return loadExtension(context, extensionPackage)
@@ -269,6 +274,7 @@ internal object AnimeExtensionLoader {
 
         if (versionName.isNullOrEmpty()) {
             logcat(LogPriority.WARN) { "Missing versionName for extension $extName" }
+            lastError = "it has no version name"
             return AnimeLoadResult.Error
         }
 
@@ -278,12 +284,14 @@ internal object AnimeExtensionLoader {
             logcat(LogPriority.WARN) {
                 "Lib version is $libVersion, while only versions $LIB_VERSION_MIN to $LIB_VERSION_MAX are allowed"
             }
+            lastError = "it was built for extension lib $libVersion; this app supports $LIB_VERSION_MIN to $LIB_VERSION_MAX"
             return AnimeLoadResult.Error
         }
 
         val signatures = getSignatures(pkgInfo)
         if (signatures.isNullOrEmpty()) {
             logcat(LogPriority.WARN) { "Package $pkgName isn't signed" }
+            lastError = "it isn't signed"
             return AnimeLoadResult.Error
         } else if (!trustExtension.isTrusted(pkgInfo, signatures)) {
             val extension = Extension.Untrusted(
@@ -309,6 +317,7 @@ internal object AnimeExtensionLoader {
         val isTorrent = appInfo.metaData.getInt(METADATA_TORRENT) == 1
         if (!loadNsfwSource && isNsfw) {
             logcat(LogPriority.WARN) { "NSFW extension $pkgName not allowed" }
+            lastError = "it's an 18+ extension and 18+ sources are hidden (Settings › Browse)"
             return AnimeLoadResult.Error
         }
 
@@ -316,6 +325,7 @@ internal object AnimeExtensionLoader {
             ChildFirstPathClassLoader(appInfo.sourceDir, null, context.classLoader)
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, e) { "Extension load error: $extName ($pkgName)" }
+            lastError = "its code couldn't be loaded (${e.message})"
             return AnimeLoadResult.Error
         }
 
@@ -338,6 +348,7 @@ internal object AnimeExtensionLoader {
                     }
                 } catch (e: Throwable) {
                     logcat(LogPriority.ERROR, e) { "Extension load error: $extName ($it)" }
+                    lastError = "one of its sources failed to load (${e.message})"
                     return AnimeLoadResult.Error
                 }
             }

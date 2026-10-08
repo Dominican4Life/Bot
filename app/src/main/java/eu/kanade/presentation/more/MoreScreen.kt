@@ -28,6 +28,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -67,6 +69,7 @@ fun MoreScreen(
     showNavHistory: Boolean,
     // SY <--
     onClickDownloadQueue: () -> Unit,
+    onClickAnimeDownloadQueue: () -> Unit,
     onClickCategories: () -> Unit,
     onClickStats: () -> Unit,
     onClickDataAndStorage: () -> Unit,
@@ -168,6 +171,20 @@ fun MoreScreen(
                     onPreferenceClick = onClickDownloadQueue,
                 )
             }
+            // KMK -->
+            item {
+                val animeManager = remember { Injekt.get<eu.kanade.tachiyomi.data.anime.download.AnimeDownloadManager>() }
+                val animeQueue by animeManager.queue.collectAsState()
+                TextPreferenceWidget(
+                    title = stringResource(KMR.strings.anime_download_queue),
+                    subtitle = animeQueue.size.takeIf { it > 0 }?.let {
+                        pluralStringResource(MR.plurals.download_queue_summary, count = it, it)
+                    },
+                    icon = Icons.Outlined.GetApp,
+                    onPreferenceClick = onClickAnimeDownloadQueue,
+                )
+            }
+            // KMK <--
             item {
                 TextPreferenceWidget(
                     title = stringResource(MR.strings.categories),

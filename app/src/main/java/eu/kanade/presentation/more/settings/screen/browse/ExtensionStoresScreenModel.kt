@@ -1,15 +1,18 @@
 package eu.kanade.presentation.more.settings.screen.browse
 
+import android.app.Application
 import androidx.compose.runtime.Immutable
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.tachiyomi.animeextension.AnimeExtensionManager
 import eu.kanade.tachiyomi.extension.ExtensionManager
+import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
+import mihon.data.extension.service.ExtensionStoreService
 import mihon.domain.extension.interactor.AddExtensionStore
 import mihon.domain.extension.interactor.GetExtensionStores
 import mihon.domain.extension.interactor.RemoveExtensionStore
@@ -18,6 +21,8 @@ import mihon.domain.extension.model.ExtensionStore
 import mihon.domain.extension.repository.AnimeExtensionStoreRepository
 import mihon.domain.extension.repository.ExtensionStoreRepository
 import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.core.common.util.lang.withUIContext
+import tachiyomi.i18n.kmk.KMR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
@@ -102,6 +107,35 @@ class ExtensionStoresScreenModel(
                     },
                 )
             }
+            // KMK: an Aniyomi repo added on the manga side goes to the anime repos instead
+            if (!anime && isAnimeRepo(indexUrl)) {
+                Injekt.get<AnimeExtensionStoreRepository>().insert(indexUrl)
+                    .onSuccess {
+                        Injekt.get<AnimeExtensionManager>().findAvailableExtensions()
+                        withUIContext {
+                            Injekt.get<Application>().toast(KMR.strings.anime_repo_moved)
+                        }
+                        dismissDialog()
+                    }
+                    .onFailure { throwable ->
+                        updateSuccessState {
+                            it.copy(
+                                dialog = when (it.dialog) {
+                                    is ExtensionStoreDialog.Create -> it.dialog.copy(
+                                        processing = false,
+                                        errorMessage = throwable.message ?: "unknown error",
+                                    )
+                                    is ExtensionStoreDialog.Confirm -> it.dialog.copy(
+                                        processing = false,
+                                        errorMessage = throwable.message ?: "unknown error",
+                                    )
+                                    else -> it.dialog
+                                },
+                            )
+                        }
+                    }
+                return@launchIO
+            }
             addExtensionStore(indexUrl)
                 .onSuccess {
                     findAvailableExtensions()
@@ -181,6 +215,14 @@ class ExtensionStoresScreenModel(
     // KMK <--
 
     // KMK -->
+    /** Whether the repo lists Aniyomi (anime) extensions */
+    private suspend fun isAnimeRepo(indexUrl: String): Boolean {
+        val service = Injekt.get<ExtensionStoreService>()
+        val store = service.fetch(indexUrl).getOrNull() ?: return false
+        val extensions = service.getExtensions(store).getOrNull() ?: return false
+        return extensions.isNotEmpty() && extensions.all { it.pkgName.contains(".animeextension.") }
+    }
+
     private suspend fun findAvailableExtensions() {
         if (anime) {
             Injekt.get<AnimeExtensionManager>().findAvailableExtensions()

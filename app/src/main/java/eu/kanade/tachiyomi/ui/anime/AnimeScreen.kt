@@ -105,6 +105,7 @@ import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.ank.AMR
 import tachiyomi.i18n.kmk.KMR
+import tachiyomi.i18n.sy.SYMR
 import tachiyomi.presentation.core.components.LabeledCheckbox
 import tachiyomi.presentation.core.components.RadioItem
 import tachiyomi.presentation.core.components.ScrollbarLazyColumn
@@ -188,6 +189,8 @@ class AnimeScreen(private val animeId: Long) : Screen() {
                 }
             },
             onRelatedScreen = { navigator.push(AnimeRelatedScreen(anime.id)) },
+            onMerge = { navigator.push(AnimeGlobalSearchScreen(anime.title, mergeIntoId = anime.id)) },
+            onMergeSettings = { dialog = AnimeDialog.MergeSettings },
             onSearch = { query -> navigator.push(AnimeSourceScreen(anime.source, query)) },
             onSourceClick = { navigator.push(AnimeSourceScreen(anime.source)) },
             onOpenAnime = { navigator.push(AnimeScreen(it.id)) },
@@ -224,6 +227,17 @@ class AnimeScreen(private val animeId: Long) : Screen() {
                     onDismissRequest = { dialog = null },
                     onConfirm = screenModel::clearAnime,
                 )
+                AnimeDialog.MergeSettings -> MergeSettingsDialog(
+                    rootId = anime.id,
+                    members = state.members,
+                    memberSources = state.memberSources,
+                    onDismissRequest = { dialog = null },
+                    onOpen = {
+                        dialog = null
+                        navigator.push(AnimeScreen(it.id))
+                    },
+                    onRemove = screenModel::removeFromMerge,
+                )
             }
             if (isTabletUi()) {
                 AnimeScreenLarge(state, anime, actions, screenModel.source)
@@ -240,7 +254,7 @@ class AnimeScreen(private val animeId: Long) : Screen() {
     }
 }
 
-private enum class AnimeDialog { Settings, Scanlators, Notes, Clear }
+private enum class AnimeDialog { Settings, Scanlators, Notes, Clear, MergeSettings }
 
 /** Everything the details page can do, passed down to both layouts */
 private class AnimeActions(
@@ -256,6 +270,8 @@ private class AnimeActions(
     val onClearAnime: () -> Unit,
     val onSourceSettings: () -> Unit,
     val onRelatedScreen: () -> Unit,
+    val onMerge: () -> Unit,
+    val onMergeSettings: () -> Unit,
     val onSearch: (String) -> Unit,
     val onSourceClick: () -> Unit,
     val onOpenAnime: (Anime) -> Unit,
@@ -371,8 +387,8 @@ private fun AnimeToolbar(
         onClearManga = actions.onClearAnime,
         onOpenMangaFolder = null,
         onClickRecommend = null,
-        onClickMerge = null,
-        onClickMergedSettings = null,
+        onClickMerge = actions.onMerge,
+        onClickMergedSettings = actions.onMergeSettings,
         actionModeCounter = 0,
         onCancelActionMode = {},
         onSelectAll = {},
@@ -840,6 +856,7 @@ private fun LazyListScope.episodeItems(
         EpisodeItem(
             episode = episode,
             displayNumber = anime.displayNumber,
+            sourceLabel = state.memberSources[episode.animeId],
             downloadState = state.downloadState(episode),
             downloadProgress = state.downloadProgress(episode),
             onDownload = { action -> actions.onEpisodeDownload(episode, action) },
@@ -854,6 +871,7 @@ private fun LazyListScope.episodeItems(
 private fun EpisodeItem(
     episode: Episode,
     displayNumber: Boolean,
+    sourceLabel: String?,
     downloadState: Download.State,
     downloadProgress: Int,
     onDownload: (ChapterDownloadAction) -> Unit,
@@ -891,6 +909,7 @@ private fun EpisodeItem(
         date = date,
         readProgress = progress,
         scanlator = listOfNotNull(
+            sourceLabel,
             episode.scanlator?.takeIf { it.isNotBlank() },
             stringResource(KMR.strings.anime_filler).takeIf { episode.fillermark },
         ).joinToString(" • ").ifEmpty { null },
@@ -918,6 +937,51 @@ private fun EpisodeItem(
                     },
                 )
                 else -> {}
+            }
+        },
+    )
+}
+
+/** The anime merged into this page, with their sources; each can be opened or taken off */
+@Composable
+private fun MergeSettingsDialog(
+    rootId: Long,
+    members: List<Anime>,
+    memberSources: Map<Long, String>,
+    onDismissRequest: () -> Unit,
+    onOpen: (Anime) -> Unit,
+    onRemove: (Anime) -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismissRequest,
+        confirmButton = { TextButton(onClick = onDismissRequest) { Text(stringResource(MR.strings.action_ok)) } },
+        title = { Text(stringResource(SYMR.strings.merge_settings)) },
+        text = {
+            if (members.size <= 1) {
+                Text(stringResource(KMR.strings.anime_merge_settings_empty))
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    members.forEach { member ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(member.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    text = memberSources[member.id].orEmpty(),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            if (member.id != rootId) {
+                                TextButton(onClick = { onOpen(member) }) {
+                                    Text(stringResource(KMR.strings.anime_merge_open))
+                                }
+                                TextButton(onClick = { onRemove(member) }) {
+                                    Text(stringResource(KMR.strings.anime_merge_remove))
+                                }
+                            }
+                        }
+                    }
+                }
             }
         },
     )

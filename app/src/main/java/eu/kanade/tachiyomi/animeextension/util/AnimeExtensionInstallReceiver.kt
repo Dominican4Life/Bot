@@ -4,16 +4,21 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.widget.Toast
 import androidx.core.content.ContextCompat
 import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.animeextension.model.AnimeExtension
 import eu.kanade.tachiyomi.animeextension.model.AnimeLoadResult
 import eu.kanade.tachiyomi.extension.model.Extension
+import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import logcat.LogPriority
+import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.i18n.kmk.KMR
 
 /**
  * Broadcast receiver that listens for the system's packages installed, updated or removed, and only
@@ -54,7 +59,7 @@ internal class AnimeExtensionInstallReceiver(private val listener: Listener) : B
                     when (val result = getExtensionFromIntent(context, intent)) {
                         is AnimeLoadResult.Success -> listener.onExtensionInstalled(result.extension)
                         is AnimeLoadResult.Untrusted -> listener.onExtensionUntrusted(result.extension)
-                        else -> {}
+                        else -> reportLoadError(context, intent)
                     }
                 }
             }
@@ -63,7 +68,7 @@ internal class AnimeExtensionInstallReceiver(private val listener: Listener) : B
                     when (val result = getExtensionFromIntent(context, intent)) {
                         is AnimeLoadResult.Success -> listener.onExtensionUpdated(result.extension)
                         is AnimeLoadResult.Untrusted -> listener.onExtensionUntrusted(result.extension)
-                        else -> {}
+                        else -> reportLoadError(context, intent)
                     }
                 }
             }
@@ -75,6 +80,19 @@ internal class AnimeExtensionInstallReceiver(private val listener: Listener) : B
                     listener.onPackageUninstalled(pkgName)
                 }
             }
+        }
+    }
+
+    /** KMK: tell why an installed anime extension can't be used (only for anime extension packages) */
+    private suspend fun reportLoadError(context: Context, intent: Intent) {
+        val pkgName = getPackageNameFromIntent(intent) ?: return
+        if (!pkgName.contains(".animeextension.")) return
+        val reason = AnimeExtensionLoader.lastError ?: return
+        withUIContext {
+            context.toast(
+                context.stringResource(KMR.strings.anime_ext_not_loaded, pkgName.substringAfterLast('.'), reason),
+                Toast.LENGTH_LONG,
+            )
         }
     }
 

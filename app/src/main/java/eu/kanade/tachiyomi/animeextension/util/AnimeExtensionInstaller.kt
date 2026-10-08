@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.animeextension.util
 
 import android.content.Context
 import android.content.Intent
+import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import eu.kanade.domain.base.BasePreferences
@@ -14,6 +15,7 @@ import eu.kanade.tachiyomi.extension.util.ExtensionInstallService
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.util.storage.getUriCompat
 import eu.kanade.tachiyomi.util.system.isPackageInstalled
+import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -26,7 +28,10 @@ import kotlinx.coroutines.launch
 import logcat.LogPriority
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.i18n.kmk.KMR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.File
@@ -79,7 +84,7 @@ internal class AnimeExtensionInstaller(
                         // KMK <--
 
                         if (!response.isSuccessful) {
-                            throw Exception("Failed to download extension")
+                            throw Exception("download failed (HTTP ${response.code})")
                         }
                         // KMK -->
                         tmpFile.outputStream().use { output ->
@@ -98,6 +103,17 @@ internal class AnimeExtensionInstaller(
                 } else {
                     logcat(LogPriority.ERROR, e)
                     step.value = InstallStep.Error
+                    // KMK: say why instead of only showing the retry button
+                    withUIContext {
+                        context.toast(
+                            context.stringResource(
+                                KMR.strings.anime_ext_install_failed,
+                                extension.name,
+                                e.message ?: e.javaClass.simpleName,
+                            ),
+                            Toast.LENGTH_LONG,
+                        )
+                    }
                 }
                 // KMK -->
                 tmpFile.delete()
@@ -136,6 +152,16 @@ internal class AnimeExtensionInstaller(
                         updateInstallStep(downloadId, InstallStep.Installed)
                     } else {
                         updateInstallStep(downloadId, InstallStep.Error)
+                        AnimeExtensionLoader.lastError?.let { reason ->
+                            scope.launch {
+                                withUIContext {
+                                    context.toast(
+                                        context.stringResource(KMR.strings.anime_ext_install_failed, tempFile.name, reason),
+                                        Toast.LENGTH_LONG,
+                                    )
+                                }
+                            }
+                        }
                     }
                 } catch (e: Exception) {
                     logcat(LogPriority.ERROR, e) { "Failed to read downloaded extension file." }

@@ -703,7 +703,8 @@ class MainActivity : BaseActivity() {
                 else if (intent.isAddExtensionStoreIntent()) {
                     intent.data?.getQueryParameter("url")?.let { repoUrl ->
                         navigator.popUntilRoot()
-                        navigator.push(ExtensionStoresScreen(repoUrl))
+                        // KMK: "Add to Aniyomi" links go to the anime repos
+                        navigator.push(ExtensionStoresScreen(repoUrl, anime = intent.isAddAnimeStoreIntent()))
                     }
                 }
                 null
@@ -721,8 +722,16 @@ class MainActivity : BaseActivity() {
 
     private fun Intent.isAddExtensionStoreIntent(): Boolean {
         return (scheme == "tachiyomi" && data?.host == "add-repo") ||
-            (scheme == "mihon" && data?.host == "extension-store")
+            (scheme == "mihon" && data?.host == "extension-store") ||
+            // KMK -->
+            isAddAnimeStoreIntent()
+        // KMK <--
     }
+
+    // KMK -->
+    private fun Intent.isAddAnimeStoreIntent(): Boolean =
+        scheme in listOf("aniyomi", "anikku", "animetail") && data?.host == "add-repo"
+    // KMK <--
 
     companion object {
         const val INTENT_SEARCH = "eu.kanade.tachiyomi.SEARCH"

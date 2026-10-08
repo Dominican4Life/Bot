@@ -187,12 +187,29 @@ class ExtensionManager(
      * Finds the available extensions in the [api] and updates [availableExtensionMapFlow].
      */
     suspend fun findAvailableExtensions() {
-        val extensions: List<Extension.Available> = try {
+        val allExtensions: List<Extension.Available> = try {
             api.findExtensions()
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, e)
             withUIContext { context.toast(MR.strings.extension_api_error) }
             return
+        }
+
+        // KMK: Aniyomi repos added as manga repos can't install anything here; move them to the anime repos
+        val (animeExtensions, extensions) = allExtensions.partition { it.pkgName.contains(".animeextension.") }
+        val animeStores = animeExtensions.map { it.store }.distinctBy { it.indexUrl }
+            .filter { store -> extensions.none { it.store.indexUrl == store.indexUrl } }
+        if (animeStores.isNotEmpty()) {
+            val mangaStores = Injekt.get<mihon.domain.extension.repository.ExtensionStoreRepository>()
+            val animeStoreRepo = Injekt.get<mihon.domain.extension.repository.AnimeExtensionStoreRepository>()
+            animeStores.forEach { store ->
+                runCatching {
+                    animeStoreRepo.insert(store.indexUrl).getOrThrow()
+                    mangaStores.remove(store.indexUrl)
+                }.onFailure { logcat(LogPriority.WARN, it) { "Couldn't move anime repo ${store.indexUrl}" } }
+            }
+            Injekt.get<eu.kanade.tachiyomi.animeextension.AnimeExtensionManager>().findAvailableExtensions()
+            withUIContext { context.toast(tachiyomi.i18n.kmk.KMR.strings.anime_repo_moved) }
         }
 
         enableAdditionalSubLanguages(extensions)
