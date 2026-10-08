@@ -21,6 +21,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -69,6 +70,8 @@ fun MigrateSourceScreen(
     onToggleSortingMode: () -> Unit,
     // KMK -->
     onChangeSearchQuery: (String?) -> Unit,
+    /** Migrate every library entry from this source at once (from TachiyomiSY) */
+    onClickAll: (Source) -> Unit = {},
     // KMK <--
 ) {
     val context = LocalContext.current
@@ -97,6 +100,7 @@ fun MigrateSourceScreen(
                 // KMK -->
                 state = state,
                 onChangeSearchQuery = onChangeSearchQuery,
+                onClickAll = onClickAll,
                 // KMK <--
             )
     }
@@ -115,6 +119,7 @@ private fun MigrateSourceList(
     // KMK -->
     state: MigrateSourceScreenModel.State,
     onChangeSearchQuery: (String?) -> Unit,
+    onClickAll: (Source) -> Unit,
     // KMK <--
 ) {
     // KMK -->
@@ -211,6 +216,9 @@ private fun MigrateSourceList(
                         count = count,
                         onClickItem = { onClickItem(source) },
                         onLongClickItem = { onLongClickItem(source) },
+                        // KMK -->
+                        onClickAll = { onClickAll(source) },
+                        // KMK <--
                     )
                 }
             }
@@ -242,6 +250,9 @@ private fun MigrateSourceItem(
     count: Long,
     onClickItem: () -> Unit,
     onLongClickItem: () -> Unit,
+    // KMK -->
+    onClickAll: () -> Unit,
+    // KMK <--
     modifier: Modifier = Modifier,
 ) {
     BaseSourceItem(
@@ -255,6 +266,14 @@ private fun MigrateSourceItem(
             BadgeGroup {
                 Badge(text = "$count")
             }
+            // KMK -->
+            TextButton(onClick = onClickAll) {
+                Text(
+                    text = stringResource(MR.strings.all),
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            // KMK <--
         },
         content = { _, sourceLangString, /* KMK --> */ lang /* KMK <-- */ ->
             Column(
