@@ -32,8 +32,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -58,9 +60,12 @@ import eu.kanade.presentation.browse.components.SavedSearchCreateDialog
 import eu.kanade.presentation.browse.components.SavedSearchDeleteDialog
 import eu.kanade.presentation.category.components.ChangeCategoryDialog
 import eu.kanade.presentation.components.BulkSelectionToolbar
+import eu.kanade.presentation.manga.ChapterSettingsDialog
 import eu.kanade.presentation.manga.DuplicateMangaDialog
+import eu.kanade.presentation.manga.components.ScanlatorFilterDialog
 import eu.kanade.presentation.more.settings.screen.SettingsEhScreen
 import eu.kanade.presentation.reader.sidePanelWidth
+import eu.kanade.presentation.theme.TachiyomiTheme
 import eu.kanade.presentation.util.AssistContentScreen
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.source.ConfigurableSource
@@ -80,6 +85,7 @@ import exh.source.anyIs
 import exh.source.isEhBasedSource
 import exh.source.isMdBasedSource
 import exh.ui.smartsearch.SmartSearchScreen
+import kotlinx.collections.immutable.toImmutableSet
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -187,6 +193,8 @@ data class BrowseSourceScreen(
         val previewScreenModel = rememberScreenModel { BrowsePreviewScreenModel(screenModel.source) }
         val previewState by previewScreenModel.state.collectAsState()
         val previewEnabled = smartSearchConfig == null
+        var showChapterSettings by remember { mutableStateOf(false) }
+        var showScanlatorFilter by remember { mutableStateOf(false) }
 
         // Covers per row, adjustable from the display mode menu
         val orientation = LocalConfiguration.current.orientation
@@ -451,31 +459,63 @@ data class BrowseSourceScreen(
                 )
 
                 // KMK -->
-                // The panels start below the toolbar and the Popular / Latest / Filter row
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(top = paddingValues.calculateTopPadding()),
-                ) {
-                    BrowseChapterPanel(
-                        state = previewState,
-                        onClose = previewScreenModel::closeChapterPanel,
-                        onSelectChapter = previewScreenModel::selectChapter,
-                        onOpenChapter = { chapter ->
-                            context.startActivity(ReaderActivity.newIntent(context, chapter.mangaId, chapter.id))
-                        },
-                    )
-                    BrowsePagePanel(
-                        state = previewState,
-                        source = previewScreenModel.httpSource,
-                        onClose = previewScreenModel::closePagePanel,
-                        onRetry = { previewState.selectedChapter?.let(previewScreenModel::selectChapter) },
-                        onOpenPage = { chapter, pageIndex ->
-                            context.startActivity(
-                                ReaderActivity.newIntent(context, chapter.mangaId, chapter.id, pageIndex),
-                            )
-                        },
-                    )
+                // The panels start below the toolbar and the Popular / Latest / Filter row,
+                // and are colored to match the selected cover like the details page.
+                TachiyomiTheme(seedColor = previewState.seedColor) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(top = paddingValues.calculateTopPadding()),
+                    ) {
+                        BrowseChapterPanel(
+                            state = previewState,
+                            onClose = previewScreenModel::closeChapterPanel,
+                            onSelectChapter = previewScreenModel::selectChapter,
+                            onOpenChapter = { chapter ->
+                                context.startActivity(ReaderActivity.newIntent(context, chapter.mangaId, chapter.id))
+                            },
+                            onToggleRead = previewScreenModel::toggleRead,
+                            onToggleBookmark = previewScreenModel::toggleBookmark,
+                            onChapterDownloadAction = previewScreenModel::runChapterDownloadAction,
+                            onDownloadAction = previewScreenModel::runDownloadAction,
+                            onOpenFilters = { showChapterSettings = true },
+                        )
+                        BrowsePagePanel(
+                            state = previewState,
+                            source = previewScreenModel.httpSource,
+                            onClose = previewScreenModel::closePagePanel,
+                            onRetry = { previewState.selectedChapter?.let(previewScreenModel::selectChapter) },
+                            onOpenPage = { chapter, pageIndex ->
+                                context.startActivity(
+                                    ReaderActivity.newIntent(context, chapter.mangaId, chapter.id, pageIndex),
+                                )
+                            },
+                        )
+                    }
+
+                    if (showChapterSettings) {
+                        ChapterSettingsDialog(
+                            onDismissRequest = { showChapterSettings = false },
+                            manga = previewState.manga,
+                            onDownloadFilterChanged = previewScreenModel::setDownloadedFilter,
+                            onUnreadFilterChanged = previewScreenModel::setUnreadFilter,
+                            onBookmarkedFilterChanged = previewScreenModel::setBookmarkedFilter,
+                            scanlatorFilterActive = previewState.scanlatorFilterActive,
+                            onScanlatorFilterClicked = { showScanlatorFilter = true },
+                            onSortModeChanged = previewScreenModel::setSorting,
+                            onDisplayModeChanged = previewScreenModel::setDisplayMode,
+                            onSetAsDefault = previewScreenModel::setCurrentSettingsAsDefault,
+                            onResetToDefault = previewScreenModel::resetToDefaultSettings,
+                        )
+                    }
+                    if (showScanlatorFilter) {
+                        ScanlatorFilterDialog(
+                            availableScanlators = previewState.availableScanlators.toImmutableSet(),
+                            excludedScanlators = previewState.excludedScanlators.toImmutableSet(),
+                            onDismissRequest = { showScanlatorFilter = false },
+                            onConfirm = previewScreenModel::setExcludedScanlators,
+                        )
+                    }
                 }
             }
             // KMK <--

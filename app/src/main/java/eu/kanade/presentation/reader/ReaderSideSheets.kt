@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.aspectRatio
@@ -172,6 +173,8 @@ fun SlidingSidePanel(
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
     applyTopInset: Boolean = true,
+    /** Extra buttons shown in the header, left of the X */
+    actions: @Composable RowScope.() -> Unit = {},
     content: @Composable () -> Unit,
 ) {
     // +1 slides towards the right edge, -1 towards the left edge
@@ -224,6 +227,7 @@ fun SlidingSidePanel(
                             style = MaterialTheme.typography.titleLarge,
                             modifier = Modifier.weight(1f),
                         )
+                        actions()
                         IconButton(onClick = onClose) {
                             Icon(
                                 imageVector = Icons.Outlined.Close,

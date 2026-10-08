@@ -6,10 +6,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -19,13 +21,28 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.FilterList
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -39,21 +56,35 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
+import eu.kanade.domain.manga.model.chaptersFiltered
+import eu.kanade.presentation.manga.DownloadAction
+import eu.kanade.presentation.manga.components.ChapterDownloadAction
+import eu.kanade.presentation.manga.components.ChapterDownloadIndicator
 import eu.kanade.presentation.reader.SlidingSidePanel
+import eu.kanade.presentation.util.formatChapterNumber
 import eu.kanade.tachiyomi.data.coil.SourcePageThumbnail
+import eu.kanade.tachiyomi.data.download.DownloadManager
+import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowsePreviewScreenModel
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
 import tachiyomi.domain.chapter.model.Chapter
+import tachiyomi.domain.manga.model.Manga
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
+import tachiyomi.presentation.core.i18n.pluralStringResource
 import tachiyomi.presentation.core.i18n.stringResource
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import java.text.DateFormat
 import java.util.Date
 
 /**
  * KMK: Left panel on the browse source screen with the chapters of the selected cover.
  * Tap a chapter to preview its pages in the right panel; tap it again to start reading it.
+ * Each chapter has read, bookmark and download buttons; the header has download and filter menus.
  */
 @Composable
 fun BrowseChapterPanel(
@@ -61,6 +92,11 @@ fun BrowseChapterPanel(
     onClose: () -> Unit,
     onSelectChapter: (Chapter) -> Unit,
     onOpenChapter: (Chapter) -> Unit,
+    onToggleRead: (Chapter) -> Unit,
+    onToggleBookmark: (Chapter) -> Unit,
+    onChapterDownloadAction: (Chapter, ChapterDownloadAction) -> Unit,
+    onDownloadAction: (DownloadAction?) -> Unit,
+    onOpenFilters: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     SlidingSidePanel(
@@ -70,6 +106,52 @@ fun BrowseChapterPanel(
         onClose = onClose,
         modifier = modifier,
         applyTopInset = false,
+        actions = {
+            var showDownloadMenu by remember { mutableStateOf(false) }
+            Box {
+                IconButton(onClick = { showDownloadMenu = true }, enabled = state.manga != null) {
+                    Icon(
+                        imageVector = Icons.Outlined.Download,
+                        contentDescription = stringResource(MR.strings.manga_download),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                DropdownMenu(
+                    expanded = showDownloadMenu,
+                    onDismissRequest = { showDownloadMenu = false },
+                ) {
+                    listOf(
+                        DownloadAction.NEXT_1_CHAPTER to pluralStringResource(MR.plurals.download_amount, 1, 1),
+                        DownloadAction.NEXT_5_CHAPTERS to pluralStringResource(MR.plurals.download_amount, 5, 5),
+                        DownloadAction.NEXT_10_CHAPTERS to pluralStringResource(MR.plurals.download_amount, 10, 10),
+                        DownloadAction.NEXT_25_CHAPTERS to pluralStringResource(MR.plurals.download_amount, 25, 25),
+                        DownloadAction.UNREAD_CHAPTERS to stringResource(MR.strings.download_unread),
+                        DownloadAction.BOOKMARKED_CHAPTERS to stringResource(MR.strings.download_bookmarked),
+                        null to stringResource(KMR.strings.browse_download_all_chapters),
+                    ).forEach { (action, label) ->
+                        DropdownMenuItem(
+                            text = { Text(text = label) },
+                            onClick = {
+                                showDownloadMenu = false
+                                onDownloadAction(action)
+                            },
+                        )
+                    }
+                }
+            }
+            val filterActive = state.manga?.chaptersFiltered() == true || state.scanlatorFilterActive
+            IconButton(onClick = onOpenFilters, enabled = state.manga != null) {
+                Icon(
+                    imageVector = Icons.Outlined.FilterList,
+                    contentDescription = stringResource(MR.strings.action_filter),
+                    tint = if (filterActive) {
+                        MaterialTheme.colorScheme.tertiary
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
+                )
+            }
+        },
     ) {
         state.manga?.let {
             Text(
@@ -91,14 +173,24 @@ fun BrowseChapterPanel(
             }
             else -> key(state.manga?.id) {
                 val listState = rememberLazyListState()
+                val showNumber = state.manga?.displayMode == Manga.CHAPTER_DISPLAY_NUMBER
                 LazyColumn(
                     state = listState,
                     contentPadding = PaddingValues(vertical = 8.dp),
                     modifier = Modifier.fillMaxSize(),
                 ) {
-                    items(items = state.chapters, key = { it.id }) { chapter ->
+                    items(items = state.chapters, key = { it.chapter.id }) { item ->
+                        val chapter = item.chapter
                         BrowseChapterRow(
-                            chapter = chapter,
+                            item = item,
+                            title = if (showNumber) {
+                                stringResource(
+                                    MR.strings.display_mode_chapter,
+                                    formatChapterNumber(chapter.chapterNumber),
+                                )
+                            } else {
+                                chapter.name
+                            },
                             selected = chapter.id == state.selectedChapterId,
                             onClick = {
                                 if (chapter.id == state.selectedChapterId) {
@@ -107,6 +199,9 @@ fun BrowseChapterPanel(
                                     onSelectChapter(chapter)
                                 }
                             },
+                            onToggleRead = { onToggleRead(chapter) },
+                            onToggleBookmark = { onToggleBookmark(chapter) },
+                            onDownloadAction = { onChapterDownloadAction(chapter, it) },
                         )
                     }
                 }
@@ -117,17 +212,35 @@ fun BrowseChapterPanel(
 
 @Composable
 private fun BrowseChapterRow(
-    chapter: Chapter,
+    item: BrowsePreviewScreenModel.ChapterItem,
+    title: String,
     selected: Boolean,
     onClick: () -> Unit,
+    onToggleRead: () -> Unit,
+    onToggleBookmark: () -> Unit,
+    onDownloadAction: (ChapterDownloadAction) -> Unit,
 ) {
+    val chapter = item.chapter
     val subtitle = remember(chapter.dateUpload, chapter.scanlator) {
         listOfNotNull(
             chapter.dateUpload.takeIf { it > 0 }?.let { DateFormat.getDateInstance(DateFormat.SHORT).format(Date(it)) },
             chapter.scanlator?.takeIf { it.isNotBlank() },
         ).joinToString(" • ")
     }
-    Column(
+    // Live progress while this chapter is downloading
+    val downloadManager = remember { Injekt.get<DownloadManager>() }
+    val progress = if (item.downloadState == Download.State.DOWNLOADING) {
+        remember(chapter.id) {
+            downloadManager.progressFlow()
+                .filter { it.chapter.id == chapter.id }
+                .map { it.progress }
+        }.collectAsState(0).value
+    } else {
+        0
+    }
+    val dimmed = chapter.read && !selected
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 8.dp, vertical = 2.dp)
@@ -136,30 +249,73 @@ private fun BrowseChapterRow(
                 if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
             )
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 10.dp)
-            .alpha(if (chapter.read && !selected) 0.6f else 1f),
+            .padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
     ) {
-        Text(
-            text = chapter.name,
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-            color = if (selected) {
-                MaterialTheme.colorScheme.onPrimaryContainer
-            } else {
-                MaterialTheme.colorScheme.onSurface
-            },
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-        if (subtitle.isNotEmpty()) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .alpha(if (dimmed) 0.6f else 1f),
+        ) {
             Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                color = if (selected) {
+                    MaterialTheme.colorScheme.onPrimaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                },
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (subtitle.isNotEmpty()) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
+        // Read / unread
+        IconButton(onClick = onToggleRead, modifier = Modifier.size(36.dp)) {
+            Icon(
+                imageVector = if (chapter.read) Icons.Filled.Visibility else Icons.Outlined.VisibilityOff,
+                contentDescription = stringResource(
+                    if (chapter.read) MR.strings.action_mark_as_unread else MR.strings.action_mark_as_read,
+                ),
+                tint = if (chapter.read) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                modifier = Modifier.size(20.dp),
+            )
+        }
+        // Bookmark
+        IconButton(onClick = onToggleBookmark, modifier = Modifier.size(36.dp)) {
+            Icon(
+                imageVector = if (chapter.bookmark) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
+                contentDescription = stringResource(
+                    if (chapter.bookmark) MR.strings.action_remove_bookmark else MR.strings.action_bookmark,
+                ),
+                tint = if (chapter.bookmark) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                modifier = Modifier.size(20.dp),
+            )
+        }
+        // Download
+        ChapterDownloadIndicator(
+            enabled = true,
+            downloadStateProvider = { item.downloadState },
+            downloadProgressProvider = { progress },
+            onClick = onDownloadAction,
+            modifier = Modifier.size(36.dp),
+        )
     }
 }
 
