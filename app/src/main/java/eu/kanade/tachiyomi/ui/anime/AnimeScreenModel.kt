@@ -3,6 +3,8 @@ package eu.kanade.tachiyomi.ui.anime
 import androidx.compose.runtime.Immutable
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
+import eu.kanade.presentation.manga.DownloadAction
+import eu.kanade.presentation.manga.components.ChapterDownloadAction
 import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
 import eu.kanade.tachiyomi.animesource.AnimeSource
 import eu.kanade.tachiyomi.animesource.model.FetchType
@@ -13,10 +15,14 @@ import eu.kanade.tachiyomi.data.anime.Anime
 import eu.kanade.tachiyomi.data.anime.AnimeRepository
 import eu.kanade.tachiyomi.data.anime.AnimeVideoFetcher
 import eu.kanade.tachiyomi.data.anime.Episode
+import eu.kanade.tachiyomi.data.anime.download.AnimeDownloadManager
+import eu.kanade.tachiyomi.data.download.model.Download
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.update
 import logcat.LogPriority
 import tachiyomi.core.common.preference.PreferenceStore
@@ -34,6 +40,7 @@ class AnimeScreenModel(
     private val animeId: Long,
     private val repository: AnimeRepository = Injekt.get(),
     private val sourceManager: AnimeSourceManager = Injekt.get(),
+    val downloadManager: AnimeDownloadManager = Injekt.get(),
 ) : StateScreenModel<AnimeScreenModel.State>(State()) {
 
     var source: AnimeSource? = null
@@ -56,8 +63,7 @@ class AnimeScreenModel(
             anime.unseenFilter.keep(!ep.seen) &&
                 anime.bookmarkedFilter.keep(ep.bookmark) &&
                 anime.fillermarkedFilter.keep(ep.fillermark) &&
-                // Downloads aren't merged yet, so nothing counts as downloaded
-                anime.downloadedFilter.keep(false) &&
+                anime.downloadedFilter.keep(downloadManager.isDownloaded(anime, ep)) &&
                 (ep.scanlator.isNullOrBlank() || ep.scanlator !in excluded)
         }
         // "Descending" is the default: newest first
@@ -100,7 +106,40 @@ class AnimeScreenModel(
                         scanlators = episodes.mapNotNull { it.scanlator?.takeIf(String::isNotBlank) }.toSet(),
                         excludedScanlators = excluded,
                         notes = notes,
+                        downloadedIds = anime?.let { a ->
+                            episodes.filter { downloadManager.isDownloaded(a, it) }.map { it.id }.toSet()
+                        } ?: emptySet(),
                         isLoaded = true,
+                    )
+                }
+            }
+        }
+        // KMK: download progress and finished downloads update the rows and the Downloaded filter
+        screenModelScope.launchIO {
+            repository.getAnime(animeId)?.let { downloadManager.refresh(it) }
+            combine(
+                downloadManager.queue.flatMapLatest { items ->
+                    if (items.isEmpty()) {
+                        flowOf(emptyMap())
+                    } else {
+                        combine(
+                            items.map { item ->
+                                combine(item.state, item.progress) { st, p -> item.episode.id to DownloadInfo(st, p) }
+                            },
+                        ) { it.toMap() }
+                    }
+                },
+                downloadManager.changes,
+            ) { active, _ -> active }.collect { active ->
+                mutableState.update { state ->
+                    val anime = state.anime
+                    state.copy(
+                        activeDownloads = active,
+                        downloadedIds = anime?.let { a ->
+                            state.allEpisodes.filter { downloadManager.isDownloaded(a, it) }.map { it.id }.toSet()
+                        } ?: emptySet(),
+                        episodes = anime?.let { filterAndSort(it, state.allEpisodes, state.excludedScanlators) }
+                            ?: state.episodes,
                     )
                 }
             }
@@ -227,11 +266,43 @@ class AnimeScreenModel(
         notesPref.set(notes)
     }
 
-    /** "Clear anime": removes the saved episodes (and their watch history), then fetches the list again */
-    fun clearAnime() {
-        screenModelScope.launchIO {
-            repository.deleteEpisodes(animeId)
-            refresh()
+    /** "Clear anime": removes downloaded files and/or the saved episodes (then fetches the list again) */
+    fun clearAnime(deleteDownloads: Boolean, removeEpisodes: Boolean) {
+        val anime = state.value.anime ?: return
+        if (deleteDownloads) downloadManager.deleteAnime(anime)
+        if (removeEpisodes) {
+            screenModelScope.launchIO {
+                repository.deleteEpisodes(animeId)
+                refresh()
+            }
+        }
+    }
+
+    /** Toolbar download menu */
+    fun downloadEpisodes(action: DownloadAction) {
+        val anime = state.value.anime ?: return
+        // Watching order: oldest first
+        val inOrder = state.value.allEpisodes.sortedByDescending { it.sourceOrder }
+        val unseen = inOrder.filter { !it.seen }
+        val episodes = when (action) {
+            DownloadAction.NEXT_1_CHAPTER -> unseen.take(1)
+            DownloadAction.NEXT_5_CHAPTERS -> unseen.take(5)
+            DownloadAction.NEXT_10_CHAPTERS -> unseen.take(10)
+            DownloadAction.NEXT_25_CHAPTERS -> unseen.take(25)
+            DownloadAction.UNREAD_CHAPTERS -> unseen
+            DownloadAction.BOOKMARKED_CHAPTERS -> inOrder.filter { it.bookmark }
+        }
+        downloadManager.enqueue(anime, episodes)
+    }
+
+    /** The download button on an episode row */
+    fun episodeDownloadAction(episode: Episode, action: ChapterDownloadAction) {
+        val anime = state.value.anime ?: return
+        when (action) {
+            ChapterDownloadAction.START -> downloadManager.enqueue(anime, listOf(episode))
+            ChapterDownloadAction.START_NOW -> downloadManager.enqueue(anime, listOf(episode), startNow = true)
+            ChapterDownloadAction.CANCEL -> downloadManager.cancel(listOf(episode.id))
+            ChapterDownloadAction.DELETE -> downloadManager.delete(anime, listOf(episode))
         }
     }
     // KMK <--
@@ -336,6 +407,9 @@ class AnimeScreenModel(
     }
 
     @Immutable
+    data class DownloadInfo(val state: Download.State, val progress: Int)
+
+    @Immutable
     data class State(
         val anime: Anime? = null,
         val episodes: List<Episode> = emptyList(),
@@ -353,7 +427,14 @@ class AnimeScreenModel(
         val scanlators: Set<String> = emptySet(),
         val excludedScanlators: Set<String> = emptySet(),
         val notes: String = "",
+        val downloadedIds: Set<Long> = emptySet(),
+        val activeDownloads: Map<Long, DownloadInfo> = emptyMap(),
     ) {
+        fun downloadState(episode: Episode): Download.State = activeDownloads[episode.id]?.state
+            ?: if (episode.id in downloadedIds) Download.State.DOWNLOADED else Download.State.NOT_DOWNLOADED
+
+        fun downloadProgress(episode: Episode): Int = activeDownloads[episode.id]?.progress ?: 0
+
         val filterActive: Boolean
             get() = ((anime?.episodeFlags ?: 0L) and Anime.ALL_FILTERS) != 0L || excludedScanlators.isNotEmpty()
 

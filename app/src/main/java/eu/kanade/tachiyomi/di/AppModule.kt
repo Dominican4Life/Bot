@@ -172,6 +172,7 @@ class AppModule(val app: Application) : InjektModule {
         addSingletonFactory { eu.kanade.tachiyomi.ui.player.settings.DecoderPreferences(get()) }
         // KMK: Anime4K shaders for the player filters panel
         addSingletonFactory { eu.kanade.tachiyomi.ui.player.utils.Anime4KManager(app) }
+        addSingletonFactory { eu.kanade.tachiyomi.data.anime.download.AnimeDownloadManager(app) }
         addSingletonFactory { eu.kanade.tachiyomi.ui.player.settings.SubtitlePreferences(get()) }
         addSingletonFactory { eu.kanade.tachiyomi.ui.player.settings.AudioPreferences(get()) }
         addSingletonFactory { eu.kanade.tachiyomi.ui.player.settings.AdvancedPlayerPreferences(get()) }

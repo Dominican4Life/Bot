@@ -314,4 +314,12 @@
     <string name="anime_preview_upscaler_note">The upscaler only shows in Filtered view</string>
     <string name="anime_preview_gpu_next_note">Turn off gpu-next in player settings to use Anime4K</string>
     <string name="anime_preview_shared_note">These settings are shared with the full player</string>
+    <string name="anime_downloader_title">Anime downloads</string>
+    <string name="anime_download_progress">%1$s – %2$s</string>
+    <string name="anime_download_queued">%1$d episodes left</string>
+    <string name="anime_download_failed">Couldn\'t download %1$s</string>
+    <string name="anime_delete_downloads">Downloaded episodes</string>
+    <string name="anime_episodes_from_database">Episode list</string>
+    <string name="anime_download_queue">Anime download queue</string>
+    <string name="anime_download_queue_empty">No anime episodes are downloading</string>
 </resources>

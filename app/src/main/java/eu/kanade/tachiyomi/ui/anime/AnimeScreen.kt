@@ -71,7 +71,9 @@ import eu.kanade.presentation.browse.RelatedMangaTitle
 import eu.kanade.presentation.components.TabbedDialog
 import eu.kanade.presentation.components.TabbedDialogPaddings
 import eu.kanade.presentation.library.components.MangaComfortableGridItem
+import eu.kanade.presentation.manga.DownloadAction
 import eu.kanade.presentation.manga.ScanlatorFilterItem
+import eu.kanade.presentation.manga.components.ChapterDownloadAction
 import eu.kanade.presentation.manga.components.ExpandableMangaDescription
 import eu.kanade.presentation.manga.components.MangaActionRow
 import eu.kanade.presentation.manga.components.MangaChapterListItem
@@ -103,6 +105,7 @@ import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.ank.AMR
 import tachiyomi.i18n.kmk.KMR
+import tachiyomi.presentation.core.components.LabeledCheckbox
 import tachiyomi.presentation.core.components.RadioItem
 import tachiyomi.presentation.core.components.ScrollbarLazyColumn
 import tachiyomi.presentation.core.components.SortItem
@@ -172,7 +175,8 @@ class AnimeScreen(private val animeId: Long) : Screen() {
                     context.startActivity(Intent.createChooser(intent, context.stringResource(MR.strings.action_share)))
                 }
             },
-            onDownload = { context.toast(KMR.strings.anime_downloads_coming) },
+            onDownload = screenModel::downloadEpisodes,
+            onEpisodeDownload = screenModel::episodeDownloadAction,
             onEditNotes = { dialog = AnimeDialog.Notes },
             onClearAnime = { dialog = AnimeDialog.Clear },
             onSourceSettings = {
@@ -216,21 +220,9 @@ class AnimeScreen(private val animeId: Long) : Screen() {
                     onDismissRequest = { dialog = null },
                     onSave = screenModel::setNotes,
                 )
-                AnimeDialog.Clear -> AlertDialog(
+                AnimeDialog.Clear -> ClearAnimeDialog(
                     onDismissRequest = { dialog = null },
-                    confirmButton = {
-                        TextButton(
-                            onClick = {
-                                dialog = null
-                                screenModel.clearAnime()
-                            },
-                        ) { Text(stringResource(MR.strings.action_ok)) }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { dialog = null }) { Text(stringResource(MR.strings.action_cancel)) }
-                    },
-                    title = { Text(stringResource(AMR.strings.action_clear_anime)) },
-                    text = { Text(stringResource(KMR.strings.anime_clear_episodes)) },
+                    onConfirm = screenModel::clearAnime,
                 )
             }
             if (isTabletUi()) {
@@ -258,7 +250,8 @@ private class AnimeActions(
     val onFilter: () -> Unit,
     val onWebView: (() -> Unit)?,
     val onShare: (() -> Unit)?,
-    val onDownload: () -> Unit,
+    val onDownload: (DownloadAction) -> Unit,
+    val onEpisodeDownload: (Episode, ChapterDownloadAction) -> Unit,
     val onEditNotes: () -> Unit,
     val onClearAnime: () -> Unit,
     val onSourceSettings: () -> Unit,
@@ -367,7 +360,7 @@ private fun AnimeToolbar(
         navigateUp = actions.navigateUp,
         onClickFilter = actions.onFilter,
         onClickShare = actions.onShare,
-        onClickDownload = { actions.onDownload() },
+        onClickDownload = actions.onDownload,
         onClickEditCategory = null,
         onClickRefresh = actions.onRefresh,
         onClickMigrate = null,
@@ -847,6 +840,9 @@ private fun LazyListScope.episodeItems(
         EpisodeItem(
             episode = episode,
             displayNumber = anime.displayNumber,
+            downloadState = state.downloadState(episode),
+            downloadProgress = state.downloadProgress(episode),
+            onDownload = { action -> actions.onEpisodeDownload(episode, action) },
             onPlay = { actions.onPlay(episode) },
             onToggleSeen = { actions.onToggleSeen(episode) },
             onToggleBookmark = { actions.onToggleBookmark(episode) },
@@ -858,6 +854,9 @@ private fun LazyListScope.episodeItems(
 private fun EpisodeItem(
     episode: Episode,
     displayNumber: Boolean,
+    downloadState: Download.State,
+    downloadProgress: Int,
+    onDownload: (ChapterDownloadAction) -> Unit,
     onPlay: () -> Unit,
     onToggleSeen: () -> Unit,
     onToggleBookmark: () -> Unit,
@@ -899,19 +898,63 @@ private fun EpisodeItem(
         read = episode.seen,
         bookmark = episode.bookmark,
         selected = false,
-        downloadIndicatorEnabled = false,
-        downloadStateProvider = { Download.State.NOT_DOWNLOADED },
-        downloadProgressProvider = { 0 },
+        downloadIndicatorEnabled = true,
+        downloadStateProvider = { downloadState },
+        downloadProgressProvider = { downloadProgress },
         chapterSwipeStartAction = swipeStart,
         chapterSwipeEndAction = swipeEnd,
         onLongClick = onToggleSeen,
         onClick = onPlay,
-        onDownloadClick = null,
+        onDownloadClick = onDownload,
         onChapterSwipe = { action ->
             when (action) {
                 LibraryPreferences.ChapterSwipeAction.ToggleRead -> onToggleSeen()
                 LibraryPreferences.ChapterSwipeAction.ToggleBookmark -> onToggleBookmark()
+                LibraryPreferences.ChapterSwipeAction.Download -> onDownload(
+                    when (downloadState) {
+                        Download.State.NOT_DOWNLOADED, Download.State.ERROR -> ChapterDownloadAction.START_NOW
+                        Download.State.QUEUE, Download.State.DOWNLOADING -> ChapterDownloadAction.CANCEL
+                        Download.State.DOWNLOADED -> ChapterDownloadAction.DELETE
+                    },
+                )
                 else -> {}
+            }
+        },
+    )
+}
+
+/** Same choices as "Clear manga": the downloaded files and/or the saved episode list */
+@Composable
+private fun ClearAnimeDialog(onDismissRequest: () -> Unit, onConfirm: (Boolean, Boolean) -> Unit) {
+    var downloads by remember { mutableStateOf(false) }
+    var episodes by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = onDismissRequest,
+        confirmButton = {
+            TextButton(
+                enabled = downloads || episodes,
+                onClick = {
+                    onDismissRequest()
+                    onConfirm(downloads, episodes)
+                },
+            ) { Text(stringResource(MR.strings.action_ok)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismissRequest) { Text(stringResource(MR.strings.action_cancel)) }
+        },
+        title = { Text(stringResource(AMR.strings.action_clear_anime)) },
+        text = {
+            Column {
+                LabeledCheckbox(
+                    label = stringResource(KMR.strings.anime_delete_downloads),
+                    checked = downloads,
+                    onCheckedChange = { downloads = it },
+                )
+                LabeledCheckbox(
+                    label = stringResource(KMR.strings.anime_episodes_from_database),
+                    checked = episodes,
+                    onCheckedChange = { episodes = it },
+                )
             }
         },
     )

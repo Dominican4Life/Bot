@@ -100,6 +100,9 @@ class AnimeRepository(
     suspend fun getEpisodes(animeId: Long): List<Episode> =
         handler.awaitList { episodesQueries.getByAnimeId(animeId, ::mapEpisode) }
 
+    suspend fun getEpisode(id: Long): Episode? =
+        handler.awaitOneOrNull { episodesQueries.getById(id, ::mapEpisode) }
+
     fun subscribeEpisodes(animeId: Long): Flow<List<Episode>> =
         handler.subscribeToList { episodesQueries.getByAnimeId(animeId, ::mapEpisode) }
 

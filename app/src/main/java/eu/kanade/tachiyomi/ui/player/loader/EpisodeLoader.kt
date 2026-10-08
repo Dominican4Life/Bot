@@ -12,6 +12,9 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import tachiyomi.core.common.util.lang.withIOContext
 import eu.kanade.tachiyomi.data.anime.Anime
+import eu.kanade.tachiyomi.data.anime.download.AnimeDownloadManager
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import eu.kanade.tachiyomi.data.anime.Episode
 import eu.kanade.tachiyomi.util.subtitles.StremioSubtitleResolver
 
@@ -41,7 +44,20 @@ class EpisodeLoader {
             source: AnimeSource,
             allowDownloaded: Boolean = true,
         ): List<Hoster> {
-            // KMK: downloads and the local anime source aren't merged yet
+            // KMK: a downloaded episode plays from its file
+            if (allowDownloaded) {
+                val file = withIOContext {
+                    Injekt.get<AnimeDownloadManager>().findEpisodeFile(anime, episode)
+                }
+                if (file != null) {
+                    val video = Video(
+                        videoUrl = file.uri.toString(),
+                        videoTitle = "Downloaded",
+                        initialized = true,
+                    )
+                    return listOf(Hoster(hosterName = "Downloaded", videoList = listOf(video)))
+                }
+            }
             return when (source) {
                 is AnimeHttpSource -> getHostersOnHttp(episode, source)
                 // ANZ -->
@@ -53,9 +69,9 @@ class EpisodeLoader {
             }
         }
 
-        /** KMK: downloads aren't merged yet, so nothing is downloaded */
-        @Suppress("UNUSED_PARAMETER")
-        fun isDownload(episode: Episode, anime: Anime): Boolean = false
+        /** KMK: whether the episode has a downloaded file */
+        fun isDownload(episode: Episode, anime: Anime): Boolean =
+            Injekt.get<AnimeDownloadManager>().isDownloaded(anime, episode)
 
         private fun checkHasHosters(source: AnimeHttpSource): Boolean {
             var current: Class<in AnimeHttpSource> = source.javaClass

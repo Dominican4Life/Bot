@@ -1,5 +1,7 @@
 package eu.kanade.presentation.anime
 
+import `is`.xyz.mpv.BaseMPVView
+import `is`.xyz.mpv.MPV
 import android.os.Handler
 import android.os.Looper
 import androidx.compose.animation.AnimatedVisibility
@@ -81,14 +83,14 @@ import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.data.anime.Anime
 import eu.kanade.tachiyomi.data.anime.AnimeVideoFetcher
 import eu.kanade.tachiyomi.data.anime.Episode
+import eu.kanade.tachiyomi.data.anime.download.AnimeDownloadManager
 import eu.kanade.tachiyomi.ui.player.VideoFilterTheme
 import eu.kanade.tachiyomi.ui.player.VideoFilters
 import eu.kanade.tachiyomi.ui.player.applyAnime4K
+import eu.kanade.tachiyomi.ui.player.resolveUri
 import eu.kanade.tachiyomi.ui.player.settings.DecoderPreferences
 import eu.kanade.tachiyomi.ui.player.settings.PlayerPreferences
 import eu.kanade.tachiyomi.ui.player.utils.Anime4KManager
-import `is`.xyz.mpv.BaseMPVView
-import `is`.xyz.mpv.MPV
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -255,10 +257,22 @@ fun AnimePreviewSection(
     }
 
     fun loadEpisode(ep: Episode) {
-        val src = source ?: return
         loadJob?.cancel()
         loadJob = scope.launch {
             phase = PreviewPhase.Loading
+            // Downloaded: play the file, no need to ask the site
+            val localUrl = withIOContext {
+                Injekt.get<AnimeDownloadManager>().findEpisodeFile(anime, ep)?.uri?.resolveUri(context)
+            }
+            if (localUrl != null) {
+                videos = listOf(Video(videoUrl = localUrl, videoTitle = "Downloaded", initialized = true))
+                startVideo(0, videos, ep)
+                return@launch
+            }
+            val src = source ?: run {
+                phase = PreviewPhase.NoVideos
+                return@launch
+            }
             try {
                 val list = withIOContext { AnimeVideoFetcher.fetchVideos(src, ep.toSEpisode()) }
                 videos = list

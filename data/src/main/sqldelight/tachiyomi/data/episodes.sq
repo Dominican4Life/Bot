@@ -27,6 +27,9 @@ CREATE INDEX kmk_episodes_anime_id_index ON episodes(anime_id);
 getByAnimeId:
 SELECT * FROM episodes WHERE anime_id = :animeId ORDER BY source_order;
 
+getById:
+SELECT * FROM episodes WHERE _id = :id;
+
 insert:
 INSERT INTO episodes(anime_id, url, name, scanlator, summary, preview_url, fillermark, episode_number, source_order, date_fetch, date_upload)
 VALUES (:animeId, :url, :name, :scanlator, :summary, :previewUrl, :fillermark, :episodeNumber, :sourceOrder, :dateFetch, :dateUpload);
