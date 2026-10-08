@@ -375,7 +375,6 @@ object PlayerSettingsPlayerScreen : SearchableSettings {
                 ),
                 Preference.PreferenceItem.InfoPreference(
                     title = stringResource(AMR.strings.pref_category_player_aniskip_info),
-                    enabled = isIntroSkipEnabled,
                 ),
             ),
         )

@@ -17,6 +17,9 @@ class Padding {
 
     val medium = 16.dp
 
+    // KMK: used by the anime player
+    val mediumSmall = 12.dp
+
     val small = 8.dp
 
     val extraSmall = 4.dp
