@@ -218,7 +218,7 @@ fun AnimePreviewSection(
                     instance.command("vf", "set", splitGraph(values))
                 }
             }
-        }.onFailure { logcat(LogPriority.WARN, it) { "Preview filters failed" } }
+        }.onFailure { e -> context.logcat(LogPriority.WARN, e) { "Preview filters failed" } }
     }
 
     fun startVideo(index: Int, list: List<Video>, ep: Episode) {
@@ -369,7 +369,7 @@ fun AnimePreviewSection(
                 )
                 PreviewPhase.Playing -> {
                     if (buffering && !paused) CircularProgressIndicator(color = Color.White)
-                    AnimatedVisibility(
+                    androidx.compose.animation.AnimatedVisibility(
                         visible = showControls || paused,
                         enter = fadeIn(),
                         exit = fadeOut(),
