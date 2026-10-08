@@ -44,6 +44,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.neverEqualPolicy
 import androidx.compose.runtime.remember
@@ -63,6 +64,7 @@ import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.presentation.anime.AnimeEpisodePanel
+import eu.kanade.presentation.anime.AnimePlayerPanel
 import eu.kanade.presentation.anime.asMangaCover
 import eu.kanade.presentation.anime.toMangaFilterList
 import eu.kanade.presentation.anime.writeBackToAnime
@@ -226,12 +228,21 @@ class AnimeSourceScreen(
                         if (preview.panelOpen) panelWidth else 0.dp,
                         label = "animeBrowseStartPadding",
                     )
+                    val endPadding by animateDpAsState(
+                        if (preview.playerPanelOpen) panelWidth else 0.dp,
+                        label = "animeBrowseEndPadding",
+                    )
                     val gridPadding = PaddingValues(
                         top = paddingValues.calculateTopPadding(),
                         bottom = paddingValues.calculateBottomPadding(),
                         start = paddingValues.calculateStartPadding(layoutDirection) + startPadding,
-                        end = paddingValues.calculateEndPadding(layoutDirection),
+                        end = paddingValues.calculateEndPadding(layoutDirection) + endPadding,
                     )
+                    // The right panel plays whichever episode was tapped last (the first one until then)
+                    var chosenEpisode by remember(preview.anime?.id) {
+                        mutableStateOf<eu.kanade.tachiyomi.data.anime.Episode?>(null)
+                    }
+                    var playToken by remember(preview.anime?.id) { mutableIntStateOf(0) }
                     when {
                         source == null -> EmptyScreen(
                             message = stringResource(MR.strings.source_not_installed, sourceId.toString()),
@@ -260,7 +271,10 @@ class AnimeSourceScreen(
                                     preview.anime?.id != anime.id
                                 ) {
                                     // First tap: highlight and preview. Second tap on the same cover: open it.
-                                    screenModel.selectPreview(anime)
+                                    screenModel.selectPreview(
+                                        anime,
+                                        showPlayer = previewPanels == SourcePreferences.PREVIEW_PANELS_BOTH,
+                                    )
                                 } else {
                                     navigator.push(AnimeScreen(anime.id))
                                 }
@@ -299,7 +313,19 @@ class AnimeSourceScreen(
                             onPlay = playEpisode,
                             onToggleSeen = screenModel::toggleSeen,
                             onToggleBookmark = screenModel::toggleBookmark,
+                            selectedEpisodeId = chosenEpisode?.id,
+                            onSelectEpisode = { episode ->
+                                chosenEpisode = episode
+                                playToken++
+                                screenModel.openPlayerPanel()
+                            },
+                        )
+                        AnimePlayerPanel(
+                            preview = preview,
                             source = source,
+                            episode = chosenEpisode ?: preview.episodes.firstOrNull(),
+                            playToken = playToken,
+                            onClose = screenModel::closePlayerPanel,
                             onOpenPlayer = { episode, positionMs ->
                                 screenModel.savePreviewPosition(episode.id, positionMs) {
                                     context.startActivity(

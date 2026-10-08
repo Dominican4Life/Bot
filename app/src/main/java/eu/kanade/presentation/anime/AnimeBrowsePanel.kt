@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.filled.Bookmark
@@ -31,8 +33,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -71,8 +71,8 @@ fun AnimeEpisodePanel(
     onPlay: (Episode) -> Unit,
     onToggleSeen: (Episode) -> Unit,
     onToggleBookmark: (Episode) -> Unit,
-    source: AnimeSource?,
-    onOpenPlayer: (Episode, Long) -> Unit,
+    selectedEpisodeId: Long?,
+    onSelectEpisode: (Episode) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     SlidingSidePanel(
@@ -90,23 +90,11 @@ fun AnimeEpisodePanel(
         key(anime.id) {
             val listState = rememberLazyListState()
             val displayManga = remember(anime) { anime.asDisplayManga() }
-            // The preview player plays whichever episode was tapped last (the first one until then)
-            var chosenEpisode by remember { mutableStateOf<Episode?>(null) }
-            var playToken by remember { mutableIntStateOf(0) }
             LazyColumn(
                 state = listState,
                 contentPadding = PaddingValues(bottom = 8.dp),
                 modifier = Modifier.fillMaxSize(),
             ) {
-                item(key = "player") {
-                    AnimePreviewSection(
-                        anime = anime,
-                        source = source,
-                        episode = chosenEpisode ?: preview.episodes.firstOrNull(),
-                        playToken = playToken,
-                        onOpenPlayer = onOpenPlayer,
-                    )
-                }
                 item(key = "info") {
                     BrowsePreviewInfoHeader(
                         manga = displayManga,
@@ -154,17 +142,63 @@ fun AnimeEpisodePanel(
                     else -> items(preview.episodes, key = { it.id }) { episode ->
                         AnimePanelEpisodeRow(
                             episode = episode,
-                            selected = episode.id == chosenEpisode?.id,
-                            onClick = {
-                                chosenEpisode = episode
-                                playToken++
-                            },
+                            selected = episode.id == selectedEpisodeId,
+                            onClick = { onSelectEpisode(episode) },
                             onLongClick = { onPlay(episode) },
                             onToggleSeen = { onToggleSeen(episode) },
                             onToggleBookmark = { onToggleBookmark(episode) },
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * KMK: Right panel on the anime browse screen, like the manga pages panel: the preview player with its
+ * video settings. Plays the episode tapped in the left panel (the first one until then).
+ */
+@Composable
+fun AnimePlayerPanel(
+    preview: AnimeSourceScreenModel.Preview,
+    source: AnimeSource?,
+    episode: Episode?,
+    playToken: Int,
+    onClose: () -> Unit,
+    onOpenPlayer: (Episode, Long) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    SlidingSidePanel(
+        visible = preview.playerPanelOpen,
+        fromStart = false,
+        title = episode?.name.orEmpty(),
+        onClose = onClose,
+        modifier = modifier,
+        applyTopInset = false,
+        showClose = false,
+        squareTop = true,
+        showHeader = false,
+    ) {
+        val anime = preview.anime ?: return@SlidingSidePanel
+        key(anime.id) {
+            Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                if (episode != null) {
+                    Text(
+                        text = episode.name,
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 8.dp),
+                    )
+                }
+                AnimePreviewSection(
+                    anime = anime,
+                    source = source,
+                    episode = episode,
+                    playToken = playToken,
+                    onOpenPlayer = onOpenPlayer,
+                )
             }
         }
     }

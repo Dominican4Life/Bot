@@ -105,10 +105,10 @@ class AnimeSourceScreenModel(
     private var previewJob: Job? = null
     private var previewRefreshJob: Job? = null
 
-    fun selectPreview(anime: Anime) {
+    fun selectPreview(anime: Anime, showPlayer: Boolean = true) {
         previewJob?.cancel()
         previewRefreshJob?.cancel()
-        _preview.value = Preview(anime = anime, panelOpen = true, loading = true)
+        _preview.value = Preview(anime = anime, panelOpen = true, playerPanelOpen = showPlayer, loading = true)
         eu.kanade.presentation.anime.loadAnimeSeedColor(anime) { color ->
             _preview.update { if (it.anime?.id == anime.id) it.copy(seedColor = color) else it }
         }
@@ -155,6 +155,17 @@ class AnimeSourceScreenModel(
 
     fun closePreviewPanel() {
         _preview.update { it.copy(panelOpen = false) }
+        if (!_preview.value.playerPanelOpen) clearPreview()
+    }
+
+    /** The right panel with the video player */
+    fun closePlayerPanel() {
+        _preview.update { it.copy(playerPanelOpen = false) }
+        if (!_preview.value.panelOpen) clearPreview()
+    }
+
+    fun openPlayerPanel() {
+        _preview.update { it.copy(playerPanelOpen = true) }
     }
 
     fun toggleFavorite(anime: Anime) {
@@ -194,6 +205,7 @@ class AnimeSourceScreenModel(
     data class Preview(
         val anime: Anime? = null,
         val panelOpen: Boolean = false,
+        val playerPanelOpen: Boolean = false,
         val episodes: List<eu.kanade.tachiyomi.data.anime.Episode> = emptyList(),
         val loading: Boolean = false,
         val error: String? = null,
