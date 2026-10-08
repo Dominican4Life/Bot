@@ -46,6 +46,9 @@ data class Anime(
 
     companion object {
         const val SORT_ASCENDING = 1L
+        const val FILTER_UNSEEN = 2L
+        const val FILTER_BOOKMARKED = 4L
+        const val FILTER_HIDE_FILLER = 8L
     }
 }
 

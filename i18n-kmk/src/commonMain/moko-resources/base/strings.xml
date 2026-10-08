@@ -285,4 +285,7 @@
     <string name="anime_tracking_coming">Anime tracking is coming in a later update</string>
     <string name="anime_watched_until">Watched until %1$s</string>
     <string name="anime_filler">Filler</string>
+    <string name="anime_hide_filler">Hide filler episodes</string>
+    <string name="anime_sort_newest_first">Newest episodes first</string>
+    <string name="anime_sort_oldest_first">Oldest episodes first</string>
 </resources>

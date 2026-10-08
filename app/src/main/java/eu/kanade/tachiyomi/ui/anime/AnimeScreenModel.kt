@@ -53,13 +53,19 @@ class AnimeScreenModel(
                         mutableState.update { it.copy(seedColor = color) }
                     }
                 }
+                val flags = anime?.episodeFlags ?: 0L
+                val shown = episodes
+                    .filter { (flags and Anime.FILTER_UNSEEN) == 0L || !it.seen }
+                    .filter { (flags and Anime.FILTER_BOOKMARKED) == 0L || it.bookmark }
+                    .filter { (flags and Anime.FILTER_HIDE_FILLER) == 0L || !it.fillermark }
                 mutableState.update { state ->
                     state.copy(
                         anime = anime,
+                        allEpisodes = episodes,
                         episodes = if (anime?.sortAscending == true) {
-                            episodes.sortedBy { it.sourceOrder }.reversed()
+                            shown.sortedBy { it.sourceOrder }.reversed()
                         } else {
-                            episodes.sortedBy { it.sourceOrder }
+                            shown.sortedBy { it.sourceOrder }
                         },
                         isLoaded = true,
                     )
@@ -77,6 +83,7 @@ class AnimeScreenModel(
             }
             source = found
             mutableState.update { it.copy(sourceName = found?.name, sourceMissing = found == null) }
+            loadSuggestions()
             val anime = repository.getAnime(animeId) ?: return@launchIO
             if (found != null && (!anime.initialized || anime.fetchType == FetchType.Seasons || !anime.favorite)) {
                 refresh()
@@ -111,6 +118,42 @@ class AnimeScreenModel(
             }
         }
     }
+
+    // KMK --> suggestions, like the manga details page
+    private fun loadSuggestions() {
+        val source = source as? eu.kanade.tachiyomi.animesource.AnimeCatalogueSource ?: return
+        if (!Injekt.get<eu.kanade.domain.source.service.SourcePreferences>().relatedMangas().get()) return
+        screenModelScope.launchIO {
+            val anime = repository.getAnime(animeId) ?: return@launchIO
+            mutableState.update { it.copy(suggestionsLoading = true) }
+            try {
+                source.getRelatedAnimeList(
+                    anime = anime.toSAnime(),
+                    exceptionHandler = { e -> logcat(LogPriority.WARN, e) { "Suggestions failed" } },
+                    pushResults = { (_, list), _ ->
+                        val found = list.mapNotNull {
+                            runCatching { repository.networkToLocal(it, source.id) }.getOrNull()
+                        }.filter { it.id != animeId }
+                        mutableState.update { state ->
+                            state.copy(suggestions = (state.suggestions + found).distinctBy { it.id }.take(40))
+                        }
+                    },
+                )
+            } catch (e: Throwable) {
+                if (e is CancellationException) throw e
+                logcat(LogPriority.WARN, e) { "Suggestions failed" }
+            } finally {
+                mutableState.update { it.copy(suggestionsLoading = false) }
+            }
+        }
+    }
+
+    /** Turns one episode filter on or off ([Anime.FILTER_UNSEEN], [Anime.FILTER_BOOKMARKED], [Anime.FILTER_HIDE_FILLER]) */
+    fun toggleEpisodeFilter(flag: Long) {
+        val anime = state.value.anime ?: return
+        screenModelScope.launchIO { repository.setEpisodeFlags(anime, anime.episodeFlags xor flag) }
+    }
+    // KMK <--
 
     fun toggleFavorite() {
         val anime = state.value.anime ?: return
@@ -263,12 +306,19 @@ class AnimeScreenModel(
         val error: String? = null,
         val videoDialog: VideoDialog? = null,
         val seedColor: androidx.compose.ui.graphics.Color? = null,
+        val allEpisodes: List<Episode> = emptyList(),
+        val suggestions: List<Anime> = emptyList(),
+        val suggestionsLoading: Boolean = false,
     ) {
+        val filterActive: Boolean
+            get() = ((anime?.episodeFlags ?: 0L) and
+                (Anime.FILTER_UNSEEN or Anime.FILTER_BOOKMARKED or Anime.FILTER_HIDE_FILLER)) != 0L
+
         /** The episode the Start/Resume button plays: the first unwatched one, oldest first */
         val nextEpisode: Episode?
-            get() = episodes.sortedByDescending { it.sourceOrder }.firstOrNull { !it.seen }
+            get() = allEpisodes.sortedByDescending { it.sourceOrder }.firstOrNull { !it.seen }
 
         val hasStarted: Boolean
-            get() = episodes.any { it.seen || it.lastSecondSeen > 0 }
+            get() = allEpisodes.any { it.seen || it.lastSecondSeen > 0 }
     }
 }

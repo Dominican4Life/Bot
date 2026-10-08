@@ -31,10 +31,17 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.outlined.FilterList
+import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -48,7 +55,9 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -65,6 +74,8 @@ import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.presentation.anime.AnimeGridItem
 import eu.kanade.presentation.anime.asDisplayManga
+import eu.kanade.presentation.anime.asMangaCover
+import eu.kanade.presentation.library.components.MangaComfortableGridItem
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarTitle
 import eu.kanade.presentation.manga.components.ExpandableMangaDescription
@@ -95,6 +106,7 @@ import tachiyomi.presentation.core.components.material.PullRefresh
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.LoadingScreen
+import tachiyomi.presentation.core.theme.active
 import tachiyomi.presentation.core.util.collectAsState
 import tachiyomi.presentation.core.util.shouldExpandFAB
 import uy.kohesive.injekt.Injekt
@@ -140,7 +152,16 @@ class AnimeScreen(private val animeId: Long) : Screen() {
         }
         val searchSource: (String) -> Unit = { query -> navigator.push(AnimeSourceScreen(anime.source, query)) }
 
+        var showFilter by remember { mutableStateOf(false) }
         CoverSeedTheme(seedColor = state.seedColor) {
+            if (showFilter) {
+                EpisodeFilterDialog(
+                    anime = anime,
+                    onToggleFilter = screenModel::toggleEpisodeFilter,
+                    onToggleSort = screenModel::toggleSort,
+                    onDismissRequest = { showFilter = false },
+                )
+            }
             if (isTabletUi()) {
                 AnimeScreenLarge(
                     state = state,
@@ -149,6 +170,7 @@ class AnimeScreen(private val animeId: Long) : Screen() {
                     onRefresh = screenModel::refresh,
                     onToggleFavorite = screenModel::toggleFavorite,
                     onToggleSort = screenModel::toggleSort,
+                    onFilter = { showFilter = true },
                     onWebView = openWebView,
                     onSearch = searchSource,
                     onSourceClick = { navigator.push(AnimeSourceScreen(anime.source)) },
@@ -167,6 +189,7 @@ class AnimeScreen(private val animeId: Long) : Screen() {
                     onRefresh = screenModel::refresh,
                     onToggleFavorite = screenModel::toggleFavorite,
                     onToggleSort = screenModel::toggleSort,
+                    onFilter = { showFilter = true },
                     onWebView = openWebView,
                     onSearch = searchSource,
                     onSourceClick = { navigator.push(AnimeSourceScreen(anime.source)) },
@@ -271,24 +294,97 @@ private fun AnimeToolbar(
     title: String,
     titleAlpha: Float,
     backgroundAlpha: Float,
+    filterActive: Boolean,
     navigateUp: () -> Unit,
     onRefresh: () -> Unit,
+    onFilter: () -> Unit,
     onWebView: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
+    var showMenu by remember { mutableStateOf(false) }
     AppBar(
         titleContent = { AppBarTitle(title, modifier = Modifier.alpha(titleAlpha)) },
         modifier = modifier,
         backgroundColor = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp).copy(alpha = backgroundAlpha),
         navigateUp = navigateUp,
         actions = {
-            if (onWebView != null) {
-                IconButton(onClick = onWebView) {
-                    Icon(Icons.Outlined.Public, contentDescription = stringResource(MR.strings.action_web_view))
+            IconButton(onClick = onFilter) {
+                Icon(
+                    Icons.Outlined.FilterList,
+                    contentDescription = stringResource(MR.strings.action_filter),
+                    tint = if (filterActive) MaterialTheme.colorScheme.active else LocalContentColor.current,
+                )
+            }
+            Box {
+                IconButton(onClick = { showMenu = true }) {
+                    Icon(Icons.Outlined.MoreVert, contentDescription = stringResource(MR.strings.action_menu_overflow_description))
+                }
+                DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(MR.strings.action_webview_refresh)) },
+                        onClick = {
+                            showMenu = false
+                            onRefresh()
+                        },
+                    )
+                    if (onWebView != null) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(MR.strings.action_web_view)) },
+                            onClick = {
+                                showMenu = false
+                                onWebView()
+                            },
+                        )
+                    }
                 }
             }
-            IconButton(onClick = onRefresh) {
-                Icon(Icons.Outlined.Refresh, contentDescription = stringResource(MR.strings.action_webview_refresh))
+        },
+    )
+}
+
+/** Episode filters and sort, like the chapter settings on the manga details page */
+@Composable
+private fun EpisodeFilterDialog(
+    anime: Anime,
+    onToggleFilter: (Long) -> Unit,
+    onToggleSort: () -> Unit,
+    onDismissRequest: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismissRequest,
+        confirmButton = { TextButton(onClick = onDismissRequest) { Text(stringResource(MR.strings.action_ok)) } },
+        title = { Text(stringResource(MR.strings.action_filter)) },
+        text = {
+            Column {
+                listOf(
+                    Anime.FILTER_UNSEEN to stringResource(MR.strings.action_filter_unread),
+                    Anime.FILTER_BOOKMARKED to stringResource(MR.strings.action_filter_bookmarked),
+                    Anime.FILTER_HIDE_FILLER to stringResource(KMR.strings.anime_hide_filler),
+                ).forEach { (flag, label) ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onToggleFilter(flag) },
+                    ) {
+                        Checkbox(checked = (anime.episodeFlags and flag) != 0L, onCheckedChange = { onToggleFilter(flag) })
+                        Text(label)
+                    }
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = onToggleSort)
+                        .padding(vertical = 8.dp),
+                ) {
+                    Icon(Icons.AutoMirrored.Outlined.Sort, contentDescription = null, modifier = Modifier.padding(12.dp))
+                    Text(
+                        stringResource(
+                            if (anime.sortAscending) KMR.strings.anime_sort_oldest_first else KMR.strings.anime_sort_newest_first,
+                        ),
+                    )
+                }
             }
         },
     )
@@ -317,6 +413,7 @@ private fun AnimeInfo(
     onWebView: (() -> Unit)?,
     onSearch: (String) -> Unit,
     onSourceClick: () -> Unit,
+    onOpenAnime: (Anime) -> Unit,
 ) {
     val context = LocalContext.current
     val displayManga = remember(anime) { anime.asDisplayManga() }
@@ -366,6 +463,9 @@ private fun AnimeInfo(
             searchMetadataChips = null,
             doSearch = { query, _ -> onSearch(query) },
         )
+        if (state.suggestions.isNotEmpty()) {
+            AnimeSuggestionsRow(suggestions = state.suggestions, onClick = onOpenAnime)
+        }
         if (state.error != null) {
             Text(
                 text = state.error,
@@ -392,6 +492,7 @@ private fun AnimeScreenSmall(
     onRefresh: () -> Unit,
     onToggleFavorite: () -> Unit,
     onToggleSort: () -> Unit,
+    onFilter: () -> Unit,
     onWebView: (() -> Unit)?,
     onSearch: (String) -> Unit,
     onSourceClick: () -> Unit,
@@ -416,8 +517,10 @@ private fun AnimeScreenSmall(
                 title = anime.title,
                 titleAlpha = titleAlpha,
                 backgroundAlpha = backgroundAlpha,
+                filterActive = state.filterActive,
                 navigateUp = navigateUp,
                 onRefresh = onRefresh,
+                onFilter = onFilter,
                 onWebView = onWebView,
             )
         },
@@ -447,6 +550,7 @@ private fun AnimeScreenSmall(
                             onWebView = onWebView,
                             onSearch = onSearch,
                             onSourceClick = onSourceClick,
+                            onOpenAnime = onOpenSeason,
                         )
                     }
                     episodeItems(state, source, onToggleSort, onOpenSeason, onPlay, onToggleSeen, onToggleBookmark)
@@ -464,6 +568,7 @@ private fun AnimeScreenLarge(
     onRefresh: () -> Unit,
     onToggleFavorite: () -> Unit,
     onToggleSort: () -> Unit,
+    onFilter: () -> Unit,
     onWebView: (() -> Unit)?,
     onSearch: (String) -> Unit,
     onSourceClick: () -> Unit,
@@ -482,8 +587,10 @@ private fun AnimeScreenLarge(
                 title = anime.title,
                 titleAlpha = 1f,
                 backgroundAlpha = 1f,
+                filterActive = state.filterActive,
                 navigateUp = navigateUp,
                 onRefresh = onRefresh,
+                onFilter = onFilter,
                 onWebView = onWebView,
             )
         },
@@ -516,6 +623,7 @@ private fun AnimeScreenLarge(
                             onWebView = onWebView,
                             onSearch = onSearch,
                             onSourceClick = onSourceClick,
+                            onOpenAnime = onOpenSeason,
                         )
                     }
                 },
@@ -538,6 +646,36 @@ private fun AnimeScreenLarge(
                 },
             )
         }
+    }
+}
+
+@Composable
+private fun AnimeSuggestionsRow(suggestions: List<Anime>, onClick: (Anime) -> Unit) {
+    Column {
+        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+        Text(
+            text = stringResource(KMR.strings.pref_source_related_mangas),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        )
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+        ) {
+            items(suggestions, key = { it.id }) { anime ->
+                Box(Modifier.width(110.dp)) {
+                    MangaComfortableGridItem(
+                        coverData = anime.asMangaCover(),
+                        title = anime.title,
+                        onClick = { onClick(anime) },
+                        onLongClick = { onClick(anime) },
+                        usePanoramaCover = false,
+                    )
+                }
+            }
+        }
+        HorizontalDivider(modifier = Modifier.padding(top = 8.dp))
     }
 }
 

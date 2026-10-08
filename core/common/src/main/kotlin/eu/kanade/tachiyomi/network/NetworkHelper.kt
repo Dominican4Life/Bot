@@ -86,6 +86,10 @@ import kotlin.random.Random
         }
     }
 
+    // KMK --> used by anime extensions
+    val nonCloudflareClient by lazy { clientBuilder().build() }
+    // KMK <--
+
     /* SY --> */ open /* SY <-- */ val client /* KMK --> */ by lazy /* KMK <-- */ {
         clientBuilder()
             .addInterceptor(
