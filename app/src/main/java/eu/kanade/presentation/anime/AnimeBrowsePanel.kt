@@ -1,6 +1,6 @@
 package eu.kanade.presentation.anime
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,14 +29,19 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.browse.components.BrowsePreviewInfoHeader
 import eu.kanade.presentation.reader.SlidingSidePanel
+import eu.kanade.tachiyomi.animesource.AnimeSource
 import eu.kanade.tachiyomi.data.anime.Anime
 import eu.kanade.tachiyomi.data.anime.Episode
 import eu.kanade.tachiyomi.ui.anime.source.AnimeSourceScreenModel
@@ -66,6 +71,8 @@ fun AnimeEpisodePanel(
     onPlay: (Episode) -> Unit,
     onToggleSeen: (Episode) -> Unit,
     onToggleBookmark: (Episode) -> Unit,
+    source: AnimeSource?,
+    onOpenPlayer: (Episode, Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     SlidingSidePanel(
@@ -83,11 +90,23 @@ fun AnimeEpisodePanel(
         key(anime.id) {
             val listState = rememberLazyListState()
             val displayManga = remember(anime) { anime.asDisplayManga() }
+            // The preview player plays whichever episode was tapped last (the first one until then)
+            var chosenEpisode by remember { mutableStateOf<Episode?>(null) }
+            var playToken by remember { mutableIntStateOf(0) }
             LazyColumn(
                 state = listState,
                 contentPadding = PaddingValues(bottom = 8.dp),
                 modifier = Modifier.fillMaxSize(),
             ) {
+                item(key = "player") {
+                    AnimePreviewSection(
+                        anime = anime,
+                        source = source,
+                        episode = chosenEpisode ?: preview.episodes.firstOrNull(),
+                        playToken = playToken,
+                        onOpenPlayer = onOpenPlayer,
+                    )
+                }
                 item(key = "info") {
                     BrowsePreviewInfoHeader(
                         manga = displayManga,
@@ -135,7 +154,12 @@ fun AnimeEpisodePanel(
                     else -> items(preview.episodes, key = { it.id }) { episode ->
                         AnimePanelEpisodeRow(
                             episode = episode,
-                            onClick = { onPlay(episode) },
+                            selected = episode.id == chosenEpisode?.id,
+                            onClick = {
+                                chosenEpisode = episode
+                                playToken++
+                            },
+                            onLongClick = { onPlay(episode) },
                             onToggleSeen = { onToggleSeen(episode) },
                             onToggleBookmark = { onToggleBookmark(episode) },
                         )
@@ -149,7 +173,9 @@ fun AnimeEpisodePanel(
 @Composable
 private fun AnimePanelEpisodeRow(
     episode: Episode,
+    selected: Boolean,
     onClick: () -> Unit,
+    onLongClick: () -> Unit,
     onToggleSeen: () -> Unit,
     onToggleBookmark: () -> Unit,
 ) {
@@ -163,8 +189,8 @@ private fun AnimePanelEpisodeRow(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .selectedBackground(false)
-            .clickable(onClick = onClick)
+            .selectedBackground(selected)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(start = 16.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
     ) {
         Column(

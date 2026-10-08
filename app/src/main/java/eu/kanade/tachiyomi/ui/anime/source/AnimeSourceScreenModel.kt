@@ -174,6 +174,14 @@ class AnimeSourceScreenModel(
         screenModelScope.launchIO { repository.setBookmark(episode, !episode.bookmark) }
     }
 
+    /** Remembers where the preview stopped so the full player picks up from there */
+    fun savePreviewPosition(episodeId: Long, positionMs: Long, then: () -> Unit) {
+        screenModelScope.launchIO {
+            if (positionMs > 0) repository.updateEpisode(episodeId, lastSecondSeen = positionMs)
+            tachiyomi.core.common.util.lang.withUIContext { then() }
+        }
+    }
+
     fun toggleEpisodeSort() {
         val anime = _preview.value.anime ?: return
         screenModelScope.launchIO {

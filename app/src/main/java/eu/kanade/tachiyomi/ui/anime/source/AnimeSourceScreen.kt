@@ -299,6 +299,14 @@ class AnimeSourceScreen(
                             onPlay = playEpisode,
                             onToggleSeen = screenModel::toggleSeen,
                             onToggleBookmark = screenModel::toggleBookmark,
+                            source = source,
+                            onOpenPlayer = { episode, positionMs ->
+                                screenModel.savePreviewPosition(episode.id, positionMs) {
+                                    context.startActivity(
+                                        PlayerActivity.newIntent(context, episode.animeId, episode.id),
+                                    )
+                                }
+                            },
                         )
                     }
                 }

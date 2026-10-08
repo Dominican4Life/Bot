@@ -6,13 +6,12 @@ import cafe.adriel.voyager.core.model.screenModelScope
 import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
 import eu.kanade.tachiyomi.animesource.AnimeSource
 import eu.kanade.tachiyomi.animesource.model.FetchType
-import eu.kanade.tachiyomi.animesource.model.Hoster
-import eu.kanade.tachiyomi.animesource.model.Hoster.Companion.toHosterList
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.data.anime.Anime
 import eu.kanade.tachiyomi.data.anime.AnimeRepository
+import eu.kanade.tachiyomi.data.anime.AnimeVideoFetcher
 import eu.kanade.tachiyomi.data.anime.Episode
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -324,48 +323,8 @@ class AnimeScreenModel(
         mutableState.update { it.copy(videoDialog = null) }
     }
 
-    private suspend fun fetchVideos(source: AnimeSource, episode: SEpisode): List<Video> {
-        val hosters: List<Hoster> = if (source is AnimeHttpSource && source.usesHosters()) {
-            try {
-                source.getHosterList(episode)
-            } catch (e: Throwable) {
-                if (e is CancellationException) throw e
-                logcat(LogPriority.WARN, e) { "Hoster list failed, trying the video list" }
-                source.getVideoList(episode).toHosterList()
-            }
-        } else {
-            source.getVideoList(episode).toHosterList()
-        }
-        val sortedHosters = if (source is AnimeHttpSource) with(source) { hosters.sortHosters() } else hosters
-        val videos = sortedHosters.flatMap { hoster ->
-            try {
-                (hoster.videoList ?: source.getVideoList(hoster)).map { video ->
-                    if (hoster.hosterName.isNotBlank() && hoster.hosterName != Hoster.NO_HOSTER_LIST) {
-                        video.copy(videoTitle = "${hoster.hosterName} • ${video.videoTitle}")
-                    } else {
-                        video
-                    }
-                }
-            } catch (e: Throwable) {
-                if (e is CancellationException) throw e
-                logcat(LogPriority.WARN, e) { "Couldn't load videos of ${hoster.hosterName}" }
-                emptyList()
-            }
-        }
-        return if (source is AnimeHttpSource) with(source) { videos.sortVideos() } else videos
-    }
-
-    /** Extensions built for the newer API override the hoster methods; older ones only have video lists. */
-    private fun AnimeHttpSource.usesHosters(): Boolean {
-        var cls: Class<*>? = javaClass
-        while (cls != null && cls != AnimeHttpSource::class.java) {
-            if (cls.declaredMethods.any { it.name == "hosterListParse" || it.name == "getHosterList" }) {
-                return true
-            }
-            cls = cls.superclass
-        }
-        return false
-    }
+    private suspend fun fetchVideos(source: AnimeSource, episode: SEpisode): List<Video> =
+        AnimeVideoFetcher.fetchVideos(source, episode)
 
     sealed interface VideoDialog {
         val episode: Episode

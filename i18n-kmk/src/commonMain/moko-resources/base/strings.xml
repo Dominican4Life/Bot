@@ -295,4 +295,23 @@
     <string name="anime_clear_episodes">Remove the saved episode list? It will be fetched again from the source.</string>
     <string name="anime_downloads_coming">Anime downloads are coming in the next update</string>
     <string name="anime_no_source_settings">This source has no settings</string>
+    <string name="anime_preview_tap_to_play">Tap to preview %1$s</string>
+    <string name="anime_preview_loading">Loading video…</string>
+    <string name="anime_preview_no_videos">No videos found for this episode</string>
+    <string name="anime_preview_video_settings">Video settings</string>
+    <string name="anime_preview_view">View</string>
+    <string name="anime_preview_original">Original</string>
+    <string name="anime_preview_filtered">Filtered</string>
+    <string name="anime_preview_split">Split before / after</string>
+    <string name="anime_preview_hold_compare">Hold to compare</string>
+    <string name="anime_preview_adjust">Adjust</string>
+    <string name="anime_preview_speed">Speed</string>
+    <string name="anime_preview_quality">Quality</string>
+    <string name="anime_preview_reset">Reset filters</string>
+    <string name="anime_preview_open_player">Open in player</string>
+    <string name="anime_preview_mute">Mute</string>
+    <string name="anime_preview_unmute">Unmute</string>
+    <string name="anime_preview_upscaler_note">The upscaler only shows in Filtered view</string>
+    <string name="anime_preview_gpu_next_note">Turn off gpu-next in player settings to use Anime4K</string>
+    <string name="anime_preview_shared_note">These settings are shared with the full player</string>
 </resources>
