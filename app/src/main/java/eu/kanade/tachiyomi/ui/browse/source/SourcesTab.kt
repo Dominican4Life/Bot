@@ -1,7 +1,6 @@
 package eu.kanade.tachiyomi.ui.browse.source
 
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.TravelExplore
 import androidx.compose.material.icons.outlined._18UpRating
 import androidx.compose.material3.LocalContentColor
@@ -63,21 +62,8 @@ fun Screen.sourcesTab(
                 onClick = { screenModel.toggleNsfwOnly() },
             ),
             // KMK <--
-        ).let {
-            when (smartSearchConfig) {
-                null -> {
-                    it.add(
-                        AppBar.Action(
-                            title = stringResource(MR.strings.action_filter),
-                            icon = Icons.Outlined.FilterList,
-                            onClick = { navigator.push(SourcesFilterScreen()) },
-                        ),
-                    )
-                }
-                // Merge: find in another source
-                else -> it
-            }
-        },
+            // KMK: the sources filter button now sits next to the search bar
+        ),
         // SY <--
         content = { contentPadding, snackbarHostState ->
             SourcesScreen(
@@ -98,6 +84,7 @@ fun Screen.sourcesTab(
                 onLongClickItem = screenModel::showSourceDialog,
                 // KMK -->
                 onChangeSearchQuery = screenModel::search,
+                onClickFilter = { navigator.push(SourcesFilterScreen()) }.takeIf { smartSearchConfig == null },
                 // KMK <--
             )
 

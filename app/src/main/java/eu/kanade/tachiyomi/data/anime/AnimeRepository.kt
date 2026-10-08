@@ -109,6 +109,11 @@ class AnimeRepository(
         }
     }
 
+    /** "Clear anime": drops the saved episode list so the next refresh fetches it fresh */
+    suspend fun deleteEpisodes(animeId: Long) {
+        handler.await { episodesQueries.deleteByAnimeId(animeId) }
+    }
+
     suspend fun setBookmark(episode: Episode, bookmark: Boolean) {
         handler.await { episodesQueries.setBookmark(bookmark, episode.id) }
     }

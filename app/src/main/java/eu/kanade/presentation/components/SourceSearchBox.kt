@@ -5,6 +5,8 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -25,6 +27,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusManager
 import androidx.compose.ui.focus.FocusRequester
@@ -61,6 +64,8 @@ fun AnimatedFloatingSearchBox(
     focusManager: FocusManager = LocalFocusManager.current,
     focusRequester: FocusRequester = remember { FocusRequester() },
     keyboardController: SoftwareKeyboardController? = LocalSoftwareKeyboardController.current,
+    // KMK: e.g. the sources filter button, shown right of the search bar
+    trailing: (@Composable RowScope.() -> Unit)? = null,
 ) {
     AnimatedVisibility(
         visible = listState.isItemScrollingUp(),
@@ -68,15 +73,21 @@ fun AnimatedFloatingSearchBox(
         exit = shrinkVertically(),
         modifier = modifier,
     ) {
-        SourcesSearchBox(
-            searchQuery = searchQuery,
-            onChangeSearchQuery = onChangeSearchQuery,
-            onGloballyPositioned = onGloballyPositioned,
-            placeholderText = placeholderText,
-            focusManager = focusManager,
-            focusRequester = focusRequester,
-            keyboardController = keyboardController,
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.onGloballyPositioned(onGloballyPositioned),
+        ) {
+            SourcesSearchBox(
+                searchQuery = searchQuery,
+                onChangeSearchQuery = onChangeSearchQuery,
+                placeholderText = placeholderText,
+                focusManager = focusManager,
+                focusRequester = focusRequester,
+                keyboardController = keyboardController,
+                modifier = Modifier.weight(1f),
+            )
+            trailing?.invoke(this)
+        }
     }
 }
 

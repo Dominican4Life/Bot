@@ -129,6 +129,7 @@ data object BrowseTab : Tab {
                         navigator.push(eu.kanade.tachiyomi.ui.anime.source.AnimeSourceScreen(it))
                     }
                 },
+                onClickFilter = { navigator.push(eu.kanade.tachiyomi.ui.browse.anime.AnimeSourcesFilterScreen()) },
             )
         }
         val animeExtensions: @Composable (PaddingValues) -> Unit = { padding ->
@@ -176,16 +177,17 @@ data object BrowseTab : Tab {
                     migrateSourceTab().withAnime(animeMigrate),
                 )
 
+            // KMK: Extensions sits right after Sources, Feed after it
             else ->
                 persistentListOf(
                     sourcesTab().withAnime(animeSources),
+                    extensionsTab(extensionsScreenModel).withAnime(animeExtensions),
                     feedTab(
                         // KMK -->
                         feedScreenModel,
                         bulkFavoriteScreenModel,
                         // KMK <--
                     ),
-                    extensionsTab(extensionsScreenModel).withAnime(animeExtensions),
                     migrateSourceTab().withAnime(animeMigrate),
                 )
         }
@@ -206,7 +208,10 @@ data object BrowseTab : Tab {
         )
         LaunchedEffect(Unit) {
             switchToExtensionTabChannel.receiveAsFlow()
-                .collectLatest { state.scrollToPage(/* SY --> */2/* SY <-- */) }
+                .collectLatest {
+                    // KMK: Extensions is the 3rd tab only when Feed is in front
+                    state.scrollToPage(if (feedTabInFront && !hideFeedTab) 2 else 1)
+                }
         }
 
         LaunchedEffect(Unit) {

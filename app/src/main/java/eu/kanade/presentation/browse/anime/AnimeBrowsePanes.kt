@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Dangerous
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Extension
+import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.GetApp
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.PushPin
@@ -34,6 +35,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.ProvideTextStyle
@@ -75,6 +77,7 @@ import tachiyomi.presentation.core.components.FastScrollLazyColumn
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.icons.FlagEmoji
+import tachiyomi.presentation.core.theme.active
 import tachiyomi.presentation.core.util.secondaryItemAlpha
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -148,16 +151,30 @@ fun AnimeSourcesPane(
     onSearch: (String?) -> Unit,
     onTogglePin: (Long) -> Unit,
     onClickSource: (Long) -> Unit,
+    onClickFilter: () -> Unit,
 ) {
     val context = LocalContext.current
     val extensionManager = remember { Injekt.get<AnimeExtensionManager>() }
     Column(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
-        SourcesSearchBox(
-            searchQuery = state.sourceQuery,
-            onChangeSearchQuery = onSearch,
-            placeholderText = stringResource(KMR.strings.browse_search_anime_sources),
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+        ) {
+            SourcesSearchBox(
+                searchQuery = state.sourceQuery,
+                onChangeSearchQuery = onSearch,
+                placeholderText = stringResource(KMR.strings.browse_search_anime_sources),
+                modifier = Modifier.weight(1f),
+            )
+            // Anime sources filter (languages / single sources), like the manga one
+            IconButton(onClick = onClickFilter) {
+                Icon(
+                    imageVector = Icons.Outlined.FilterList,
+                    contentDescription = stringResource(MR.strings.action_filter),
+                    tint = if (state.filterActive) MaterialTheme.colorScheme.active else LocalContentColor.current,
+                )
+            }
+        }
         val sources = state.filteredSources
         if (sources.isEmpty()) {
             EmptyMessage(stringResource(KMR.strings.anime_no_sources))

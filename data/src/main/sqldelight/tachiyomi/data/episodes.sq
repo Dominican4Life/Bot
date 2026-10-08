@@ -55,6 +55,9 @@ UPDATE episodes SET last_second_seen = :lastSecondSeen, total_seconds = :totalSe
 deleteById:
 DELETE FROM episodes WHERE _id = :id;
 
+deleteByAnimeId:
+DELETE FROM episodes WHERE anime_id = :animeId;
+
 updatePartial:
 UPDATE episodes SET
     seen = coalesce(:seen, seen),

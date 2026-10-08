@@ -12,9 +12,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -31,25 +31,17 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.outlined.FilterList
-import androidx.compose.material.icons.outlined.MoreVert
-import androidx.compose.material.icons.outlined.Public
-import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SmallExtendedFloatingActionButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.animateFloatingActionButton
-import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -60,7 +52,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -71,42 +62,58 @@ import androidx.core.net.toUri
 import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
+import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.presentation.anime.AnimeGridItem
 import eu.kanade.presentation.anime.asDisplayManga
 import eu.kanade.presentation.anime.asMangaCover
+import eu.kanade.presentation.browse.RelatedMangaTitle
+import eu.kanade.presentation.components.TabbedDialog
+import eu.kanade.presentation.components.TabbedDialogPaddings
 import eu.kanade.presentation.library.components.MangaComfortableGridItem
-import eu.kanade.presentation.components.AppBar
-import eu.kanade.presentation.components.AppBarTitle
+import eu.kanade.presentation.manga.ScanlatorFilterItem
 import eu.kanade.presentation.manga.components.ExpandableMangaDescription
 import eu.kanade.presentation.manga.components.MangaActionRow
 import eu.kanade.presentation.manga.components.MangaChapterListItem
 import eu.kanade.presentation.manga.components.MangaInfoBox
+import eu.kanade.presentation.manga.components.MangaToolbar
+import eu.kanade.presentation.manga.components.OutlinedButtonWithArrow
+import eu.kanade.presentation.manga.components.ScanlatorFilterDialog
 import eu.kanade.presentation.theme.CoverSeedTheme
 import eu.kanade.presentation.util.Screen
 import eu.kanade.presentation.util.isTabletUi
+import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.data.anime.Anime
 import eu.kanade.tachiyomi.data.anime.Episode
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.ui.anime.source.AnimeSourceScreen
+import eu.kanade.tachiyomi.ui.browse.extension.details.SourcePreferencesScreen
 import eu.kanade.tachiyomi.ui.player.PlayerActivity
 import eu.kanade.tachiyomi.ui.player.settings.PlayerPreferences
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
 import eu.kanade.tachiyomi.util.lang.toRelativeString
 import eu.kanade.tachiyomi.util.system.toast
+import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.toImmutableSet
+import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.core.common.preference.TriState
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.i18n.MR
+import tachiyomi.i18n.ank.AMR
 import tachiyomi.i18n.kmk.KMR
+import tachiyomi.presentation.core.components.RadioItem
 import tachiyomi.presentation.core.components.ScrollbarLazyColumn
+import tachiyomi.presentation.core.components.SortItem
+import tachiyomi.presentation.core.components.TriStateItem
 import tachiyomi.presentation.core.components.TwoPanelBox
 import tachiyomi.presentation.core.components.VerticalFastScroller
 import tachiyomi.presentation.core.components.material.PullRefresh
 import tachiyomi.presentation.core.components.material.Scaffold
+import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.LoadingScreen
-import tachiyomi.presentation.core.theme.active
 import tachiyomi.presentation.core.util.collectAsState
 import tachiyomi.presentation.core.util.shouldExpandFAB
 import uy.kohesive.injekt.Injekt
@@ -117,7 +124,8 @@ import java.time.ZoneId
 
 /**
  * KMK: Anime details with its episode list. Built from the same pieces as the manga details page
- * (cover backdrop, action buttons, description and tags, chapter-style rows, Start button, cover colors).
+ * (toolbar, cover backdrop, action buttons, description and tags, related row, chapter-style rows,
+ * Start button, cover colors, filter/sort/display sheet).
  */
 class AnimeScreen(private val animeId: Long) : Screen() {
 
@@ -143,63 +151,92 @@ class AnimeScreen(private val animeId: Long) : Screen() {
                 context.startActivity(PlayerActivity.newIntent(context, episode.animeId, episode.id))
             }
         }
-        val openWebView: (() -> Unit)? = (screenModel.source as? AnimeHttpSource)?.let { source ->
-            {
-                val url = runCatching { source.getAnimeUrl(anime.toSAnime()) }
-                    .getOrElse { source.baseUrl + anime.url }
-                navigator.push(WebViewScreen(url, anime.title))
-            }
+        val animeUrl: String? = (screenModel.source as? AnimeHttpSource)?.let { source ->
+            runCatching { source.getAnimeUrl(anime.toSAnime()) }.getOrElse { source.baseUrl + anime.url }
         }
-        val searchSource: (String) -> Unit = { query -> navigator.push(AnimeSourceScreen(anime.source, query)) }
+        val openWebView: (() -> Unit)? = animeUrl?.let { url -> { navigator.push(WebViewScreen(url, anime.title)) } }
 
-        var showFilter by remember { mutableStateOf(false) }
+        var dialog by remember { mutableStateOf<AnimeDialog?>(null) }
+        val actions = AnimeActions(
+            navigateUp = navigator::pop,
+            onRefresh = screenModel::refresh,
+            onToggleFavorite = screenModel::toggleFavorite,
+            onFilter = { dialog = AnimeDialog.Settings },
+            onWebView = openWebView,
+            onShare = animeUrl?.let { url ->
+                {
+                    val intent = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, url)
+                    }
+                    context.startActivity(Intent.createChooser(intent, context.stringResource(MR.strings.action_share)))
+                }
+            },
+            onDownload = { context.toast(KMR.strings.anime_downloads_coming) },
+            onEditNotes = { dialog = AnimeDialog.Notes },
+            onClearAnime = { dialog = AnimeDialog.Clear },
+            onSourceSettings = {
+                val source = screenModel.source
+                if (source is ConfigurableAnimeSource) {
+                    navigator.push(SourcePreferencesScreen(source.id, anime = true))
+                } else {
+                    context.toast(KMR.strings.anime_no_source_settings)
+                }
+            },
+            onRelatedScreen = { navigator.push(AnimeRelatedScreen(anime.id)) },
+            onSearch = { query -> navigator.push(AnimeSourceScreen(anime.source, query)) },
+            onSourceClick = { navigator.push(AnimeSourceScreen(anime.source)) },
+            onOpenAnime = { navigator.push(AnimeScreen(it.id)) },
+            onPlay = playEpisode,
+            onToggleSeen = screenModel::toggleSeen,
+            onToggleBookmark = screenModel::toggleBookmark,
+        )
+
         CoverSeedTheme(seedColor = state.seedColor) {
-            if (showFilter) {
-                EpisodeFilterDialog(
+            when (dialog) {
+                null -> {}
+                AnimeDialog.Settings -> AnimeEpisodeSettingsDialog(
                     anime = anime,
-                    onToggleFilter = screenModel::toggleEpisodeFilter,
-                    onToggleSort = screenModel::toggleSort,
-                    onDismissRequest = { showFilter = false },
+                    scanlatorFilterActive = state.excludedScanlators.isNotEmpty(),
+                    onDismissRequest = { dialog = null },
+                    onFilterChanged = screenModel::setEpisodeFilter,
+                    onScanlatorFilterClicked = { dialog = AnimeDialog.Scanlators },
+                    onSortModeChanged = screenModel::setSortMode,
+                    onDisplayNumberChanged = screenModel::setDisplayNumber,
+                    onReset = screenModel::resetEpisodeSettings,
+                )
+                AnimeDialog.Scanlators -> ScanlatorFilterDialog(
+                    availableScanlators = state.scanlators.toImmutableSet(),
+                    excludedScanlators = state.excludedScanlators.toImmutableSet(),
+                    onDismissRequest = { dialog = AnimeDialog.Settings },
+                    onConfirm = screenModel::setExcludedScanlators,
+                )
+                AnimeDialog.Notes -> AnimeNotesDialog(
+                    notes = state.notes,
+                    onDismissRequest = { dialog = null },
+                    onSave = screenModel::setNotes,
+                )
+                AnimeDialog.Clear -> AlertDialog(
+                    onDismissRequest = { dialog = null },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                dialog = null
+                                screenModel.clearAnime()
+                            },
+                        ) { Text(stringResource(MR.strings.action_ok)) }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { dialog = null }) { Text(stringResource(MR.strings.action_cancel)) }
+                    },
+                    title = { Text(stringResource(AMR.strings.action_clear_anime)) },
+                    text = { Text(stringResource(KMR.strings.anime_clear_episodes)) },
                 )
             }
             if (isTabletUi()) {
-                AnimeScreenLarge(
-                    state = state,
-                    anime = anime,
-                    navigateUp = navigator::pop,
-                    onRefresh = screenModel::refresh,
-                    onToggleFavorite = screenModel::toggleFavorite,
-                    onToggleSort = screenModel::toggleSort,
-                    onFilter = { showFilter = true },
-                    onWebView = openWebView,
-                    onSearch = searchSource,
-                    onSourceClick = { navigator.push(AnimeSourceScreen(anime.source)) },
-                    onOpenSeason = { navigator.push(AnimeScreen(it.id)) },
-                    onPlay = playEpisode,
-                    onToggleSeen = screenModel::toggleSeen,
-                    onToggleBookmark = screenModel::toggleBookmark,
-                    sourceMissing = state.sourceMissing,
-                    source = screenModel.source,
-                )
+                AnimeScreenLarge(state, anime, actions, screenModel.source)
             } else {
-                AnimeScreenSmall(
-                    state = state,
-                    anime = anime,
-                    navigateUp = navigator::pop,
-                    onRefresh = screenModel::refresh,
-                    onToggleFavorite = screenModel::toggleFavorite,
-                    onToggleSort = screenModel::toggleSort,
-                    onFilter = { showFilter = true },
-                    onWebView = openWebView,
-                    onSearch = searchSource,
-                    onSourceClick = { navigator.push(AnimeSourceScreen(anime.source)) },
-                    onOpenSeason = { navigator.push(AnimeScreen(it.id)) },
-                    onPlay = playEpisode,
-                    onToggleSeen = screenModel::toggleSeen,
-                    onToggleBookmark = screenModel::toggleBookmark,
-                    sourceMissing = state.sourceMissing,
-                    source = screenModel.source,
-                )
+                AnimeScreenSmall(state, anime, actions, screenModel.source)
             }
 
             VideoDialogs(
@@ -210,6 +247,29 @@ class AnimeScreen(private val animeId: Long) : Screen() {
         }
     }
 }
+
+private enum class AnimeDialog { Settings, Scanlators, Notes, Clear }
+
+/** Everything the details page can do, passed down to both layouts */
+private class AnimeActions(
+    val navigateUp: () -> Unit,
+    val onRefresh: () -> Unit,
+    val onToggleFavorite: () -> Unit,
+    val onFilter: () -> Unit,
+    val onWebView: (() -> Unit)?,
+    val onShare: (() -> Unit)?,
+    val onDownload: () -> Unit,
+    val onEditNotes: () -> Unit,
+    val onClearAnime: () -> Unit,
+    val onSourceSettings: () -> Unit,
+    val onRelatedScreen: () -> Unit,
+    val onSearch: (String) -> Unit,
+    val onSourceClick: () -> Unit,
+    val onOpenAnime: (Anime) -> Unit,
+    val onPlay: (Episode) -> Unit,
+    val onToggleSeen: (Episode) -> Unit,
+    val onToggleBookmark: (Episode) -> Unit,
+)
 
 @Composable
 private fun VideoDialogs(state: AnimeScreenModel.State, screenModel: AnimeScreenModel, context: Context) {
@@ -289,103 +349,160 @@ private fun VideoDialogs(state: AnimeScreenModel.State, screenModel: AnimeScreen
         }
 }
 
+/** The manga details toolbar, with the options anime supports */
 @Composable
 private fun AnimeToolbar(
     title: String,
-    titleAlpha: Float,
-    backgroundAlpha: Float,
     filterActive: Boolean,
-    navigateUp: () -> Unit,
-    onRefresh: () -> Unit,
-    onFilter: () -> Unit,
-    onWebView: (() -> Unit)?,
-    modifier: Modifier = Modifier,
+    actions: AnimeActions,
+    titleAlphaProvider: () -> Float,
+    backgroundAlphaProvider: () -> Float,
 ) {
-    var showMenu by remember { mutableStateOf(false) }
-    AppBar(
-        titleContent = { AppBarTitle(title, modifier = Modifier.alpha(titleAlpha)) },
-        modifier = modifier,
-        backgroundColor = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp).copy(alpha = backgroundAlpha),
-        navigateUp = navigateUp,
-        actions = {
-            IconButton(onClick = onFilter) {
-                Icon(
-                    Icons.Outlined.FilterList,
-                    contentDescription = stringResource(MR.strings.action_filter),
-                    tint = if (filterActive) MaterialTheme.colorScheme.active else LocalContentColor.current,
-                )
-            }
-            Box {
-                IconButton(onClick = { showMenu = true }) {
-                    Icon(Icons.Outlined.MoreVert, contentDescription = stringResource(MR.strings.action_menu_overflow_description))
-                }
-                DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-                    DropdownMenuItem(
-                        text = { Text(stringResource(MR.strings.action_webview_refresh)) },
-                        onClick = {
-                            showMenu = false
-                            onRefresh()
-                        },
-                    )
-                    if (onWebView != null) {
-                        DropdownMenuItem(
-                            text = { Text(stringResource(MR.strings.action_web_view)) },
-                            onClick = {
-                                showMenu = false
-                                onWebView()
-                            },
-                        )
-                    }
-                }
-            }
-        },
+    val uiPreferences = remember { Injekt.get<UiPreferences>() }
+    val expandRelated by uiPreferences.expandRelatedMangas().collectAsState()
+    val relatedInOverflow by uiPreferences.relatedMangasInOverflow().collectAsState()
+    MangaToolbar(
+        title = title,
+        hasFilters = filterActive,
+        navigateUp = actions.navigateUp,
+        onClickFilter = actions.onFilter,
+        onClickShare = actions.onShare,
+        onClickDownload = { actions.onDownload() },
+        onClickEditCategory = null,
+        onClickRefresh = actions.onRefresh,
+        onClickMigrate = null,
+        onClickEditNotes = actions.onEditNotes,
+        onClickEditInfo = null,
+        onClickRelatedMangas = actions.onRelatedScreen.takeIf { !expandRelated && relatedInOverflow },
+        onClickSourceSettings = actions.onSourceSettings,
+        onClearManga = actions.onClearAnime,
+        onOpenMangaFolder = null,
+        onClickRecommend = null,
+        onClickMerge = null,
+        onClickMergedSettings = null,
+        actionModeCounter = 0,
+        onCancelActionMode = {},
+        onSelectAll = {},
+        onInvertSelection = {},
+        titleAlphaProvider = titleAlphaProvider,
+        backgroundAlphaProvider = backgroundAlphaProvider,
+        onPaletteScreenClick = {},
     )
 }
 
-/** Episode filters and sort, like the chapter settings on the manga details page */
+/** Filter / Sort / Display sheet, same as Anikku's episode settings */
 @Composable
-private fun EpisodeFilterDialog(
+private fun AnimeEpisodeSettingsDialog(
     anime: Anime,
-    onToggleFilter: (Long) -> Unit,
-    onToggleSort: () -> Unit,
+    scanlatorFilterActive: Boolean,
     onDismissRequest: () -> Unit,
+    onFilterChanged: (include: Long, exclude: Long, TriState) -> Unit,
+    onScanlatorFilterClicked: () -> Unit,
+    onSortModeChanged: (Long) -> Unit,
+    onDisplayNumberChanged: (Boolean) -> Unit,
+    onReset: () -> Unit,
 ) {
-    AlertDialog(
+    TabbedDialog(
         onDismissRequest = onDismissRequest,
-        confirmButton = { TextButton(onClick = onDismissRequest) { Text(stringResource(MR.strings.action_ok)) } },
-        title = { Text(stringResource(MR.strings.action_filter)) },
-        text = {
-            Column {
-                listOf(
-                    Anime.FILTER_UNSEEN to stringResource(MR.strings.action_filter_unread),
-                    Anime.FILTER_BOOKMARKED to stringResource(MR.strings.action_filter_bookmarked),
-                    Anime.FILTER_HIDE_FILLER to stringResource(KMR.strings.anime_hide_filler),
-                ).forEach { (flag, label) ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onToggleFilter(flag) },
-                    ) {
-                        Checkbox(checked = (anime.episodeFlags and flag) != 0L, onCheckedChange = { onToggleFilter(flag) })
-                        Text(label)
+        tabTitles = persistentListOf(
+            stringResource(MR.strings.action_filter),
+            stringResource(MR.strings.action_sort),
+            stringResource(MR.strings.action_display),
+        ),
+        tabOverflowMenuContent = { closeMenu ->
+            DropdownMenuItem(
+                text = { Text(stringResource(MR.strings.action_reset)) },
+                onClick = {
+                    onReset()
+                    closeMenu()
+                },
+            )
+        },
+    ) { page ->
+        Column(
+            modifier = Modifier
+                .padding(vertical = TabbedDialogPaddings.Vertical)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            when (page) {
+                0 -> {
+                    TriStateItem(
+                        label = stringResource(MR.strings.label_downloaded),
+                        state = anime.downloadedFilter,
+                        onClick = { onFilterChanged(Anime.FILTER_DOWNLOADED, Anime.FILTER_DOWNLOADED_EXCLUDE, it) },
+                    )
+                    TriStateItem(
+                        label = stringResource(KMR.strings.anime_filter_unseen),
+                        state = anime.unseenFilter,
+                        onClick = { onFilterChanged(Anime.FILTER_UNSEEN, Anime.FILTER_UNSEEN_EXCLUDE, it) },
+                    )
+                    TriStateItem(
+                        label = stringResource(MR.strings.action_filter_bookmarked),
+                        state = anime.bookmarkedFilter,
+                        onClick = { onFilterChanged(Anime.FILTER_BOOKMARKED, Anime.FILTER_BOOKMARKED_EXCLUDE, it) },
+                    )
+                    TriStateItem(
+                        label = stringResource(AMR.strings.action_filter_fillermarked),
+                        state = anime.fillermarkedFilter,
+                        onClick = { onFilterChanged(Anime.FILTER_FILLER_INCLUDE, Anime.FILTER_HIDE_FILLER, it) },
+                    )
+                    ScanlatorFilterItem(active = scanlatorFilterActive, onClick = onScanlatorFilterClicked)
+                }
+                1 -> {
+                    listOf(
+                        MR.strings.sort_by_source to Anime.SORT_BY_SOURCE,
+                        KMR.strings.anime_sort_by_episode_number to Anime.SORT_BY_NUMBER,
+                        MR.strings.sort_by_upload_date to Anime.SORT_BY_UPLOAD_DATE,
+                        MR.strings.action_sort_alpha to Anime.SORT_BY_ALPHABET,
+                    ).forEach { (label, mode) ->
+                        SortItem(
+                            label = stringResource(label),
+                            sortDescending = (!anime.sortAscending).takeIf { anime.sortMode == mode },
+                            onClick = { onSortModeChanged(mode) },
+                        )
                     }
                 }
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(onClick = onToggleSort)
-                        .padding(vertical = 8.dp),
-                ) {
-                    Icon(Icons.AutoMirrored.Outlined.Sort, contentDescription = null, modifier = Modifier.padding(12.dp))
-                    Text(
-                        stringResource(
-                            if (anime.sortAscending) KMR.strings.anime_sort_oldest_first else KMR.strings.anime_sort_newest_first,
-                        ),
+                2 -> {
+                    RadioItem(
+                        label = stringResource(MR.strings.show_title),
+                        selected = !anime.displayNumber,
+                        onClick = { onDisplayNumberChanged(false) },
+                    )
+                    RadioItem(
+                        label = stringResource(KMR.strings.anime_show_episode_number),
+                        selected = anime.displayNumber,
+                        onClick = { onDisplayNumberChanged(true) },
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun AnimeNotesDialog(notes: String, onDismissRequest: () -> Unit, onSave: (String) -> Unit) {
+    var text by remember { mutableStateOf(notes) }
+    AlertDialog(
+        onDismissRequest = onDismissRequest,
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    onSave(text.trim())
+                    onDismissRequest()
+                },
+            ) { Text(stringResource(MR.strings.action_save)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismissRequest) { Text(stringResource(MR.strings.action_cancel)) }
+        },
+        title = { Text(stringResource(MR.strings.action_edit_notes)) },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                minLines = 4,
+                modifier = Modifier.fillMaxWidth(),
+            )
         },
     )
 }
@@ -408,12 +525,7 @@ private fun AnimeInfo(
     state: AnimeScreenModel.State,
     isTablet: Boolean,
     appBarPadding: androidx.compose.ui.unit.Dp,
-    sourceMissing: Boolean,
-    onToggleFavorite: () -> Unit,
-    onWebView: (() -> Unit)?,
-    onSearch: (String) -> Unit,
-    onSourceClick: () -> Unit,
-    onOpenAnime: (Anime) -> Unit,
+    actions: AnimeActions,
 ) {
     val context = LocalContext.current
     val displayManga = remember(anime) { anime.asDisplayManga() }
@@ -424,22 +536,23 @@ private fun AnimeInfo(
             appBarPadding = appBarPadding,
             manga = displayManga,
             sourceName = state.sourceName ?: anime.source.toString(),
-            isStubSource = sourceMissing,
+            isStubSource = state.sourceMissing,
             isSourceIncognito = false,
             onCoverClick = {},
-            doSearch = { query, _ -> onSearch(query) },
-            librarySearch = { onSearch(it) },
-            onSourceClick = onSourceClick,
+            doSearch = { query, _ -> actions.onSearch(query) },
+            librarySearch = { actions.onSearch(it) },
+            onSourceClick = actions.onSourceClick,
             onCoverLoaded = {},
             coverRatio = coverRatio,
+            forcePanoramaCover = true,
         )
         MangaActionRow(
             favorite = anime.favorite,
             trackingCount = 0,
             nextUpdate = null,
             isUserIntervalMode = false,
-            onAddToLibraryClicked = onToggleFavorite,
-            onWebViewClicked = onWebView,
+            onAddToLibraryClicked = actions.onToggleFavorite,
+            onWebViewClicked = actions.onWebView,
             onWebViewLongClicked = null,
             onTrackingClicked = { context.toast(KMR.strings.anime_tracking_coming) },
             onEditIntervalClicked = null,
@@ -452,20 +565,17 @@ private fun AnimeInfo(
             defaultExpandState = isTablet,
             description = anime.description,
             tagsProvider = { anime.genre?.filter { it.isNotBlank() } },
-            notes = "",
-            onTagSearch = onSearch,
+            notes = state.notes,
+            onTagSearch = actions.onSearch,
             onCopyTagToClipboard = { tag ->
                 context.getSystemService(ClipboardManager::class.java)
                     ?.setPrimaryClip(ClipData.newPlainText(tag, tag))
                 context.toast(MR.strings.copied_to_clipboard_plain)
             },
-            onEditNotes = {},
+            onEditNotes = actions.onEditNotes,
             searchMetadataChips = null,
-            doSearch = { query, _ -> onSearch(query) },
+            doSearch = { query, _ -> actions.onSearch(query) },
         )
-        if (state.suggestions.isNotEmpty()) {
-            AnimeSuggestionsRow(suggestions = state.suggestions, onClick = onOpenAnime)
-        }
         if (state.error != null) {
             Text(
                 text = state.error,
@@ -474,7 +584,7 @@ private fun AnimeInfo(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             )
         }
-        if (sourceMissing) {
+        if (state.sourceMissing) {
             Text(
                 text = stringResource(KMR.strings.anime_source_not_loaded),
                 color = MaterialTheme.colorScheme.error,
@@ -488,22 +598,11 @@ private fun AnimeInfo(
 private fun AnimeScreenSmall(
     state: AnimeScreenModel.State,
     anime: Anime,
-    navigateUp: () -> Unit,
-    onRefresh: () -> Unit,
-    onToggleFavorite: () -> Unit,
-    onToggleSort: () -> Unit,
-    onFilter: () -> Unit,
-    onWebView: (() -> Unit)?,
-    onSearch: (String) -> Unit,
-    onSourceClick: () -> Unit,
-    onOpenSeason: (Anime) -> Unit,
-    onPlay: (Episode) -> Unit,
-    onToggleSeen: (Episode) -> Unit,
-    onToggleBookmark: (Episode) -> Unit,
-    sourceMissing: Boolean,
+    actions: AnimeActions,
     source: eu.kanade.tachiyomi.animesource.AnimeSource?,
 ) {
     val listState = rememberLazyListState()
+    val related = rememberRelatedSettings()
     Scaffold(
         topBar = {
             val isFirstItemVisible by remember { derivedStateOf { listState.firstVisibleItemIndex == 0 } }
@@ -515,21 +614,18 @@ private fun AnimeScreenSmall(
             )
             AnimeToolbar(
                 title = anime.title,
-                titleAlpha = titleAlpha,
-                backgroundAlpha = backgroundAlpha,
                 filterActive = state.filterActive,
-                navigateUp = navigateUp,
-                onRefresh = onRefresh,
-                onFilter = onFilter,
-                onWebView = onWebView,
+                actions = actions,
+                titleAlphaProvider = { titleAlpha },
+                backgroundAlphaProvider = { backgroundAlpha },
             )
         },
-        floatingActionButton = { StartFab(state, listState.shouldExpandFAB(), onPlay) },
+        floatingActionButton = { StartFab(state, listState.shouldExpandFAB(), actions.onPlay) },
     ) { contentPadding ->
         val topPadding = contentPadding.calculateTopPadding()
         PullRefresh(
             refreshing = state.isRefreshing,
-            onRefresh = onRefresh,
+            onRefresh = actions.onRefresh,
             enabled = true,
             indicatorPadding = PaddingValues(top = topPadding),
         ) {
@@ -545,15 +641,11 @@ private fun AnimeScreenSmall(
                             state = state,
                             isTablet = false,
                             appBarPadding = topPadding,
-                            sourceMissing = sourceMissing,
-                            onToggleFavorite = onToggleFavorite,
-                            onWebView = onWebView,
-                            onSearch = onSearch,
-                            onSourceClick = onSourceClick,
-                            onOpenAnime = onOpenSeason,
+                            actions = actions,
                         )
                     }
-                    episodeItems(state, source, onToggleSort, onOpenSeason, onPlay, onToggleSeen, onToggleBookmark)
+                    relatedItems(state, related, uppercaseTitle = false, dividerAbove = true, actions)
+                    episodeItems(state, anime, source, actions)
                 }
             }
         }
@@ -564,41 +656,27 @@ private fun AnimeScreenSmall(
 private fun AnimeScreenLarge(
     state: AnimeScreenModel.State,
     anime: Anime,
-    navigateUp: () -> Unit,
-    onRefresh: () -> Unit,
-    onToggleFavorite: () -> Unit,
-    onToggleSort: () -> Unit,
-    onFilter: () -> Unit,
-    onWebView: (() -> Unit)?,
-    onSearch: (String) -> Unit,
-    onSourceClick: () -> Unit,
-    onOpenSeason: (Anime) -> Unit,
-    onPlay: (Episode) -> Unit,
-    onToggleSeen: (Episode) -> Unit,
-    onToggleBookmark: (Episode) -> Unit,
-    sourceMissing: Boolean,
+    actions: AnimeActions,
     source: eu.kanade.tachiyomi.animesource.AnimeSource?,
 ) {
     val listState = rememberLazyListState()
     val layoutDirection = LocalLayoutDirection.current
+    val related = rememberRelatedSettings()
     Scaffold(
         topBar = {
             AnimeToolbar(
                 title = anime.title,
-                titleAlpha = 1f,
-                backgroundAlpha = 1f,
                 filterActive = state.filterActive,
-                navigateUp = navigateUp,
-                onRefresh = onRefresh,
-                onFilter = onFilter,
-                onWebView = onWebView,
+                actions = actions,
+                titleAlphaProvider = { 1f },
+                backgroundAlphaProvider = { 1f },
             )
         },
-        floatingActionButton = { StartFab(state, listState.shouldExpandFAB(), onPlay) },
+        floatingActionButton = { StartFab(state, listState.shouldExpandFAB(), actions.onPlay) },
     ) { contentPadding ->
         PullRefresh(
             refreshing = state.isRefreshing,
-            onRefresh = onRefresh,
+            onRefresh = actions.onRefresh,
             enabled = true,
             indicatorPadding = PaddingValues(top = contentPadding.calculateTopPadding()),
         ) {
@@ -618,12 +696,7 @@ private fun AnimeScreenLarge(
                             state = state,
                             isTablet = true,
                             appBarPadding = contentPadding.calculateTopPadding(),
-                            sourceMissing = sourceMissing,
-                            onToggleFavorite = onToggleFavorite,
-                            onWebView = onWebView,
-                            onSearch = onSearch,
-                            onSourceClick = onSourceClick,
-                            onOpenAnime = onOpenSeason,
+                            actions = actions,
                         )
                     }
                 },
@@ -640,7 +713,9 @@ private fun AnimeScreenLarge(
                                 bottom = contentPadding.calculateBottomPadding() + 72.dp,
                             ),
                         ) {
-                            episodeItems(state, source, onToggleSort, onOpenSeason, onPlay, onToggleSeen, onToggleBookmark)
+                            // Same spot as the manga page: related titles above the episode list
+                            relatedItems(state, related, uppercaseTitle = true, dividerAbove = false, actions)
+                            episodeItems(state, anime, source, actions)
                         }
                     }
                 },
@@ -649,44 +724,85 @@ private fun AnimeScreenLarge(
     }
 }
 
+private class RelatedSettings(val enabled: Boolean, val expand: Boolean, val inOverflow: Boolean)
+
 @Composable
-private fun AnimeSuggestionsRow(suggestions: List<Anime>, onClick: (Anime) -> Unit) {
-    Column {
-        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-        Text(
-            text = stringResource(KMR.strings.pref_source_related_mangas),
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-        )
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-        ) {
-            items(suggestions, key = { it.id }) { anime ->
-                Box(Modifier.width(110.dp)) {
-                    MangaComfortableGridItem(
-                        coverData = anime.asMangaCover(),
-                        title = anime.title,
-                        onClick = { onClick(anime) },
-                        onLongClick = { onClick(anime) },
-                        usePanoramaCover = false,
-                    )
+private fun rememberRelatedSettings(): RelatedSettings {
+    val uiPreferences = remember { Injekt.get<UiPreferences>() }
+    val sourcePreferences = remember { Injekt.get<SourcePreferences>() }
+    val enabled by sourcePreferences.relatedMangas().collectAsState()
+    val expand by uiPreferences.expandRelatedMangas().collectAsState()
+    val inOverflow by uiPreferences.relatedMangasInOverflow().collectAsState()
+    return RelatedSettings(enabled, expand, inOverflow)
+}
+
+/** Related titles row, or the "Related titles" button, following the same settings as manga */
+private fun LazyListScope.relatedItems(
+    state: AnimeScreenModel.State,
+    settings: RelatedSettings,
+    uppercaseTitle: Boolean,
+    dividerAbove: Boolean,
+    actions: AnimeActions,
+) {
+    if (!settings.enabled || state.sourceMissing) return
+    if (settings.expand) {
+        if (state.suggestions.isEmpty() && !state.suggestionsLoading) return
+        if (dividerAbove) item(key = "related-divider-top") { HorizontalDivider() }
+        item(key = "related") {
+            Column {
+                val title = stringResource(KMR.strings.pref_source_related_mangas)
+                RelatedMangaTitle(
+                    title = if (uppercaseTitle) title.uppercase() else title,
+                    subtitle = null,
+                    onClick = actions.onRelatedScreen,
+                    onLongClick = null,
+                    modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
+                )
+                if (state.suggestions.isEmpty()) {
+                    Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                    }
+                } else {
+                    AnimeSuggestionsRow(suggestions = state.suggestions, onClick = actions.onOpenAnime)
                 }
             }
         }
-        HorizontalDivider(modifier = Modifier.padding(top = 8.dp))
+        item(key = "related-divider") { HorizontalDivider() }
+    } else if (!settings.inOverflow) {
+        item(key = "related") {
+            OutlinedButtonWithArrow(
+                text = stringResource(KMR.strings.pref_source_related_mangas),
+                onClick = actions.onRelatedScreen,
+            )
+        }
+    }
+}
+
+@Composable
+private fun AnimeSuggestionsRow(suggestions: List<Anime>, onClick: (Anime) -> Unit) {
+    LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        items(suggestions, key = { it.id }) { anime ->
+            Box(Modifier.width(110.dp)) {
+                MangaComfortableGridItem(
+                    coverData = anime.asMangaCover(),
+                    title = anime.title,
+                    onClick = { onClick(anime) },
+                    onLongClick = { onClick(anime) },
+                    usePanoramaCover = false,
+                )
+            }
+        }
     }
 }
 
 private fun LazyListScope.episodeItems(
     state: AnimeScreenModel.State,
+    anime: Anime,
     source: eu.kanade.tachiyomi.animesource.AnimeSource?,
-    onToggleSort: () -> Unit,
-    onOpenSeason: (Anime) -> Unit,
-    onPlay: (Episode) -> Unit,
-    onToggleSeen: (Episode) -> Unit,
-    onToggleBookmark: (Episode) -> Unit,
+    actions: AnimeActions,
 ) {
     if (state.seasons.isNotEmpty()) {
         item(key = "seasons") {
@@ -703,7 +819,7 @@ private fun LazyListScope.episodeItems(
                 ) {
                     items(state.seasons, key = { it.id }) { season ->
                         Box(Modifier.width(120.dp)) {
-                            AnimeGridItem(anime = season, source = source, onClick = { onOpenSeason(season) })
+                            AnimeGridItem(anime = season, source = source, onClick = { actions.onOpenAnime(season) })
                         }
                     }
                 }
@@ -712,33 +828,28 @@ private fun LazyListScope.episodeItems(
         return
     }
     item(key = "episodes_header") {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
+        // Like the manga chapter header: tap it to open the filter sheet
+        Text(
+            text = if (state.isLoaded && state.episodes.isEmpty() && !state.isRefreshing) {
+                stringResource(KMR.strings.anime_no_episodes)
+            } else {
+                stringResource(KMR.strings.anime_episodes_count, state.episodes.size)
+            },
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
-        ) {
-            Text(
-                text = if (state.isLoaded && state.episodes.isEmpty() && !state.isRefreshing) {
-                    stringResource(KMR.strings.anime_no_episodes)
-                } else {
-                    stringResource(KMR.strings.anime_episodes_count, state.episodes.size)
-                },
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.weight(1f),
-            )
-            IconButton(onClick = onToggleSort) {
-                Icon(Icons.AutoMirrored.Outlined.Sort, contentDescription = stringResource(MR.strings.action_sort))
-            }
-        }
+                .clickable(onClick = actions.onFilter)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+        )
     }
     items(state.episodes, key = { "ep-${it.id}" }, contentType = { "episode" }) { episode ->
         EpisodeItem(
             episode = episode,
-            onPlay = { onPlay(episode) },
-            onToggleSeen = { onToggleSeen(episode) },
-            onToggleBookmark = { onToggleBookmark(episode) },
+            displayNumber = anime.displayNumber,
+            onPlay = { actions.onPlay(episode) },
+            onToggleSeen = { actions.onToggleSeen(episode) },
+            onToggleBookmark = { actions.onToggleBookmark(episode) },
         )
     }
 }
@@ -746,6 +857,7 @@ private fun LazyListScope.episodeItems(
 @Composable
 private fun EpisodeItem(
     episode: Episode,
+    displayNumber: Boolean,
     onPlay: () -> Unit,
     onToggleSeen: () -> Unit,
     onToggleBookmark: () -> Unit,
@@ -768,8 +880,15 @@ private fun EpisodeItem(
     } else {
         null
     }
+    val title = if (displayNumber && episode.episodeNumber >= 0) {
+        val number = episode.episodeNumber
+        val text = if (number % 1.0 == 0.0) number.toLong().toString() else number.toString()
+        stringResource(KMR.strings.anime_episode_number, text)
+    } else {
+        episode.name
+    }
     MangaChapterListItem(
-        title = episode.name,
+        title = title,
         date = date,
         readProgress = progress,
         scanlator = listOfNotNull(

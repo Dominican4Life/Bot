@@ -78,7 +78,8 @@ object PlayerSettingsMainScreen : Screen() {
     @Composable
     fun Content(twoPane: Boolean) {
         val navigator = LocalNavigator.currentOrThrow
-        val backPress = LocalBackPress.currentOrThrow
+        // KMK: opened inside the settings pane on tablets, where no back handler is provided
+        val backPress: () -> Unit = LocalBackPress.current ?: { navigator.pop() }
         val containerColor = if (twoPane) getPalerSurface() else MaterialTheme.colorScheme.surface
         val topBarState = rememberTopAppBarState()
 
@@ -87,7 +88,7 @@ object PlayerSettingsMainScreen : Screen() {
             topBar = { scrollBehavior ->
                 AppBar(
                     title = stringResource(AMR.strings.label_player_settings),
-                    navigateUp = backPress::invoke,
+                    navigateUp = backPress,
                     scrollBehavior = scrollBehavior,
                 )
             },

@@ -137,10 +137,13 @@ fun MangaInfoBox(
     onSourceClick: () -> Unit,
     onCoverLoaded: (DomainMangaCover) -> Unit,
     coverRatio: MutableFloatState,
+    /** Anime pages always switch to the wide cover when the thumbnail is wide */
+    forcePanoramaCover: Boolean = false,
     // KMK <--
 ) {
     // KMK -->
-    val usePanoramaCover by Injekt.get<UiPreferences>().usePanoramaCoverMangaInfo().collectAsState()
+    val panoramaPref by Injekt.get<UiPreferences>().usePanoramaCoverMangaInfo().collectAsState()
+    val usePanoramaCover = forcePanoramaCover || panoramaPref
     val topAlignCover by Injekt.get<UiPreferences>().topAlignCover().collectAsState()
     // KMK <--
     Box(modifier = modifier) {

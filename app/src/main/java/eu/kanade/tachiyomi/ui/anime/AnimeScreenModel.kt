@@ -20,8 +20,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import logcat.LogPriority
+import tachiyomi.core.common.preference.PreferenceStore
+import tachiyomi.core.common.preference.TriState
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.presentation.core.icons.FlagEmoji
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
@@ -37,15 +40,52 @@ class AnimeScreenModel(
     var source: AnimeSource? = null
         private set
 
+    // KMK: anime rows have no notes or scanlator columns yet, so these live in preferences
+    private val preferenceStore: PreferenceStore = Injekt.get()
+    private val excludedScanlatorsPref = preferenceStore.getStringSet("anime_excluded_scanlators_$animeId", emptySet())
+    private val notesPref = preferenceStore.getString("anime_notes_$animeId", "")
+
+    private data class Quad(val anime: Anime?, val episodes: List<Episode>, val excluded: Set<String>, val notes: String)
+
+    private fun filterAndSort(anime: Anime, episodes: List<Episode>, excluded: Set<String>): List<Episode> {
+        fun TriState.keep(value: Boolean) = when (this) {
+            TriState.DISABLED -> true
+            TriState.ENABLED_IS -> value
+            TriState.ENABLED_NOT -> !value
+        }
+        val shown = episodes.filter { ep ->
+            anime.unseenFilter.keep(!ep.seen) &&
+                anime.bookmarkedFilter.keep(ep.bookmark) &&
+                anime.fillermarkedFilter.keep(ep.fillermark) &&
+                // Downloads aren't merged yet, so nothing counts as downloaded
+                anime.downloadedFilter.keep(false) &&
+                (ep.scanlator.isNullOrBlank() || ep.scanlator !in excluded)
+        }
+        // "Descending" is the default: newest first
+        val descending = !anime.sortAscending
+        val sorted = when (anime.sortMode) {
+            Anime.SORT_BY_NUMBER -> shown.sortedBy { it.episodeNumber }.let { if (descending) it.reversed() else it }
+            Anime.SORT_BY_UPLOAD_DATE -> shown.sortedBy { it.dateUpload }.let { if (descending) it.reversed() else it }
+            Anime.SORT_BY_ALPHABET -> shown.sortedBy { it.name.lowercase() }.let { if (descending) it.reversed() else it }
+            else -> shown.sortedBy { it.sourceOrder }.let { if (descending) it else it.reversed() }
+        }
+        return sorted
+    }
+
     private var refreshJob: Job? = null
     private var seedColorUrl: String? = null
     private var videoJob: Job? = null
 
     init {
         screenModelScope.launchIO {
-            combine(repository.subscribeAnime(animeId), repository.subscribeEpisodes(animeId)) { anime, episodes ->
-                anime to episodes
-            }.collect { (anime, episodes) ->
+            combine(
+                repository.subscribeAnime(animeId),
+                repository.subscribeEpisodes(animeId),
+                excludedScanlatorsPref.changes(),
+                notesPref.changes(),
+            ) { anime, episodes, excluded, notes ->
+                Quad(anime, episodes, excluded, notes)
+            }.collect { (anime, episodes, excluded, notes) ->
                 // KMK: theme color from the cover, like the manga details page
                 if (anime != null && anime.thumbnailUrl != seedColorUrl) {
                     seedColorUrl = anime.thumbnailUrl
@@ -53,20 +93,14 @@ class AnimeScreenModel(
                         mutableState.update { it.copy(seedColor = color) }
                     }
                 }
-                val flags = anime?.episodeFlags ?: 0L
-                val shown = episodes
-                    .filter { (flags and Anime.FILTER_UNSEEN) == 0L || !it.seen }
-                    .filter { (flags and Anime.FILTER_BOOKMARKED) == 0L || it.bookmark }
-                    .filter { (flags and Anime.FILTER_HIDE_FILLER) == 0L || !it.fillermark }
                 mutableState.update { state ->
                     state.copy(
                         anime = anime,
                         allEpisodes = episodes,
-                        episodes = if (anime?.sortAscending == true) {
-                            shown.sortedBy { it.sourceOrder }.reversed()
-                        } else {
-                            shown.sortedBy { it.sourceOrder }
-                        },
+                        episodes = anime?.let { filterAndSort(it, episodes, excluded) } ?: episodes,
+                        scanlators = episodes.mapNotNull { it.scanlator?.takeIf(String::isNotBlank) }.toSet(),
+                        excludedScanlators = excluded,
+                        notes = notes,
                         isLoaded = true,
                     )
                 }
@@ -82,7 +116,9 @@ class AnimeScreenModel(
                 tries++
             }
             source = found
-            mutableState.update { it.copy(sourceName = found?.name, sourceMissing = found == null) }
+            // KMK: same "Name (flag)" label as manga sources
+            val label = found?.let { src -> "${src.name} (${FlagEmoji.getEmojiLangFlag(src.lang)})" }
+            mutableState.update { it.copy(sourceName = label, sourceMissing = found == null) }
             loadSuggestions()
             val anime = repository.getAnime(animeId) ?: return@launchIO
             if (found != null && (!anime.initialized || anime.fetchType == FetchType.Seasons || !anime.favorite)) {
@@ -148,10 +184,56 @@ class AnimeScreenModel(
         }
     }
 
-    /** Turns one episode filter on or off ([Anime.FILTER_UNSEEN], [Anime.FILTER_BOOKMARKED], [Anime.FILTER_HIDE_FILLER]) */
-    fun toggleEpisodeFilter(flag: Long) {
+    /** Sets one tri-state filter (only these / hide these / off), like the manga chapter filters */
+    fun setEpisodeFilter(include: Long, exclude: Long, state: TriState) {
+        val anime = this.state.value.anime ?: return
+        screenModelScope.launchIO {
+            repository.setEpisodeFlags(anime, Anime.withTriState(anime.episodeFlags, include, exclude, state))
+        }
+    }
+
+    /** Picking the current sort again flips its direction, like the manga Sort tab */
+    fun setSortMode(mode: Long) {
         val anime = state.value.anime ?: return
-        screenModelScope.launchIO { repository.setEpisodeFlags(anime, anime.episodeFlags xor flag) }
+        val flags = anime.episodeFlags
+        val newFlags = if (anime.sortMode == mode) {
+            flags xor Anime.SORT_ASCENDING
+        } else {
+            (flags and Anime.SORT_MODE_MASK.inv() and Anime.SORT_ASCENDING.inv()) or mode
+        }
+        screenModelScope.launchIO { repository.setEpisodeFlags(anime, newFlags) }
+    }
+
+    fun setDisplayNumber(number: Boolean) {
+        val anime = state.value.anime ?: return
+        val flags = if (number) {
+            anime.episodeFlags or Anime.DISPLAY_NUMBER
+        } else {
+            anime.episodeFlags and Anime.DISPLAY_NUMBER.inv()
+        }
+        screenModelScope.launchIO { repository.setEpisodeFlags(anime, flags) }
+    }
+
+    fun resetEpisodeSettings() {
+        val anime = state.value.anime ?: return
+        screenModelScope.launchIO { repository.setEpisodeFlags(anime, 0L) }
+        excludedScanlatorsPref.delete()
+    }
+
+    fun setExcludedScanlators(excluded: Set<String>) {
+        excludedScanlatorsPref.set(excluded)
+    }
+
+    fun setNotes(notes: String) {
+        notesPref.set(notes)
+    }
+
+    /** "Clear anime": removes the saved episodes (and their watch history), then fetches the list again */
+    fun clearAnime() {
+        screenModelScope.launchIO {
+            repository.deleteEpisodes(animeId)
+            refresh()
+        }
     }
     // KMK <--
 
@@ -309,10 +391,12 @@ class AnimeScreenModel(
         val allEpisodes: List<Episode> = emptyList(),
         val suggestions: List<Anime> = emptyList(),
         val suggestionsLoading: Boolean = false,
+        val scanlators: Set<String> = emptySet(),
+        val excludedScanlators: Set<String> = emptySet(),
+        val notes: String = "",
     ) {
         val filterActive: Boolean
-            get() = ((anime?.episodeFlags ?: 0L) and
-                (Anime.FILTER_UNSEEN or Anime.FILTER_BOOKMARKED or Anime.FILTER_HIDE_FILLER)) != 0L
+            get() = ((anime?.episodeFlags ?: 0L) and Anime.ALL_FILTERS) != 0L || excludedScanlators.isNotEmpty()
 
         /** The episode the Start/Resume button plays: the first unwatched one, oldest first */
         val nextEpisode: Episode?

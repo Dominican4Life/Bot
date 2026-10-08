@@ -13,6 +13,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -71,6 +72,8 @@ fun SourcesScreen(
     // KMK -->
     @Suppress("UNUSED_PARAMETER") modifier: Modifier = Modifier,
     onChangeSearchQuery: (String?) -> Unit,
+    /** Sources filter button next to the search bar (moved there from the toolbar) */
+    onClickFilter: (() -> Unit)? = null,
     // KMK <--
 ) {
     // KMK -->
@@ -158,6 +161,16 @@ fun SourcesScreen(
                     .align(Alignment.TopCenter),
                 onGloballyPositioned = { layoutCoordinates ->
                     searchBoxHeight = with(density) { layoutCoordinates.size.height.toDp() + 2 * MaterialTheme.padding.small }
+                },
+                trailing = onClickFilter?.let { onClick ->
+                    {
+                        IconButton(onClick = onClick) {
+                            Icon(
+                                imageVector = Icons.Outlined.FilterList,
+                                contentDescription = stringResource(MR.strings.action_filter),
+                            )
+                        }
+                    }
                 },
             )
             // KMK <--

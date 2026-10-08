@@ -58,6 +58,8 @@ class AnimeBrowseScreenModel(
                 mutableState.update {
                     newState.copy(
                         pinnedSources = it.pinnedSources,
+                        disabledLanguages = it.disabledLanguages,
+                        disabledSources = it.disabledSources,
                         sourceQuery = it.sourceQuery,
                         extensionQuery = it.extensionQuery,
                         isRefreshing = it.isRefreshing,
@@ -67,6 +69,12 @@ class AnimeBrowseScreenModel(
         }
         sourcePreferences.animePinnedSources().changes()
             .onEach { pinned -> mutableState.update { it.copy(pinnedSources = pinned) } }
+            .launchIn(screenModelScope)
+        sourcePreferences.animeDisabledLanguages().changes()
+            .onEach { langs -> mutableState.update { it.copy(disabledLanguages = langs) } }
+            .launchIn(screenModelScope)
+        sourcePreferences.animeDisabledSources().changes()
+            .onEach { ids -> mutableState.update { it.copy(disabledSources = ids) } }
             .launchIn(screenModelScope)
         refreshExtensions()
     }
@@ -133,11 +141,20 @@ class AnimeBrowseScreenModel(
         val extensionQuery: String? = null,
         val isRefreshing: Boolean = false,
         val pinnedSources: Set<String> = emptySet(),
+        val disabledLanguages: Set<String> = emptySet(),
+        val disabledSources: Set<String> = emptySet(),
     ) {
+        /** Sources left on in the anime sources filter, then narrowed by the search box */
         val filteredSources: List<AnimeCatalogueSource>
-            get() = sourceQuery?.takeIf { it.isNotBlank() }
-                ?.let { q -> sources.filter { it.name.contains(q, ignoreCase = true) } }
-                ?: sources
+            get() {
+                val enabled = sources.filter { it.lang !in disabledLanguages && it.id.toString() !in disabledSources }
+                return sourceQuery?.takeIf { it.isNotBlank() }
+                    ?.let { q -> enabled.filter { it.name.contains(q, ignoreCase = true) } }
+                    ?: enabled
+            }
+
+        val filterActive: Boolean
+            get() = disabledLanguages.isNotEmpty() || disabledSources.isNotEmpty()
 
         private fun matches(name: String) =
             extensionQuery.isNullOrBlank() || name.contains(extensionQuery, ignoreCase = true)

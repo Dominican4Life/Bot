@@ -4,6 +4,7 @@ import androidx.compose.runtime.Immutable
 import eu.kanade.tachiyomi.animesource.model.FetchType
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
+import tachiyomi.core.common.preference.TriState
 
 /** KMK: An anime saved in the database (merged from Anikku). */
 @Immutable
@@ -44,11 +45,64 @@ data class Anime(
     val sortAscending: Boolean
         get() = episodeFlags and SORT_ASCENDING != 0L
 
+    /** One of [SORT_BY_SOURCE], [SORT_BY_NUMBER], [SORT_BY_UPLOAD_DATE], [SORT_BY_ALPHABET] */
+    val sortMode: Long
+        get() = episodeFlags and SORT_MODE_MASK
+
+    val displayNumber: Boolean
+        get() = episodeFlags and DISPLAY_NUMBER != 0L
+
+    val unseenFilter: TriState
+        get() = triState(FILTER_UNSEEN, FILTER_UNSEEN_EXCLUDE)
+
+    val bookmarkedFilter: TriState
+        get() = triState(FILTER_BOOKMARKED, FILTER_BOOKMARKED_EXCLUDE)
+
+    val fillermarkedFilter: TriState
+        get() = triState(FILTER_FILLER_INCLUDE, FILTER_HIDE_FILLER)
+
+    val downloadedFilter: TriState
+        get() = triState(FILTER_DOWNLOADED, FILTER_DOWNLOADED_EXCLUDE)
+
+    private fun triState(include: Long, exclude: Long): TriState = when {
+        episodeFlags and include != 0L -> TriState.ENABLED_IS
+        episodeFlags and exclude != 0L -> TriState.ENABLED_NOT
+        else -> TriState.DISABLED
+    }
+
     companion object {
         const val SORT_ASCENDING = 1L
+
+        // Each filter is a pair of bits: "only these" and "hide these" (older builds used the first set only)
         const val FILTER_UNSEEN = 2L
         const val FILTER_BOOKMARKED = 4L
         const val FILTER_HIDE_FILLER = 8L
+        const val FILTER_UNSEEN_EXCLUDE = 16L
+        const val FILTER_BOOKMARKED_EXCLUDE = 32L
+        const val FILTER_FILLER_INCLUDE = 64L
+        const val FILTER_DOWNLOADED = 128L
+        const val FILTER_DOWNLOADED_EXCLUDE = 256L
+
+        const val SORT_BY_SOURCE = 0L
+        const val SORT_BY_NUMBER = 512L
+        const val SORT_BY_UPLOAD_DATE = 1024L
+        const val SORT_BY_ALPHABET = 1536L
+        const val SORT_MODE_MASK = 1536L
+
+        const val DISPLAY_NUMBER = 2048L
+
+        const val ALL_FILTERS = FILTER_UNSEEN or FILTER_BOOKMARKED or FILTER_HIDE_FILLER or FILTER_UNSEEN_EXCLUDE or
+            FILTER_BOOKMARKED_EXCLUDE or FILTER_FILLER_INCLUDE or FILTER_DOWNLOADED or FILTER_DOWNLOADED_EXCLUDE
+
+        /** Sets one filter's pair of bits from a [TriState] */
+        fun withTriState(flags: Long, include: Long, exclude: Long, state: TriState): Long {
+            val cleared = flags and (include or exclude).inv()
+            return when (state) {
+                TriState.DISABLED -> cleared
+                TriState.ENABLED_IS -> cleared or include
+                TriState.ENABLED_NOT -> cleared or exclude
+            }
+        }
     }
 }
 

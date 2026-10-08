@@ -23,6 +23,12 @@ class SourcePreferences(
     /** Pinned anime source ids */
     fun animePinnedSources() = preferenceStore.getStringSet("anime_pinned_catalogues", emptySet())
 
+    /** Anime source languages turned off in the anime sources filter */
+    fun animeDisabledLanguages() = preferenceStore.getStringSet("anime_disabled_languages", emptySet())
+
+    /** Single anime sources hidden in the anime sources filter */
+    fun animeDisabledSources() = preferenceStore.getStringSet("anime_hidden_catalogues", emptySet())
+
     /** Library shows the anime library instead of manga */
     fun libraryShowAnime() = preferenceStore.getBoolean("pref_library_show_anime", false)
 
