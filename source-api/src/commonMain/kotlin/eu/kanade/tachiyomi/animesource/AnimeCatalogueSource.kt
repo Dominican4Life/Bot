@@ -3,7 +3,6 @@ package eu.kanade.tachiyomi.animesource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
-import eu.kanade.tachiyomi.animesource.model.SAnime as SManga
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -135,9 +134,9 @@ interface AnimeCatalogueSource : AnimeSource {
         }
     }
     override suspend fun getRelatedMangaList(
-        manga: SManga,
+        manga: SAnime,
         exceptionHandler: (Throwable) -> Unit,
-        pushResults: suspend (relatedManga: Pair<String, List<SManga>>, completed: Boolean) -> Unit,
+        pushResults: suspend (relatedManga: Pair<String, List<SAnime>>, completed: Boolean) -> Unit,
     ) = getRelatedAnimeList(manga, exceptionHandler, pushResults)
 
     /**
@@ -157,8 +156,8 @@ interface AnimeCatalogueSource : AnimeSource {
             }
     }
     suspend fun getRelatedMangaListByExtension(
-        manga: SManga,
-        pushResults: suspend (relatedManga: Pair<String, List<SManga>>, completed: Boolean) -> Unit,
+        manga: SAnime,
+        pushResults: suspend (relatedManga: Pair<String, List<SAnime>>, completed: Boolean) -> Unit,
     ) = getRelatedAnimeListByExtension(manga, pushResults)
 
     /**
@@ -170,7 +169,7 @@ interface AnimeCatalogueSource : AnimeSource {
      * @throws UnsupportedOperationException if a source doesn't support related animes.
      */
     suspend fun fetchRelatedAnimeList(anime: SAnime): List<SAnime> = throw UnsupportedOperationException("Unsupported!")
-    suspend fun fetchRelatedMangaList(manga: SManga): List<SManga> = fetchRelatedAnimeList(manga)
+    suspend fun fetchRelatedMangaList(manga: SAnime): List<SAnime> = fetchRelatedAnimeList(manga)
 
     /**
      * Slit & strip anime's title into separate searchable keywords.
@@ -234,8 +233,8 @@ interface AnimeCatalogueSource : AnimeSource {
         }
     }
     suspend fun getRelatedMangaListBySearch(
-        manga: SManga,
-        pushResults: suspend (relatedManga: Pair<String, List<SManga>>, completed: Boolean) -> Unit,
+        manga: SAnime,
+        pushResults: suspend (relatedManga: Pair<String, List<SAnime>>, completed: Boolean) -> Unit,
     ) = getRelatedAnimeListBySearch(manga, pushResults)
     // KMK <--
 }

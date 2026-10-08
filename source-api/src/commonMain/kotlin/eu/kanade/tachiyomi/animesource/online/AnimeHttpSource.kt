@@ -13,7 +13,6 @@ import eu.kanade.tachiyomi.network.ProgressListener
 import eu.kanade.tachiyomi.network.asObservableSuccess
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.network.newCachelessCallWithProgress
-import eu.kanade.tachiyomi.animesource.model.SAnime as SManga
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import okhttp3.Headers
@@ -280,7 +279,7 @@ abstract class AnimeHttpSource : AnimeCatalogueSource {
                 }
         }.await()
     }
-    override suspend fun fetchRelatedMangaList(manga: SManga) = fetchRelatedAnimeList(manga)
+    override suspend fun fetchRelatedMangaList(manga: SAnime) = fetchRelatedAnimeList(manga)
 
     /**
      * Returns the request for get related anime list. Override only if it's needed to override
@@ -293,7 +292,7 @@ abstract class AnimeHttpSource : AnimeCatalogueSource {
     protected open fun relatedAnimeListRequest(anime: SAnime): Request {
         return animeDetailsRequest(anime)
     }
-    protected open fun relatedMangaListRequest(manga: SManga) = relatedAnimeListRequest(manga)
+    protected open fun relatedMangaListRequest(manga: SAnime) = relatedAnimeListRequest(manga)
 
     /**
      * Parses the response from the site and returns a list of related animes.

@@ -2,7 +2,6 @@
 
 package eu.kanade.tachiyomi.animesource.model
 
-import eu.kanade.tachiyomi.animesource.model.AnimeUpdateStrategy as UpdateStrategy
 import java.io.Serializable
 
 interface SAnime : Serializable {
@@ -88,7 +87,7 @@ interface SAnime : Serializable {
         background_url: String? = this.background_url,
         fetch_type: FetchType = this.fetch_type,
         season_number: Double = this.season_number,
-        update_strategy: UpdateStrategy = this.update_strategy,
+        update_strategy: AnimeUpdateStrategy = this.update_strategy,
         // ANK <--
         initialized: Boolean = this.initialized,
     ) = create().also {
@@ -137,7 +136,7 @@ interface SAnime : Serializable {
             background_url: String? = null,
             fetch_type: FetchType = FetchType.Episodes,
             season_number: Double = -1.0,
-            update_strategy: UpdateStrategy = UpdateStrategy.ALWAYS_UPDATE,
+            update_strategy: AnimeUpdateStrategy = AnimeUpdateStrategy.ALWAYS_UPDATE,
             // ANK <--
             initialized: Boolean = false,
         ): SAnime {

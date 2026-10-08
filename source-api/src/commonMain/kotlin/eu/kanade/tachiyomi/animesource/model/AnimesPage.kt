@@ -1,9 +1,8 @@
 package eu.kanade.tachiyomi.animesource.model
 
-import eu.kanade.tachiyomi.animesource.model.SAnime as SManga
 
 open class AnimesPage(open val animes: List<SAnime>, open val hasNextPage: Boolean) {
-    val mangas: List<SManga>
+    val mangas: List<SAnime>
         get() = animes
 
     // SY -->
@@ -24,7 +23,7 @@ open class AnimesPage(open val animes: List<SAnime>, open val hasNextPage: Boole
     }
     // SY <--
 
-    fun copy(mangas: List<SManga> = this.mangas, hasNextPage: Boolean = this.hasNextPage): AnimesPage {
+    fun copy(mangas: List<SAnime> = this.mangas, hasNextPage: Boolean = this.hasNextPage): AnimesPage {
         return AnimesPage(mangas, hasNextPage)
     }
 
