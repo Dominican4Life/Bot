@@ -4,14 +4,6 @@ import android.app.Application
 import androidx.compose.runtime.Immutable
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
-import eu.kanade.tachiyomi.animeextension.AnimeExtensionManager
-import eu.kanade.tachiyomi.animeextension.util.AnimeExtensionLoader
-import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
-import eu.kanade.tachiyomi.extension.ExtensionManager
-import eu.kanade.tachiyomi.extension.util.ExtensionLoader
-import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.tachiyomi.sumizuri.ApkImport
-import eu.kanade.tachiyomi.sumizuri.AutoCode
 import eu.kanade.tachiyomi.sumizuri.SumizuriManager
 import eu.kanade.tachiyomi.sumizuri.SumizuriPreferences
 import eu.kanade.tachiyomi.sumizuri.SumizuriRuntime
@@ -67,8 +59,6 @@ class SourceEditorScreenModel(
         val justSaved: SumizuriSourceInfo? = null,
         /** Why the last save failed, shown in a dialog */
         val saveError: String? = null,
-        /** An APK that holds several sources, waiting for one to be picked */
-        val apkScan: ApkImport.Scan? = null,
     )
 
     /** One test run, newest first in the panel */
@@ -197,167 +187,6 @@ class SourceEditorScreenModel(
             anime = anime,
             code = SourceTemplates.templateFor(json, anime),
         )
-    }
-
-    // Start from APK
-
-    /** An installed Mihon or Aniyomi extension, for the "Start from APK" list */
-    @Immutable
-    data class InstalledExtension(
-        val name: String,
-        val pkgName: String,
-        val lang: String,
-        val version: String,
-        val anime: Boolean,
-    )
-
-    fun installedExtensions(): List<InstalledExtension> {
-        val manga = Injekt.get<ExtensionManager>().installedExtensionsFlow.value.map {
-            InstalledExtension(it.name, it.pkgName, it.lang, it.versionName, anime = false)
-        }
-        val anime = Injekt.get<AnimeExtensionManager>().installedExtensionsFlow.value.map {
-            InstalledExtension(it.name, it.pkgName, it.lang, it.versionName, anime = true)
-        }
-        return (manga + anime).sortedBy { it.name.lowercase() }
-    }
-
-    fun startFromInstalled(extension: InstalledExtension) {
-        screenModelScope.launchIO {
-            mutableState.update { it.copy(running = "Reading ${extension.name}") }
-            runCatching {
-                val app = if (extension.anime) {
-                    AnimeExtensionLoader.getExtensionPackageInfoFromPkgName(context, extension.pkgName)
-                } else {
-                    ExtensionLoader.getExtensionPackageInfoFromPkgName(context, extension.pkgName)
-                }?.applicationInfo ?: error("Can't find the APK of ${extension.name}")
-                val sources = if (extension.anime) {
-                    Injekt.get<AnimeExtensionManager>().installedExtensionsFlow.value
-                        .find { it.pkgName == extension.pkgName }?.sources.orEmpty()
-                        .mapNotNull { it as? AnimeHttpSource }
-                        .map { ApkImport.SourceGuess(it.name, it.lang, it.baseUrl) }
-                } else {
-                    Injekt.get<ExtensionManager>().installedExtensionsFlow.value
-                        .find { it.pkgName == extension.pkgName }?.sources.orEmpty()
-                        .mapNotNull { it as? HttpSource }
-                        .map { ApkImport.SourceGuess(it.name, it.lang, it.baseUrl) }
-                }
-                val iconUrl = if (extension.anime) {
-                    Injekt.get<AnimeExtensionManager>().availableExtensionsFlow.value
-                        .find { it.pkgName == extension.pkgName }?.iconUrl
-                } else {
-                    Injekt.get<ExtensionManager>().availableExtensionsFlow.first()
-                        .find { it.pkgName == extension.pkgName }?.iconUrl
-                }
-                ApkImport.scan(
-                    apk = java.io.File(app.sourceDir),
-                    label = extension.name,
-                    pkgName = extension.pkgName,
-                    version = extension.version,
-                    anime = extension.anime,
-                    known = sources.distinctBy { it.name + it.lang + it.baseUrl },
-                    iconUrl = iconUrl,
-                )
-            }.onSuccess(::scanned).onFailure(::scanFailed)
-        }
-    }
-
-    /** An .apk file the user picked, already copied to [file] */
-    fun startFromApkFile(file: java.io.File) {
-        screenModelScope.launchIO {
-            mutableState.update { it.copy(running = "Reading the APK") }
-            runCatching { ApkImport.scanFile(context, file) }
-                .onSuccess(::scanned)
-                .onFailure(::scanFailed)
-            file.delete()
-        }
-    }
-
-    private fun scanned(scan: ApkImport.Scan) {
-        mutableState.update { it.copy(running = null) }
-        if (scan.sources.size > 1) {
-            mutableState.update { it.copy(apkScan = scan) }
-        } else {
-            useApkSource(scan, scan.sources.first())
-        }
-    }
-
-    private fun scanFailed(e: Throwable) {
-        AppLog.add('W', "sumizuri", "Start from APK failed: $e")
-        mutableState.update { it.copy(running = null, message = "Couldn't read the APK: ${e.message}") }
-    }
-
-    fun dismissApkScan() = mutableState.update { it.copy(apkScan = null) }
-
-    /** Fills a new source (JS or JSON, as the tab says) from what was found in the APK */
-    fun useApkSource(scan: ApkImport.Scan, source: ApkImport.SourceGuess) {
-        closeRuntime()
-        val json = state.value.json
-        val code = ApkImport.template(scan, source, json)
-        mutableState.value = State(
-            key = manager.newKey(),
-            json = json,
-            anime = scan.anime,
-            code = code,
-            name = source.name,
-            lang = source.lang,
-            baseUrl = source.baseUrl,
-            iconUrl = scan.iconUrl.orEmpty(),
-            dirty = true,
-            message = buildString {
-                append("Started from ").append(scan.label)
-                scan.theme?.let { append(" (").append(it).append(" theme)") }
-                append(". Test it, adjust, then save")
-            },
-        )
-    }
-
-    // Auto Code
-
-    /** Visits [url], writes a source for it (JS or JSON, as the tab says) and tests it */
-    fun autoCode(url: String, kind: AutoCode.Kind) {
-        job?.cancel()
-        job = screenModelScope.launchIO {
-            val started = System.currentTimeMillis()
-            val lines = mutableListOf<String>()
-            mutableState.update { it.copy(running = "Auto Code", console = emptyList(), results = emptyList()) }
-            runCatching {
-                AutoCode.run(context, url, kind, state.value.json) { line ->
-                    lines += line
-                    AppLog.add('I', "autocode", line)
-                    mutableState.update { it.copy(running = "Auto Code: $line", console = it.console + "[auto] $line") }
-                }
-            }.onSuccess { r ->
-                closeRuntime()
-                val report = Result("Auto Code", true, System.currentTimeMillis() - started, text = lines.joinToString("\n"))
-                mutableState.update {
-                    State(
-                        key = if (it.saved) manager.newKey() else it.key,
-                        json = r.json,
-                        anime = r.anime,
-                        code = r.code,
-                        name = r.name,
-                        lang = r.lang,
-                        baseUrl = r.baseUrl,
-                        iconUrl = r.iconUrl,
-                        dirty = true,
-                        results = listOf(report),
-                        console = it.console,
-                        message = "Auto Code wrote a source for ${r.name}. Testing it now",
-                    )
-                }
-                runAll("")
-            }.onFailure { e ->
-                if (e is kotlinx.coroutines.CancellationException) throw e
-                AppLog.add('W', "autocode", "Auto Code failed: $e")
-                val report = Result(
-                    "Auto Code",
-                    false,
-                    System.currentTimeMillis() - started,
-                    text = (lines + (e.message ?: e.toString())).joinToString("\n"),
-                )
-                mutableState.update { it.copy(running = null, results = listOf(report) + it.results) }
-            }
-        }
     }
 
     fun open(key: String) {
