@@ -47,6 +47,7 @@ import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -62,6 +63,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
 import coil3.compose.AsyncImage
 import eu.kanade.presentation.browse.ExtensionHeader
+import eu.kanade.presentation.browse.ExtensionTrustDialog
 import eu.kanade.presentation.components.SourcesSearchBox
 import eu.kanade.presentation.manga.components.DotSeparatorNoSpaceText
 import eu.kanade.presentation.util.isTabletUi
@@ -272,6 +274,20 @@ fun AnimeExtensionsPane(
         val installedTitle = stringResource(MR.strings.ext_installed)
         val untrustedTitle = stringResource(MR.strings.ext_untrusted)
         val availableTitle = stringResource(KMR.strings.anime_available)
+        var trustDialogFor by remember { mutableStateOf<Extension.Untrusted?>(null) }
+        trustDialogFor?.let { ext ->
+            ExtensionTrustDialog(
+                onClickConfirm = {
+                    onTrust(ext)
+                    trustDialogFor = null
+                },
+                onClickDismiss = {
+                    onUninstall(ext.pkgName)
+                    trustDialogFor = null
+                },
+                onDismissRequest = { trustDialogFor = null },
+            )
+        }
         val hasUpdates = state.filteredUpdates.isNotEmpty()
         val hasInstalled = state.filteredInstalled.isNotEmpty()
         val hasUntrusted = state.filteredUntrusted.isNotEmpty()
@@ -290,9 +306,11 @@ fun AnimeExtensionsPane(
                     version = ext.versionName,
                     store = ext.storeName,
                     warning = stringResource(MR.strings.ext_untrusted),
+                    // Same as manga: ask before trusting
+                    onClick = { trustDialogFor = ext },
                     onLongClick = { onUninstall(ext.pkgName) },
                     action = {
-                        IconButton(onClick = { onTrust(ext) }) {
+                        IconButton(onClick = { trustDialogFor = ext }) {
                             Icon(Icons.Outlined.VerifiedUser, contentDescription = stringResource(MR.strings.ext_trust))
                         }
                     },

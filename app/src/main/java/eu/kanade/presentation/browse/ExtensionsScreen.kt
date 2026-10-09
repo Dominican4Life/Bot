@@ -575,7 +575,7 @@ internal fun ExtensionHeader(
 }
 
 @Composable
-private fun ExtensionTrustDialog(
+internal fun ExtensionTrustDialog(
     onClickConfirm: () -> Unit,
     onClickDismiss: () -> Unit,
     onDismissRequest: () -> Unit,

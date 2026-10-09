@@ -55,6 +55,7 @@ import eu.kanade.presentation.more.settings.widget.TrailingWidgetBuffer
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.extension.model.Extension
 import eu.kanade.tachiyomi.source.ConfigurableSource
+import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.ui.browse.extension.details.ExtensionDetailsScreenModel
 import eu.kanade.tachiyomi.util.system.LocaleHelper
 import eu.kanade.tachiyomi.util.system.copyToClipboard
@@ -82,6 +83,8 @@ fun ExtensionDetailsScreen(
     onClickUninstall: () -> Unit,
     onClickSource: (sourceId: Long) -> Unit,
     onClickIncognito: (Boolean) -> Unit,
+    /** KMK: anime extensions decide themselves which sources have settings */
+    isConfigurable: ((Source) -> Boolean)? = null,
 ) {
     val uriHandler = LocalUriHandler.current
     val url = remember(state.extension) {
@@ -164,6 +167,7 @@ fun ExtensionDetailsScreen(
             onClickUninstall = onClickUninstall,
             onClickSource = onClickSource,
             onClickIncognito = onClickIncognito,
+            isConfigurable = isConfigurable,
         )
     }
 }
@@ -178,6 +182,7 @@ private fun ExtensionDetails(
     onClickUninstall: () -> Unit,
     onClickSource: (sourceId: Long) -> Unit,
     onClickIncognito: (Boolean) -> Unit,
+    isConfigurable: ((Source) -> Boolean)?,
 ) {
     val context = LocalContext.current
     var showNsfwWarning by remember { mutableStateOf(false) }
@@ -226,6 +231,7 @@ private fun ExtensionDetails(
                 source = source,
                 onClickSourcePreferences = onClickSourcePreferences,
                 onClickSource = onClickSource,
+                isConfigurable = isConfigurable,
             )
         }
     }
@@ -448,6 +454,7 @@ private fun SourceSwitchPreference(
     onClickSourcePreferences: (sourceId: Long) -> Unit,
     onClickSource: (sourceId: Long) -> Unit,
     modifier: Modifier = Modifier,
+    isConfigurable: ((Source) -> Boolean)? = null,
 ) {
     val context = LocalContext.current
 
@@ -462,7 +469,7 @@ private fun SourceSwitchPreference(
             Row(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (source.source is ConfigurableSource) {
+                if (isConfigurable?.invoke(source.source) ?: (source.source is ConfigurableSource)) {
                     IconButton(onClick = { onClickSourcePreferences(source.source.id) }) {
                         Icon(
                             imageVector = Icons.Outlined.Settings,
