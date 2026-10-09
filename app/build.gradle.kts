@@ -221,8 +221,6 @@ dependencies {
     implementation(projects.sourceApi)
     // KMK: Kotatsu / Tsuki parser ABI for JAR extensions
     implementation(projects.kotatsuApi)
-    // KMK: Cloudstream 3 runtime for .cs3 plugins
-    implementation(projects.cloudstreamRuntime)
     implementation(projects.sourceLocal)
     implementation(projects.data)
     implementation(projects.domain)

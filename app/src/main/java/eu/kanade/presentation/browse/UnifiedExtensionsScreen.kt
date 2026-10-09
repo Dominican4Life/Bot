@@ -349,7 +349,7 @@ private fun EmptyState(text: String) {
 /** JAR and Cloudstream come later: say so instead of a bare empty list */
 @Composable
 private fun emptyText(kinds: Set<ExtensionKind>, default: String): String {
-    val pending = emptyList<ExtensionKind>()
+    val pending = kinds.filter { it == ExtensionKind.CLOUDSTREAM }
     return if (pending.isNotEmpty() && pending.size == kinds.size) {
         stringResource(KMR.strings.ext_kind_coming, pending.joinToString(" / ") { it.label })
     } else {
