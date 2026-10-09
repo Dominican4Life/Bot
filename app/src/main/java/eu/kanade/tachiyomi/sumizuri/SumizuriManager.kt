@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.sumizuri
 
 import android.app.Application
+import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -15,6 +16,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonPrimitive
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import java.io.File
 import java.util.UUID
 
@@ -82,6 +85,7 @@ class SumizuriManager(private val context: Application) {
         File(folder, codeFile(json)).writeText(code)
         File(folder, META).writeText(sumizuriJson.encodeToString(SumizuriSourceInfo.serializer(), info))
         invalidate(key)
+        showLanguage(info)
         _saved.value = (listOf(info) + _saved.value.filterNot { it.key == key }).sortedByDescending { it.updatedAt }
         AppLog.add('I', "sumizuri", "Saved ${if (info.anime) "anime" else "manga"} source ${info.name} (${if (json) "JSON" else "JS"})")
         return info
@@ -122,6 +126,22 @@ class SumizuriManager(private val context: Application) {
             createdAt = existing?.createdAt ?: System.currentTimeMillis(),
             updatedAt = System.currentTimeMillis(),
         )
+    }
+
+    /** A saved source is listed in Browse even when its language was turned off there */
+    private fun showLanguage(info: SumizuriSourceInfo) {
+        runCatching {
+            val preferences = Injekt.get<SourcePreferences>()
+            if (info.anime) {
+                val disabled = preferences.animeDisabledLanguages()
+                if (info.displayLang in disabled.get()) disabled.set(disabled.get() - info.displayLang)
+            } else {
+                val enabled = preferences.enabledLanguages()
+                if (info.displayLang !in enabled.get()) enabled.set(enabled.get() + info.displayLang)
+            }
+            val disabledSources = preferences.disabledSources()
+            if (info.id.toString() in disabledSources.get()) disabledSources.set(disabledSources.get() - info.id.toString())
+        }
     }
 
     fun delete(key: String) {

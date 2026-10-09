@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.sumizuri.SumizuriRuntime
 import eu.kanade.tachiyomi.sumizuri.SumizuriSourceInfo
 import eu.kanade.tachiyomi.sumizuri.str
 import eu.kanade.tachiyomi.sumizuri.sumizuriJson
+import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
@@ -53,6 +54,10 @@ class SourceEditorScreenModel(
         val message: String? = null,
         /** The source's settings, while the Source settings dialog is open */
         val settings: List<SumizuriPreferences.Definition>? = null,
+        /** Set right after a save, so the screen can offer to open the source in Browse */
+        val justSaved: SumizuriSourceInfo? = null,
+        /** Why the last save failed, shown in a dialog */
+        val saveError: String? = null,
     )
 
     /** One test run, newest first in the panel */
@@ -179,6 +184,10 @@ class SourceEditorScreenModel(
         return true
     }
 
+    fun consumeSaved() = mutableState.update { it.copy(justSaved = null) }
+
+    fun dismissSaveError() = mutableState.update { it.copy(saveError = null) }
+
     fun consumeMessage() = mutableState.update { it.copy(message = null) }
 
     private fun message(text: String) = mutableState.update { it.copy(message = text) }
@@ -214,11 +223,12 @@ class SourceEditorScreenModel(
                         lang = info.lang,
                         iconUrl = info.iconUrl.orEmpty(),
                         baseUrl = info.baseUrl,
-                        message = "Saved ${info.name} as ${if (info.anime) "an anime" else "a manga"} source in Browse",
+                        justSaved = info,
                     )
                 }
             }.onFailure { e ->
-                mutableState.update { it.copy(running = null, message = "Can't save: ${e.message}") }
+                AppLog.add('E', "sumizuri", "Saving ${s.name.ifBlank { "a source" }} failed: $e")
+                mutableState.update { it.copy(running = null, saveError = e.message ?: e.toString()) }
             }
         }
     }

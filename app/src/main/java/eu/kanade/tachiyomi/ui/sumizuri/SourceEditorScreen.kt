@@ -59,8 +59,10 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SecondaryTabRow
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
@@ -95,12 +97,15 @@ import coil3.compose.AsyncImage
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.sumizuri.SumizuriPreferences
 import eu.kanade.tachiyomi.sumizuri.SumizuriSourceInfo
+import eu.kanade.tachiyomi.ui.anime.source.AnimeSourceScreen
+import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreen
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
+import tachiyomi.domain.source.interactor.GetRemoteManga
 import tachiyomi.presentation.core.components.material.Scaffold
 
 /**
@@ -117,10 +122,31 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
         val model = rememberScreenModel { SourceEditorScreenModel(sourceKey) }
         val state by model.state.collectAsState()
         val snackbar = remember { SnackbarHostState() }
+        val saveClipboard = LocalClipboardManager.current
         var showMenu by remember { mutableStateOf(false) }
         var showSaved by remember { mutableStateOf(false) }
         var confirmDelete by remember { mutableStateOf(false) }
         var query by rememberSaveable { mutableStateOf("") }
+
+        LaunchedEffect(state.justSaved) {
+            val info = state.justSaved ?: return@LaunchedEffect
+            model.consumeSaved()
+            val result = snackbar.showSnackbar(
+                message = "Saved. ${info.name} is in Browse → Sources (${if (info.anime) "anime" else "manga"})",
+                actionLabel = "Open",
+                withDismissAction = true,
+                duration = SnackbarDuration.Long,
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                navigator.push(
+                    if (info.anime) {
+                        AnimeSourceScreen(info.id)
+                    } else {
+                        BrowseSourceScreen(info.id, GetRemoteManga.QUERY_POPULAR)
+                    },
+                )
+            }
+        }
 
         LaunchedEffect(state.message) {
             val message = state.message ?: return@LaunchedEffect
@@ -292,6 +318,30 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
                     model.open(it)
                 },
                 onDismiss = { showSaved = false },
+            )
+        }
+        state.saveError?.let { error ->
+            AlertDialog(
+                onDismissRequest = model::dismissSaveError,
+                title = { Text("Couldn't save") },
+                text = {
+                    SelectionContainer {
+                        Text(
+                            "The source has to run to be saved, and it stopped with:\n\n$error",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 12.sp,
+                        )
+                    }
+                },
+                confirmButton = { TextButton(onClick = model::dismissSaveError) { Text("OK") } },
+                dismissButton = {
+                    TextButton(
+                        onClick = {
+                            saveClipboard.setText(AnnotatedString(error))
+                            context.toast("Copied")
+                        },
+                    ) { Text("Copy") }
+                },
             )
         }
         if (confirmDelete) {

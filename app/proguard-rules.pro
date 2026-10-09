@@ -324,3 +324,4 @@
 # KMK: QuickJS engine for Sumizuri-compatible sources (JNI calls back into these)
 -keep class com.dokar.quickjs.** { *; }
 -keep interface com.dokar.quickjs.** { *; }
+-keep class kotlin.UByteArray { *; }
