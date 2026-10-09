@@ -141,7 +141,7 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
                 context.toast("Exported")
             }.onFailure { context.toast("Couldn't write the file: ${it.message}") }
         }
-        val openInBrowser = {
+        val openInBrowser: () -> Unit = {
             val url = state.baseUrl.trim()
             if (url.startsWith("http")) {
                 navigator.push(WebViewScreen(url = url, initialTitle = state.name.ifBlank { url }, sourceId = null))

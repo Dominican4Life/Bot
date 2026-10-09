@@ -278,7 +278,7 @@ internal class SumizuriHtmlPages(private val maxPages: Int = 24) {
         val ids = IdentityHashMap<Element, Int>()
 
         fun register(element: Element): Int = ids.getOrPut(element) {
-            elements += element
+            elements.add(element)
             elements.size - 1
         }
     }
