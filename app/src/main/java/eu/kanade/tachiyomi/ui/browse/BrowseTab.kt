@@ -5,6 +5,10 @@ import androidx.compose.animation.graphics.res.rememberAnimatedVectorPainter
 import androidx.compose.animation.graphics.vector.AnimatedImageVector
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.MenuBook
+import androidx.compose.material.icons.outlined.Movie
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -19,10 +23,12 @@ import cafe.adriel.voyager.navigator.currentOrThrow
 import cafe.adriel.voyager.navigator.tab.LocalTabNavigator
 import cafe.adriel.voyager.navigator.tab.TabOptions
 import eu.kanade.core.preference.asState
+import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.presentation.browse.anime.AnimeMigratePane
 import eu.kanade.presentation.browse.anime.AnimeSourcesPane
 import eu.kanade.presentation.browse.anime.MangaAnimeSplit
+import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.TabContent
 import eu.kanade.presentation.components.TabbedScreen
 import eu.kanade.presentation.more.settings.screen.browse.ExtensionStoresScreenModel
@@ -42,13 +48,16 @@ import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchScreen
 import eu.kanade.tachiyomi.ui.browse.source.sourcesTab
 import eu.kanade.tachiyomi.ui.main.MainActivity
 import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.receiveAsFlow
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.i18n.MR
+import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
@@ -114,6 +123,29 @@ data object BrowseTab : Tab {
             )
         }
 
+        // Sources: one panel, manga or anime, switched from the toolbar like the library
+        val browseAnimePref = remember { Injekt.get<SourcePreferences>().browseShowAnime() }
+        val browseAnime by browseAnimePref.collectAsState()
+
+        fun TabContent.withAnimeSwitch(anime: @Composable (PaddingValues) -> Unit): TabContent {
+            val mangaContent = content
+            return copy(
+                actions = (
+                    listOf(
+                        AppBar.Action(
+                            title = stringResource(KMR.strings.library_switch_type),
+                            icon = if (browseAnime) Icons.Outlined.Movie else Icons.AutoMirrored.Outlined.MenuBook,
+                            iconTint = MaterialTheme.colorScheme.primary,
+                            onClick = { browseAnimePref.set(!browseAnime) },
+                        ),
+                    ) + actions
+                    ).toImmutableList(),
+                content = { contentPadding, snackbarHostState ->
+                    if (browseAnime) anime(contentPadding) else mangaContent(contentPadding, snackbarHostState)
+                },
+            )
+        }
+
         val animeSources: @Composable (PaddingValues) -> Unit = { padding ->
             AnimeSourcesPane(
                 state = animeState,
@@ -148,7 +180,7 @@ data object BrowseTab : Tab {
         val tabs = when {
             hideFeedTab ->
                 persistentListOf(
-                    sourcesTab().withAnime(animeSources),
+                    sourcesTab().withAnimeSwitch(animeSources),
                     extensions,
                     migrateSourceTab().withAnime(animeMigrate),
                 )
@@ -161,7 +193,7 @@ data object BrowseTab : Tab {
                         bulkFavoriteScreenModel,
                         // KMK <--
                     ),
-                    sourcesTab().withAnime(animeSources),
+                    sourcesTab().withAnimeSwitch(animeSources),
                     extensions,
                     migrateSourceTab().withAnime(animeMigrate),
                 )
@@ -169,7 +201,7 @@ data object BrowseTab : Tab {
             // KMK: Extensions sits right after Sources, Feed after it
             else ->
                 persistentListOf(
-                    sourcesTab().withAnime(animeSources),
+                    sourcesTab().withAnimeSwitch(animeSources),
                     extensions,
                     feedTab(
                         // KMK -->
