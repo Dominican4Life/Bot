@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.launchIn
@@ -90,10 +91,8 @@ class HistoryScreenModel(
                 // KMK -->
                 getHistoryItemPreferenceFlow()
                     .distinctUntilChanged(),
-                // Device files only, from the toolbar
-                eu.kanade.tachiyomi.devicefiles.DeviceFilesPreferences.instance.historyDeviceOnly.changes(),
-            ) { query, itemPreferences, deviceOnly -> Triple(query, itemPreferences, deviceOnly) }
-                .flatMapLatest { (query, pref, deviceOnly) ->
+            ) { query, itemPreferences -> query to itemPreferences }
+                .flatMapLatest { (query, pref) ->
                     // KMK <--
                     getHistory.subscribe(
                         query ?: "",
@@ -103,13 +102,10 @@ class HistoryScreenModel(
                         nonLibraryEntries = pref.filterNonLibraryManga.toBooleanOrNull(),
                         // KMK <--
                     )
+                        // Device files keep their own history, behind the History toolbar's folder button
                         .map { list ->
-                            if (deviceOnly) {
-                                list.filter {
-                                    it.coverData.sourceId == eu.kanade.tachiyomi.devicefiles.DeviceFilesIds.MANGA
-                                }
-                            } else {
-                                list
+                            list.filterNot {
+                                it.coverData.sourceId == eu.kanade.tachiyomi.devicefiles.DeviceFilesIds.MANGA
                             }
                         }
                         .distinctUntilChanged()
@@ -189,6 +185,16 @@ class HistoryScreenModel(
 
     fun removeAllHistory() {
         screenModelScope.launchIO {
+            // KMK: Device files history has its own page, so clearing this one leaves it
+            val all = getHistory.subscribe("", null, null, null).first()
+            val device = all.filter { it.coverData.sourceId == eu.kanade.tachiyomi.devicefiles.DeviceFilesIds.MANGA }
+            if (device.isNotEmpty()) {
+                val ids = all.filterNot { it in device }.map { it.mangaId }.distinct()
+                if (ids.isNotEmpty()) removeHistory.awaitManga(ids)
+                _events.send(Event.HistoryCleared)
+                return@launchIO
+            }
+            // KMK <--
             val result = removeHistory.awaitAll()
             if (!result) return@launchIO
             _events.send(Event.HistoryCleared)

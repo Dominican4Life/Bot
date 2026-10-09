@@ -99,7 +99,7 @@ fun HistoryScreen(
     val deviceOnlyPref = remember { eu.kanade.tachiyomi.devicefiles.DeviceFilesPreferences.instance.historyDeviceOnly }
     val deviceOnly by deviceOnlyPref.collectAsState()
     val deviceAction = AppBar.Action(
-        title = if (deviceOnly) "Show all history" else "Device files only",
+        title = if (deviceOnly) "Back to history" else "Device files history",
         icon = if (deviceOnly) Icons.Filled.Folder else Icons.Outlined.Folder,
         iconTint = if (deviceOnly) MaterialTheme.colorScheme.active else LocalContentColor.current,
         onClick = { deviceOnlyPref.set(!deviceOnly) },
@@ -130,6 +130,11 @@ fun HistoryScreen(
                     searchQuery = state.searchQuery,
                     onChangeSearchQuery = onSearchQueryChange,
                     actions = {
+                        // KMK: Device files history has only its own button (and the search)
+                        if (deviceOnly) {
+                            AppBarActions(persistentListOf(deviceAction))
+                            return@SearchToolbar
+                        }
                         AppBarActions(
                             persistentListOf(
                                 // KMK -->
@@ -172,6 +177,15 @@ fun HistoryScreen(
         },
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
     ) { outerPadding ->
+        // KMK --> Device files history on its own, from the folder button
+        if (deviceOnly) {
+            eu.kanade.tachiyomi.ui.devicefiles.DeviceHistoryPane(
+                contentPadding = outerPadding,
+                searchQuery = state.searchQuery,
+            )
+            return@Scaffold
+        }
+        // KMK <--
         // KMK --> manga history on the left, anime on the right
         eu.kanade.presentation.browse.anime.MangaAnimeSwitch(
             showAnime = showAnime,
@@ -192,19 +206,10 @@ fun HistoryScreen(
                 } else {
                     MR.strings.information_no_recent_manga
                 }
-                // KMK -->
-                if (deviceOnly && state.searchQuery.isNullOrEmpty()) {
-                    EmptyScreen(
-                        message = "Nothing read from Device files yet",
-                        modifier = Modifier.padding(contentPadding),
-                    )
-                } else {
-                    // KMK <--
-                    EmptyScreen(
-                        stringRes = msg,
-                        modifier = Modifier.padding(contentPadding),
-                    )
-                }
+                EmptyScreen(
+                    stringRes = msg,
+                    modifier = Modifier.padding(contentPadding),
+                )
             } else {
                 // KMK -->
                 val uiModels = remember(state.list) { state.getUiModel() }

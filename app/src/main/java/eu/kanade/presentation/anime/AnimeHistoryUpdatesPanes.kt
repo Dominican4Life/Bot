@@ -99,13 +99,9 @@ fun AnimeHistoryPane(
     var removeAnimeId by remember { mutableStateOf<Long?>(null) }
     var confirmClearAll by remember { mutableStateOf(false) }
 
-    // KMK: History's "Device files only" button
-    val deviceOnlyPref = remember { eu.kanade.tachiyomi.devicefiles.DeviceFilesPreferences.instance.historyDeviceOnly }
-    val deviceOnly by remember { deviceOnlyPref.changes() }.collectAsState(initial = deviceOnlyPref.get())
+    // KMK: Device files keep their own history, behind the History toolbar's folder button
     val all = history ?: return
-    val items = remember(all, deviceOnly) {
-        if (deviceOnly) all.filter { it.source == eu.kanade.tachiyomi.devicefiles.DeviceFilesIds.ANIME } else all
-    }
+    val items = remember(all) { all.filterNot { it.source == eu.kanade.tachiyomi.devicefiles.DeviceFilesIds.ANIME } }
     val filtered = remember(items, searchQuery) {
         if (searchQuery.isNullOrBlank()) items else items.filter { it.title.contains(searchQuery, ignoreCase = true) }
     }
@@ -129,13 +125,9 @@ fun AnimeHistoryPane(
         }
         if (filtered.isEmpty()) {
             EmptyScreen(
-                message = if (deviceOnly && searchQuery.isNullOrBlank()) {
-                    "Nothing played from Device files yet"
-                } else {
-                    stringResource(
-                        if (searchQuery.isNullOrBlank()) KMR.strings.anime_no_history else MR.strings.no_results_found,
-                    )
-                },
+                message = stringResource(
+                    if (searchQuery.isNullOrBlank()) KMR.strings.anime_no_history else MR.strings.no_results_found,
+                ),
             )
         } else {
             FastScrollLazyColumn(
@@ -164,7 +156,11 @@ fun AnimeHistoryPane(
     if (confirmClearAll) {
         ConfirmDialog(
             text = stringResource(KMR.strings.anime_clear_history_confirm),
-            onConfirm = { scope.launchIO { repository.removeAllHistory() } },
+            // Device files history stays (it isn't shown here)
+            onConfirm = {
+                val ids = items.map { it.animeId }.distinct()
+                scope.launchIO { ids.forEach { repository.removeHistory(it) } }
+            },
             onDismiss = { confirmClearAll = false },
         )
     }
