@@ -6,13 +6,16 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -30,6 +33,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Sort
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -904,15 +908,38 @@ private fun EpisodeItem(
     } else {
         episode.name
     }
+    val info = listOfNotNull(
+        sourceLabel,
+        episode.scanlator?.takeIf { it.isNotBlank() },
+        stringResource(KMR.strings.anime_filler).takeIf { episode.fillermark },
+    ).joinToString(" • ").ifEmpty { null }
+    // KMK: AniZen-style row (preview image, title, summary, date · Sub / Dub) when the source gives them
+    if (!episode.previewUrl.isNullOrBlank() || !episode.summary.isNullOrBlank()) {
+        RichEpisodeItem(
+            title = when {
+                !displayNumber || episode.name.isBlank() || episode.name == title -> title
+                ": " in episode.name -> "$title: ${episode.name.substringAfter(": ")}"
+                episode.name.startsWith("ep", ignoreCase = true) -> title
+                else -> "$title: ${episode.name}"
+            },
+            summary = episode.summary,
+            previewUrl = episode.previewUrl,
+            info = listOfNotNull(date, progress, info).joinToString(" • ").ifEmpty { null },
+            seen = episode.seen,
+            bookmark = episode.bookmark,
+            downloadState = downloadState,
+            downloadProgress = downloadProgress,
+            onDownload = onDownload,
+            onPlay = onPlay,
+            onLongClick = onToggleSeen,
+        )
+        return
+    }
     MangaChapterListItem(
         title = title,
         date = date,
         readProgress = progress,
-        scanlator = listOfNotNull(
-            sourceLabel,
-            episode.scanlator?.takeIf { it.isNotBlank() },
-            stringResource(KMR.strings.anime_filler).takeIf { episode.fillermark },
-        ).joinToString(" • ").ifEmpty { null },
+        scanlator = info,
         sourceName = null,
         read = episode.seen,
         bookmark = episode.bookmark,
@@ -940,6 +967,105 @@ private fun EpisodeItem(
             }
         },
     )
+}
+
+/**
+ * KMK: An episode with its preview image and summary, laid out like AniZen: 16:9 thumbnail, two-line title and a
+ * short summary (tap to expand), then date, progress and Sub / Dub under it with the download button.
+ */
+@Composable
+private fun RichEpisodeItem(
+    title: String,
+    summary: String?,
+    previewUrl: String?,
+    info: String?,
+    seen: Boolean,
+    bookmark: Boolean,
+    downloadState: Download.State,
+    downloadProgress: Int,
+    onDownload: (ChapterDownloadAction) -> Unit,
+    onPlay: () -> Unit,
+    onLongClick: () -> Unit,
+) {
+    val alpha = if (seen) tachiyomi.presentation.core.components.material.DISABLED_ALPHA else 1f
+    var expanded by remember { mutableStateOf(false) }
+    val thumbWidth = (androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp * 0.4f).coerceAtMost(250f).dp
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = onPlay, onLongClick = onLongClick)
+            .padding(start = 16.dp, top = 10.dp, end = 8.dp, bottom = 10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.Top) {
+            if (!previewUrl.isNullOrBlank()) {
+                coil3.compose.AsyncImage(
+                    model = previewUrl,
+                    contentDescription = null,
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    alpha = alpha,
+                    modifier = Modifier
+                        .width(thumbWidth)
+                        .aspectRatio(16f / 9f)
+                        .clip(MaterialTheme.shapes.small)
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                )
+                Spacer(Modifier.width(10.dp))
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha),
+                )
+                if (!summary.isNullOrBlank()) {
+                    Text(
+                        text = summary,
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = if (expanded) Int.MAX_VALUE else 3,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha * 0.85f),
+                        modifier = Modifier
+                            .padding(top = 2.dp)
+                            .clickable { expanded = !expanded },
+                    )
+                }
+            }
+        }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 4.dp),
+        ) {
+            if (bookmark) {
+                Icon(
+                    imageVector = Icons.Filled.Bookmark,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .size(14.dp)
+                        .padding(end = 2.dp),
+                )
+            }
+            Text(
+                text = info.orEmpty(),
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha),
+                modifier = Modifier.weight(1f),
+            )
+            eu.kanade.presentation.manga.components.ChapterDownloadIndicator(
+                enabled = true,
+                downloadStateProvider = { downloadState },
+                downloadProgressProvider = { downloadProgress },
+                onClick = onDownload,
+            )
+        }
+    }
 }
 
 /** The anime merged into this page, with their sources; each can be opened or taken off */
