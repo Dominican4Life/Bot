@@ -320,19 +320,3 @@
 -keep class is.xyz.mpv.** { *; }
 -keep class com.arthenica.** { public protected *; }
 # KMK <--
-
-# KMK --> JAR extensions (Kotatsu / Tsuki parser plugins) bind to these classes by name at runtime
--keep class org.koitharu.kotatsu.** { *; }
--keep interface org.koitharu.kotatsu.** { *; }
--keep @interface org.koitharu.kotatsu.** { *; }
--keep class tsuki.** { *; }
--keep interface tsuki.** { *; }
--keep @interface tsuki.** { *; }
--dontwarn org.koitharu.kotatsu.**
--dontwarn tsuki.**
--keep class androidx.collection.** { public protected *; }
--keep class kotlin.** { public protected *; }
--keep class kotlinx.coroutines.** { public protected *; }
--keep class okio.** { public protected *; }
--keep class org.json.** { *; }
-# KMK <--

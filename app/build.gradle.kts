@@ -219,8 +219,6 @@ dependencies {
     implementation(projects.core.common)
     implementation(projects.coreMetadata)
     implementation(projects.sourceApi)
-    // KMK: Kotatsu / Tsuki parser ABI for JAR extensions
-    implementation(projects.kotatsuApi)
     implementation(projects.sourceLocal)
     implementation(projects.data)
     implementation(projects.domain)
