@@ -33,10 +33,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Android
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.material.icons.outlined.FolderOpen
@@ -126,6 +128,8 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
         var showMenu by remember { mutableStateOf(false) }
         var showSaved by remember { mutableStateOf(false) }
         var confirmDelete by remember { mutableStateOf(false) }
+        var showApkChoice by remember { mutableStateOf(false) }
+        var showInstalled by remember { mutableStateOf(false) }
         var query by rememberSaveable { mutableStateOf("") }
 
         LaunchedEffect(state.justSaved) {
@@ -154,6 +158,17 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
             snackbar.showSnackbar(message)
         }
 
+        // Start from APK: an .apk file, copied here first so it can be read as a zip
+        val apkLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+            uri ?: return@rememberLauncherForActivityResult
+            runCatching {
+                val file = java.io.File(context.cacheDir, "start_from.apk")
+                context.contentResolver.openInputStream(uri)!!.use { input ->
+                    file.outputStream().use { input.copyTo(it) }
+                }
+                model.startFromApkFile(file)
+            }.onFailure { context.toast("Couldn't read the file: ${it.message}") }
+        }
         val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
             uri ?: return@rememberLauncherForActivityResult
             runCatching {
@@ -235,6 +250,10 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
                                     showMenu = false
                                     model.newSource(json = true, anime = state.anime)
                                 }
+                                MenuItem("Start from APK", Icons.Outlined.Android) {
+                                    showMenu = false
+                                    showApkChoice = true
+                                }
                                 MenuItem("Import .js / .json file", Icons.Outlined.FileUpload) {
                                     showMenu = false
                                     importLauncher.launch("*/*")
@@ -306,6 +325,85 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
             }
         }
 
+        if (showApkChoice) {
+            AlertDialog(
+                onDismissRequest = { showApkChoice = false },
+                title = { Text("Start from APK") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "Reads the site's address, paths and selectors out of a Mihon or Aniyomi extension and " +
+                                "fills a ${if (state.json) "JSON definition" else "JS source"} with them (the tab at " +
+                                "the top decides which). Madara and MangaThemesia sites get a full definition.",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                showApkChoice = false
+                                showInstalled = true
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(Icons.Outlined.Extension, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Select from installed")
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                showApkChoice = false
+                                apkLauncher.launch("*/*")
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(Icons.Outlined.FileUpload, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Import .apk file")
+                        }
+                    }
+                },
+                confirmButton = { TextButton(onClick = { showApkChoice = false }) { Text("Cancel") } },
+            )
+        }
+        if (showInstalled) {
+            InstalledExtensionsDialog(
+                extensions = remember { model.installedExtensions() },
+                onPick = {
+                    showInstalled = false
+                    model.startFromInstalled(it)
+                },
+                onDismiss = { showInstalled = false },
+            )
+        }
+        state.apkScan?.let { scan ->
+            AlertDialog(
+                onDismissRequest = model::dismissApkScan,
+                title = { Text("${scan.label} has ${scan.sources.size} sources") },
+                text = {
+                    LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
+                        items(scan.sources) { source ->
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        model.dismissApkScan()
+                                        model.useApkSource(scan, source)
+                                    }
+                                    .padding(vertical = 8.dp, horizontal = 4.dp),
+                            ) {
+                                Text("${source.name} (${source.lang})", style = MaterialTheme.typography.bodyLarge)
+                                Text(
+                                    source.baseUrl,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                },
+                confirmButton = { TextButton(onClick = model::dismissApkScan) { Text("Cancel") } },
+            )
+        }
         if (showSaved) {
             SavedSourcesDialog(
                 model = model,
@@ -803,3 +901,61 @@ private fun Context.fileName(uri: Uri): String? = runCatching {
         if (cursor.moveToFirst()) cursor.getString(0) else null
     }
 }.getOrNull() ?: uri.lastPathSegment
+
+@Composable
+private fun InstalledExtensionsDialog(
+    extensions: List<SourceEditorScreenModel.InstalledExtension>,
+    onPick: (SourceEditorScreenModel.InstalledExtension) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var query by remember { mutableStateOf("") }
+    var anime by remember { mutableStateOf<Boolean?>(null) }
+    val shown = remember(extensions, query, anime) {
+        extensions.filter { ext ->
+            (anime == null || ext.anime == anime) &&
+                (query.isBlank() || ext.name.contains(query, true) || ext.pkgName.contains(query, true))
+        }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Installed extensions") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholder = { Text("Search") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = anime == null, onClick = { anime = null }, label = { Text("All") })
+                    FilterChip(selected = anime == false, onClick = { anime = false }, label = { Text("Manga") })
+                    FilterChip(selected = anime == true, onClick = { anime = true }, label = { Text("Anime") })
+                }
+                LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
+                    if (shown.isEmpty()) {
+                        item { Text("No installed extensions match.", modifier = Modifier.padding(8.dp)) }
+                    }
+                    items(shown, key = { it.pkgName + it.anime }) { ext ->
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { onPick(ext) }
+                                .padding(vertical = 8.dp, horizontal = 4.dp),
+                        ) {
+                            Text(ext.name, style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                "${if (ext.anime) "Anime" else "Manga"} · ${ext.lang} · ${ext.version}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}

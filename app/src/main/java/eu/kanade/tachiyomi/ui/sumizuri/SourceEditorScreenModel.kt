@@ -4,6 +4,13 @@ import android.app.Application
 import androidx.compose.runtime.Immutable
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
+import eu.kanade.tachiyomi.animeextension.AnimeExtensionManager
+import eu.kanade.tachiyomi.animeextension.util.AnimeExtensionLoader
+import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
+import eu.kanade.tachiyomi.extension.ExtensionManager
+import eu.kanade.tachiyomi.extension.util.ExtensionLoader
+import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.sumizuri.ApkImport
 import eu.kanade.tachiyomi.sumizuri.SumizuriManager
 import eu.kanade.tachiyomi.sumizuri.SumizuriPreferences
 import eu.kanade.tachiyomi.sumizuri.SumizuriRuntime
@@ -12,6 +19,7 @@ import eu.kanade.tachiyomi.sumizuri.str
 import eu.kanade.tachiyomi.sumizuri.sumizuriJson
 import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -58,6 +66,8 @@ class SourceEditorScreenModel(
         val justSaved: SumizuriSourceInfo? = null,
         /** Why the last save failed, shown in a dialog */
         val saveError: String? = null,
+        /** An APK that holds several sources, waiting for one to be picked */
+        val apkScan: ApkImport.Scan? = null,
     )
 
     /** One test run, newest first in the panel */
@@ -136,17 +146,46 @@ class SourceEditorScreenModel(
     fun importCode(fileName: String?, text: String) {
         val json = fileName?.endsWith(".json", ignoreCase = true) == true ||
             (fileName?.endsWith(".js", ignoreCase = true) != true && text.trimStart().startsWith("{"))
+        val info = quickInfo(text, json)
+        closeRuntime()
         mutableState.update {
             it.copy(
+                // Importing over a saved source starts a new one, so the saved one isn't replaced by mistake
+                key = if (it.saved) manager.newKey() else it.key,
+                saved = false,
                 json = json,
                 code = text,
-                // An import is a new source unless it replaces the one being edited
                 anime = json && "\"videos\"" in text || !json && "getVideoList" in text,
+                // Straight from the file's text, so the Details show at once (the run below fills any gaps)
+                name = info["name"].orEmpty(),
+                lang = info["lang"] ?: "en",
+                baseUrl = info["baseUrl"].orEmpty(),
+                iconUrl = info["iconUrl"].orEmpty(),
+                results = emptyList(),
+                console = emptyList(),
                 dirty = true,
             )
         }
         message("Imported ${fileName ?: "file"}")
         loadInfo()
+    }
+
+    /**
+     * name, lang, baseUrl and iconUrl read from the code's text without running it: the top-level keys of a JSON
+     * definition, or `name: "..."` / `NAME = "..."` in a script.
+     */
+    private fun quickInfo(code: String, json: Boolean): Map<String, String> {
+        val keys = mapOf("name" to "NAME", "lang" to "LANG", "baseUrl" to "BASE_URL", "iconUrl" to "ICON_URL")
+        if (json) {
+            val obj = runCatching {
+                sumizuriJson.parseToJsonElement(eu.kanade.tachiyomi.sumizuri.stripJsonComments(code)) as? JsonObject
+            }.getOrNull()
+            if (obj != null) return keys.keys.mapNotNull { k -> obj.str(k)?.takeIf { it.isNotBlank() }?.let { k to it } }.toMap()
+        }
+        return keys.mapNotNull { (key, global) ->
+            val pattern = Regex("""(?:\b$key\s*:|\b$global\s*=|"$key"\s*:)\s*(["'`])((?:\\.|(?!\1).)*)\1""")
+            pattern.find(code)?.groupValues?.get(2)?.takeIf { it.isNotBlank() }?.let { key to it }
+        }.toMap()
     }
 
     fun newSource(json: Boolean, anime: Boolean) {
@@ -156,6 +195,118 @@ class SourceEditorScreenModel(
             json = json,
             anime = anime,
             code = SourceTemplates.templateFor(json, anime),
+        )
+    }
+
+    // Start from APK
+
+    /** An installed Mihon or Aniyomi extension, for the "Start from APK" list */
+    @Immutable
+    data class InstalledExtension(
+        val name: String,
+        val pkgName: String,
+        val lang: String,
+        val version: String,
+        val anime: Boolean,
+    )
+
+    fun installedExtensions(): List<InstalledExtension> {
+        val manga = Injekt.get<ExtensionManager>().installedExtensionsFlow.value.map {
+            InstalledExtension(it.name, it.pkgName, it.lang, it.versionName, anime = false)
+        }
+        val anime = Injekt.get<AnimeExtensionManager>().installedExtensionsFlow.value.map {
+            InstalledExtension(it.name, it.pkgName, it.lang, it.versionName, anime = true)
+        }
+        return (manga + anime).sortedBy { it.name.lowercase() }
+    }
+
+    fun startFromInstalled(extension: InstalledExtension) {
+        screenModelScope.launchIO {
+            mutableState.update { it.copy(running = "Reading ${extension.name}") }
+            runCatching {
+                val app = if (extension.anime) {
+                    AnimeExtensionLoader.getExtensionPackageInfoFromPkgName(context, extension.pkgName)
+                } else {
+                    ExtensionLoader.getExtensionPackageInfoFromPkgName(context, extension.pkgName)
+                }?.applicationInfo ?: error("Can't find the APK of ${extension.name}")
+                val sources = if (extension.anime) {
+                    Injekt.get<AnimeExtensionManager>().installedExtensionsFlow.value
+                        .find { it.pkgName == extension.pkgName }?.sources.orEmpty()
+                        .mapNotNull { it as? AnimeHttpSource }
+                        .map { ApkImport.SourceGuess(it.name, it.lang, it.baseUrl) }
+                } else {
+                    Injekt.get<ExtensionManager>().installedExtensionsFlow.value
+                        .find { it.pkgName == extension.pkgName }?.sources.orEmpty()
+                        .mapNotNull { it as? HttpSource }
+                        .map { ApkImport.SourceGuess(it.name, it.lang, it.baseUrl) }
+                }
+                val iconUrl = if (extension.anime) {
+                    Injekt.get<AnimeExtensionManager>().availableExtensionsFlow.value
+                        .find { it.pkgName == extension.pkgName }?.iconUrl
+                } else {
+                    Injekt.get<ExtensionManager>().availableExtensionsFlow.first()
+                        .find { it.pkgName == extension.pkgName }?.iconUrl
+                }
+                ApkImport.scan(
+                    apk = java.io.File(app.sourceDir),
+                    label = extension.name,
+                    pkgName = extension.pkgName,
+                    version = extension.version,
+                    anime = extension.anime,
+                    known = sources.distinctBy { it.name + it.lang + it.baseUrl },
+                    iconUrl = iconUrl,
+                )
+            }.onSuccess(::scanned).onFailure(::scanFailed)
+        }
+    }
+
+    /** An .apk file the user picked, already copied to [file] */
+    fun startFromApkFile(file: java.io.File) {
+        screenModelScope.launchIO {
+            mutableState.update { it.copy(running = "Reading the APK") }
+            runCatching { ApkImport.scanFile(context, file) }
+                .onSuccess(::scanned)
+                .onFailure(::scanFailed)
+            file.delete()
+        }
+    }
+
+    private fun scanned(scan: ApkImport.Scan) {
+        mutableState.update { it.copy(running = null) }
+        if (scan.sources.size > 1) {
+            mutableState.update { it.copy(apkScan = scan) }
+        } else {
+            useApkSource(scan, scan.sources.first())
+        }
+    }
+
+    private fun scanFailed(e: Throwable) {
+        AppLog.add('W', "sumizuri", "Start from APK failed: $e")
+        mutableState.update { it.copy(running = null, message = "Couldn't read the APK: ${e.message}") }
+    }
+
+    fun dismissApkScan() = mutableState.update { it.copy(apkScan = null) }
+
+    /** Fills a new source (JS or JSON, as the tab says) from what was found in the APK */
+    fun useApkSource(scan: ApkImport.Scan, source: ApkImport.SourceGuess) {
+        closeRuntime()
+        val json = state.value.json
+        val code = ApkImport.template(scan, source, json)
+        mutableState.value = State(
+            key = manager.newKey(),
+            json = json,
+            anime = scan.anime,
+            code = code,
+            name = source.name,
+            lang = source.lang,
+            baseUrl = source.baseUrl,
+            iconUrl = scan.iconUrl.orEmpty(),
+            dirty = true,
+            message = buildString {
+                append("Started from ").append(scan.label)
+                scan.theme?.let { append(" (").append(it).append(" theme)") }
+                append(". Test it, adjust, then save")
+            },
         )
     }
 
