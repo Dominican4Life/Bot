@@ -55,6 +55,7 @@ include(":domain")
 include(":i18n")
 // KMK -->
 include(":i18n-kmk")
+include(":kotatsu-api")
 include(":i18n-ank")
 include(":flagkit")
 // KMK <--

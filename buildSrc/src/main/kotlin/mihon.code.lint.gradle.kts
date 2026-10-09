@@ -21,7 +21,7 @@ val xmlFormatExclude = buildList(2) {
 spotless {
     kotlin {
         target("**/*.kt", "**/*.kts")
-        targetExclude("**/build/**/*.kt")
+        targetExclude("**/build/**/*.kt", "src/main/java/org/koitharu/**/*.kt")
         ktlint(libs.ktlint.core.get().version)
         trimTrailingWhitespace()
         endWithNewline()
