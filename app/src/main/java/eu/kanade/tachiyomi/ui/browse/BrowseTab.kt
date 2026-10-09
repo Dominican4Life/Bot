@@ -20,13 +20,12 @@ import cafe.adriel.voyager.navigator.tab.LocalTabNavigator
 import cafe.adriel.voyager.navigator.tab.TabOptions
 import eu.kanade.core.preference.asState
 import eu.kanade.domain.ui.UiPreferences
-import eu.kanade.presentation.browse.anime.AnimeExtensionsPane
 import eu.kanade.presentation.browse.anime.AnimeMigratePane
 import eu.kanade.presentation.browse.anime.AnimeSourcesPane
 import eu.kanade.presentation.browse.anime.MangaAnimeSplit
 import eu.kanade.presentation.components.TabContent
 import eu.kanade.presentation.components.TabbedScreen
-import eu.kanade.presentation.more.settings.screen.browse.ExtensionStoresScreen
+import eu.kanade.presentation.more.settings.screen.browse.ExtensionStoresScreenModel
 import eu.kanade.presentation.util.Tab
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.connections.discord.DiscordRPCService
@@ -34,14 +33,14 @@ import eu.kanade.tachiyomi.data.connections.discord.DiscordScreen
 import eu.kanade.tachiyomi.ui.browse.anime.AnimeBrowseScreenModel
 import eu.kanade.tachiyomi.ui.browse.anime.AnimeExtensionDetailsScreen
 import eu.kanade.tachiyomi.ui.browse.extension.ExtensionsScreenModel
-import eu.kanade.tachiyomi.ui.browse.extension.extensionsTab
+import eu.kanade.tachiyomi.ui.browse.extension.unified.UnifiedExtensionsScreenModel
+import eu.kanade.tachiyomi.ui.browse.extension.unified.unifiedExtensionsTab
 import eu.kanade.tachiyomi.ui.browse.feed.FeedScreenModel
 import eu.kanade.tachiyomi.ui.browse.feed.feedTab
 import eu.kanade.tachiyomi.ui.browse.migration.sources.migrateSourceTab
 import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchScreen
 import eu.kanade.tachiyomi.ui.browse.source.sourcesTab
 import eu.kanade.tachiyomi.ui.main.MainActivity
-import eu.kanade.tachiyomi.ui.webview.WebViewScreen
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
@@ -137,26 +136,11 @@ data object BrowseTab : Tab {
                 },
             )
         }
-        val animeExtensions: @Composable (PaddingValues) -> Unit = { padding ->
-            AnimeExtensionsPane(
-                state = animeState,
-                contentPadding = padding,
-                onSearch = animeScreenModel::searchExtensions,
-                onRefresh = animeScreenModel::refreshExtensions,
-                onOpenRepos = { navigator.push(ExtensionStoresScreen(anime = true)) },
-                onInstall = animeScreenModel::install,
-                onUpdate = animeScreenModel::update,
-                onUninstall = animeScreenModel::uninstall,
-                onTrust = animeScreenModel::trust,
-                onCancel = animeScreenModel::cancelInstall,
-                onOpenDetails = { navigator.push(AnimeExtensionDetailsScreen(it.pkgName)) },
-                onOpenWebView = { ext ->
-                    ext.sources.firstOrNull { it.baseUrl.isNotBlank() }?.let {
-                        navigator.push(WebViewScreen(url = it.baseUrl, initialTitle = it.name))
-                    }
-                },
-            )
-        }
+        // Extensions: one Kototoro-style screen for every kind of extension
+        val unifiedExtensionsModel = rememberScreenModel { UnifiedExtensionsScreenModel() }
+        val mangaStoresModel = rememberScreenModel(tag = "manga_stores") { ExtensionStoresScreenModel() }
+        val animeStoresModel = rememberScreenModel(tag = "anime_stores") { ExtensionStoresScreenModel(anime = true) }
+        val extensions = unifiedExtensionsTab(unifiedExtensionsModel, mangaStoresModel, animeStoresModel)
         val animeMigrate: @Composable (PaddingValues) -> Unit = { padding -> AnimeMigratePane(padding) }
         // KMK <--
 
@@ -165,7 +149,7 @@ data object BrowseTab : Tab {
             hideFeedTab ->
                 persistentListOf(
                     sourcesTab().withAnime(animeSources),
-                    extensionsTab(extensionsScreenModel).withAnime(animeExtensions),
+                    extensions,
                     migrateSourceTab().withAnime(animeMigrate),
                 )
 
@@ -178,7 +162,7 @@ data object BrowseTab : Tab {
                         // KMK <--
                     ),
                     sourcesTab().withAnime(animeSources),
-                    extensionsTab(extensionsScreenModel).withAnime(animeExtensions),
+                    extensions,
                     migrateSourceTab().withAnime(animeMigrate),
                 )
 
@@ -186,7 +170,7 @@ data object BrowseTab : Tab {
             else ->
                 persistentListOf(
                     sourcesTab().withAnime(animeSources),
-                    extensionsTab(extensionsScreenModel).withAnime(animeExtensions),
+                    extensions,
                     feedTab(
                         // KMK -->
                         feedScreenModel,

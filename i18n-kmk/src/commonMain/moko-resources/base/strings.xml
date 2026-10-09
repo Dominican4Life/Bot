@@ -373,4 +373,25 @@
     <string name="suggestions_finding">Finding manga you may like…</string>
     <string name="suggestions_empty">No suggestions yet. Add some manga to your library, then refresh.</string>
     <string name="suggestions_notification_title">You may like this</string>
+    <!-- Unified extension management -->
+    <string name="ext_tab_sources">Sources (%1$d)</string>
+    <string name="ext_tab_repositories">Repositories (%1$d)</string>
+    <string name="ext_tab_packages">Packages (%1$d)</string>
+    <string name="ext_search_all">Search sources, repositories, packages</string>
+    <string name="ext_all_repositories">All repositories</string>
+    <string name="ext_all_sources">All sources</string>
+    <string name="ext_status_all">All</string>
+    <string name="ext_status_updates">Updates</string>
+    <string name="ext_status_installed">Installed</string>
+    <string name="ext_status_not_installed">Not installed</string>
+    <string name="ext_updates_banner">%1$d extension updates available</string>
+    <string name="ext_active_count">%1$d/%2$d active</string>
+    <string name="ext_installed_version">Installed: %1$s</string>
+    <string name="ext_details">Details</string>
+    <string name="ext_add_repository">Add repository</string>
+    <string name="ext_repo_counts">%1$d packages · %2$d installed</string>
+    <string name="ext_no_sources">No sources yet. Install packages from the Packages tab.</string>
+    <string name="ext_no_repositories">No repositories match.</string>
+    <string name="ext_no_packages">No packages match. Add a repository to find more.</string>
+    <string name="ext_kind_coming">%1$s extensions are coming in a later update.</string>
 </resources>
