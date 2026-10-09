@@ -90,8 +90,10 @@ class HistoryScreenModel(
                 // KMK -->
                 getHistoryItemPreferenceFlow()
                     .distinctUntilChanged(),
-            ) { query, itemPreferences -> query to itemPreferences }
-                .flatMapLatest { (query, pref) ->
+                // Device files only, from the toolbar
+                eu.kanade.tachiyomi.devicefiles.DeviceFilesPreferences.instance.historyDeviceOnly.changes(),
+            ) { query, itemPreferences, deviceOnly -> Triple(query, itemPreferences, deviceOnly) }
+                .flatMapLatest { (query, pref, deviceOnly) ->
                     // KMK <--
                     getHistory.subscribe(
                         query ?: "",
@@ -101,6 +103,15 @@ class HistoryScreenModel(
                         nonLibraryEntries = pref.filterNonLibraryManga.toBooleanOrNull(),
                         // KMK <--
                     )
+                        .map { list ->
+                            if (deviceOnly) {
+                                list.filter {
+                                    it.coverData.sourceId == eu.kanade.tachiyomi.devicefiles.DeviceFilesIds.MANGA
+                                }
+                            } else {
+                                list
+                            }
+                        }
                         .distinctUntilChanged()
                         .catch { error ->
                             logcat(LogPriority.ERROR, error)

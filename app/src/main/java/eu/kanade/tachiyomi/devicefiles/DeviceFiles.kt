@@ -108,6 +108,9 @@ class DeviceFilesPreferences(store: PreferenceStore) {
     val showRecent = store.getBoolean("device_files_show_recent", true)
     val favourites = store.getStringSet("device_files_favourites", emptySet())
 
+    /** History shows only what was played or read from Device files */
+    val historyDeviceOnly = store.getBoolean("history_device_files_only", false)
+
     fun sortOrder(): FileSort = runCatching { FileSort.valueOf(sort.get()) }.getOrDefault(FileSort.Name)
 
     fun isFavourite(path: String): Boolean = path in favourites.get()

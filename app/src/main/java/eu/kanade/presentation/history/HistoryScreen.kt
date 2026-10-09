@@ -10,10 +10,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.automirrored.outlined.ViewList
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.FlipToBack
+import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.SelectAll
@@ -93,6 +95,15 @@ fun HistoryScreen(
         iconTint = MaterialTheme.colorScheme.primary,
         onClick = { showAnimePref.set(!showAnime) },
     )
+    // Device files only: what was played or read from the device's storage
+    val deviceOnlyPref = remember { eu.kanade.tachiyomi.devicefiles.DeviceFilesPreferences.instance.historyDeviceOnly }
+    val deviceOnly by deviceOnlyPref.collectAsState()
+    val deviceAction = AppBar.Action(
+        title = if (deviceOnly) "Show all history" else "Device files only",
+        icon = if (deviceOnly) Icons.Filled.Folder else Icons.Outlined.Folder,
+        iconTint = if (deviceOnly) MaterialTheme.colorScheme.active else LocalContentColor.current,
+        onClick = { deviceOnlyPref.set(!deviceOnly) },
+    )
     // KMK <--
 
     Scaffold(
@@ -108,7 +119,14 @@ fun HistoryScreen(
                 )
                 // KMK <--
                 else -> SearchToolbar(
-                    titleContent = { AppBarTitle(stringResource(MR.strings.history)) },
+                    titleContent = {
+                        AppBarTitle(
+                            stringResource(MR.strings.history),
+                            // KMK -->
+                            subtitle = "Device files".takeIf { deviceOnly },
+                            // KMK <--
+                        )
+                    },
                     searchQuery = state.searchQuery,
                     onChangeSearchQuery = onSearchQueryChange,
                     actions = {
@@ -116,6 +134,7 @@ fun HistoryScreen(
                             persistentListOf(
                                 // KMK -->
                                 switchAction,
+                                deviceAction,
                                 AppBar.Action(
                                     title = stringResource(MR.strings.action_filter),
                                     icon = Icons.Outlined.FilterList,
@@ -173,10 +192,19 @@ fun HistoryScreen(
                 } else {
                     MR.strings.information_no_recent_manga
                 }
-                EmptyScreen(
-                    stringRes = msg,
-                    modifier = Modifier.padding(contentPadding),
-                )
+                // KMK -->
+                if (deviceOnly && state.searchQuery.isNullOrEmpty()) {
+                    EmptyScreen(
+                        message = "Nothing read from Device files yet",
+                        modifier = Modifier.padding(contentPadding),
+                    )
+                } else {
+                    // KMK <--
+                    EmptyScreen(
+                        stringRes = msg,
+                        modifier = Modifier.padding(contentPadding),
+                    )
+                }
             } else {
                 // KMK -->
                 val uiModels = remember(state.list) { state.getUiModel() }

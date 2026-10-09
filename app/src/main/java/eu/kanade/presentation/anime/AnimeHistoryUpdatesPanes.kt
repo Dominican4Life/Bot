@@ -99,7 +99,13 @@ fun AnimeHistoryPane(
     var removeAnimeId by remember { mutableStateOf<Long?>(null) }
     var confirmClearAll by remember { mutableStateOf(false) }
 
-    val items = history ?: return
+    // KMK: History's "Device files only" button
+    val deviceOnlyPref = remember { eu.kanade.tachiyomi.devicefiles.DeviceFilesPreferences.instance.historyDeviceOnly }
+    val deviceOnly by remember { deviceOnlyPref.changes() }.collectAsState(initial = deviceOnlyPref.get())
+    val all = history ?: return
+    val items = remember(all, deviceOnly) {
+        if (deviceOnly) all.filter { it.source == eu.kanade.tachiyomi.devicefiles.DeviceFilesIds.ANIME } else all
+    }
     val filtered = remember(items, searchQuery) {
         if (searchQuery.isNullOrBlank()) items else items.filter { it.title.contains(searchQuery, ignoreCase = true) }
     }
@@ -123,9 +129,13 @@ fun AnimeHistoryPane(
         }
         if (filtered.isEmpty()) {
             EmptyScreen(
-                message = stringResource(
-                    if (searchQuery.isNullOrBlank()) KMR.strings.anime_no_history else MR.strings.no_results_found,
-                ),
+                message = if (deviceOnly && searchQuery.isNullOrBlank()) {
+                    "Nothing played from Device files yet"
+                } else {
+                    stringResource(
+                        if (searchQuery.isNullOrBlank()) KMR.strings.anime_no_history else MR.strings.no_results_found,
+                    )
+                },
             )
         } else {
             FastScrollLazyColumn(
