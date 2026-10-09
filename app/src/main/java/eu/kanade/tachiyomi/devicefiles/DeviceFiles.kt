@@ -143,7 +143,8 @@ object DeviceFilesRepository {
     private fun selectionFor(category: FileCategory): Pair<String, Array<String>> {
         val type = MediaStore.Files.FileColumns.MEDIA_TYPE
         val data = MediaStore.Files.FileColumns.DATA
-        val format = MediaStore.Files.FileColumns.FORMAT
+        // MTP format column (not in the public constants)
+        val format = "format"
         return when (category) {
             FileCategory.Images -> "$type = ?" to arrayOf(MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString())
             FileCategory.Videos -> "$type = ?" to arrayOf(MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString())
@@ -206,7 +207,8 @@ object DeviceFilesRepository {
 
     /** The newest files, leaving out apps' own data and thumbnails */
     fun recent(context: Context, limit: Int, showHidden: Boolean): List<DeviceFile> {
-        val format = MediaStore.Files.FileColumns.FORMAT
+        // MTP format column (not in the public constants)
+        val format = "format"
         val data = MediaStore.Files.FileColumns.DATA
         return query(
             context,
@@ -222,7 +224,8 @@ object DeviceFilesRepository {
     fun search(context: Context, text: String, showHidden: Boolean): List<DeviceFile> {
         if (text.isBlank()) return emptyList()
         val escaped = text.trim().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        val format = MediaStore.Files.FileColumns.FORMAT
+        // MTP format column (not in the public constants)
+        val format = "format"
         val fromIndex = query(
             context,
             "${MediaStore.Files.FileColumns.DISPLAY_NAME} LIKE ? ESCAPE '\\' AND ($format IS NULL OR $format != $FORMAT_FOLDER)",
