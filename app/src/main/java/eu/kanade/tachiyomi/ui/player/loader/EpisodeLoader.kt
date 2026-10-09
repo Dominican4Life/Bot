@@ -19,8 +19,6 @@ import eu.kanade.tachiyomi.data.anime.Episode
 import eu.kanade.tachiyomi.util.subtitles.StremioSubtitleResolver
 
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
-import eu.kanade.tachiyomi.ui.player.PlayerViewModel
-import tachiyomi.i18n.MR
 
 /**
  * Loader used to retrieve the hosters for a given episode.
@@ -60,12 +58,8 @@ class EpisodeLoader {
             }
             return when (source) {
                 is AnimeHttpSource -> getHostersOnHttp(episode, source)
-                // ANZ -->
-                else -> throw PlayerViewModel.ExceptionWithStringResource(
-                    "Source not supported: ${source.name}",
-                    MR.strings.source_unsupported,
-                )
-                // ANZ <--
+                // KMK: any other anime source (Code editor sources) gives its videos directly
+                else -> withIOContext { source.getVideoList(episode.toSEpisode()).toHosterList() }
             }
         }
 
@@ -127,12 +121,8 @@ class EpisodeLoader {
                 hoster.videoList != null && source is AnimeHttpSource -> hoster.videoList!!.parseVideoUrls(source)
                 hoster.videoList != null -> hoster.videoList!!
                 source is AnimeHttpSource -> getVideosOnHttp(source, hoster)
-                // ANZ -->
-                else -> throw PlayerViewModel.ExceptionWithStringResource(
-                    "Source not supported: ${source.name}",
-                    MR.strings.source_unsupported,
-                )
-                // ANZ <--
+                // KMK: any other anime source answers per hoster too
+                else -> withIOContext { source.getVideoList(hoster) }
             }
 
             val sortedVideos = if (source is AnimeHttpSource) {

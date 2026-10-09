@@ -78,11 +78,12 @@ object AutoCode {
     suspend fun run(context: Context, address: String, kind: Kind, json: Boolean, log: (String) -> Unit): Result =
         withContext(Dispatchers.IO) {
             val start = normalize(address)
-            val base = start.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}" }
-                ?: throw IllegalArgumentException("\"$address\" is not a web address")
+            start.toHttpUrlOrNull() ?: throw IllegalArgumentException("\"$address\" is not a web address")
             log("Opening $start")
             var renderLists = false
             var home = fetch(context, start, log)
+            // The site's address after redirects (pornhub.com -> www.pornhub.com)
+            val base = home.url.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}" } ?: start.toHttpUrlOrNull()!!.let { "${it.scheme}://${it.host}" }
             if (home.render) renderLists = true
 
             // A known theme: its full definition
@@ -259,9 +260,19 @@ object AutoCode {
         val cover: List<Pick>,
     )
 
+    /** [href] is on the same site as [base] (with or without www.), and the part after the host */
+    private fun sameSite(href: String, base: String): Boolean {
+        val a = href.toHttpUrlOrNull()?.host?.removePrefix("www.") ?: return false
+        val b = base.toHttpUrlOrNull()?.host?.removePrefix("www.") ?: return false
+        return a == b || a.endsWith(".$b")
+    }
+
+    private fun pathOf(href: String): String =
+        href.toHttpUrlOrNull()?.let { it.encodedPath + (it.encodedQuery?.let { q -> "?$q" } ?: "") } ?: href
+
     private fun isTitleLink(href: String, base: String): Boolean {
-        if (!href.startsWith(base) || href.trimEnd('/') == base) return false
-        val path = href.removePrefix(base).lowercase()
+        if (!sameSite(href, base) || pathOf(href).trim('/').isEmpty()) return false
+        val path = pathOf(href).lowercase()
         return NOT_TITLE_PATHS.none { it in path } && path.count { it == '/' } >= 1 && !path.startsWith("/#")
     }
 
@@ -336,7 +347,7 @@ object AutoCode {
         doc.select("nav a[href], header a[href], .menu a[href], ul a[href], a[href]")
             .firstOrNull { a ->
                 val href = a.absUrl("href")
-                href.startsWith(base) && (words.containsMatchIn(a.text()) || words.containsMatchIn(href.removePrefix(base)))
+                sameSite(href, base) && (words.containsMatchIn(a.text()) || words.containsMatchIn(pathOf(href)))
             }
             ?.absUrl("href")
 
@@ -364,8 +375,8 @@ object AutoCode {
             val hidden = form.select("input[type=hidden][name]").joinToString("") { "&${it.attr("name")}=${it.attr("value")}" }
             val pageParam = when {
                 "/page/{page}" in popularUrl -> null
-                Regex("""[?&](page|p|pg)=\{page}""").containsMatchIn(popularUrl) ->
-                    Regex("""[?&](page|p|pg)=\{page}""").find(popularUrl)!!.groupValues[1]
+                Regex("""[?&](page|p|pg)=\{page\}""").containsMatchIn(popularUrl) ->
+                    Regex("""[?&](page|p|pg)=\{page\}""").find(popularUrl)!!.groupValues[1]
                 else -> null
             }
             return if ("/page/{page}" in popularUrl && name == "s") {
@@ -413,7 +424,7 @@ object AutoCode {
         val links = doc.select("a[href]").filter { a ->
             val text = a.text()
             val href = a.absUrl("href")
-            href.startsWith(base) && (CHAPTER_TEXT.containsMatchIn(text) || CHAPTER_HREF.containsMatchIn(href.removePrefix(base)))
+            sameSite(href, base) && (CHAPTER_TEXT.containsMatchIn(text) || CHAPTER_HREF.containsMatchIn(pathOf(href)))
         }
         if (links.size < 1) return null
         // The repeated row each link sits in (often li), grouped by its parent
@@ -622,7 +633,7 @@ object AutoCode {
                 rest = rest.removePrefix(plan.baseUrl)
             }
             var last = 0
-            Regex("""\{(page|query)}""").findAll(rest).forEach { m ->
+            Regex("""\{(page|query)\}""").findAll(rest).forEach { m ->
                 if (m.range.first > last) out += rest.substring(last, m.range.first).jsQuoted()
                 out += if (m.groupValues[1] == "page") "page" else "encodeURIComponent(query)"
                 last = m.range.last + 1

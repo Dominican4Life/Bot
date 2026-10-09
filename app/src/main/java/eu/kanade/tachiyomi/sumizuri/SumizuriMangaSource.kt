@@ -32,6 +32,10 @@ class SumizuriMangaSource(
     override val id: Long = info.id
     override val versionId: Int = 1
     override val supportsLatest: Boolean = true
+
+    // Related titles by searching each word of the title would fire a search per word at the site at once,
+    // which sites answer with 429 (too many requests) and which blocks this source's other calls meanwhile
+    override val disableRelatedMangasBySearch: Boolean = true
     override val baseUrl: String = info.baseUrl.trimEnd('/')
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder().apply {

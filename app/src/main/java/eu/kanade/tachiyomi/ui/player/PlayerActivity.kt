@@ -1230,9 +1230,12 @@ class PlayerActivity : BaseActivity() {
 
     private fun setHttpOptions(video: Video) {
         if (viewModel.isEpisodeOnline() != true) return
-        val source = viewModel.currentSource.value as? AnimeHttpSource ?: return
+        val sourceHeaders = (viewModel.currentSource.value as? AnimeHttpSource)?.headers
+            // KMK: Code editor sources send their headers too
+            ?: (viewModel.currentSource.value as? eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource)?.headers
+            ?: return
 
-        val headers = (video.headers ?: source.headers)
+        val headers = (video.headers ?: sourceHeaders)
             .toMultimap()
             .mapValues { it.value.firstOrNull() ?: "" }
             .toMutableMap()

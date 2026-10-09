@@ -567,7 +567,8 @@ class PlayerViewModel @JvmOverloads constructor(
         val anime = anime ?: return null
         val episode = currentEpisode.value ?: return null
         val source = currentSource.value ?: return null
-        return source is AnimeHttpSource &&
+        // KMK: Code editor sources are online too
+        return (source is AnimeHttpSource || source is eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource) &&
             !EpisodeLoader.isDownload(
                 episode.toDomainEpisode()!!,
                 anime,
