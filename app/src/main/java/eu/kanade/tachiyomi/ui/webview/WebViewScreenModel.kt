@@ -25,6 +25,17 @@ class WebViewScreenModel(
     var headers = emptyMap<String, String>()
 
     init {
+        // KMK: the app's user agent unless a source says otherwise, so a bot check passed here is passed for the
+        // app's requests too (Cloudflare ties its pass to the user agent)
+        headers = mapOf("user-agent" to network.defaultUserAgentProvider())
+        sourceId?.let {
+            runCatching {
+                Injekt.get<eu.kanade.tachiyomi.animeextension.AnimeSourceManager>().get(it)
+                    as? eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource
+            }.getOrNull()
+        }?.let { source ->
+            headers = source.headers.toMultimap().mapValues { it.value.getOrNull(0) ?: "" }
+        }
         sourceId?.let { sourceManager.get(it) as? HttpSource }?.let { source ->
             try {
                 headers = source.headers.toMultimap().mapValues { it.value.getOrNull(0) ?: "" }

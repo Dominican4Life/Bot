@@ -208,7 +208,7 @@ object AutoCode {
                 .header("Accept", "text/html,application/xhtml+xml,*/*")
                 .build()
             val (code, body, finalUrl) = runCatching {
-                network.client.newCall(request).execute().use { Triple(it.code, it.body.string(), it.request.url.toString()) }
+                network.nonCloudflareClient.newCall(request).execute().use { Triple(it.code, it.body.string(), it.request.url.toString()) }
             }.getOrElse { Triple(0, "", url) }
             val challenge = code in listOf(403, 503) &&
                 listOf("cf-chl", "Just a moment", "challenge-platform", "cf_chl").any { it in body }

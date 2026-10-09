@@ -108,8 +108,10 @@ class SumizuriRuntime private constructor(
         /** Default values from getSourcePreferences(), used until the user changes one */
         var preferenceDefaults: Map<String, JsonElement> = emptyMap()
 
+        // The app's connection without its Cloudflare helper: a bot check is passed in a browser page instead
+        // (SumizuriBrowserFetch), which gets through where the helper can't
         private val client by lazy {
-            network.client.newBuilder()
+            network.nonCloudflareClient.newBuilder()
                 .callTimeout(60, TimeUnit.SECONDS)
                 .build()
         }
@@ -329,25 +331,47 @@ class SumizuriRuntime private constructor(
                 lastRequestAt = System.currentTimeMillis()
             }
 
+            val origin = SumizuriBrowserFetch.originOf(url)
+            val plainHeaders = headers.build().toMultimap().mapValues { it.value.firstOrNull().orEmpty() }
+            suspend fun viaBrowser(): Map<String, Any?> {
+                val result = SumizuriBrowserFetch.fetch(context, url, method, plainHeaders, body, binary)
+                if (testing) log("net", "$method $url -> ${result["statusCode"]} (through the browser)")
+                return result
+            }
+            // Binary replies (images, archives) never go through the browser page
+            if (!binary && origin != null && origin in SumizuriBrowserFetch.browserFirst) {
+                return@withContext viaBrowser()
+            }
+
             val started = System.currentTimeMillis()
             val request = Request.Builder().url(url).headers(headers.build()).method(method, requestBody).build()
-            client.newCall(request).execute().use { response ->
+            val plain = client.newCall(request).execute().use { response ->
                 val took = System.currentTimeMillis() - started
                 if (testing) log("net", "$method $url -> ${response.code} in ${took}ms")
                 val responseHeaders = response.headers.names().associate { name ->
                     name.lowercase() to response.headers.values(name).joinToString(",")
                 }
-                buildMap {
-                    put("statusCode", response.code)
-                    put("url", response.request.url.toString())
-                    if (binary) {
-                        put("bodyBase64", SumizuriBytes.encode(response.body.bytes(), "base64"))
-                    } else {
-                        put("body", response.body.string())
+                val bytes = response.body.bytes()
+                val text = if (binary) "" else String(bytes, response.body.contentType()?.charset() ?: Charsets.UTF_8)
+                if (!binary && origin != null &&
+                    SumizuriBrowserFetch.isChallenge(response.code, response.header("Server"), text)
+                ) {
+                    null
+                } else {
+                    buildMap<String, Any?> {
+                        put("statusCode", response.code)
+                        put("url", response.request.url.toString())
+                        if (binary) put("bodyBase64", SumizuriBytes.encode(bytes, "base64")) else put("body", text)
+                        put("headers", responseHeaders)
                     }
-                    put("headers", responseHeaders)
                 }
             }
+            if (plain != null) return@withContext plain
+            // A bot check answered: ask from inside a browser page on the site, and keep doing so for this site
+            log("warn", "A bot check answered $url: sending it from a browser page on the site instead")
+            val result = viaBrowser()
+            SumizuriBrowserFetch.browserFirst += origin!!
+            result
         }
     }
 

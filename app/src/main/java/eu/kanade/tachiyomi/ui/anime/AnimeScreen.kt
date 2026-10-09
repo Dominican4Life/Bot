@@ -164,7 +164,7 @@ class AnimeScreen(private val animeId: Long) : Screen() {
         }
             // KMK: Code editor sources open their title's page too
             ?: (screenModel.source as? eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource)?.getAnimeUrl(anime.toSAnime())
-        val openWebView: (() -> Unit)? = animeUrl?.let { url -> { navigator.push(WebViewScreen(url, anime.title)) } }
+        val openWebView: (() -> Unit)? = animeUrl?.let { url -> { navigator.push(WebViewScreen(url, anime.title, anime.source)) } }
 
         var dialog by remember { mutableStateOf<AnimeDialog?>(null) }
         val actions = AnimeActions(

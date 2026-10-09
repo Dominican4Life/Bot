@@ -691,7 +691,7 @@ private fun AnimeSourceSheet(
         onOpenWebView = baseUrl?.takeIf { it.isNotBlank() }?.let { url ->
             {
                 onDismiss()
-                navigator?.push(eu.kanade.tachiyomi.ui.webview.WebViewScreen(url = url, initialTitle = source.name))
+                navigator?.push(eu.kanade.tachiyomi.ui.webview.WebViewScreen(url = url, initialTitle = source.name, sourceId = source.id))
             }
         },
         onClearCookies = {
