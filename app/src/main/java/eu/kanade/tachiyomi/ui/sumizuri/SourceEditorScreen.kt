@@ -34,6 +34,7 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.FileDownload
@@ -79,7 +80,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -429,6 +432,8 @@ private fun TestPanel(
     onQuery: (String) -> Unit,
 ) {
     var consoleOpen by rememberSaveable { mutableStateOf(true) }
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     Column(modifier = Modifier.fillMaxSize()) {
         Column(
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -484,7 +489,10 @@ private fun TestPanel(
         HorizontalDivider()
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().clickable { consoleOpen = !consoleOpen }.padding(horizontal = 12.dp, vertical = 8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { consoleOpen = !consoleOpen }
+                .padding(start = 12.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
         ) {
             Text("Console", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
             Text(
@@ -492,6 +500,19 @@ private fun TestPanel(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            // Copies the whole console (not only the lines shown)
+            IconButton(
+                onClick = {
+                    if (state.console.isEmpty()) {
+                        context.toast("The console is empty")
+                    } else {
+                        clipboard.setText(AnnotatedString(state.console.joinToString("\n")))
+                        context.toast("Copied ${state.console.size} lines")
+                    }
+                },
+            ) {
+                Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy console", modifier = Modifier.size(20.dp))
+            }
         }
         if (consoleOpen) {
             SelectionContainer {
