@@ -128,8 +128,10 @@ class SumizuriAnimeSource(
                 video.obj("outro")?.let { stamp(it, "Outro", ChapterType.Ending) },
             )
             val quality = video.str("quality").orEmpty()
+            val isHls = url.substringBefore('?').lowercase().let { it.endsWith(".m3u8") || "m3u8" in it }
             Video(
-                videoUrl = url,
+                // HLS goes through the relay, which removes fake picture headers some hosts put on each piece
+                videoUrl = if (isHls) HlsRelay.wrap(url, headers) else url,
                 videoTitle = quality.ifBlank { "Video" },
                 resolution = Regex("""(\d{3,4})p""").find(quality)?.groupValues?.get(1)?.toIntOrNull(),
                 headers = headers,
