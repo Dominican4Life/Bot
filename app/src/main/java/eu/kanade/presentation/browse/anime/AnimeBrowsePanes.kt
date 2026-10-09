@@ -17,6 +17,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -64,12 +67,19 @@ import androidx.core.graphics.drawable.toBitmap
 import coil3.compose.AsyncImage
 import eu.kanade.presentation.browse.ExtensionHeader
 import eu.kanade.presentation.browse.ExtensionTrustDialog
+import eu.kanade.presentation.browse.components.SourceTile
+import eu.kanade.presentation.browse.components.SourceTileGap
+import eu.kanade.presentation.browse.components.SourceTileHeader
+import eu.kanade.presentation.browse.components.SourceTileMinWidth
+import eu.kanade.presentation.browse.components.sourceSiteOf
 import eu.kanade.presentation.components.SourcesSearchBox
+import eu.kanade.presentation.components.rememberSourceBadgeCorners
 import eu.kanade.presentation.manga.components.DotSeparatorNoSpaceText
 import eu.kanade.presentation.util.isTabletUi
 import eu.kanade.tachiyomi.animeextension.AnimeExtensionManager
 import eu.kanade.tachiyomi.animeextension.model.AnimeExtension
 import eu.kanade.tachiyomi.animesource.AnimeCatalogueSource
+import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.extension.model.Extension
 import eu.kanade.tachiyomi.extension.model.InstallStep
 import eu.kanade.tachiyomi.ui.browse.anime.AnimeBrowseScreenModel
@@ -77,6 +87,7 @@ import eu.kanade.tachiyomi.util.system.LocaleHelper
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.components.FastScrollLazyColumn
+import tachiyomi.presentation.core.components.FastScrollLazyVerticalGrid
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.icons.FlagEmoji
@@ -156,6 +167,8 @@ fun AnimeSourcesPane(
     onClickSource: (Long) -> Unit,
     onClickFilter: () -> Unit,
     onClickGlobalSearch: () -> Unit,
+    onClickSettings: (pkgName: String) -> Unit,
+    onClickLatest: (sourceId: Long) -> Unit,
 ) {
     val context = LocalContext.current
     val extensionManager = remember { Injekt.get<AnimeExtensionManager>() }
@@ -192,46 +205,47 @@ fun AnimeSourcesPane(
         }
         val pinnedTitle = stringResource(MR.strings.pinned_sources)
         val pinned = sources.filter { it.id.toString() in state.pinnedSources }
-        FastScrollLazyColumn(modifier = Modifier.fillMaxSize()) {
-            val row: @Composable (AnimeCatalogueSource) -> Unit = { source ->
-                val isPinned = source.id.toString() in state.pinnedSources
-                PaneRow(
-                    icon = {
-                        AnimeIcon(
-                            drawable = remember(source.id) { extensionManager.getAppIconForSource(source.id) },
-                            url = null,
-                        )
-                    },
-                    title = source.name,
-                    subtitle = LocaleHelper.getSourceDisplayName(source.lang, context),
+        // KMK: tiles, like the manga sources
+        val corners = rememberSourceBadgeCorners()
+        FastScrollLazyVerticalGrid(
+            columns = GridCells.Adaptive(SourceTileMinWidth),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(SourceTileGap),
+            verticalArrangement = Arrangement.spacedBy(SourceTileGap),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            val tile: @Composable (AnimeCatalogueSource) -> Unit = { source ->
+                val icon = remember(source.id) {
+                    extensionManager.getAppIconForSource(source.id)?.toBitmap()?.asImageBitmap()
+                }
+                val ext = remember(source.id) {
+                    extensionManager.installedExtensionsFlow.value.find { e -> e.sources.any { it.id == source.id } }
+                }
+                SourceTile(
+                    name = source.name,
+                    site = remember(source.id) { sourceSiteOf((source as? AnimeHttpSource)?.baseUrl) },
+                    icon = icon,
+                    lang = source.lang,
+                    isNsfw = ext?.isNsfw == true,
+                    isPinned = source.id.toString() in state.pinnedSources,
+                    supportsLatest = source.supportsLatest,
+                    corners = corners,
                     onClick = { onClickSource(source.id) },
                     onLongClick = { onTogglePin(source.id) },
-                    action = {
-                        IconButton(onClick = { onTogglePin(source.id) }) {
-                            Icon(
-                                imageVector = if (isPinned) Icons.Filled.PushPin else Icons.Outlined.PushPin,
-                                contentDescription = stringResource(
-                                    if (isPinned) MR.strings.action_unpin else MR.strings.action_pin,
-                                ),
-                                tint = if (isPinned) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                },
-                            )
-                        }
-                    },
+                    onClickSettings = ext?.let { { onClickSettings(it.pkgName) } },
+                    onClickPin = { onTogglePin(source.id) },
+                    onClickLatest = { onClickLatest(source.id) },
                 )
             }
             if (pinned.isNotEmpty()) {
-                item(key = "header-pinned") { SectionHeader(pinnedTitle) }
-                items(pinned, key = { "anime-pinned-${it.id}" }) { row(it) }
+                item(key = "header-pinned", span = { GridItemSpan(maxLineSpan) }) { SourceTileHeader(pinnedTitle) }
+                items(pinned, key = { "anime-pinned-${it.id}" }) { tile(it) }
             }
             sources.groupBy { it.lang }.forEach { (lang, langSources) ->
-                item(key = "header-$lang") {
-                    SectionHeader(LocaleHelper.getSourceDisplayName(lang, context))
+                item(key = "header-$lang", span = { GridItemSpan(maxLineSpan) }) {
+                    SourceTileHeader(LocaleHelper.getSourceDisplayName(lang, context))
                 }
-                items(langSources, key = { "anime-source-${it.id}" }) { row(it) }
+                items(langSources, key = { "anime-source-${it.id}" }) { tile(it) }
             }
         }
     }

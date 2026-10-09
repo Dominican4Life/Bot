@@ -87,6 +87,8 @@ fun MangaCompactGridItem(
     coverBadgeEnd: @Composable (RowScope.() -> Unit)? = null,
     // KMK -->
     libraryColored: Boolean = true,
+    coverBadgeBottomStart: @Composable (RowScope.() -> Unit)? = null,
+    coverBadgeBottomEnd: @Composable (RowScope.() -> Unit)? = null,
     // KMK <--
 ) {
     // KMK -->
@@ -127,6 +129,10 @@ fun MangaCompactGridItem(
             },
             badgesStart = coverBadgeStart,
             badgesEnd = coverBadgeEnd,
+            badgesBottomStart = coverBadgeBottomStart,
+            badgesBottomEnd = coverBadgeBottomEnd,
+            // Keep bottom badges clear of the title drawn over the cover
+            bottomBadgesOffset = if (title != null) 40.dp else 0.dp,
             content = {
                 if (title != null) {
                     CoverTextOverlay(
@@ -217,6 +223,8 @@ fun MangaComfortableGridItem(
     coverBadgeEnd: @Composable (RowScope.() -> Unit)? = null,
     onClickContinueReading: (() -> Unit)? = null,
     // KMK -->
+    coverBadgeBottomStart: @Composable (RowScope.() -> Unit)? = null,
+    coverBadgeBottomEnd: @Composable (RowScope.() -> Unit)? = null,
     libraryColored: Boolean = true,
     coverRatio: MutableFloatState = remember { mutableFloatStateOf(1f) },
     usePanoramaCover: Boolean,
@@ -299,6 +307,8 @@ fun MangaComfortableGridItem(
                 // KMK <--
                 badgesStart = coverBadgeStart,
                 badgesEnd = coverBadgeEnd,
+                badgesBottomStart = coverBadgeBottomStart,
+                badgesBottomEnd = coverBadgeBottomEnd,
                 content = {
                     if (onClickContinueReading != null) {
                         ContinueReadingButton(
@@ -335,6 +345,11 @@ private fun MangaGridCover(
     // KMK <--
     badgesStart: (@Composable RowScope.() -> Unit)? = null,
     badgesEnd: (@Composable RowScope.() -> Unit)? = null,
+    // KMK -->
+    badgesBottomStart: (@Composable RowScope.() -> Unit)? = null,
+    badgesBottomEnd: (@Composable RowScope.() -> Unit)? = null,
+    bottomBadgesOffset: Dp = 0.dp,
+    // KMK <--
     content: @Composable (BoxScope.() -> Unit)? = null,
 ) {
     Box(
@@ -361,6 +376,24 @@ private fun MangaGridCover(
                 content = badgesEnd,
             )
         }
+        // KMK -->
+        if (badgesBottomStart != null) {
+            BadgeGroup(
+                modifier = Modifier
+                    .padding(start = 4.dp, end = 4.dp, bottom = 4.dp + bottomBadgesOffset)
+                    .align(Alignment.BottomStart),
+                content = badgesBottomStart,
+            )
+        }
+        if (badgesBottomEnd != null) {
+            BadgeGroup(
+                modifier = Modifier
+                    .padding(start = 4.dp, end = 4.dp, bottom = 4.dp + bottomBadgesOffset)
+                    .align(Alignment.BottomEnd),
+                content = badgesBottomEnd,
+            )
+        }
+        // KMK <--
     }
 }
 

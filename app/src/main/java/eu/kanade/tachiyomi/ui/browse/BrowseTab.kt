@@ -131,6 +131,10 @@ data object BrowseTab : Tab {
                 },
                 onClickFilter = { navigator.push(eu.kanade.tachiyomi.ui.browse.anime.AnimeSourcesFilterScreen()) },
                 onClickGlobalSearch = { navigator.push(eu.kanade.tachiyomi.ui.anime.AnimeGlobalSearchScreen()) },
+                onClickSettings = { navigator.push(AnimeExtensionDetailsScreen(it)) },
+                onClickLatest = {
+                    navigator.push(eu.kanade.tachiyomi.ui.anime.source.AnimeSourceScreen(it, initialLatest = true))
+                },
             )
         }
         val animeExtensions: @Composable (PaddingValues) -> Unit = { padding ->

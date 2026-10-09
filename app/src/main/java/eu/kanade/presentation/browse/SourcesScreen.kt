@@ -1,13 +1,18 @@
 package eu.kanade.presentation.browse
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -25,20 +30,26 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.times
+import eu.kanade.domain.source.model.icon
 import eu.kanade.domain.source.model.installedExtension
 import eu.kanade.presentation.browse.components.BaseSourceItem
-import eu.kanade.presentation.components.AnimatedFloatingSearchBox
-import eu.kanade.presentation.components.SOURCE_SEARCH_BOX_HEIGHT
-import eu.kanade.presentation.util.animateItemFastScroll
+import eu.kanade.presentation.browse.components.DefaultTileIcon
+import eu.kanade.presentation.browse.components.SourceTile
+import eu.kanade.presentation.browse.components.SourceTileGap
+import eu.kanade.presentation.browse.components.SourceTileHeader
+import eu.kanade.presentation.browse.components.SourceTileMinWidth
+import eu.kanade.presentation.browse.components.sourceSiteOf
+import eu.kanade.presentation.components.SourcesSearchBox
+import eu.kanade.presentation.components.rememberSourceBadgeCorners
+import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.browse.source.SourcesScreenModel
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreenModel.Listing
 import eu.kanade.tachiyomi.util.system.LocaleHelper
@@ -47,12 +58,12 @@ import exh.source.EXH_SOURCE_ID
 import kotlinx.collections.immutable.ImmutableList
 import tachiyomi.domain.source.model.Pin
 import tachiyomi.domain.source.model.Source
+import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.i18n.sy.SYMR
-import tachiyomi.presentation.core.components.FastScrollLazyColumn
+import tachiyomi.presentation.core.components.FastScrollLazyVerticalGrid
 import tachiyomi.presentation.core.components.LabeledCheckbox
-import tachiyomi.presentation.core.components.Scroller.STICKY_HEADER_KEY_PREFIX
 import tachiyomi.presentation.core.components.material.SECONDARY_ALPHA
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
@@ -61,6 +72,8 @@ import tachiyomi.presentation.core.screens.LoadingScreen
 import tachiyomi.presentation.core.theme.header
 import tachiyomi.source.local.LocalSource
 import tachiyomi.source.local.isLocal
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 @Composable
 fun SourcesScreen(
@@ -74,6 +87,8 @@ fun SourcesScreen(
     onChangeSearchQuery: (String?) -> Unit,
     /** Sources filter button next to the search bar (moved there from the toolbar) */
     onClickFilter: (() -> Unit)? = null,
+    /** Settings button on a tile: the source's extension details */
+    onClickSettings: ((Source) -> Unit)? = null,
     // KMK <--
 ) {
     // KMK -->
@@ -93,88 +108,100 @@ fun SourcesScreen(
             MR.strings.source_empty_screen,
             modifier = Modifier.padding(contentPadding),
         )
-        // KMK -->
-        else -> Box(
-            modifier = Modifier.padding(contentPadding),
-        ) {
-            val density = LocalDensity.current
-            var searchBoxHeight by remember { mutableStateOf(SOURCE_SEARCH_BOX_HEIGHT) }
-
-            FastScrollLazyColumn(
-                state = lazyListState,
-                contentPadding = PaddingValues(top = searchBoxHeight),
-                // KMK <--
+        // KMK --> sources as tiles (design from Sumizuri), grouped like before
+        else -> Column(modifier = Modifier.padding(contentPadding)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .background(MaterialTheme.colorScheme.background)
+                    .padding(horizontal = MaterialTheme.padding.medium, vertical = MaterialTheme.padding.small),
+            ) {
+                SourcesSearchBox(
+                    searchQuery = state.searchQuery,
+                    onChangeSearchQuery = onChangeSearchQuery,
+                    placeholderText = stringResource(KMR.strings.browse_search_manga_sources),
+                    modifier = Modifier.weight(1f),
+                )
+                if (onClickFilter != null) {
+                    IconButton(onClick = onClickFilter) {
+                        Icon(
+                            imageVector = Icons.Outlined.FilterList,
+                            contentDescription = stringResource(MR.strings.action_filter),
+                        )
+                    }
+                }
+            }
+            val corners = rememberSourceBadgeCorners()
+            val sourceManager = remember { Injekt.get<SourceManager>() }
+            FastScrollLazyVerticalGrid(
+                columns = GridCells.Adaptive(SourceTileMinWidth),
+                contentPadding = PaddingValues(
+                    start = MaterialTheme.padding.medium,
+                    end = MaterialTheme.padding.medium,
+                    bottom = MaterialTheme.padding.medium,
+                ),
+                horizontalArrangement = Arrangement.spacedBy(SourceTileGap),
+                verticalArrangement = Arrangement.spacedBy(SourceTileGap),
             ) {
                 state.items.forEach { model ->
                     when (model) {
-                        is SourceUiModel.Header -> {
-                            stickyHeader(
-                                key = "$STICKY_HEADER_KEY_PREFIX-header-${model.hashCode()}",
-                                contentType = "header",
-                            ) {
-                                SourceHeader(
-                                    modifier = Modifier
-                                        .animateItemFastScroll()
-                                        .background(MaterialTheme.colorScheme.background)
-                                        .fillMaxWidth(),
-                                    language = model.language,
-                                    // SY -->
-                                    isCategory = model.isCategory,
-                                    // SY <--
-                                )
-                            }
+                        is SourceUiModel.Header -> item(
+                            key = "header-${model.hashCode()}",
+                            span = { GridItemSpan(maxLineSpan) },
+                            contentType = "header",
+                        ) {
+                            val context = LocalContext.current
+                            SourceTileHeader(
+                                text = if (!model.isCategory) {
+                                    LocaleHelper.getSourceDisplayName(model.language, context)
+                                } else {
+                                    model.language
+                                },
+                            )
                         }
-                        is SourceUiModel.Item -> {
-                            item(
-                                key = "source-${model.source.key()}",
-                                contentType = "item",
-                            ) {
-                                SourceItem(
-                                    modifier = Modifier.animateItemFastScroll(),
-                                    source = model.source,
-                                    // SY -->
-                                    showLatest = state.showLatest,
-                                    showPin = state.showPin,
-                                    // SY <--
-                                    onClickItem = onClickItem,
-                                    onLongClickItem = onLongClickItem,
-                                    onClickPin = onClickPin,
-                                )
+                        is SourceUiModel.Item -> item(
+                            key = "source-${model.source.key()}",
+                            contentType = "item",
+                        ) {
+                            val source = model.source
+                            val site = remember(source.id) {
+                                sourceSiteOf((sourceManager.get(source.id) as? HttpSource)?.baseUrl)
                             }
+                            val icon = remember(source.id) { source.icon }
+                            val isNsfw = remember(source.id) { source.installedExtension?.isNsfw == true }
+                            SourceTile(
+                                name = source.name,
+                                site = site,
+                                icon = icon,
+                                lang = source.lang,
+                                isNsfw = isNsfw,
+                                isPinned = Pin.Pinned in source.pin,
+                                supportsLatest = source.supportsLatest && state.showLatest,
+                                corners = corners,
+                                onClick = { onClickItem(source, Listing.Popular) },
+                                onLongClick = { onLongClickItem(source) },
+                                onClickSettings = onClickSettings?.let { { it(source) } },
+                                onClickPin = { onClickPin(source) }.takeIf { state.showPin },
+                                onClickLatest = { onClickItem(source, Listing.Latest) },
+                                fallbackIcon = {
+                                    if (source.isLocal()) {
+                                        Image(
+                                            painter = painterResource(R.mipmap.ic_local_source),
+                                            contentDescription = null,
+                                            modifier = Modifier.fillMaxSize(),
+                                        )
+                                    } else {
+                                        DefaultTileIcon()
+                                    }
+                                },
+                                modifier = Modifier.animateItem(),
+                            )
                         }
                     }
                 }
             }
-
-            // KMK -->
-            AnimatedFloatingSearchBox(
-                listState = lazyListState,
-                searchQuery = state.searchQuery,
-                onChangeSearchQuery = onChangeSearchQuery,
-                placeholderText = stringResource(KMR.strings.browse_search_manga_sources),
-                modifier = Modifier
-                    .background(MaterialTheme.colorScheme.background)
-                    .padding(
-                        horizontal = MaterialTheme.padding.medium,
-                        vertical = MaterialTheme.padding.small,
-                    )
-                    .align(Alignment.TopCenter),
-                onGloballyPositioned = { layoutCoordinates ->
-                    searchBoxHeight = with(density) { layoutCoordinates.size.height.toDp() + 2 * MaterialTheme.padding.small }
-                },
-                trailing = onClickFilter?.let { onClick ->
-                    {
-                        IconButton(onClick = onClick) {
-                            Icon(
-                                imageVector = Icons.Outlined.FilterList,
-                                contentDescription = stringResource(MR.strings.action_filter),
-                            )
-                        }
-                    }
-                },
-            )
-            // KMK <--
         }
+        // KMK <--
     }
 }
 

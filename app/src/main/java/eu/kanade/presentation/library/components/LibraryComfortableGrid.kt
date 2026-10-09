@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import eu.kanade.domain.ui.BadgeCorner
+import eu.kanade.presentation.components.rememberCoverBadgeCorners
 import eu.kanade.tachiyomi.ui.library.LibraryItem
 import tachiyomi.domain.library.model.LibraryManga
 import tachiyomi.domain.manga.model.MangaCover
@@ -24,6 +26,9 @@ internal fun LibraryComfortableGrid(
     usePanoramaCover: Boolean = false,
     // KMK <--
 ) {
+    // KMK -->
+    val badgeCorners = rememberCoverBadgeCorners()
+    // KMK <--
     LazyLibraryGrid(
         modifier = Modifier.fillMaxSize(),
         columns = columns,
@@ -46,22 +51,12 @@ internal fun LibraryComfortableGrid(
                     ogUrl = manga.thumbnailUrl,
                     lastModified = manga.coverLastModified,
                 ),
-                coverBadgeStart = {
-                    DownloadsBadge(count = libraryItem.downloadCount)
-                    UnreadBadge(count = libraryItem.unreadCount)
-                },
-                coverBadgeEnd = {
-                    LanguageBadge(
-                        isLocal = libraryItem.isLocal,
-                        sourceLanguage = libraryItem.sourceLanguage,
-                        // KMK -->
-                        useLangIcon = libraryItem.useLangIcon,
-                        // KMK <--
-                    )
-                    // KMK -->
-                    SourceIconBadge(source = libraryItem.source)
-                    // KMK <--
-                },
+                // KMK --> badges go in the corners chosen in Settings › Library › Badges
+                coverBadgeStart = badgeCorners.slot(BadgeCorner.TopLeft, libraryBadges(libraryItem)),
+                coverBadgeEnd = badgeCorners.slot(BadgeCorner.TopRight, libraryBadges(libraryItem)),
+                coverBadgeBottomStart = badgeCorners.slot(BadgeCorner.BottomLeft, libraryBadges(libraryItem)),
+                coverBadgeBottomEnd = badgeCorners.slot(BadgeCorner.BottomRight, libraryBadges(libraryItem)),
+                // KMK <--
                 onLongClick = { onLongClick(libraryItem.libraryManga) },
                 onClick = { onClick(libraryItem.libraryManga) },
                 onClickContinueReading = if (onClickContinueReading != null && libraryItem.unreadCount > 0) {

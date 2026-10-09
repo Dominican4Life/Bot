@@ -85,6 +85,9 @@ fun Screen.sourcesTab(
                 // KMK -->
                 onChangeSearchQuery = screenModel::search,
                 onClickFilter = { navigator.push(SourcesFilterScreen()) }.takeIf { smartSearchConfig == null },
+                onClickSettings = { source ->
+                    source.installedExtension?.let { navigator.push(ExtensionDetailsScreen(it.pkgName)) }
+                },
                 // KMK <--
             )
 

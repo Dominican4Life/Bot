@@ -127,3 +127,21 @@ private fun BadgePreview() {
         }
     }
 }
+
+// KMK -->
+/** Every badge a library cover can show, keyed like [eu.kanade.domain.ui.CoverBadge], for [eu.kanade.presentation.components.BadgeCorners] */
+internal fun libraryBadges(
+    item: eu.kanade.tachiyomi.ui.library.LibraryItem,
+): Map<String, @Composable androidx.compose.foundation.layout.RowScope.() -> Unit> = mapOf(
+    eu.kanade.domain.ui.CoverBadge.DOWNLOADED to { DownloadsBadge(count = item.downloadCount) },
+    eu.kanade.domain.ui.CoverBadge.UNREAD to { UnreadBadge(count = item.unreadCount) },
+    eu.kanade.domain.ui.CoverBadge.LANGUAGE to {
+        LanguageBadge(
+            isLocal = item.isLocal,
+            sourceLanguage = item.sourceLanguage,
+            useLangIcon = item.useLangIcon,
+        )
+    },
+    eu.kanade.domain.ui.CoverBadge.SOURCE to { SourceIconBadge(source = item.source) },
+)
+// KMK <--

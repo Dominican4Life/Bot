@@ -57,6 +57,14 @@ class UiPreferences(
 
     fun relatedMangasInOverflow() = preferenceStore.getBoolean("related_mangas_in_overflow", false)
 
+    // KMK --> corner placement of badges (like Kototoro's "Badges in lists")
+    fun coverBadges(corner: BadgeCorner) =
+        preferenceStore.getStringSet("cover_badges_${corner.key}", corner.defaultCoverBadges)
+
+    fun sourceBadges(corner: BadgeCorner) =
+        preferenceStore.getStringSet("source_badges_${corner.key}", corner.defaultSourceBadges)
+    // KMK <--
+
     fun showHomeOnRelatedMangas() = preferenceStore.getBoolean("show_home_on_related_mangas", true)
 
     fun readButtonPosition() = preferenceStore.getString("reading_button_position", FabPosition.End.toString())

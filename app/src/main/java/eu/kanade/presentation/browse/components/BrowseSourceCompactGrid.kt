@@ -15,6 +15,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastAny
 import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
+import eu.kanade.domain.ui.BadgeCorner
+import eu.kanade.presentation.components.favoriteBadgeSlot
+import eu.kanade.presentation.components.rememberFavoriteBadgeCorner
 import eu.kanade.presentation.library.components.CommonMangaItemDefaults
 import eu.kanade.presentation.library.components.MangaCompactGridItem
 import eu.kanade.tachiyomi.R
@@ -91,6 +94,9 @@ internal fun BrowseSourceCompactGridItem(
     isSelected: Boolean = false,
     // KMK <--
 ) {
+    // KMK -->
+    val favoriteCorner = rememberFavoriteBadgeCorner()
+    // KMK <--
     MangaCompactGridItem(
         title = manga.title,
         coverData = MangaCover(
@@ -104,11 +110,16 @@ internal fun BrowseSourceCompactGridItem(
         isSelected = isSelected,
         // KMK <--
         coverAlpha = if (manga.favorite) CommonMangaItemDefaults.BrowseFavoriteCoverAlpha else 1f,
-        coverBadgeStart = {
-            InLibraryBadge(enabled = manga.favorite)
-        },
+        // KMK --> "In library" goes in the corner chosen in Settings › Library › Badges
+        coverBadgeStart = favoriteBadgeSlot(BadgeCorner.TopLeft, favoriteCorner, manga.favorite),
+        coverBadgeBottomStart = favoriteBadgeSlot(BadgeCorner.BottomLeft, favoriteCorner, manga.favorite),
+        coverBadgeBottomEnd = favoriteBadgeSlot(BadgeCorner.BottomRight, favoriteCorner, manga.favorite),
+        // KMK <--
         // SY -->
         coverBadgeEnd = {
+            // KMK -->
+            if (favoriteCorner == BadgeCorner.TopRight) InLibraryBadge(enabled = manga.favorite)
+            // KMK <--
             if (metadata is MangaDexSearchMetadata) {
                 metadata.followStatus?.let { followStatus ->
                     val text = LocalResources.current

@@ -64,6 +64,9 @@ object SettingsLibraryScreen : SearchableSettings {
 
         return listOf(
             getCategoriesGroup(LocalNavigator.currentOrThrow, allCategories, libraryPreferences),
+            // KMK -->
+            getBadgesGroup(LocalNavigator.currentOrThrow),
+            // KMK <--
             getGlobalUpdateGroup(allCategories, libraryPreferences),
             getBehaviorGroup(libraryPreferences),
             // SY -->
@@ -71,6 +74,27 @@ object SettingsLibraryScreen : SearchableSettings {
             // SY <--
         )
     }
+
+    // KMK -->
+    @Composable
+    private fun getBadgesGroup(navigator: Navigator): Preference.PreferenceGroup {
+        return Preference.PreferenceGroup(
+            title = stringResource(KMR.strings.pref_badges),
+            preferenceItems = persistentListOf(
+                Preference.PreferenceItem.TextPreference(
+                    title = stringResource(KMR.strings.pref_cover_badges),
+                    subtitle = stringResource(KMR.strings.pref_cover_badges_summary),
+                    onClick = { navigator.push(SettingsCoverBadgesScreen) },
+                ),
+                Preference.PreferenceItem.TextPreference(
+                    title = stringResource(KMR.strings.pref_source_badges),
+                    subtitle = stringResource(KMR.strings.pref_source_badges_summary),
+                    onClick = { navigator.push(SettingsSourceBadgesScreen) },
+                ),
+            ),
+        )
+    }
+    // KMK <--
 
     @Composable
     private fun getCategoriesGroup(

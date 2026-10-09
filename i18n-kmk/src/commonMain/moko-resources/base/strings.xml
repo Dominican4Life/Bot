@@ -332,4 +332,23 @@
     <string name="anime_repo_moved">That repo has anime extensions, so it was added to the anime repos</string>
     <string name="anime_ext_install_failed">Couldn\'t install %1$s: %2$s</string>
     <string name="anime_ext_not_loaded">%1$s was installed but can\'t be used: %2$s</string>
+    <string name="pref_badges">Badges</string>
+    <string name="pref_cover_badges">Cover badges</string>
+    <string name="pref_cover_badges_summary">Choose which corner of a cover each badge goes in</string>
+    <string name="pref_source_badges">Source badges</string>
+    <string name="pref_source_badges_summary">Choose which corner of a source tile each badge goes in</string>
+    <string name="badge_corner_top_left">Top-left badges</string>
+    <string name="badge_corner_top_right">Top-right badges</string>
+    <string name="badge_corner_bottom_left">Bottom-left badges</string>
+    <string name="badge_corner_bottom_right">Bottom-right badges</string>
+    <string name="badge_downloaded">Downloaded count</string>
+    <string name="badge_unread">Unread count</string>
+    <string name="badge_language">Language</string>
+    <string name="badge_source_icon">Source icon</string>
+    <string name="badge_in_library">In library</string>
+    <string name="badge_nsfw">18+</string>
+    <string name="badge_settings">Settings button</string>
+    <string name="badge_pinned">Pin button</string>
+    <string name="badge_latest">Latest button</string>
+    <string name="badge_corner_note">A badge can only be in one corner. Picking it here takes it out of the others. Badges in no corner are hidden.</string>
 </resources>
