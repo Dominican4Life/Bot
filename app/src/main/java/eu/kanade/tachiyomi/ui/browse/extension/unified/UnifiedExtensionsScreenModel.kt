@@ -31,6 +31,7 @@ class UnifiedExtensionsScreenModel(
     private val mangaManager: ExtensionManager = Injekt.get(),
     private val animeManager: AnimeExtensionManager = Injekt.get(),
     private val preferences: SourcePreferences = Injekt.get(),
+    private val jarManager: eu.kanade.tachiyomi.jarextension.JarExtensionManager = Injekt.get(),
     mangaStores: ExtensionStoreRepository = Injekt.get(),
     animeStores: AnimeExtensionStoreRepository = Injekt.get(),
 ) : StateScreenModel<UnifiedExtensionsScreenModel.State>(State()) {
@@ -49,6 +50,13 @@ class UnifiedExtensionsScreenModel(
         val untrusted: List<Extension.Untrusted>,
         val available: List<Extension.Available>,
         val stores: List<ExtensionStore>,
+    )
+
+    private data class JarData(
+        val installed: List<eu.kanade.tachiyomi.jarextension.JarExtensionManager.Installed>,
+        val available: List<eu.kanade.tachiyomi.jarextension.JarExtensionManager.Available>,
+        val repos: List<eu.kanade.tachiyomi.jarextension.JarExtensionManager.Repo>,
+        val installing: Set<String>,
     )
 
     private data class Prefs(
@@ -86,9 +94,16 @@ class UnifiedExtensionsScreenModel(
             Prefs(disabled, pinned, animeDisabled, animePinned, languages, disabledRepos)
         }
 
+        val jarFlow = combine(
+            jarManager.installedFlow,
+            jarManager.availableFlow,
+            jarManager.reposFlow,
+            jarManager.installingFlow,
+        ) { installed, available, repos, installing -> JarData(installed, available, repos, installing) }
+
         screenModelScope.launchIO {
-            combine(mangaFlow, animeFlow, prefsFlow, steps) { manga, anime, prefs, steps ->
-                build(manga, anime, prefs, steps)
+            combine(mangaFlow, animeFlow, prefsFlow, steps, jarFlow) { manga, anime, prefs, steps, jar ->
+                build(manga, anime, prefs, steps, jar)
             }.collectLatest { built ->
                 mutableState.update {
                     it.copy(
@@ -108,6 +123,7 @@ class UnifiedExtensionsScreenModel(
         anime: AnimeData,
         prefs: Prefs,
         steps: Map<String, InstallStep>,
+        jar: JarData,
     ): Triple<List<UnifiedPackage>, List<UnifiedSource>, List<UnifiedRepo>> {
         val showNsfw = preferences.showNsfwSource().get()
         val packages = mutableListOf<UnifiedPackage>()
@@ -232,6 +248,82 @@ class UnifiedExtensionsScreenModel(
             .filter { showNsfw || !it.isNsfw }
             .forEach { ext -> packages += availablePackage(ExtensionKind.ANIYOMI, ext, steps).copy(animeOther = ext) }
 
+        // JAR (Kotatsu / Tsuki parser) extensions
+        val jarAvailable = jar.available.associateBy { it.pkgName }
+        jar.installed.forEach { installed ->
+            val meta = installed.meta
+            val offer = jarAvailable[meta.pkgName]
+            val hasUpdate = offer != null && offer.versionName != meta.versionName
+            val key = key(ExtensionKind.JAR, meta.pkgName)
+            packages += UnifiedPackage(
+                key = key,
+                kind = ExtensionKind.JAR,
+                name = meta.name,
+                pkgName = meta.pkgName,
+                versionName = if (hasUpdate) offer!!.versionName else meta.versionName,
+                installedVersionName = meta.versionName.takeIf { hasUpdate },
+                lang = installed.sources.map { it.lang }.distinct().singleOrNull() ?: "all",
+                isNsfw = installed.sources.any { it.info.isNsfw },
+                repoUrl = meta.repoUrl,
+                repoName = meta.repoName ?: installed.architecture?.name?.lowercase()?.replaceFirstChar { it.uppercase() },
+                state = when {
+                    meta.pkgName in jar.installing -> PackageState.INSTALLING
+                    hasUpdate -> PackageState.UPDATE_AVAILABLE
+                    installed.error != null -> PackageState.OBSOLETE
+                    else -> PackageState.INSTALLED
+                },
+                installStep = if (meta.pkgName in jar.installing) InstallStep.Downloading else InstallStep.Idle,
+                icon = null,
+                iconUrl = null,
+                sourceNames = installed.sources.map { it.name },
+                activeSources = installed.sources.count { it.id.toString() !in prefs.disabled },
+                totalSources = installed.sources.size,
+                signatureHash = "",
+                jarAvailable = offer,
+                error = installed.error,
+            )
+            installed.sources.forEach { source ->
+                sources += UnifiedSource(
+                    id = source.id,
+                    kind = ExtensionKind.JAR,
+                    name = source.name,
+                    lang = source.lang,
+                    enabled = source.id.toString() !in prefs.disabled,
+                    pinned = source.id.toString() in prefs.pinned,
+                    isNsfw = source.info.isNsfw,
+                    pkgName = meta.pkgName,
+                    packageName = meta.name,
+                    repoUrl = meta.repoUrl,
+                    repoName = meta.repoName,
+                    icon = null,
+                )
+            }
+        }
+        val jarTaken = jar.installed.map { it.pkgName }.toSet()
+        jar.available.filter { it.pkgName !in jarTaken }.forEach { offer ->
+            packages += UnifiedPackage(
+                key = key(ExtensionKind.JAR, offer.pkgName),
+                kind = ExtensionKind.JAR,
+                name = offer.name,
+                pkgName = offer.pkgName,
+                versionName = offer.versionName,
+                installedVersionName = null,
+                lang = "all",
+                isNsfw = false,
+                repoUrl = offer.repoUrl,
+                repoName = offer.repoName,
+                state = if (offer.pkgName in jar.installing) PackageState.INSTALLING else PackageState.AVAILABLE,
+                installStep = if (offer.pkgName in jar.installing) InstallStep.Downloading else InstallStep.Idle,
+                icon = null,
+                iconUrl = null,
+                sourceNames = listOf(offer.fileName),
+                activeSources = 0,
+                totalSources = 0,
+                signatureHash = "",
+                jarAvailable = offer,
+            )
+        }
+
         // Repositories
         fun repos(kind: ExtensionKind, stores: List<ExtensionStore>) = stores.map { store ->
             val inRepo = packages.filter { it.kind == kind && it.repoUrl == store.indexUrl }
@@ -245,7 +337,20 @@ class UnifiedExtensionsScreenModel(
                 enabled = store.indexUrl !in prefs.disabledRepos,
             )
         }
-        val repos = repos(ExtensionKind.MIHON, manga.stores) + repos(ExtensionKind.ANIYOMI, anime.stores)
+        val jarRepos = jar.repos.map { repo ->
+            val inRepo = packages.filter { it.kind == ExtensionKind.JAR && it.repoUrl == repo.url }
+            UnifiedRepo(
+                kind = ExtensionKind.JAR,
+                indexUrl = repo.url,
+                name = repo.name,
+                website = repo.url,
+                packageCount = inRepo.size,
+                installedCount = inRepo.count { it.state.isInstalled },
+                enabled = true,
+                error = repo.error,
+            )
+        }
+        val repos = repos(ExtensionKind.MIHON, manga.stores) + repos(ExtensionKind.ANIYOMI, anime.stores) + jarRepos
 
         val order = compareBy<UnifiedPackage>(
             { it.state != PackageState.UPDATE_AVAILABLE && it.state != PackageState.INSTALLING },
@@ -337,6 +442,7 @@ class UnifiedExtensionsScreenModel(
             mutableState.update { it.copy(isRefreshing = true) }
             runCatching { mangaManager.findAvailableExtensions() }
             runCatching { animeManager.findAvailableExtensions() }
+            runCatching { jarManager.refreshRepos() }
             mutableState.update { it.copy(isRefreshing = false) }
         }
     }
@@ -352,6 +458,10 @@ class UnifiedExtensionsScreenModel(
     }
 
     fun install(item: UnifiedPackage) {
+        if (item.kind == ExtensionKind.JAR) {
+            installJar(item)
+            return
+        }
         when (val ext = item.manga ?: item.animeOther) {
             is Extension.Available -> {
                 if (item.kind == ExtensionKind.ANIYOMI) {
@@ -364,7 +474,39 @@ class UnifiedExtensionsScreenModel(
         }
     }
 
+    private fun installJar(item: UnifiedPackage) {
+        val offer = item.jarAvailable ?: return
+        screenModelScope.launchIO {
+            jarManager.install(offer).onFailure { e ->
+                mutableState.update { it.copy(message = e.message ?: e.javaClass.simpleName) }
+            }
+        }
+    }
+
+    fun importJar(uri: android.net.Uri) {
+        screenModelScope.launchIO {
+            jarManager.importLocal(uri)
+                .onSuccess { name -> mutableState.update { it.copy(message = "Imported $name") } }
+                .onFailure { e -> mutableState.update { it.copy(message = e.message ?: e.javaClass.simpleName) } }
+        }
+    }
+
+    /** Adds a JAR repository when [url] is one; false when it's for the APK repo screens */
+    fun addJarRepoIfMatches(url: String): Boolean {
+        if (!jarManager.isJarRepoUrl(url)) return false
+        jarManager.addRepo(url)
+        return true
+    }
+
+    fun removeJarRepo(url: String) = jarManager.removeRepo(url)
+
+    fun consumeMessage() = mutableState.update { it.copy(message = null) }
+
     fun update(item: UnifiedPackage) {
+        if (item.kind == ExtensionKind.JAR) {
+            installJar(item)
+            return
+        }
         item.anime?.let { animeManager.updateExtension(it).track(item.key) }
         (item.manga as? Extension.Installed)?.let { mangaManager.updateExtension(it).track(item.key) }
     }
@@ -383,6 +525,10 @@ class UnifiedExtensionsScreenModel(
     }
 
     fun uninstall(item: UnifiedPackage) {
+        if (item.kind == ExtensionKind.JAR) {
+            jarManager.uninstall(item.pkgName)
+            return
+        }
         if (item.kind == ExtensionKind.ANIYOMI) {
             animeManager.uninstallExtension(item.pkgName)
         } else {
@@ -440,6 +586,7 @@ class UnifiedExtensionsScreenModel(
         val allSources: List<UnifiedSource> = emptyList(),
         val allRepos: List<UnifiedRepo> = emptyList(),
         val filters: UnifiedFilters = UnifiedFilters(),
+        val message: String? = null,
     ) {
         private fun matchesQuery(vararg text: String?): Boolean {
             val query = filters.query.trim()
