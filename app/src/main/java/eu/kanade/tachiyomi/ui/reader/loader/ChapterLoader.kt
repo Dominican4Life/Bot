@@ -90,6 +90,19 @@ class ChapterLoader(
     /**
      * Returns the page loader to use for this [chapter].
      */
+    // KMK -->
+    private fun deviceFilesLoader(path: String): PageLoader {
+        val file = java.io.File(path)
+        if (!file.exists()) error("${file.name} isn't on the device any more")
+        val uniFile = com.hippo.unifile.UniFile.fromFile(file)!!
+        return when {
+            file.isDirectory -> DirectoryPageLoader(uniFile)
+            file.extension.equals("epub", ignoreCase = true) -> EpubPageLoader(uniFile.epubReader(context))
+            else -> ArchivePageLoader(uniFile.archiveReader(context))
+        }
+    }
+    // KMK <--
+
     private fun getPageLoader(chapter: ReaderChapter): PageLoader {
         val dbChapter = chapter.chapter
         val isDownloaded = downloadManager.isChapterDownloaded(
@@ -139,6 +152,9 @@ class ChapterLoader(
                 }
             }
             // SY <--
+            // KMK --> a comic archive or a folder of pictures on the device
+            source is eu.kanade.tachiyomi.devicefiles.DeviceFilesMangaSource -> deviceFilesLoader(dbChapter.url)
+            // KMK <--
             isDownloaded -> DownloadPageLoader(
                 chapter,
                 manga,

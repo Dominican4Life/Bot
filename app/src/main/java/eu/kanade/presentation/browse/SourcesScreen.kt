@@ -5,6 +5,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -19,6 +20,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.outlined.FilterList
+import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -34,6 +36,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
@@ -46,6 +49,7 @@ import eu.kanade.presentation.browse.components.SourceTileGap
 import eu.kanade.presentation.browse.components.SourceTileHeader
 import eu.kanade.presentation.browse.components.SourceTileMinWidth
 import eu.kanade.presentation.browse.components.sourceSiteOf
+import eu.kanade.presentation.components.BadgeCorners
 import eu.kanade.presentation.components.SourcesSearchBox
 import eu.kanade.presentation.components.rememberSourceBadgeCorners
 import eu.kanade.tachiyomi.R
@@ -89,6 +93,8 @@ fun SourcesScreen(
     onClickFilter: (() -> Unit)? = null,
     /** Settings button on a tile: the source's extension details */
     onClickSettings: ((Source) -> Unit)? = null,
+    /** Device files, everything on the device's storage: a tile after Local source */
+    onClickDeviceFiles: (() -> Unit)? = null,
     // KMK <--
 ) {
     // KMK -->
@@ -143,6 +149,16 @@ fun SourcesScreen(
                 horizontalArrangement = Arrangement.spacedBy(SourceTileGap),
                 verticalArrangement = Arrangement.spacedBy(SourceTileGap),
             ) {
+                val deviceFilesTile: () -> Unit = {
+                    if (onClickDeviceFiles != null) {
+                        item(key = "device-files", contentType = "item") {
+                            DeviceFilesTile(corners = corners, onClick = onClickDeviceFiles)
+                        }
+                    }
+                }
+                // Without Local source in the list (hidden, or a search), it comes first
+                val hasLocal = state.items.any { it is SourceUiModel.Item && it.source.isLocal() }
+                if (!hasLocal && state.searchQuery.isNullOrBlank()) deviceFilesTile()
                 state.items.forEach { model ->
                     when (model) {
                         is SourceUiModel.Header -> item(
@@ -198,6 +214,7 @@ fun SourcesScreen(
                             )
                         }
                     }
+                    if (model is SourceUiModel.Item && model.source.isLocal()) deviceFilesTile()
                 }
             }
         }
@@ -419,3 +436,39 @@ fun SourceCategoriesDialog(
     )
 }
 // SY <--
+
+// KMK -->
+@Composable
+private fun DeviceFilesTile(corners: BadgeCorners, onClick: () -> Unit) {
+    SourceTile(
+        name = "Device files",
+        site = "Everything on this device",
+        icon = null,
+        lang = "",
+        isNsfw = false,
+        isPinned = false,
+        supportsLatest = false,
+        corners = corners,
+        onClick = onClick,
+        onLongClick = onClick,
+        onClickSettings = null,
+        onClickPin = null,
+        onClickLatest = null,
+        fallbackIcon = {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFF5B8DEF).copy(alpha = 0.18f)),
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.FolderOpen,
+                    contentDescription = null,
+                    tint = Color(0xFF5B8DEF),
+                    modifier = Modifier.fillMaxSize(0.6f),
+                )
+            }
+        },
+    )
+}
+// KMK <--

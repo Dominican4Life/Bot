@@ -115,6 +115,9 @@ fun Screen.sourcesTab(
                 onChangeSearchQuery = screenModel::search,
                 onClickFilter = { navigator.push(SourcesFilterScreen()) }.takeIf { smartSearchConfig == null },
                 onClickSettings = { source -> sheetSource = source },
+                onClickDeviceFiles = {
+                    navigator.push(eu.kanade.tachiyomi.ui.devicefiles.DeviceFilesScreen())
+                }.takeIf { smartSearchConfig == null },
                 // KMK <--
             )
 

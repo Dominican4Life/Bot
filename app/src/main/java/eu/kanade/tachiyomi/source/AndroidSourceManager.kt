@@ -119,6 +119,12 @@ class AndroidSourceManager(
                         // SY -->
                         put(MERGED_SOURCE_ID, MergedSource())
                         // SY <--
+                        // KMK --> pictures and comics opened from Device files
+                        put(
+                            eu.kanade.tachiyomi.devicefiles.DeviceFilesIds.MANGA,
+                            eu.kanade.tachiyomi.devicefiles.DeviceFilesMangaSource(),
+                        )
+                        // KMK <--
                     }
                     extensions.forEach { extension ->
                         extension.sources.mapNotNull { it.toInternalSource(/* KMK --> */isHentaiEnabled/* KMK <-- */) }.forEach {

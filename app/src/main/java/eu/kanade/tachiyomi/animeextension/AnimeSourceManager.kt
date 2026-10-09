@@ -23,9 +23,12 @@ class AnimeSourceManager(
     // Sources made in the Code editor are anime sources too
     private val sumizuriManager: eu.kanade.tachiyomi.sumizuri.SumizuriManager by lazy { Injekt.get() }
 
+    // Videos played from Device files
+    private val deviceFiles = eu.kanade.tachiyomi.devicefiles.DeviceFilesAnimeSource()
+
     private val sourcesMapFlow: StateFlow<Map<Long, AnimeSource>> = extensionManager.installedExtensionsFlow
         .combine(sumizuriManager.animeSourcesFlow) { extensions, jsSources ->
-            (extensions.flatMap { it.sources } + jsSources).associateBy { it.id }
+            (extensions.flatMap { it.sources } + jsSources + deviceFiles).associateBy { it.id }
         }
         .stateIn(scope, SharingStarted.Eagerly, emptyMap())
 
