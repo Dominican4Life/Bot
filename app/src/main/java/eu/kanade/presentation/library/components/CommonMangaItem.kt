@@ -41,15 +41,16 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import eu.kanade.presentation.components.CoverProgressBar
 import eu.kanade.presentation.manga.components.MangaCover
 import eu.kanade.presentation.manga.components.MangaCoverHide
 import eu.kanade.presentation.manga.components.RatioSwitchToPanorama
 import exh.debug.DebugToggles
+import tachiyomi.domain.manga.model.MangaCover as MangaCoverModel
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.BadgeGroup
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.selectedBackground
-import tachiyomi.domain.manga.model.MangaCover as MangaCoverModel
 
 object CommonMangaItemDefaults {
     val GridHorizontalSpacer = 4.dp
@@ -89,6 +90,7 @@ fun MangaCompactGridItem(
     libraryColored: Boolean = true,
     coverBadgeBottomStart: @Composable (RowScope.() -> Unit)? = null,
     coverBadgeBottomEnd: @Composable (RowScope.() -> Unit)? = null,
+    progress: Float? = null,
     // KMK <--
 ) {
     // KMK -->
@@ -133,6 +135,7 @@ fun MangaCompactGridItem(
             badgesBottomEnd = coverBadgeBottomEnd,
             // Keep bottom badges clear of the title drawn over the cover
             bottomBadgesOffset = if (title != null) 40.dp else 0.dp,
+            progress = progress,
             content = {
                 if (title != null) {
                     CoverTextOverlay(
@@ -229,6 +232,7 @@ fun MangaComfortableGridItem(
     coverRatio: MutableFloatState = remember { mutableFloatStateOf(1f) },
     usePanoramaCover: Boolean,
     fitToPanoramaCover: Boolean = false,
+    progress: Float? = null,
     // KMK <--
 ) {
     // KMK -->
@@ -309,6 +313,8 @@ fun MangaComfortableGridItem(
                 badgesEnd = coverBadgeEnd,
                 badgesBottomStart = coverBadgeBottomStart,
                 badgesBottomEnd = coverBadgeBottomEnd,
+                bottomBadgesOffset = if (progress != null) 4.dp else 0.dp,
+                progress = progress,
                 content = {
                     if (onClickContinueReading != null) {
                         ContinueReadingButton(
@@ -349,6 +355,7 @@ private fun MangaGridCover(
     badgesBottomStart: (@Composable RowScope.() -> Unit)? = null,
     badgesBottomEnd: (@Composable RowScope.() -> Unit)? = null,
     bottomBadgesOffset: Dp = 0.dp,
+    progress: Float? = null,
     // KMK <--
     content: @Composable (BoxScope.() -> Unit)? = null,
 ) {
@@ -358,6 +365,13 @@ private fun MangaGridCover(
             .aspectRatio(ratio),
     ) {
         cover()
+        // KMK: reading progress along the bottom of the cover
+        CoverProgressBar(
+            percent = progress,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .clip(MaterialTheme.shapes.extraSmall),
+        )
         content?.invoke(this)
         if (badgesStart != null) {
             BadgeGroup(

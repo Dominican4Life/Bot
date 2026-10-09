@@ -394,4 +394,27 @@
     <string name="ext_no_repositories">No repositories match.</string>
     <string name="ext_no_packages">No packages match. Add a repository to find more.</string>
     <string name="ext_kind_coming">%1$s extensions are coming in a later update.</string>
+    <!-- History & Updates (Kototoro style) -->
+    <string name="history_summary_reading_time">Reading time</string>
+    <string name="history_summary_streak">%1$d-day streak</string>
+    <string name="history_summary_counts">%1$d days · %2$d entries · %3$d titles</string>
+    <string name="history_clear_2_hours">Last 2 hours</string>
+    <string name="history_clear_today">Today</string>
+    <string name="history_clear_not_in_library">Not in library</string>
+    <string name="history_clear_everything">Everything</string>
+    <string name="history_view_grid">Grid view</string>
+    <string name="history_view_list">List view</string>
+    <string name="history_show_summary">Show reading summary</string>
+    <string name="pref_cover_progress_bar">Reading progress bar</string>
+    <string name="pref_cover_progress_bar_summary">Thin bar along the bottom of covers in Library and History showing how much you\'ve read</string>
+    <string name="updates_header_updated">Updated</string>
+    <string name="updates_header_up_to_date">Up to date</string>
+    <string name="updates_header_counts">%1$d titles · %2$d chapters</string>
+    <string name="updates_header_nothing_new">No unread new chapters</string>
+    <string name="updates_all_read">All read</string>
+    <string name="updates_check_now">Check for updates</string>
+    <string name="updates_carousel_title">Updates</string>
+    <string name="updates_view_chapters">Chapter list</string>
+    <string name="updates_view_timeline">Timeline</string>
+    <string name="updates_show_carousel">Show updated covers row</string>
 </resources>

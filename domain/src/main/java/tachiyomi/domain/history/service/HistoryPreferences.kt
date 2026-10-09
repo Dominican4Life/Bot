@@ -28,4 +28,12 @@ class HistoryPreferences(
         USE_PANORAMA_COVER_PREF,
         false,
     )
+
+    // KMK -->
+    /** History as a cover grid (Kototoro style) instead of a list */
+    fun gridMode() = preferenceStore.getBoolean("pref_history_grid_mode", false)
+
+    /** The reading summary card at the top of history */
+    fun showSummary() = preferenceStore.getBoolean("pref_history_show_summary", true)
+    // KMK <--
 }

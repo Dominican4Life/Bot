@@ -6,7 +6,9 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import eu.kanade.domain.ui.BadgeCorner
+import eu.kanade.presentation.components.readingProgress
 import eu.kanade.presentation.components.rememberCoverBadgeCorners
+import eu.kanade.presentation.components.rememberCoverProgressBarEnabled
 import eu.kanade.tachiyomi.ui.library.LibraryItem
 import tachiyomi.domain.library.model.LibraryManga
 import tachiyomi.domain.manga.model.MangaCover
@@ -26,6 +28,7 @@ internal fun LibraryCompactGrid(
 ) {
     // KMK -->
     val badgeCorners = rememberCoverBadgeCorners()
+    val progressBar = rememberCoverProgressBarEnabled()
     // KMK <--
     LazyLibraryGrid(
         modifier = Modifier.fillMaxSize(),
@@ -40,6 +43,13 @@ internal fun LibraryCompactGrid(
         ) { libraryItem ->
             val manga = libraryItem.libraryManga.manga
             MangaCompactGridItem(
+                // KMK -->
+                progress = if (progressBar) {
+                    readingProgress(libraryItem.libraryManga.readCount, libraryItem.libraryManga.totalChapters)
+                } else {
+                    null
+                },
+                // KMK <--
                 isSelected = manga.id in selection,
                 title = manga.title.takeIf { showTitle },
                 coverData = MangaCover(

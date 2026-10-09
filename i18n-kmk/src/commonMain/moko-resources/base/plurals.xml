@@ -4,4 +4,16 @@
         <item quantity="one">%d new episode</item>
         <item quantity="other">%d new episodes</item>
     </plurals>
+    <plurals name="updates_new_chapters">
+        <item quantity="one">%1$d new chapter</item>
+        <item quantity="other">%1$d new chapters</item>
+    </plurals>
+    <plurals name="updates_chapters_total">
+        <item quantity="one">%1$d chapter</item>
+        <item quantity="other">%1$d chapters</item>
+    </plurals>
+    <plurals name="updates_day_count">
+        <item quantity="one">%1$d title</item>
+        <item quantity="other">%1$d titles</item>
+    </plurals>
 </resources>

@@ -35,6 +35,7 @@ import eu.kanade.tachiyomi.ui.updates.UpdatesScreenModel.Event
 import kotlinx.coroutines.flow.collectLatest
 import mihon.feature.upcoming.UpcomingScreen
 import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.core.common.preference.toggle
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
@@ -82,6 +83,10 @@ data object UpdatesTab : Tab {
 
         // KMK -->
         val usePanoramaCover by settingsScreenModel.updatesPreferences.usePanoramaCover().collectAsState()
+        // KMK -->
+        val timelineView by settingsScreenModel.updatesPreferences.timelineView().collectAsState()
+        val showCarousel by settingsScreenModel.updatesPreferences.showUpdatedCarousel().collectAsState()
+        // KMK <--
         // KMK <--
 
         UpdateScreen(
@@ -115,6 +120,9 @@ data object UpdatesTab : Tab {
             // KMK -->
             usePanoramaCover = usePanoramaCover,
             collapseToggle = screenModel::toggleExpandedState,
+            timelineView = timelineView,
+            showCarousel = showCarousel,
+            onToggleTimeline = { settingsScreenModel.updatesPreferences.timelineView().toggle() },
             // KMK <--
         )
 

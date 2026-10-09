@@ -39,6 +39,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.receiveAsFlow
 import mihon.feature.migration.dialog.MigrateMangaDialog
 import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.core.common.preference.toggle
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.i18n.MR
@@ -90,6 +91,8 @@ data object HistoryTab : Tab {
         // KMK -->
         val settingsScreenModel = rememberScreenModel { HistorySettingsScreenModel() }
         val usePanoramaCover by settingsScreenModel.historyPreferences.usePanoramaCover().collectAsState()
+        val gridMode by settingsScreenModel.historyPreferences.gridMode().collectAsState()
+        val showSummary by settingsScreenModel.historyPreferences.showSummary().collectAsState()
         // KMK <--
 
         HistoryScreen(
@@ -108,6 +111,9 @@ data object HistoryTab : Tab {
             onFilterClicked = screenModel::showFilterDialog,
             hasActiveFilters = state.hasActiveFilters,
             usePanoramaCover = usePanoramaCover,
+            gridMode = gridMode,
+            showSummary = showSummary,
+            onToggleGridMode = { settingsScreenModel.historyPreferences.gridMode().toggle() },
             // KMK <--
         )
 
@@ -127,6 +133,14 @@ data object HistoryTab : Tab {
                     },
                 )
             }
+            // KMK -->
+            is HistoryScreenModel.Dialog.Clear -> {
+                eu.kanade.presentation.history.components.HistoryClearDialog(
+                    onDismissRequest = onDismissRequest,
+                    onClear = screenModel::clearHistory,
+                )
+            }
+            // KMK <--
             is HistoryScreenModel.Dialog.DeleteAll -> {
                 HistoryDeleteAllDialog(
                     onDismissRequest = onDismissRequest,

@@ -4,11 +4,13 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ViewList
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.FlipToBack
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.SelectAll
+import androidx.compose.material.icons.outlined.ViewTimeline
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
@@ -35,6 +37,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.i18n.MR
+import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.components.FastScrollLazyColumn
 import tachiyomi.presentation.core.components.material.PullRefresh
 import tachiyomi.presentation.core.components.material.Scaffold
@@ -74,6 +77,9 @@ fun UpdateScreen(
     // KMK -->
     usePanoramaCover: Boolean,
     collapseToggle: (key: String) -> Unit,
+    timelineView: Boolean = false,
+    showCarousel: Boolean = true,
+    onToggleTimeline: () -> Unit = {},
     // KMK <--
 ) {
     BackHandler(enabled = state.selectionMode, onBack = { onSelectAll(false) })
@@ -85,6 +91,10 @@ fun UpdateScreen(
                 onUpdateLibrary = { onUpdateLibrary() },
                 onFilterClicked = { onFilterClicked() },
                 hasFilters = hasActiveFilters,
+                // KMK -->
+                timelineView = timelineView,
+                onToggleTimeline = onToggleTimeline,
+                // KMK <--
                 actionModeCounter = state.selected.size,
                 onSelectAll = { onSelectAll(true) },
                 onInvertSelection = { onInvertSelection() },
@@ -142,6 +152,33 @@ fun UpdateScreen(
                     ) {
                         updatesLastUpdatedItem(lastUpdated)
 
+                        // KMK -->
+                        if (timelineView) {
+                            updatesTimeline(
+                                items = state.items,
+                                showCarousel = showCarousel,
+                                selectionMode = state.selectionMode,
+                                onUpdateLibrary = { onUpdateLibrary() },
+                                onAllRead = {
+                                    onMultiMarkAsReadClicked(state.items.filter { !it.update.read }, true)
+                                },
+                                onClickGroup = { onClickCover(it.leader) },
+                                onSelectGroup = { group ->
+                                    onUpdateSelected(
+                                        group.leader,
+                                        UpdatesScreenModel.UpdateSelectionOptions(
+                                            selected = !group.selected,
+                                            isGroup = true,
+                                            isExpanded = false,
+                                        ),
+                                    )
+                                },
+                                onContinue = { onOpenChapter(it.continueItem) },
+                            )
+                            return@FastScrollLazyColumn
+                        }
+                        // KMK <--
+
                         updatesUiItems(
                             // KMK -->
                             uiModels = uiModels,
@@ -180,6 +217,10 @@ private fun UpdatesAppBar(
     onUpdateLibrary: () -> Unit,
     onFilterClicked: () -> Unit,
     hasFilters: Boolean,
+    // KMK -->
+    timelineView: Boolean,
+    onToggleTimeline: () -> Unit,
+    // KMK <--
     // For action mode
     actionModeCounter: Int,
     onSelectAll: () -> Unit,
@@ -200,6 +241,15 @@ private fun UpdatesAppBar(
                         iconTint = if (hasFilters) MaterialTheme.colorScheme.active else LocalContentColor.current,
                         onClick = onFilterClicked,
                     ),
+                    // KMK -->
+                    AppBar.Action(
+                        title = stringResource(
+                            if (timelineView) KMR.strings.updates_view_chapters else KMR.strings.updates_view_timeline,
+                        ),
+                        icon = if (timelineView) Icons.AutoMirrored.Outlined.ViewList else Icons.Outlined.ViewTimeline,
+                        onClick = onToggleTimeline,
+                    ),
+                    // KMK <--
                     AppBar.Action(
                         title = stringResource(MR.strings.action_view_upcoming),
                         icon = Icons.Outlined.CalendarMonth,

@@ -135,5 +135,25 @@ private fun ColumnScope.FilterSheet(
             onCheckedChange = { screenModel.toggleSwitch(UpdatesPreferences::usePanoramaCover) },
         )
     }
+
+    val showCarousel by screenModel.updatesPreferences.showUpdatedCarousel().collectAsState()
+    Row(
+        modifier = Modifier
+            .clickable { screenModel.toggleSwitch(UpdatesPreferences::showUpdatedCarousel) }
+            .fillMaxWidth()
+            .padding(horizontal = SettingsItemsPaddings.Horizontal),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(
+            text = stringResource(KMR.strings.updates_show_carousel),
+            color = MaterialTheme.colorScheme.onSurface,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Switch(
+            checked = showCarousel,
+            onCheckedChange = { screenModel.toggleSwitch(UpdatesPreferences::showUpdatedCarousel) },
+        )
+    }
     // KMK <--
 }

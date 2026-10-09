@@ -38,6 +38,12 @@ class UpdatesPreferences(
         USE_PANORAMA_COVER_PREF,
         false,
     )
+
+    /** Kototoro-style timeline (one row per title per day) instead of the chapter list */
+    fun timelineView() = preferenceStore.getBoolean("pref_updates_timeline_view", true)
+
+    /** The "Updated" cover carousel above the timeline */
+    fun showUpdatedCarousel() = preferenceStore.getBoolean("pref_updates_show_carousel", true)
     // KMK <--
 }
 

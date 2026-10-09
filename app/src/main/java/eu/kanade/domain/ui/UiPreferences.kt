@@ -63,6 +63,9 @@ class UiPreferences(
 
     fun sourceBadges(corner: BadgeCorner) =
         preferenceStore.getStringSet("source_badges_${corner.key}", corner.defaultSourceBadges)
+
+    /** Thin reading-progress bar along the bottom of covers (history, library) */
+    fun coverProgressBar() = preferenceStore.getBoolean("cover_progress_bar", true)
     // KMK <--
 
     fun showHomeOnRelatedMangas() = preferenceStore.getBoolean("show_home_on_related_mangas", true)

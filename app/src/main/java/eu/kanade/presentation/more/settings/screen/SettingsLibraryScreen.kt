@@ -91,6 +91,11 @@ object SettingsLibraryScreen : SearchableSettings {
                     subtitle = stringResource(KMR.strings.pref_source_badges_summary),
                     onClick = { navigator.push(SettingsSourceBadgesScreen) },
                 ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = remember { Injekt.get<eu.kanade.domain.ui.UiPreferences>().coverProgressBar() },
+                    title = stringResource(KMR.strings.pref_cover_progress_bar),
+                    subtitle = stringResource(KMR.strings.pref_cover_progress_bar_summary),
+                ),
             ),
         )
     }

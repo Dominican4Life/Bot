@@ -99,4 +99,25 @@ private fun ColumnScope.FilterSheet(
             onCheckedChange = { screenModel.toggleSwitch(HistoryPreferences::usePanoramaCover) },
         )
     }
+
+    // KMK: the reading summary card at the top
+    val showSummary by screenModel.historyPreferences.showSummary().collectAsState()
+    Row(
+        modifier = Modifier
+            .clickable { screenModel.toggleSwitch(HistoryPreferences::showSummary) }
+            .fillMaxWidth()
+            .padding(horizontal = SettingsItemsPaddings.Horizontal),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(
+            text = stringResource(KMR.strings.history_show_summary),
+            color = MaterialTheme.colorScheme.onSurface,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Switch(
+            checked = showSummary,
+            onCheckedChange = { screenModel.toggleSwitch(HistoryPreferences::showSummary) },
+        )
+    }
 }
