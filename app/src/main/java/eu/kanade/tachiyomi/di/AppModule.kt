@@ -166,6 +166,8 @@ class AppModule(val app: Application) : InjektModule {
         addSingletonFactory { eu.kanade.tachiyomi.animeextension.AnimeExtensionManager(app) }
         // KMK: JAR (Kotatsu / Tsuki) parser extensions
         addSingletonFactory { eu.kanade.tachiyomi.jarextension.JarExtensionManager(app) }
+        // KMK: Cloudstream 3 plugins (anime sources)
+        addSingletonFactory { eu.kanade.tachiyomi.cloudstream.CloudstreamManager(app) }
         addSingletonFactory { eu.kanade.tachiyomi.animeextension.AnimeSourceManager(get()) }
         addSingletonFactory { eu.kanade.tachiyomi.data.anime.AnimeRepository(get()) }
         // Anime player (from AniZen)

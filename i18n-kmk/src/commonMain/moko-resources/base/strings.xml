@@ -421,5 +421,5 @@
     <string name="source_sheet_enabled">Enabled</string>
     <string name="source_sheet_clear_site_data">Clear site data</string>
     <string name="source_sheet_site_data_cleared">Cookies and WebView data cleared for this source</string>
-    <string name="ext_import_local_jar">Import local JAR</string>
+    <string name="ext_import_local_jar">Import JAR / .cs3 file</string>
 </resources>

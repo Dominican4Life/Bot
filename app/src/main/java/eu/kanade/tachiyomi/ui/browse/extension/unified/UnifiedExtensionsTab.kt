@@ -88,7 +88,7 @@ fun unifiedExtensionsTab(
 
             // JAR import from storage, and messages from JAR installs
             val importJar = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-                if (uri != null) screenModel.importJar(uri)
+                if (uri != null) screenModel.importFile(context, uri)
             }
             LaunchedEffect(state.message) {
                 state.message?.let {
@@ -121,15 +121,17 @@ fun unifiedExtensionsTab(
                     val feed = Injekt.get<UiPreferences>().useNewSourceNavigation().get()
                     navigator.push(
                         when {
-                            source.kind == ExtensionKind.ANIYOMI && feed -> AnimeSourceFeedScreen(source.id)
-                            source.kind == ExtensionKind.ANIYOMI -> AnimeSourceScreen(source.id)
+                            source.isAnime && feed -> AnimeSourceFeedScreen(source.id)
+                            source.isAnime -> AnimeSourceScreen(source.id)
                             feed -> SourceFeedScreen(source.id)
                             else -> BrowseSourceScreen(source.id, GetRemoteManga.QUERY_POPULAR)
                         },
                     )
                 },
                 onSourceSettings = { source ->
-                    if (source.kind == ExtensionKind.JAR) {
+                    if (source.kind == ExtensionKind.CLOUDSTREAM) {
+                        navigator.push(AnimeSourceScreen(source.id))
+                    } else if (source.kind == ExtensionKind.JAR) {
                         navigator.push(BrowseSourceScreen(source.id, GetRemoteManga.QUERY_POPULAR))
                     } else {
                         openDetails(source.kind, source.pkgName)
@@ -154,7 +156,8 @@ fun unifiedExtensionsTab(
                 onImportJar = { importJar.launch(arrayOf("*/*")) },
                 onPackageDetails = { item ->
                     when {
-                        item.kind == ExtensionKind.JAR -> item.error?.let { context.toast(it) }
+                        item.kind == ExtensionKind.JAR || item.kind == ExtensionKind.CLOUDSTREAM ->
+                            item.error?.let { context.toast(it) }
                         else -> when (item.state) {
                         PackageState.UNTRUSTED -> trustItem = item
                         PackageState.AVAILABLE, PackageState.INSTALLING -> Unit
@@ -203,6 +206,7 @@ fun unifiedExtensionsTab(
                     onDelete = {
                         when (repo.kind) {
                             ExtensionKind.JAR -> screenModel.removeJarRepo(repo.indexUrl)
+                            ExtensionKind.CLOUDSTREAM -> screenModel.removeCloudstreamRepo(repo.indexUrl)
                             ExtensionKind.ANIYOMI -> animeStores.deleteRepo(repo.indexUrl)
                             else -> mangaStores.deleteRepo(repo.indexUrl)
                         }
@@ -219,7 +223,11 @@ fun unifiedExtensionsTab(
                     onDismissRequest = mangaStores::dismissDialog,
                     onCreate = { url ->
                         // A GitHub repository is a JAR repo; anything else goes to the APK repos
-                        if (screenModel.addJarRepoIfMatches(url)) mangaStores.dismissDialog() else mangaStores.createRepo(url)
+                        screenModel.addRepo(
+                            url = url,
+                            onAdded = mangaStores::dismissDialog,
+                            fallback = { mangaStores.createRepo(url) },
+                        )
                     },
                     storeIndexUrls = state.allRepos.map { it.indexUrl }.toSet(),
                     processing = dialog.processing,

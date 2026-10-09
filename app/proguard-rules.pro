@@ -336,3 +336,23 @@
 -keep class okio.** { public protected *; }
 -keep class org.json.** { *; }
 # KMK <--
+
+# KMK --> Cloudstream plugins (.cs3) bind to the Cloudstream runtime and its libraries by name
+-keep class com.lagradost.** { *; }
+-keep interface com.lagradost.** { *; }
+-keep class com.fasterxml.jackson.** { *; }
+-keep class org.mozilla.javascript.** { *; }
+-keep class me.xdrop.fuzzywuzzy.** { *; }
+-keep class io.ktor.http.** { public protected *; }
+-keep class dev.whyoleg.cryptography.** { public protected *; }
+-keep class com.google.gson.** { *; }
+-dontwarn com.lagradost.**
+-dontwarn com.fasterxml.jackson.**
+-dontwarn org.mozilla.javascript.**
+-dontwarn io.ktor.**
+-dontwarn dev.whyoleg.cryptography.**
+-dontwarn com.fleeksoft.ksoup.**
+-dontwarn java.beans.**
+-dontwarn javax.script.**
+-dontwarn jdk.dynalink.**
+# KMK <--

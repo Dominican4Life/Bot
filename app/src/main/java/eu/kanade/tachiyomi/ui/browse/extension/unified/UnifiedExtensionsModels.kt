@@ -70,6 +70,8 @@ data class UnifiedPackage(
     val animeOther: Extension? = null,
     /** JAR package offered by a repo (install / update source) */
     val jarAvailable: eu.kanade.tachiyomi.jarextension.JarExtensionManager.Available? = null,
+    /** Cloudstream plugin offered by a repo */
+    val csAvailable: eu.kanade.tachiyomi.cloudstream.CloudstreamManager.Available? = null,
     /** Why an installed JAR failed to load */
     val error: String? = null,
 )
@@ -89,7 +91,10 @@ data class UnifiedSource(
     val repoUrl: String?,
     val repoName: String?,
     val icon: Drawable?,
-)
+) {
+    /** Aniyomi and Cloudstream sources are anime sources */
+    val isAnime: Boolean get() = kind == ExtensionKind.ANIYOMI || kind == ExtensionKind.CLOUDSTREAM
+}
 
 /** One extension repository */
 @Immutable

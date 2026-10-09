@@ -32,6 +32,7 @@ class UnifiedExtensionsScreenModel(
     private val animeManager: AnimeExtensionManager = Injekt.get(),
     private val preferences: SourcePreferences = Injekt.get(),
     private val jarManager: eu.kanade.tachiyomi.jarextension.JarExtensionManager = Injekt.get(),
+    private val csManager: eu.kanade.tachiyomi.cloudstream.CloudstreamManager = Injekt.get(),
     mangaStores: ExtensionStoreRepository = Injekt.get(),
     animeStores: AnimeExtensionStoreRepository = Injekt.get(),
 ) : StateScreenModel<UnifiedExtensionsScreenModel.State>(State()) {
@@ -56,6 +57,13 @@ class UnifiedExtensionsScreenModel(
         val installed: List<eu.kanade.tachiyomi.jarextension.JarExtensionManager.Installed>,
         val available: List<eu.kanade.tachiyomi.jarextension.JarExtensionManager.Available>,
         val repos: List<eu.kanade.tachiyomi.jarextension.JarExtensionManager.Repo>,
+        val installing: Set<String>,
+    )
+
+    private data class CsData(
+        val installed: List<eu.kanade.tachiyomi.cloudstream.CloudstreamManager.Installed>,
+        val available: List<eu.kanade.tachiyomi.cloudstream.CloudstreamManager.Available>,
+        val repos: List<eu.kanade.tachiyomi.cloudstream.CloudstreamManager.Repo>,
         val installing: Set<String>,
     )
 
@@ -100,10 +108,17 @@ class UnifiedExtensionsScreenModel(
             jarManager.reposFlow,
             jarManager.installingFlow,
         ) { installed, available, repos, installing -> JarData(installed, available, repos, installing) }
+        val csFlow = combine(
+            csManager.installedFlow,
+            csManager.availableFlow,
+            csManager.reposFlow,
+            csManager.installingFlow,
+        ) { installed, available, repos, installing -> CsData(installed, available, repos, installing) }
+        val extraFlow = combine(jarFlow, csFlow) { jar, cs -> jar to cs }
 
         screenModelScope.launchIO {
-            combine(mangaFlow, animeFlow, prefsFlow, steps, jarFlow) { manga, anime, prefs, steps, jar ->
-                build(manga, anime, prefs, steps, jar)
+            combine(mangaFlow, animeFlow, prefsFlow, steps, extraFlow) { manga, anime, prefs, steps, (jar, cs) ->
+                build(manga, anime, prefs, steps, jar, cs)
             }.collectLatest { built ->
                 mutableState.update {
                     it.copy(
@@ -124,6 +139,7 @@ class UnifiedExtensionsScreenModel(
         prefs: Prefs,
         steps: Map<String, InstallStep>,
         jar: JarData,
+        cs: CsData,
     ): Triple<List<UnifiedPackage>, List<UnifiedSource>, List<UnifiedRepo>> {
         val showNsfw = preferences.showNsfwSource().get()
         val packages = mutableListOf<UnifiedPackage>()
@@ -324,6 +340,83 @@ class UnifiedExtensionsScreenModel(
             )
         }
 
+        // Cloudstream plugins (anime sources)
+        val csAvailable = cs.available.associateBy { it.internalName }
+        cs.installed.forEach { installed ->
+            val meta = installed.meta
+            val offer = csAvailable[meta.internalName]
+            val hasUpdate = offer != null && offer.version > meta.version
+            val busy = meta.internalName in cs.installing
+            packages += UnifiedPackage(
+                key = key(ExtensionKind.CLOUDSTREAM, meta.internalName),
+                kind = ExtensionKind.CLOUDSTREAM,
+                name = meta.name,
+                pkgName = meta.internalName,
+                versionName = (if (hasUpdate) offer!!.version else meta.version).toString(),
+                installedVersionName = meta.version.toString().takeIf { hasUpdate },
+                lang = meta.language ?: installed.sources.map { it.lang }.distinct().singleOrNull() ?: "all",
+                isNsfw = offer?.tvTypes?.any { it.equals("NSFW", true) } == true,
+                repoUrl = meta.repoUrl,
+                repoName = meta.repoName,
+                state = when {
+                    busy -> PackageState.INSTALLING
+                    hasUpdate -> PackageState.UPDATE_AVAILABLE
+                    installed.error != null -> PackageState.OBSOLETE
+                    else -> PackageState.INSTALLED
+                },
+                installStep = if (busy) InstallStep.Downloading else InstallStep.Idle,
+                icon = null,
+                iconUrl = meta.iconUrl ?: offer?.iconUrl,
+                sourceNames = installed.sources.map { it.name },
+                activeSources = installed.sources.count { it.id.toString() !in prefs.animeDisabled },
+                totalSources = installed.sources.size,
+                signatureHash = "",
+                csAvailable = offer,
+                error = installed.error,
+            )
+            installed.sources.forEach { source ->
+                sources += UnifiedSource(
+                    id = source.id,
+                    kind = ExtensionKind.CLOUDSTREAM,
+                    name = source.name,
+                    lang = source.lang,
+                    enabled = source.id.toString() !in prefs.animeDisabled,
+                    pinned = source.id.toString() in prefs.animePinned,
+                    isNsfw = false,
+                    pkgName = meta.internalName,
+                    packageName = meta.name,
+                    repoUrl = meta.repoUrl,
+                    repoName = meta.repoName,
+                    icon = null,
+                )
+            }
+        }
+        val csTaken = cs.installed.map { it.internalName }.toSet()
+        cs.available.filter { it.internalName !in csTaken }.forEach { offer ->
+            val busy = offer.internalName in cs.installing
+            packages += UnifiedPackage(
+                key = key(ExtensionKind.CLOUDSTREAM, offer.internalName),
+                kind = ExtensionKind.CLOUDSTREAM,
+                name = offer.name,
+                pkgName = offer.internalName,
+                versionName = offer.version.toString(),
+                installedVersionName = null,
+                lang = offer.language ?: "all",
+                isNsfw = offer.tvTypes.any { it.equals("NSFW", true) },
+                repoUrl = offer.repoUrl,
+                repoName = offer.repoName,
+                state = if (busy) PackageState.INSTALLING else PackageState.AVAILABLE,
+                installStep = if (busy) InstallStep.Downloading else InstallStep.Idle,
+                icon = null,
+                iconUrl = offer.iconUrl,
+                sourceNames = offer.tvTypes,
+                activeSources = 0,
+                totalSources = 0,
+                signatureHash = "",
+                csAvailable = offer,
+            )
+        }
+
         // Repositories
         fun repos(kind: ExtensionKind, stores: List<ExtensionStore>) = stores.map { store ->
             val inRepo = packages.filter { it.kind == kind && it.repoUrl == store.indexUrl }
@@ -350,7 +443,21 @@ class UnifiedExtensionsScreenModel(
                 error = repo.error,
             )
         }
-        val repos = repos(ExtensionKind.MIHON, manga.stores) + repos(ExtensionKind.ANIYOMI, anime.stores) + jarRepos
+        val csRepos = cs.repos.map { repo ->
+            val inRepo = packages.filter { it.kind == ExtensionKind.CLOUDSTREAM && it.repoUrl == repo.url }
+            UnifiedRepo(
+                kind = ExtensionKind.CLOUDSTREAM,
+                indexUrl = repo.url,
+                name = repo.name,
+                website = repo.url,
+                packageCount = inRepo.size,
+                installedCount = inRepo.count { it.state.isInstalled },
+                enabled = true,
+                error = repo.error,
+            )
+        }
+        val repos = repos(ExtensionKind.MIHON, manga.stores) + repos(ExtensionKind.ANIYOMI, anime.stores) +
+            jarRepos + csRepos
 
         val order = compareBy<UnifiedPackage>(
             { it.state != PackageState.UPDATE_AVAILABLE && it.state != PackageState.INSTALLING },
@@ -443,6 +550,7 @@ class UnifiedExtensionsScreenModel(
             runCatching { mangaManager.findAvailableExtensions() }
             runCatching { animeManager.findAvailableExtensions() }
             runCatching { jarManager.refreshRepos() }
+            runCatching { csManager.refreshRepos() }
             mutableState.update { it.copy(isRefreshing = false) }
         }
     }
@@ -462,6 +570,10 @@ class UnifiedExtensionsScreenModel(
             installJar(item)
             return
         }
+        if (item.kind == ExtensionKind.CLOUDSTREAM) {
+            installCloudstream(item)
+            return
+        }
         when (val ext = item.manga ?: item.animeOther) {
             is Extension.Available -> {
                 if (item.kind == ExtensionKind.ANIYOMI) {
@@ -473,6 +585,57 @@ class UnifiedExtensionsScreenModel(
             else -> Unit
         }
     }
+
+    private fun installCloudstream(item: UnifiedPackage) {
+        val offer = item.csAvailable ?: return
+        screenModelScope.launchIO {
+            csManager.install(offer).onFailure { e ->
+                mutableState.update { it.copy(message = e.message ?: e.javaClass.simpleName) }
+            }
+        }
+    }
+
+    /** Imports a picked file: `.cs3` as a Cloudstream plugin, anything else as a JAR */
+    fun importFile(context: android.content.Context, uri: android.net.Uri) {
+        val name = runCatching {
+            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                val index = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (cursor.moveToFirst() && index >= 0) cursor.getString(index) else null
+            }
+        }.getOrNull().orEmpty()
+        if (name.endsWith(".cs3", ignoreCase = true)) importCloudstream(uri) else importJar(uri)
+    }
+
+    fun importCloudstream(uri: android.net.Uri) {
+        screenModelScope.launchIO {
+            csManager.importLocal(uri)
+                .onSuccess { name -> mutableState.update { it.copy(message = "Imported $name") } }
+                .onFailure { e -> mutableState.update { it.copy(message = e.message ?: e.javaClass.simpleName) } }
+        }
+    }
+
+    /**
+     * Adds a repository of the right kind: a GitHub repository is a JAR repo, a `repo.json` with plugin lists is a
+     * Cloudstream repo, and anything else goes to [fallback] (the Mihon / Aniyomi repo screens).
+     */
+    fun addRepo(url: String, onAdded: () -> Unit, fallback: () -> Unit) {
+        if (addJarRepoIfMatches(url)) {
+            onAdded()
+            return
+        }
+        screenModelScope.launchIO {
+            val probe = csManager.probeRepo(url)
+            if (probe != null) {
+                csManager.addRepo(probe)
+                mutableState.update { it.copy(message = "Added Cloudstream repository ${probe.name}") }
+                tachiyomi.core.common.util.lang.withUIContext { onAdded() }
+            } else {
+                tachiyomi.core.common.util.lang.withUIContext { fallback() }
+            }
+        }
+    }
+
+    fun removeCloudstreamRepo(url: String) = csManager.removeRepo(url)
 
     private fun installJar(item: UnifiedPackage) {
         val offer = item.jarAvailable ?: return
@@ -507,6 +670,10 @@ class UnifiedExtensionsScreenModel(
             installJar(item)
             return
         }
+        if (item.kind == ExtensionKind.CLOUDSTREAM) {
+            installCloudstream(item)
+            return
+        }
         item.anime?.let { animeManager.updateExtension(it).track(item.key) }
         (item.manga as? Extension.Installed)?.let { mangaManager.updateExtension(it).track(item.key) }
     }
@@ -529,6 +696,10 @@ class UnifiedExtensionsScreenModel(
             jarManager.uninstall(item.pkgName)
             return
         }
+        if (item.kind == ExtensionKind.CLOUDSTREAM) {
+            csManager.uninstall(item.pkgName)
+            return
+        }
         if (item.kind == ExtensionKind.ANIYOMI) {
             animeManager.uninstallExtension(item.pkgName)
         } else {
@@ -544,13 +715,13 @@ class UnifiedExtensionsScreenModel(
     }
 
     fun setSourceEnabled(source: UnifiedSource, enabled: Boolean) {
-        val pref = if (source.kind == ExtensionKind.ANIYOMI) preferences.animeDisabledSources() else preferences.disabledSources()
+        val pref = if (source.isAnime) preferences.animeDisabledSources() else preferences.disabledSources()
         val id = source.id.toString()
         pref.set(if (enabled) pref.get() - id else pref.get() + id)
     }
 
     fun setAllSourcesEnabled(sources: List<UnifiedSource>, enabled: Boolean) {
-        sources.groupBy { it.kind == ExtensionKind.ANIYOMI }.forEach { (isAnime, list) ->
+        sources.groupBy { it.isAnime }.forEach { (isAnime, list) ->
             val pref = if (isAnime) preferences.animeDisabledSources() else preferences.disabledSources()
             val ids = list.map { it.id.toString() }.toSet()
             pref.set(if (enabled) pref.get() - ids else pref.get() + ids)
@@ -558,7 +729,7 @@ class UnifiedExtensionsScreenModel(
     }
 
     fun togglePin(source: UnifiedSource) {
-        val pref = if (source.kind == ExtensionKind.ANIYOMI) preferences.animePinnedSources() else preferences.pinnedSources()
+        val pref = if (source.isAnime) preferences.animePinnedSources() else preferences.pinnedSources()
         val id = source.id.toString()
         pref.set(if (id in pref.get()) pref.get() - id else pref.get() + id)
     }
