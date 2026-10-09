@@ -189,8 +189,13 @@ class AnimeScreenModel(
             val anime = repository.getAnime(animeId) ?: return@launchIO
             if (found != null && (!anime.initialized || anime.fetchType == FetchType.Seasons || !anime.favorite)) {
                 refresh()
-            } else if (found != null && repository.getEpisodes(animeId).isEmpty()) {
-                refresh()
+            } else if (found != null) {
+                val episodes = repository.getEpisodes(animeId)
+                // KMK: episodes saved before thumbnails / summaries were kept get them once per run
+                val bare = episodes.isNotEmpty() &&
+                    episodes.all { it.previewUrl.isNullOrBlank() && it.summary.isNullOrBlank() } &&
+                    refreshedThisRun.add(animeId)
+                if (episodes.isEmpty() || bare) refresh()
             }
         }
     }
@@ -213,7 +218,7 @@ class AnimeScreenModel(
                 }
                 val updated = repository.getAnime(animeId) ?: anime
                 if (updated.fetchType == FetchType.Seasons) {
-                    val seasons = source.getSeasonList(updated.toSAnime())
+                    val seasons = source.getAnimeSeasonUpdate(updated.toSAnime(), emptyList(), false, true).seasons
                         .map { repository.networkToLocal(it, source.id) }
                     mutableState.update { it.copy(seasons = seasons) }
                 }
@@ -496,5 +501,10 @@ class AnimeScreenModel(
 
         val hasStarted: Boolean
             get() = allEpisodes.any { it.seen || it.lastSecondSeen > 0 }
+    }
+
+    private companion object {
+        /** Anime whose bare episode list was already refreshed in this run */
+        val refreshedThisRun: MutableSet<Long> = java.util.Collections.synchronizedSet(HashSet())
     }
 }

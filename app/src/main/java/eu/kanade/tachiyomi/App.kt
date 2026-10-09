@@ -153,6 +153,8 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
         Injekt.importModule(SYDomainModule())
         // SY <--
 
+        // KMK: in-app log, before anything else logs
+        eu.kanade.tachiyomi.util.system.AppLog.init(this)
         setupExhLogging() // EXH logging
         if (!LogcatLogger.isInstalled) {
             val minLogPriority = when {
@@ -163,6 +165,8 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
                 else -> LogPriority.INFO
             }
             LogcatLogger.install()
+            // KMK: the in-app Logs screen (first, so XLog can tell its copies apart)
+            LogcatLogger.loggers += eu.kanade.tachiyomi.util.system.AppLog.Logger()
             LogcatLogger.loggers += XLogLogcatLogger() // SY Redirect Logcat to XLog
             LogcatLogger.loggers += AndroidLogcatLogger(minLogPriority)
         }
@@ -388,7 +392,11 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
             .disableBorder()
             .build()
 
-        val printers = mutableListOf<Printer>(AndroidPrinter())
+        val printers = mutableListOf<Printer>(
+            AndroidPrinter(),
+            // KMK: the in-app Logs screen
+            eu.kanade.tachiyomi.util.system.AppLog.XLogPrinter(),
+        )
 
         val logFolder = Injekt.get<StorageManager>().getLogsDirectory()
 

@@ -59,6 +59,24 @@ import kotlin.random.Random
             )
             .addInterceptor(UncaughtExceptionInterceptor())
             .addInterceptor(UserAgentInterceptor(::defaultUserAgentProvider))
+            // KMK: each request in the in-app Logs screen
+            .addInterceptor { chain ->
+                val request = chain.request()
+                val started = System.nanoTime()
+                try {
+                    val response = chain.proceed(request)
+                    val ms = (System.nanoTime() - started) / 1_000_000
+                    logcat.logcat("net", if (response.isSuccessful) logcat.LogPriority.DEBUG else logcat.LogPriority.WARN) {
+                        "${request.method} ${request.url} -> ${response.code} in $ms ms"
+                    }
+                    response
+                } catch (e: java.io.IOException) {
+                    logcat.logcat("net", logcat.LogPriority.WARN) {
+                        "${request.method} ${request.url} failed: ${e.javaClass.simpleName}: ${e.message}"
+                    }
+                    throw e
+                }
+            }
 
         // KMK -->
         if (EHLogLevel.isExtraLogging()) {

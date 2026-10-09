@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.outlined.BugReport
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
@@ -107,6 +108,8 @@ object HomeScreen : Screen() {
                     startBar = {
                         if (isTabletUi()) {
                             NavigationRail {
+                                // KMK: tabs in the middle, the Logs (debug) button at the bottom
+                                androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
                                 TABS
                                     // SY -->
                                     .fastFilter { it.isEnabled() }
@@ -114,6 +117,19 @@ object HomeScreen : Screen() {
                                     .fastForEach {
                                         NavigationRailItem(it/* SY --> */, alwaysShowLabel/* SY <-- */)
                                     }
+                                androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
+                                androidx.compose.material3.NavigationRailItem(
+                                    selected = false,
+                                    onClick = { navigator.push(eu.kanade.tachiyomi.ui.logs.LogsScreen()) },
+                                    icon = {
+                                        androidx.compose.material3.Icon(
+                                            imageVector = androidx.compose.material.icons.Icons.Outlined.BugReport,
+                                            contentDescription = "Logs",
+                                        )
+                                    },
+                                    label = { androidx.compose.material3.Text("Logs") },
+                                    alwaysShowLabel = alwaysShowLabel,
+                                )
                             }
                         }
                     },

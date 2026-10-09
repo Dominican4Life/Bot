@@ -1,0 +1,150 @@
+package eu.kanade.tachiyomi.ui.logs
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import cafe.adriel.voyager.navigator.LocalNavigator
+import cafe.adriel.voyager.navigator.currentOrThrow
+import eu.kanade.presentation.components.SourcesSearchBox
+import eu.kanade.presentation.util.Screen
+import eu.kanade.tachiyomi.util.system.AppLog
+import eu.kanade.tachiyomi.util.system.toast
+import tachiyomi.presentation.core.components.material.Scaffold
+
+/**
+ * KMK: Everything the app logged (requests, sources, library updates, extension loading, crashes), newest first,
+ * with All / Info / Problems filters, search, copy and clear. Opened from the bug button on the navigation rail.
+ */
+class LogsScreen : Screen() {
+
+    private enum class Filter(val label: String) { All("All"), Info("Info"), Problems("Problems") }
+
+    @Composable
+    override fun Content() {
+        val navigator = LocalNavigator.currentOrThrow
+        val context = LocalContext.current
+        val clipboard = LocalClipboardManager.current
+        val version by AppLog.version.collectAsState()
+        var filter by rememberSaveable { mutableStateOf(Filter.All) }
+        var query by rememberSaveable { mutableStateOf("") }
+        val all = remember(version) { AppLog.snapshot().asReversed() }
+        val shown = remember(all, filter, query) {
+            all.filter { line ->
+                when (filter) {
+                    Filter.All -> true
+                    Filter.Info -> line.isInfo
+                    Filter.Problems -> line.isProblem
+                } && (query.isBlank() || line.message.contains(query, true) || line.tag.contains(query, true))
+            }
+        }
+
+        Scaffold { padding ->
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .widthIn(max = 980.dp)
+                        .fillMaxSize()
+                        .padding(horizontal = 12.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                        IconButton(onClick = navigator::pop) {
+                            Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = null)
+                        }
+                        Column(modifier = Modifier.weight(1f).padding(start = 4.dp)) {
+                            Text("Logs", style = MaterialTheme.typography.headlineSmall)
+                            Text(
+                                "${all.size} lines, newest first",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        IconButton(
+                            onClick = {
+                                clipboard.setText(AnnotatedString(shown.asReversed().joinToString("\n") { AppLog.format(it) }))
+                                context.toast("Copied ${shown.size} lines")
+                            },
+                        ) { Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy") }
+                        IconButton(onClick = AppLog::clear) {
+                            Icon(Icons.Outlined.Delete, contentDescription = "Clear")
+                        }
+                    }
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(vertical = 8.dp),
+                    ) {
+                        Filter.entries.forEach { f ->
+                            FilterChip(selected = filter == f, onClick = { filter = f }, label = { Text(f.label) })
+                        }
+                        SourcesSearchBox(
+                            searchQuery = query,
+                            onChangeSearchQuery = { query = it.orEmpty() },
+                            placeholderText = "Search the log",
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    SelectionContainer {
+                        LazyColumn(
+                            contentPadding = PaddingValues(bottom = 24.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            items(shown) { line ->
+                                val color = when {
+                                    line.level == 'E' -> MaterialTheme.colorScheme.error
+                                    line.level == 'W' -> MaterialTheme.colorScheme.tertiary
+                                    line.level == 'I' -> MaterialTheme.colorScheme.onSurface
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                }
+                                Text(
+                                    text = AppLog.format(line),
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 12.sp,
+                                    lineHeight = 17.sp,
+                                    color = color,
+                                    modifier = Modifier.padding(vertical = 3.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

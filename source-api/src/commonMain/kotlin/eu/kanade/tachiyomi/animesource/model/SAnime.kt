@@ -36,6 +36,9 @@ interface SAnime : Serializable {
 
     var initialized: Boolean
 
+    /** Extra data a source keeps on the anime (extensions-lib 17) */
+    var memo: kotlinx.serialization.json.JsonObject
+
     fun getGenres(): List<String>? {
         if (genre.isNullOrBlank()) return null
         return genre?.split(", ")?.map { it.trim() }?.filterNot { it.isBlank() }?.distinct()
@@ -71,6 +74,7 @@ interface SAnime : Serializable {
         it.season_number = season_number
         // <-- AY
         it.initialized = initialized
+        it.memo = memo
     }
 
     // SY -->
@@ -106,6 +110,7 @@ interface SAnime : Serializable {
         it.update_strategy = update_strategy
         // ANK <--
         it.initialized = initialized
+        it.memo = memo
     }
     // SY <--
 
@@ -117,6 +122,7 @@ interface SAnime : Serializable {
         const val PUBLISHING_FINISHED = 4
         const val CANCELLED = 5
         const val ON_HIATUS = 6
+        const val UPCOMING = 7
 
         fun create(): SAnime {
             return SAnimeImpl()

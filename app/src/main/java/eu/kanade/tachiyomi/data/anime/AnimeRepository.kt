@@ -6,6 +6,8 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import logcat.LogPriority
+import tachiyomi.core.common.util.system.logcat
 import tachiyomi.data.DatabaseHandler
 import java.time.Instant
 
@@ -224,17 +226,46 @@ class AnimeRepository(
         return newCount
     }
 
-    /** Fetches details and episodes from the source and saves them. Returns the number of new episodes. */
+    /**
+     * Fetches details and episodes from the source and saves them. Returns the number of new episodes.
+     *
+     * KMK: like AniZen, details and episodes are two separate calls through the extensions-lib 17 combined API, so
+     * a failing details page still leaves the episodes loaded (with their thumbnails, summaries and Sub / Dub).
+     */
     suspend fun refreshFromSource(anime: Anime, source: AnimeSource): Int {
-        val details = source.getAnimeDetails(anime.toSAnime())
-        details.url = anime.url
-        if (details.title.isBlank()) details.title = anime.title
-        updateFromSource(anime, details)
-        return if (anime.fetchType == FetchType.Episodes && details.fetch_type == FetchType.Episodes) {
-            syncEpisodes(anime, source.getEpisodeList(details))
+        val base = anime.toSAnime()
+        val detailsError = runCatching {
+            val details = source.getAnimeEpisodeUpdate(base, emptyList(), fetchDetails = true, fetchEpisodes = false).anime
+            details.url = anime.url
+            if (details.title.isBlank()) details.title = anime.title
+            updateFromSource(anime, details)
+            logcat(LogPriority.INFO, tag = "anime") {
+                "${anime.title}: details loaded, description ${details.description?.length ?: 0} chars"
+            }
+        }.onFailure { e ->
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            logcat(LogPriority.WARN, e, tag = "anime") { "${anime.title}: details failed" }
+        }.exceptionOrNull()
+        val fresh = getAnime(anime.id) ?: anime
+        val count = if (fresh.fetchType == FetchType.Episodes) {
+            val episodes = source.getAnimeEpisodeUpdate(
+                fresh.toSAnime(),
+                emptyList(),
+                fetchDetails = false,
+                fetchEpisodes = true,
+            ).episodes
+            logcat(LogPriority.INFO, tag = "anime") {
+                "${anime.title}: ${episodes.size} episodes, " +
+                    "${episodes.count { !it.preview_url.isNullOrBlank() }} with thumbnails, " +
+                    "${episodes.count { !it.summary.isNullOrBlank() }} with summaries, " +
+                    "${episodes.count { !it.scanlator.isNullOrBlank() }} with Sub/Dub"
+            }
+            syncEpisodes(fresh, episodes)
         } else {
             0
         }
+        detailsError?.let { throw it }
+        return count
     }
 
     suspend fun getFavorites(): List<Anime> = handler.awaitList { animesQueries.getFavorites(::mapAnime) }

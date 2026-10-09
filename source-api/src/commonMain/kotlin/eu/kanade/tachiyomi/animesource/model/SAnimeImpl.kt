@@ -4,7 +4,7 @@ package eu.kanade.tachiyomi.animesource.model
 
 class SAnimeImpl : SAnime {
 
-    override lateinit var url: String
+    override var url: String = ""
 
     // SY -->
     override var title: String = ""
@@ -29,6 +29,8 @@ class SAnimeImpl : SAnime {
     override var update_strategy: AnimeUpdateStrategy = AnimeUpdateStrategy.ALWAYS_UPDATE
 
     override var initialized: Boolean = false
+
+    override var memo: kotlinx.serialization.json.JsonObject = kotlinx.serialization.json.JsonObject(emptyMap())
 
     // AY -->
     override var fetch_type: FetchType = FetchType.Episodes

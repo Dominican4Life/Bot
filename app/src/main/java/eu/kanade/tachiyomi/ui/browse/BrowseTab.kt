@@ -91,6 +91,17 @@ data object BrowseTab : Tab {
         val context = LocalContext.current
         val scope = rememberCoroutineScope()
         // SY -->
+        // KMK: bring the Feed tab back once for anyone who lost it to the "Hide feed tab" setting
+        remember {
+            val prefs = Injekt.get<eu.kanade.domain.base.BasePreferences>()
+            val ui = Injekt.get<UiPreferences>()
+            val flag = Injekt.get<tachiyomi.core.common.preference.PreferenceStore>().getBoolean("kmk_feed_tab_restored", false)
+            if (!flag.get()) {
+                ui.hideFeedTab().set(false)
+                flag.set(true)
+            }
+            prefs
+        }
         val hideFeedTab by remember { Injekt.get<UiPreferences>().hideFeedTab().asState(scope) }
         val feedTabInFront by remember { Injekt.get<UiPreferences>().feedTabInFront().asState(scope) }
         // SY <--

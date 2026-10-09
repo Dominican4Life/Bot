@@ -2,11 +2,11 @@ package eu.kanade.tachiyomi.animesource
 
 import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
+import eu.kanade.tachiyomi.animesource.model.SAnime as SManga
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.util.awaitSingle
 import rx.Observable
-import eu.kanade.tachiyomi.animesource.model.SAnime as SManga
 
 /**
  * A basic interface for creating a source. It could be an online source, a local source, etc.
@@ -25,6 +25,35 @@ interface AnimeSource {
 
     val lang: String
         get() = ""
+
+    // KMK --> extensions-lib 17: details and episodes in one call (extensions may override it)
+    @Suppress("DEPRECATION")
+    suspend fun getAnimeEpisodeUpdate(
+        anime: SAnime,
+        episodes: List<SEpisode>,
+        fetchDetails: Boolean,
+        fetchEpisodes: Boolean,
+    ): eu.kanade.tachiyomi.animesource.model.SAnimeEpisodeUpdate {
+        val updatedAnime = if (fetchDetails) getAnimeDetails(anime) else anime
+        val newEpisodes = if (fetchEpisodes) getEpisodeList(anime) else episodes
+        return eu.kanade.tachiyomi.animesource.model.SAnimeEpisodeUpdate(updatedAnime, newEpisodes)
+    }
+
+    @Suppress("DEPRECATION")
+    suspend fun getAnimeSeasonUpdate(
+        anime: SAnime,
+        seasons: List<SAnime>,
+        fetchDetails: Boolean,
+        fetchSeasons: Boolean,
+    ): eu.kanade.tachiyomi.animesource.model.SAnimeSeasonUpdate {
+        val updatedAnime = if (fetchDetails) getAnimeDetails(anime) else anime
+        val newSeasons = if (fetchSeasons) getSeasonList(anime) else seasons
+        return eu.kanade.tachiyomi.animesource.model.SAnimeSeasonUpdate(updatedAnime, newSeasons)
+    }
+
+    /** extensions-lib 17: hosters with the anime they belong to */
+    suspend fun getHosterList(anime: SAnime, episode: SEpisode): List<Hoster> = getHosterList(episode)
+    // KMK <--
 
     /**
      * Get the updated details for a anime.

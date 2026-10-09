@@ -26,6 +26,9 @@ interface SEpisode : Serializable {
     var preview_url: String?
     // <-- AY
 
+    /** Extra data a source keeps on the episode (extensions-lib 17) */
+    var memo: kotlinx.serialization.json.JsonObject
+
     fun copyFrom(other: SEpisode) {
         name = other.name
         url = other.url
@@ -39,6 +42,7 @@ interface SEpisode : Serializable {
         summary = other.summary
         preview_url = other.preview_url
         // <-- AY
+        memo = other.memo
     }
 
     companion object {

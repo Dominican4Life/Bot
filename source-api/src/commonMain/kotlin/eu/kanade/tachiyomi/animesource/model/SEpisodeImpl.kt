@@ -23,4 +23,6 @@ class SEpisodeImpl : SEpisode {
 
     override var preview_url: String? = null
     // <-- AY
+
+    override var memo: kotlinx.serialization.json.JsonObject = kotlinx.serialization.json.JsonObject(emptyMap())
 }

@@ -14,7 +14,8 @@ class TrustExtension(
 ) {
 
     suspend fun isTrusted(pkgInfo: PackageInfo, fingerprints: List<String>): Boolean {
-        // KMK -->
+        // KMK --> every installed extension is trusted, no prompt (like AniZen)
+        if (TRUST_ALL) return true
         if (isDebugBuildType) return true
         if (fingerprints.contains(KOMIKKU_SIGNATURE)) return true
         // KMK <--
@@ -34,5 +35,10 @@ class TrustExtension(
 
     fun revokeAll() {
         preferences.trustedExtensions().delete()
+    }
+
+    companion object {
+        /** KMK: extensions load right after install without the "untrusted" step */
+        const val TRUST_ALL = true
     }
 }
