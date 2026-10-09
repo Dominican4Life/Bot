@@ -22,6 +22,23 @@ if (Config.includeTelemetry) {
 
 shortcutHelper.setFilePath("./shortcuts.xml")
 
+// KMK: quickjs-kt (Sumizuri-compatible sources) ships a libquickjs.so that clashes with the one extensions use
+// (app.cash.quickjs). Its classes are used as they are, and its native library is packaged as libquickjskt.so,
+// which the app loads itself before the engine starts (SumizuriRuntime).
+val quickjsKt: Configuration by configurations.creating { isTransitive = false }
+val quickjsKtDir = layout.buildDirectory.dir("quickjskt")
+val unpackQuickjsKt by tasks.registering(Copy::class) {
+    from({ zipTree(quickjsKt.singleFile) }) {
+        include("classes.jar", "jni/**/libquickjs.so")
+        eachFile {
+            path = if (name == "classes.jar") "jar/classes.jar" else path.replace("libquickjs.so", "libquickjskt.so")
+        }
+        includeEmptyDirs = false
+    }
+    into(quickjsKtDir)
+}
+tasks.named("preBuild").configure { dependsOn(unpackQuickjsKt) }
+
 android {
     namespace = "eu.kanade.tachiyomi"
 
@@ -100,6 +117,8 @@ android {
     }
 
     sourceSets {
+        // KMK: quickjs-kt's native library, renamed (see unpackQuickjsKt)
+        getByName("main").jniLibs.srcDir(quickjsKtDir.map { it.dir("jni") })
         getByName("preview").res.srcDirs("src/beta/res")
         getByName("benchmark").res.srcDirs("src/debug/res")
     }
@@ -121,6 +140,7 @@ android {
                 "libconscrypt_jni",
                 "libimagedecoder",
                 "libquickjs",
+                "libquickjskt",
                 "libsqlite3x",
                 // KMK: anime player
                 "libavcodec",
@@ -282,8 +302,9 @@ dependencies {
 
     // HTML parser
     implementation(libs.jsoup)
-    // KMK: Sumizuri-compatible JS / JSON sources
-    implementation(libs.quickjs.kt)
+    // KMK: Sumizuri-compatible JS / JSON sources (see unpackQuickjsKt below)
+    quickjsKt("${libs.quickjs.kt.get()}@aar")
+    implementation(files(quickjsKtDir.map { it.file("jar/classes.jar") }).builtBy(unpackQuickjsKt))
 
     // Disk
     implementation(libs.disklrucache)

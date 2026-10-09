@@ -353,6 +353,20 @@ class SumizuriRuntime private constructor(
 
     companion object {
 
+        @Volatile
+        private var nativeLoaded = false
+
+        /**
+         * The engine's native library is packaged as libquickjskt.so (libquickjs.so is the one extensions use),
+         * so it is loaded here, before the engine's own classes look for their native methods.
+         */
+        @Synchronized
+        private fun loadNativeLibrary() {
+            if (nativeLoaded) return
+            System.loadLibrary("quickjskt")
+            nativeLoaded = true
+        }
+
         private fun asset(context: Context, name: String): String =
             context.assets.open("sumizuri/$name").bufferedReader().use { it.readText() }
 
@@ -376,6 +390,7 @@ class SumizuriRuntime private constructor(
                 preferences = SumizuriPreferences.of(context, sourceId),
                 testing = testing,
             )
+            loadNativeLibrary()
             val qjs = QuickJs.create(jobDispatcher = Dispatchers.Default)
             try {
                 qjs.maxStackSize = 2L shl 20
