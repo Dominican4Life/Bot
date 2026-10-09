@@ -8,12 +8,14 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.automirrored.outlined.ViewList
 import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.FlipToBack
 import androidx.compose.material.icons.outlined.GridView
+import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -21,6 +23,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.PreviewLightDark
@@ -52,6 +55,9 @@ import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.EmptyScreen
 import tachiyomi.presentation.core.screens.LoadingScreen
 import tachiyomi.presentation.core.theme.active
+import tachiyomi.presentation.core.util.collectAsState
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import java.time.LocalDate
 
 @Composable
@@ -78,6 +84,15 @@ fun HistoryScreen(
 ) {
     // KMK -->
     BackHandler(enabled = state.selectionMode, onBack = toggleSelectionMode)
+    // KMK: one panel, manga or anime, switched from the toolbar
+    val showAnimePref = remember { Injekt.get<eu.kanade.domain.source.service.SourcePreferences>().historyShowAnime() }
+    val showAnime by showAnimePref.collectAsState()
+    val switchAction = AppBar.Action(
+        title = stringResource(KMR.strings.library_switch_type),
+        icon = if (showAnime) Icons.Outlined.Movie else Icons.AutoMirrored.Outlined.MenuBook,
+        iconTint = MaterialTheme.colorScheme.primary,
+        onClick = { showAnimePref.set(!showAnime) },
+    )
     // KMK <--
 
     Scaffold(
@@ -100,6 +115,7 @@ fun HistoryScreen(
                         AppBarActions(
                             persistentListOf(
                                 // KMK -->
+                                switchAction,
                                 AppBar.Action(
                                     title = stringResource(MR.strings.action_filter),
                                     icon = Icons.Outlined.FilterList,
@@ -138,7 +154,8 @@ fun HistoryScreen(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
     ) { outerPadding ->
         // KMK --> manga history on the left, anime on the right
-        eu.kanade.presentation.browse.anime.MangaAnimeSplit(
+        eu.kanade.presentation.browse.anime.MangaAnimeSwitch(
+            showAnime = showAnime,
             contentPadding = outerPadding,
             anime = { padding ->
                 eu.kanade.presentation.anime.AnimeHistoryPane(contentPadding = padding, searchQuery = state.searchQuery)

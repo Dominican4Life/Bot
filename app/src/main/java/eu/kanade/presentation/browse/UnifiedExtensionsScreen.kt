@@ -277,8 +277,6 @@ private fun Chip(
 private fun kindColor(kind: ExtensionKind) = when (kind) {
     ExtensionKind.MIHON -> MaterialTheme.colorScheme.primary
     ExtensionKind.ANIYOMI -> MaterialTheme.colorScheme.tertiary
-    ExtensionKind.JAR -> MaterialTheme.colorScheme.secondary
-    ExtensionKind.CLOUDSTREAM -> MaterialTheme.colorScheme.error
 }
 
 @Composable
@@ -344,16 +342,8 @@ private fun EmptyState(text: String) {
     )
 }
 
-/** JAR and Cloudstream come later: say so instead of a bare empty list */
-@Composable
-private fun emptyText(kinds: Set<ExtensionKind>, default: String): String {
-    val pending = kinds.filter { it == ExtensionKind.JAR || it == ExtensionKind.CLOUDSTREAM }
-    return if (pending.isNotEmpty() && pending.size == kinds.size) {
-        stringResource(KMR.strings.ext_kind_coming, pending.joinToString(" / ") { it.label })
-    } else {
-        default
-    }
-}
+@Suppress("UNUSED_PARAMETER")
+private fun emptyText(kinds: Set<ExtensionKind>, default: String): String = default
 
 @Composable
 private fun SourceList(

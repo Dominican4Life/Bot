@@ -157,6 +157,17 @@ fun MangaAnimeSplit(
     }
 }
 
+/** KMK: One panel, manga or anime, picked with the toolbar switch (History, Updates) */
+@Composable
+fun MangaAnimeSwitch(
+    showAnime: Boolean,
+    contentPadding: PaddingValues,
+    manga: @Composable (PaddingValues) -> Unit,
+    anime: @Composable (PaddingValues) -> Unit,
+) {
+    if (showAnime) anime(contentPadding) else manga(contentPadding)
+}
+
 /** Anime side of the Sources tab */
 @Composable
 fun AnimeSourcesPane(

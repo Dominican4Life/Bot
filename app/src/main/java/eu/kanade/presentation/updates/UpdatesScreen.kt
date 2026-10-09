@@ -4,10 +4,12 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.automirrored.outlined.ViewList
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.FlipToBack
+import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material.icons.outlined.ViewTimeline
@@ -45,6 +47,9 @@ import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.EmptyScreen
 import tachiyomi.presentation.core.screens.LoadingScreen
 import tachiyomi.presentation.core.theme.active
+import tachiyomi.presentation.core.util.collectAsState
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import java.time.LocalDate
 import kotlin.time.Duration.Companion.seconds
 
@@ -83,6 +88,15 @@ fun UpdateScreen(
     // KMK <--
 ) {
     BackHandler(enabled = state.selectionMode, onBack = { onSelectAll(false) })
+    // KMK: one panel, manga or anime, switched from the toolbar
+    val showAnimePref = remember { Injekt.get<eu.kanade.domain.source.service.SourcePreferences>().updatesShowAnime() }
+    val showAnime by showAnimePref.collectAsState()
+    val switchAction = AppBar.Action(
+        title = stringResource(KMR.strings.library_switch_type),
+        icon = if (showAnime) Icons.Outlined.Movie else Icons.AutoMirrored.Outlined.MenuBook,
+        iconTint = MaterialTheme.colorScheme.primary,
+        onClick = { showAnimePref.set(!showAnime) },
+    )
 
     Scaffold(
         topBar = { scrollBehavior ->
@@ -94,6 +108,7 @@ fun UpdateScreen(
                 // KMK -->
                 timelineView = timelineView,
                 onToggleTimeline = onToggleTimeline,
+                switchAction = switchAction,
                 // KMK <--
                 actionModeCounter = state.selected.size,
                 onSelectAll = { onSelectAll(true) },
@@ -114,7 +129,8 @@ fun UpdateScreen(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
     ) { outerPadding ->
         // KMK --> manga updates on the left, anime on the right
-        eu.kanade.presentation.browse.anime.MangaAnimeSplit(
+        eu.kanade.presentation.browse.anime.MangaAnimeSwitch(
+            showAnime = showAnime,
             contentPadding = outerPadding,
             anime = { padding -> eu.kanade.presentation.anime.AnimeUpdatesPane(contentPadding = padding) },
             manga = { contentPadding ->
@@ -220,6 +236,7 @@ private fun UpdatesAppBar(
     // KMK -->
     timelineView: Boolean,
     onToggleTimeline: () -> Unit,
+    switchAction: AppBar.Action,
     // KMK <--
     // For action mode
     actionModeCounter: Int,
@@ -235,6 +252,8 @@ private fun UpdatesAppBar(
         actions = {
             AppBarActions(
                 persistentListOf(
+                    // KMK: manga / anime switch
+                    switchAction,
                     AppBar.Action(
                         title = stringResource(MR.strings.action_filter),
                         icon = Icons.Outlined.FilterList,

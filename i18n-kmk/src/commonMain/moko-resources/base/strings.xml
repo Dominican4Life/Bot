@@ -393,7 +393,6 @@
     <string name="ext_no_sources">No sources yet. Install packages from the Packages tab.</string>
     <string name="ext_no_repositories">No repositories match.</string>
     <string name="ext_no_packages">No packages match. Add a repository to find more.</string>
-    <string name="ext_kind_coming">%1$s extensions are coming in a later update.</string>
     <!-- History & Updates (Kototoro style) -->
     <string name="history_summary_reading_time">Reading time</string>
     <string name="history_summary_streak">%1$d-day streak</string>

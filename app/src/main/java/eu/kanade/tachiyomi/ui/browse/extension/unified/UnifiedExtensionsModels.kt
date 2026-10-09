@@ -6,12 +6,10 @@ import eu.kanade.tachiyomi.animeextension.model.AnimeExtension
 import eu.kanade.tachiyomi.extension.model.Extension
 import eu.kanade.tachiyomi.extension.model.InstallStep
 
-/** KMK: The kinds of extension the unified Extensions screen manages (as in Kototoro) */
+/** KMK: The kinds of extension the unified Extensions screen manages */
 enum class ExtensionKind(val label: String) {
     MIHON("Mihon"),
     ANIYOMI("Aniyomi"),
-    JAR("JAR"),
-    CLOUDSTREAM("Cloudstream"),
 }
 
 enum class PackageState {
