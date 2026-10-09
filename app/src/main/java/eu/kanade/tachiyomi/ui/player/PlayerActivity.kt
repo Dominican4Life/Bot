@@ -703,7 +703,10 @@ class PlayerActivity : BaseActivity() {
                     val pos = viewModel.pos.value ?: 0
                     val duration = viewModel.duration.value ?: 0
                     PlayerDebugLog.add("player", "Reached the end at $pos s of $duration s")
-                    if (pos < 15) {
+                    // A short clip played to its end, or a file on the device, isn't a broken stream
+                    val playedToEnd = duration > 0 && duration - pos <= 2
+                    val isLocalFile = viewModel.currentVideo.value?.videoUrl?.startsWith("file") == true
+                    if (pos < 15 && !playedToEnd && !isLocalFile) {
                         showPlaybackProblem("The video ended right after it started ($pos s of $duration s).")
                         return
                     }
