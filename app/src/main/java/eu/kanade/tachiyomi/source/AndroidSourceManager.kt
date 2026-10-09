@@ -72,6 +72,7 @@ class AndroidSourceManager(
     // SY <--
     // KMK -->
     private val getMergedReferencesById: GetMergedReferencesById by injectLazy()
+    private val sumizuriManager: eu.kanade.tachiyomi.sumizuri.SumizuriManager by lazy { Injekt.get() }
     // KMK <--
 
     init {
@@ -85,9 +86,12 @@ class AndroidSourceManager(
                 .combine(
                     exhPreferences.isHentaiEnabled().changes(),
                 ) { (a, b), c -> Triple(a, b, c) }
+                // Sources made in the Code editor join the manga sources
+                .combine(sumizuriManager.mangaSourcesFlow) { triple, jsSources -> triple to jsSources }
                 // KMK <--
                 // SY <--
-                .collectLatest { (extensions, enableExhentai/* KMK --> */, isHentaiEnabled/* KMK <-- */) ->
+                .collectLatest { (triple, jsSources) ->
+                    val (extensions, enableExhentai/* KMK --> */, isHentaiEnabled/* KMK <-- */) = triple
                     val mutableMap = ConcurrentHashMap<Long, Source>(
                         mapOf(
                             LocalSource.ID to LocalSource(
@@ -122,6 +126,12 @@ class AndroidSourceManager(
                             registerStubSource(StubSource.from(it))
                         }
                     }
+                    // KMK -->
+                    jsSources.forEach {
+                        mutableMap[it.id] = it
+                        registerStubSource(StubSource.from(it))
+                    }
+                    // KMK <--
                     sourcesMapFlow.value = mutableMap
                     _isInitialized.value = true
                 }

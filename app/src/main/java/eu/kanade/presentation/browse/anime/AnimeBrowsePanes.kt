@@ -661,12 +661,15 @@ private fun AnimeSourceSheet(
         extensionManager.installedExtensionsFlow.value.find { e -> e.sources.any { it.id == source.id } }
     }
     val http = source as? AnimeHttpSource
-    val urls = remember(source.id) { listOfNotNull(http?.baseUrl) }
+    // KMK: a source from the Code editor: its code opens in the editor
+    val js = source as? eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource
+    val baseUrl = http?.baseUrl ?: js?.baseUrl
+    val urls = remember(source.id) { listOfNotNull(baseUrl?.takeIf { it.isNotBlank() }) }
     val icon = remember(source.id) { extensionManager.getAppIconForSource(source.id)?.toBitmap()?.asImageBitmap() }
     eu.kanade.presentation.browse.components.SourceInfoSheet(
         info = eu.kanade.presentation.browse.components.SourceSheetInfo(
             name = source.name,
-            baseUrl = http?.baseUrl.orEmpty(),
+            baseUrl = baseUrl.orEmpty(),
             lang = source.lang,
             isAnime = true,
             icon = icon,
@@ -685,10 +688,10 @@ private fun AnimeSourceSheet(
             }
         },
         onTogglePin = onTogglePin,
-        onOpenWebView = http?.let {
+        onOpenWebView = baseUrl?.takeIf { it.isNotBlank() }?.let { url ->
             {
                 onDismiss()
-                navigator?.push(eu.kanade.tachiyomi.ui.webview.WebViewScreen(url = it.baseUrl, initialTitle = it.name))
+                navigator?.push(eu.kanade.tachiyomi.ui.webview.WebViewScreen(url = url, initialTitle = source.name))
             }
         },
         onClearCookies = {
@@ -710,7 +713,17 @@ private fun AnimeSourceSheet(
                 onDismiss()
                 extensionManager.uninstallExtension(it.pkgName)
             }
+        } ?: js?.let {
+            {
+                onDismiss()
+                Injekt.get<eu.kanade.tachiyomi.sumizuri.SumizuriManager>().delete(it.info.key)
+            }
         },
-        onSettings = ext?.let { { onSettings(it.pkgName) } },
+        onSettings = ext?.let { { onSettings(it.pkgName) } } ?: js?.let {
+            {
+                onDismiss()
+                navigator?.push(eu.kanade.tachiyomi.ui.sumizuri.SourceEditorScreen(it.info.key))
+            }
+        },
     )
 }

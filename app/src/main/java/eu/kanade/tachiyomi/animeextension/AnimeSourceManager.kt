@@ -6,8 +6,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 /**
  * KMK: Keeps track of the anime sources provided by the installed anime extensions.
@@ -17,9 +20,12 @@ class AnimeSourceManager(
 ) {
     private val scope = CoroutineScope(SupervisorJob())
 
+    // Sources made in the Code editor are anime sources too
+    private val sumizuriManager: eu.kanade.tachiyomi.sumizuri.SumizuriManager by lazy { Injekt.get() }
+
     private val sourcesMapFlow: StateFlow<Map<Long, AnimeSource>> = extensionManager.installedExtensionsFlow
-        .map { extensions ->
-            extensions.flatMap { it.sources }.associateBy { it.id }
+        .combine(sumizuriManager.animeSourcesFlow) { extensions, jsSources ->
+            (extensions.flatMap { it.sources } + jsSources).associateBy { it.id }
         }
         .stateIn(scope, SharingStarted.Eagerly, emptyMap())
 

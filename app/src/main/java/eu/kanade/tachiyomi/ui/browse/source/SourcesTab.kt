@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.ui.browse.source
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.TravelExplore
 import androidx.compose.material.icons.outlined._18UpRating
 import androidx.compose.material3.LocalContentColor
@@ -77,8 +78,21 @@ fun Screen.sourcesTab(
                 onClick = { screenModel.toggleNsfwOnly() },
             ),
             // KMK <--
-            // KMK: the sources filter button now sits next to the search bar
-        ),
+        ).let { base ->
+            // KMK: the Code editor, for JS / JSON sources (Sumizuri style)
+            if (smartSearchConfig != null) {
+                base
+            } else {
+                base.add(
+                    AppBar.Action(
+                        title = "Code editor",
+                        icon = Icons.Outlined.Code,
+                        onClick = { navigator.push(eu.kanade.tachiyomi.ui.sumizuri.SourceEditorScreen()) },
+                    ),
+                )
+            }
+        },
+        // KMK: the sources filter button now sits next to the search bar
         // SY <--
         content = { contentPadding, snackbarHostState ->
             SourcesScreen(
@@ -164,11 +178,22 @@ fun Screen.sourcesTab(
                             sheetSource = null
                             Injekt.get<eu.kanade.tachiyomi.extension.ExtensionManager>().uninstallExtension(ext)
                         }
+                    } ?: (httpSource as? eu.kanade.tachiyomi.sumizuri.SumizuriMangaSource)?.let { js ->
+                        {
+                            sheetSource = null
+                            Injekt.get<eu.kanade.tachiyomi.sumizuri.SumizuriManager>().delete(js.info.key)
+                        }
                     },
                     onSettings = extension?.let { ext ->
                         {
                             sheetSource = null
                             navigator.push(ExtensionDetailsScreen(ext.pkgName))
+                        }
+                    } ?: (httpSource as? eu.kanade.tachiyomi.sumizuri.SumizuriMangaSource)?.let { js ->
+                        // A source from the Code editor: its code opens in the editor
+                        {
+                            sheetSource = null
+                            navigator.push(eu.kanade.tachiyomi.ui.sumizuri.SourceEditorScreen(js.info.key))
                         }
                     },
                 )

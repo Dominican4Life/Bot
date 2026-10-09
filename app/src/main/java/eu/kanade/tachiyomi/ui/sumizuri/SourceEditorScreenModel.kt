@@ -1,0 +1,469 @@
+package eu.kanade.tachiyomi.ui.sumizuri
+
+import android.app.Application
+import androidx.compose.runtime.Immutable
+import cafe.adriel.voyager.core.model.StateScreenModel
+import cafe.adriel.voyager.core.model.screenModelScope
+import eu.kanade.tachiyomi.sumizuri.SumizuriManager
+import eu.kanade.tachiyomi.sumizuri.SumizuriPreferences
+import eu.kanade.tachiyomi.sumizuri.SumizuriRuntime
+import eu.kanade.tachiyomi.sumizuri.SumizuriSourceInfo
+import eu.kanade.tachiyomi.sumizuri.str
+import eu.kanade.tachiyomi.sumizuri.sumizuriJson
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
+import tachiyomi.core.common.util.lang.launchIO
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
+
+/**
+ * KMK: The Code editor: write or import a Sumizuri JS / JSON source, test it (popular, latest, search, catalogs,
+ * filters, settings, info, and drill into a title's chapters and pages / videos), and save it as a source.
+ */
+class SourceEditorScreenModel(
+    initialKey: String?,
+    private val manager: SumizuriManager = Injekt.get(),
+    private val context: Application = Injekt.get(),
+) : StateScreenModel<SourceEditorScreenModel.State>(State()) {
+
+    @Immutable
+    data class State(
+        val key: String = "",
+        val saved: Boolean = false,
+        val json: Boolean = false,
+        val anime: Boolean = false,
+        val code: String = SourceTemplates.templateFor(json = false, anime = false),
+        val name: String = "",
+        val iconUrl: String = "",
+        val lang: String = "en",
+        val baseUrl: String = "",
+        val dirty: Boolean = false,
+        val running: String? = null,
+        val results: List<Result> = emptyList(),
+        val console: List<String> = emptyList(),
+        val message: String? = null,
+        /** The source's settings, while the Source settings dialog is open */
+        val settings: List<SumizuriPreferences.Definition>? = null,
+    )
+
+    /** One test run, newest first in the panel */
+    @Immutable
+    data class Result(
+        val title: String,
+        val ok: Boolean,
+        val millis: Long,
+        val items: List<Item> = emptyList(),
+        val text: String? = null,
+    )
+
+    /** An entry, chapter, page or video in a result, with what to run when it's opened */
+    @Immutable
+    data class Item(
+        val title: String,
+        val subtitle: String? = null,
+        val imageUrl: String? = null,
+        val kind: Kind,
+        val url: String,
+    )
+
+    enum class Kind { Entry, Chapter, Page, Video, Other }
+
+    private var runtime: SumizuriRuntime? = null
+    private var runtimeCode: String? = null
+    private val runtimeMutex = Mutex()
+    private var job: Job? = null
+
+    init {
+        val info = initialKey?.let { manager.get(it) }
+        val code = initialKey?.let { manager.code(it) }
+        mutableState.update {
+            if (info != null && code != null) {
+                State(
+                    key = info.key,
+                    saved = true,
+                    json = info.json,
+                    anime = info.anime,
+                    code = code,
+                    name = info.name,
+                    iconUrl = info.iconUrl.orEmpty(),
+                    lang = info.lang,
+                    baseUrl = info.baseUrl,
+                )
+            } else {
+                State(key = manager.newKey())
+            }
+        }
+    }
+
+    val savedSources get() = manager.savedFlow
+
+    // Editing
+
+    fun setCode(code: String) = mutableState.update { it.copy(code = code, dirty = true) }
+
+    /** Switches between JS and JSON; an untouched template becomes the other kind's template */
+    fun setJson(json: Boolean) = mutableState.update {
+        if (it.json == json) return@update it
+        val code = if (SourceTemplates.isTemplate(it.code)) SourceTemplates.templateFor(json, it.anime) else it.code
+        it.copy(json = json, code = code, dirty = it.dirty || code != it.code)
+    }
+
+    fun setAnime(anime: Boolean) = mutableState.update {
+        if (it.anime == anime) return@update it
+        val code = if (SourceTemplates.isTemplate(it.code)) SourceTemplates.templateFor(it.json, anime) else it.code
+        it.copy(anime = anime, code = code)
+    }
+
+    fun setName(value: String) = mutableState.update { it.copy(name = value, dirty = true) }
+    fun setIconUrl(value: String) = mutableState.update { it.copy(iconUrl = value, dirty = true) }
+    fun setLang(value: String) = mutableState.update { it.copy(lang = value, dirty = true) }
+    fun setBaseUrl(value: String) = mutableState.update { it.copy(baseUrl = value, dirty = true) }
+
+    fun importCode(fileName: String?, text: String) {
+        val json = fileName?.endsWith(".json", ignoreCase = true) == true ||
+            (fileName?.endsWith(".js", ignoreCase = true) != true && text.trimStart().startsWith("{"))
+        mutableState.update {
+            it.copy(
+                json = json,
+                code = text,
+                // An import is a new source unless it replaces the one being edited
+                anime = json && "\"videos\"" in text || !json && "getVideoList" in text,
+                dirty = true,
+            )
+        }
+        message("Imported ${fileName ?: "file"}")
+        loadInfo()
+    }
+
+    fun newSource(json: Boolean, anime: Boolean) {
+        closeRuntime()
+        mutableState.value = State(
+            key = manager.newKey(),
+            json = json,
+            anime = anime,
+            code = SourceTemplates.templateFor(json, anime),
+        )
+    }
+
+    fun open(key: String) {
+        closeRuntime()
+        val info = manager.get(key) ?: return
+        val code = manager.code(key) ?: return
+        mutableState.value = State(
+            key = info.key,
+            saved = true,
+            json = info.json,
+            anime = info.anime,
+            code = code,
+            name = info.name,
+            iconUrl = info.iconUrl.orEmpty(),
+            lang = info.lang,
+            baseUrl = info.baseUrl,
+        )
+    }
+
+    fun delete(): Boolean {
+        val key = state.value.key
+        if (!state.value.saved) return false
+        manager.delete(key)
+        closeRuntime()
+        return true
+    }
+
+    fun consumeMessage() = mutableState.update { it.copy(message = null) }
+
+    private fun message(text: String) = mutableState.update { it.copy(message = text) }
+
+    // Saving
+
+    fun save() {
+        val s = state.value
+        screenModelScope.launchIO {
+            mutableState.update { it.copy(running = "Saving") }
+            runCatching {
+                manager.save(
+                    key = s.key,
+                    code = s.code,
+                    json = s.json,
+                    animeHint = s.anime,
+                    overrides = SumizuriSourceInfo(
+                        key = s.key,
+                        name = s.name.trim(),
+                        lang = s.lang.trim(),
+                        iconUrl = s.iconUrl.trim(),
+                        baseUrl = s.baseUrl.trim(),
+                    ),
+                )
+            }.onSuccess { info ->
+                mutableState.update {
+                    it.copy(
+                        saved = true,
+                        dirty = false,
+                        running = null,
+                        anime = info.anime,
+                        name = info.name,
+                        lang = info.lang,
+                        iconUrl = info.iconUrl.orEmpty(),
+                        baseUrl = info.baseUrl,
+                        message = "Saved ${info.name} as ${if (info.anime) "an anime" else "a manga"} source in Browse",
+                    )
+                }
+            }.onFailure { e ->
+                mutableState.update { it.copy(running = null, message = "Can't save: ${e.message}") }
+            }
+        }
+    }
+
+    // Testing
+
+    private suspend fun runtime(): SumizuriRuntime = runtimeMutex.withLock {
+        val s = state.value
+        val current = runtime
+        if (current != null && runtimeCode == s.json.toString() + s.code) return@withLock current
+        current?.close()
+        SumizuriRuntime.create(
+            context = context,
+            key = s.key,
+            sourceId = SumizuriSourceInfo.idFor(s.key),
+            name = s.name.ifBlank { "editor" },
+            code = s.code,
+            json = s.json,
+            testing = true,
+        ).also {
+            runtime = it
+            runtimeCode = s.json.toString() + s.code
+        }
+    }
+
+    private fun closeRuntime() {
+        job?.cancel()
+        runtime?.close()
+        runtime = null
+        runtimeCode = null
+    }
+
+    /** Fills the Details fields the user left empty from what the source says about itself */
+    fun loadInfo() = run("Info") { rt ->
+        val meta = rt.metadata()
+        mutableState.update {
+            it.copy(
+                name = it.name.ifBlank { meta.str("name").orEmpty() },
+                iconUrl = it.iconUrl.ifBlank { meta.str("iconUrl").orEmpty() },
+                lang = it.lang.takeIf { l -> l.isNotBlank() && l != "en" } ?: meta.str("lang") ?: it.lang,
+                baseUrl = it.baseUrl.ifBlank { meta.str("baseUrl").orEmpty() },
+                anime = when {
+                    meta["hasVideos"]?.jsonPrimitive?.contentOrNull == "true" &&
+                        meta["hasPages"]?.jsonPrimitive?.contentOrNull != "true" -> true
+                    meta["hasPages"]?.jsonPrimitive?.contentOrNull == "true" &&
+                        meta["hasVideos"]?.jsonPrimitive?.contentOrNull != "true" -> false
+                    else -> it.anime
+                },
+            )
+        }
+        Result("Info", true, 0, text = pretty(meta))
+    }
+
+    fun runPopular(page: Int = 1) = run("Popular · page $page") { entries(it.call("getPopular", page)) }
+
+    fun runLatest(page: Int = 1) = run("Latest · page $page") { entries(it.call("getLatest", page)) }
+
+    fun runSearch(query: String, page: Int = 1) = run("Search \"$query\" · page $page") {
+        entries(it.call("search", query, page, emptyMap<String, Any>()))
+    }
+
+    fun runCatalogs() = run("Catalogs") { rt ->
+        val catalogs = rt.call("getCatalogs")
+        val list = (catalogs as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+        Result(
+            "Catalogs",
+            true,
+            0,
+            items = list.map { Item(it.s("name") ?: it.s("id").orEmpty(), it.s("id"), null, Kind.Other, "catalog:" + it.s("id")) },
+            text = if (list.isEmpty()) "No catalogs" else null,
+        )
+    }
+
+    fun runFilters() = run("Filters") { Result("Filters", true, 0, text = pretty(it.call("getFilters"))) }
+
+    fun runPreferences() = run("Source settings") { Result("Source settings", true, 0, text = pretty(it.call("getSourcePreferences"))) }
+
+    /** Popular, Latest and a search, one after another, then the first title's chapters and its first chapter */
+    fun runAll(query: String) {
+        job?.cancel()
+        job = screenModelScope.launchIO {
+            val popular = execute("Popular · page 1") { entries(it.call("getPopular", 1)) }
+            execute("Latest · page 1") { entries(it.call("getLatest", 1)) }
+            if (query.isNotBlank()) {
+                execute("Search \"$query\"") { entries(it.call("search", query, 1, emptyMap<String, Any>())) }
+            }
+            val entry = popular?.items?.firstOrNull { it.kind == Kind.Entry } ?: return@launchIO
+            val chapters = execute("Chapters of ${entry.title}") { chapters(it, entry.url) } ?: return@launchIO
+            val chapter = chapters.items.firstOrNull() ?: return@launchIO
+            val what = if (state.value.anime) "Videos" else "Pages"
+            execute("$what of ${chapter.title}") { content(it, chapter.url) }
+        }
+    }
+
+    /** Opens an item of a result: a title's details and chapters, a chapter's pages or videos, a catalog's list */
+    fun openItem(item: Item) {
+        when {
+            item.kind == Kind.Entry -> run("Chapters of ${item.title}") { chapters(it, item.url) }
+            item.kind == Kind.Chapter -> run(if (state.value.anime) "Videos of ${item.title}" else "Pages of ${item.title}") { content(it, item.url) }
+            item.url.startsWith("catalog:") -> {
+                val id = item.url.removePrefix("catalog:")
+                run("Catalog ${item.title}") { entries(it.call("getCatalog", id, 1)) }
+            }
+            else -> Unit
+        }
+    }
+
+    private suspend fun chapters(rt: SumizuriRuntime, entryUrl: String): Result {
+        val details = runCatching { rt.call("getDetails", entryUrl) }.getOrNull() as? JsonObject
+        val list = (rt.call("getChapterList", entryUrl) as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+        val label = if (state.value.anime) "episodes" else "chapters"
+        return Result(
+            title = "",
+            ok = true,
+            millis = 0,
+            items = list.map { ch ->
+                Item(
+                    title = ch.s("title") ?: ch.s("number")?.let { "${if (state.value.anime) "Episode" else "Chapter"} $it" } ?: ch.s("url").orEmpty(),
+                    subtitle = listOfNotNull(ch.s("dateUploaded"), ch.s("scanlator"), ch.s("season")?.let { "season $it" })
+                        .joinToString(" · ").ifBlank { null },
+                    imageUrl = ch.s("thumbnailUrl") ?: ch.s("seasonCoverUrl"),
+                    kind = Kind.Chapter,
+                    url = ch.s("url").orEmpty(),
+                )
+            },
+            text = buildString {
+                if (details != null) {
+                    append(details.s("title").orEmpty())
+                    details.s("status")?.let { append(" · ").append(it) }
+                    details.s("description")?.let { append("\n").append(it.take(400)) }
+                    append("\n\n")
+                }
+                append("${list.size} $label")
+            },
+        )
+    }
+
+    private suspend fun content(rt: SumizuriRuntime, chapterUrl: String): Result {
+        if (state.value.anime) {
+            val videos = (rt.call("getVideoList", chapterUrl) as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+            return Result(
+                "",
+                true,
+                0,
+                items = videos.map { v ->
+                    val extras = listOfNotNull(
+                        (v["headers"] as? JsonObject)?.size?.takeIf { it > 0 }?.let { "$it headers" },
+                        (v["subtitles"] as? JsonArray)?.size?.takeIf { it > 0 }?.let { "$it subtitles" },
+                        (v["audioTracks"] as? JsonArray)?.size?.takeIf { it > 0 }?.let { "$it audio tracks" },
+                    )
+                    Item(
+                        title = v.s("quality") ?: "Video",
+                        subtitle = (listOf(v.s("url").orEmpty()) + extras).joinToString(" · "),
+                        kind = Kind.Video,
+                        url = v.s("url").orEmpty(),
+                    )
+                },
+                text = "${videos.size} videos",
+            )
+        }
+        val pages = (rt.call("getPageList", chapterUrl) as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+        return Result(
+            "",
+            true,
+            0,
+            items = pages.map { p ->
+                Item(
+                    title = "Page ${(p.s("index")?.toIntOrNull() ?: 0) + 1}",
+                    subtitle = p.s("imageUrl") ?: p.s("text")?.take(120),
+                    imageUrl = p.s("imageUrl"),
+                    kind = Kind.Page,
+                    url = p.s("imageUrl").orEmpty(),
+                )
+            },
+            text = "${pages.size} pages",
+        )
+    }
+
+    private fun entries(element: JsonElement): Result {
+        val list = (element as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+        return Result(
+            title = "",
+            ok = true,
+            millis = 0,
+            items = list.map { e ->
+                Item(
+                    title = e.s("title").orEmpty(),
+                    subtitle = e.s("url"),
+                    imageUrl = e.s("coverUrl"),
+                    kind = Kind.Entry,
+                    url = e.s("url").orEmpty(),
+                )
+            },
+            text = "${list.size} entries",
+        )
+    }
+
+    private fun run(title: String, block: suspend (SumizuriRuntime) -> Result) {
+        job?.cancel()
+        job = screenModelScope.launchIO { execute(title, block) }
+    }
+
+    /** Runs one test, adds its result (or error) to the panel and returns it, or null when it failed */
+    private suspend fun execute(title: String, block: suspend (SumizuriRuntime) -> Result): Result? {
+        mutableState.update { it.copy(running = title) }
+        val started = System.currentTimeMillis()
+        val result = try {
+            val rt = runtime()
+            val r = block(rt)
+            r.copy(title = r.title.ifBlank { title }, millis = System.currentTimeMillis() - started)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            Result(title, false, System.currentTimeMillis() - started, text = e.message ?: e.toString())
+        }
+        val console = runtime?.console.orEmpty()
+        mutableState.update {
+            it.copy(running = null, results = (listOf(result) + it.results).take(20), console = console)
+        }
+        return result.takeIf { it.ok }
+    }
+
+    /** Opens the Source settings dialog, with what getSourcePreferences() offers */
+    fun openSettings() = run("Source settings") { rt ->
+        val raw = rt.call("getSourcePreferences")
+        val defs = SumizuriPreferences.parse(raw)
+        mutableState.update { it.copy(settings = defs) }
+        Result("Source settings", true, 0, text = if (defs.isEmpty()) "This source has no settings" else pretty(raw))
+    }
+
+    fun closeSettings() = mutableState.update { it.copy(settings = null) }
+
+    fun clearResults() {
+        runtime?.clearConsole()
+        mutableState.update { it.copy(results = emptyList(), console = emptyList()) }
+    }
+
+    override fun onDispose() {
+        closeRuntime()
+        super.onDispose()
+    }
+
+    private fun JsonObject.s(key: String): String? = (this[key] as? JsonPrimitive)?.takeUnless { it is JsonNull }?.contentOrNull
+
+    private fun pretty(element: JsonElement): String = prettyJson.encodeToString(JsonElement.serializer(), element)
+
+    private val prettyJson = kotlinx.serialization.json.Json(from = sumizuriJson) { prettyPrint = true }
+}

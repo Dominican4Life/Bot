@@ -282,6 +282,8 @@ dependencies {
 
     // HTML parser
     implementation(libs.jsoup)
+    // KMK: Sumizuri-compatible JS / JSON sources
+    implementation(libs.quickjs.kt)
 
     // Disk
     implementation(libs.disklrucache)
