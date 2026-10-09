@@ -8,6 +8,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -88,11 +89,15 @@ fun SourceTile(
     fallbackIcon: @Composable () -> Unit = { DefaultTileIcon() },
 ) {
     val shape = RoundedCornerShape(16.dp)
+    // Keep the icon, name and site clear of the corner badges: reserve a strip for each row of corners in use
+    val hasTop = corners.badgesIn(BadgeCorner.TopLeft).isNotEmpty() || corners.badgesIn(BadgeCorner.TopRight).isNotEmpty()
+    val hasBottom = corners.badgesIn(BadgeCorner.BottomLeft).isNotEmpty() ||
+        corners.badgesIn(BadgeCorner.BottomRight).isNotEmpty()
     Surface(
         shape = shape,
         color = MaterialTheme.colorScheme.surfaceContainer,
         modifier = modifier
-            .height(SourceTileHeight)
+            .height(SourceTileHeight + (if (hasTop) 10.dp else 0.dp) + (if (hasBottom) 26.dp else 0.dp))
             .alpha(if (enabled) 1f else 0.55f),
     ) {
         Box(
@@ -106,7 +111,12 @@ fun SourceTile(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(start = 10.dp, end = 10.dp, top = 16.dp, bottom = 12.dp),
+                    .padding(
+                        start = 10.dp,
+                        end = 10.dp,
+                        top = if (hasTop) 26.dp else 16.dp,
+                        bottom = if (hasBottom) 38.dp else 12.dp,
+                    ),
             ) {
                 Box(
                     modifier = Modifier
@@ -200,9 +210,10 @@ private fun androidx.compose.foundation.layout.BoxScope.CornerColumn(
 ) {
     val content = corners.badgesIn(corner).mapNotNull { badges[it] }
     if (content.isEmpty()) return
-    Column(
-        horizontalAlignment = horizontal,
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+    // One row per corner, so badges never stack down into the middle of the tile
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(4.dp, horizontal),
+        verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .align(alignment)
             .padding(6.dp),

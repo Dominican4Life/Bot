@@ -24,13 +24,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Dangerous
-import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.GetApp
 import androidx.compose.material.icons.outlined.Public
-import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.TravelExplore
@@ -84,6 +82,8 @@ import eu.kanade.tachiyomi.extension.model.Extension
 import eu.kanade.tachiyomi.extension.model.InstallStep
 import eu.kanade.tachiyomi.ui.browse.anime.AnimeBrowseScreenModel
 import eu.kanade.tachiyomi.util.system.LocaleHelper
+import eu.kanade.tachiyomi.util.system.toast
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.components.FastScrollLazyColumn
@@ -172,6 +172,27 @@ fun AnimeSourcesPane(
 ) {
     val context = LocalContext.current
     val extensionManager = remember { Injekt.get<AnimeExtensionManager>() }
+    // KMK: the per-source sheet (details, on/off, pin, WebView, cookies, site data)
+    var sheetSource by remember { mutableStateOf<AnimeCatalogueSource?>(null) }
+    sheetSource?.let { source ->
+        AnimeSourceSheet(
+            source = source,
+            pinned = source.id.toString() in state.pinnedSources,
+            onDismiss = { sheetSource = null },
+            onTogglePin = {
+                onTogglePin(source.id)
+                sheetSource = null
+            },
+            onOpenLatest = {
+                sheetSource = null
+                onClickLatest(source.id)
+            },
+            onSettings = { pkgName ->
+                sheetSource = null
+                onClickSettings(pkgName)
+            },
+        )
+    }
     Column(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -231,8 +252,8 @@ fun AnimeSourcesPane(
                     supportsLatest = source.supportsLatest,
                     corners = corners,
                     onClick = { onClickSource(source.id) },
-                    onLongClick = { onTogglePin(source.id) },
-                    onClickSettings = ext?.let { { onClickSettings(it.pkgName) } },
+                    onLongClick = { sheetSource = source },
+                    onClickSettings = { sheetSource = source },
                     onClickPin = { onTogglePin(source.id) },
                     onClickLatest = { onClickLatest(source.id) },
                 )
@@ -610,4 +631,75 @@ private fun EmptyMessage(text: String) {
     Box(modifier = Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
         Text(text = text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.secondaryItemAlpha())
     }
+}
+
+/** KMK: [SourceInfoSheet] for an anime source */
+@Composable
+private fun AnimeSourceSheet(
+    source: AnimeCatalogueSource,
+    pinned: Boolean,
+    onDismiss: () -> Unit,
+    onTogglePin: () -> Unit,
+    onOpenLatest: () -> Unit,
+    onSettings: (pkgName: String) -> Unit,
+) {
+    val context = LocalContext.current
+    val navigator = cafe.adriel.voyager.navigator.LocalNavigator.current
+    val extensionManager = remember { Injekt.get<AnimeExtensionManager>() }
+    val ext = remember(source.id) {
+        extensionManager.installedExtensionsFlow.value.find { e -> e.sources.any { it.id == source.id } }
+    }
+    val http = source as? AnimeHttpSource
+    val urls = remember(source.id) { listOfNotNull(http?.baseUrl) }
+    val icon = remember(source.id) { extensionManager.getAppIconForSource(source.id)?.toBitmap()?.asImageBitmap() }
+    eu.kanade.presentation.browse.components.SourceInfoSheet(
+        info = eu.kanade.presentation.browse.components.SourceSheetInfo(
+            name = source.name,
+            baseUrl = http?.baseUrl.orEmpty(),
+            lang = source.lang,
+            isAnime = true,
+            icon = icon,
+            enabled = true,
+            pinned = pinned,
+            isNsfw = ext?.isNsfw == true,
+            extensionName = ext?.name,
+            versionName = ext?.versionName,
+        ),
+        onDismissRequest = onDismiss,
+        onToggleEnabled = { enabled ->
+            if (!enabled) {
+                val pref = Injekt.get<eu.kanade.domain.source.service.SourcePreferences>().animeDisabledSources()
+                pref.set(pref.get() + source.id.toString())
+                onDismiss()
+            }
+        },
+        onTogglePin = onTogglePin,
+        onOpenWebView = http?.let {
+            {
+                onDismiss()
+                navigator?.push(eu.kanade.tachiyomi.ui.webview.WebViewScreen(url = it.baseUrl, initialTitle = it.name))
+            }
+        },
+        onClearCookies = {
+            val network = Injekt.get<eu.kanade.tachiyomi.network.NetworkHelper>()
+            urls.forEach { url ->
+                runCatching {
+                    network.cookieJar.remove(url.toHttpUrl())
+                }
+            }
+            context.toast(MR.strings.cookies_cleared)
+        },
+        onClearSiteData = {
+            eu.kanade.presentation.browse.components.clearSourceSiteData(urls)
+            context.toast(KMR.strings.source_sheet_site_data_cleared)
+        },
+        onOpenLatest = onOpenLatest.takeIf { source.supportsLatest },
+        onRemove = ext?.let {
+            {
+                onDismiss()
+                extensionManager.uninstallExtension(it.pkgName)
+            }
+        },
+        onSettings = ext?.let { { onSettings(it.pkgName) } },
+    )
 }

@@ -9,10 +9,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.core.screen.Screen
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
+import eu.kanade.domain.source.model.icon
 import eu.kanade.domain.source.model.installedExtension
 import eu.kanade.presentation.browse.SourceCategoriesDialog
 import eu.kanade.presentation.browse.SourceOptionsDialog
@@ -25,14 +30,20 @@ import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreen
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreenModel.Listing
 import eu.kanade.tachiyomi.ui.browse.source.feed.SourceFeedScreen
 import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchScreen
+import eu.kanade.tachiyomi.ui.webview.WebViewScreen
+import eu.kanade.tachiyomi.util.system.toast
 import exh.ui.smartsearch.SmartSearchScreen
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import tachiyomi.domain.source.interactor.GetRemoteManga
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.i18n.sy.SYMR
 import tachiyomi.presentation.core.i18n.stringResource
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 @Composable
 fun Screen.sourcesTab(
@@ -41,6 +52,10 @@ fun Screen.sourcesTab(
     val navigator = LocalNavigator.currentOrThrow
     val screenModel = rememberScreenModel { SourcesScreenModel(smartSearchConfig = smartSearchConfig) }
     val state by screenModel.state.collectAsState()
+    // KMK -->
+    val context = LocalContext.current
+    var sheetSource by remember { mutableStateOf<tachiyomi.domain.source.model.Source?>(null) }
+    // KMK <--
 
     return TabContent(
         // SY -->
@@ -85,11 +100,80 @@ fun Screen.sourcesTab(
                 // KMK -->
                 onChangeSearchQuery = screenModel::search,
                 onClickFilter = { navigator.push(SourcesFilterScreen()) }.takeIf { smartSearchConfig == null },
-                onClickSettings = { source ->
-                    source.installedExtension?.let { navigator.push(ExtensionDetailsScreen(it.pkgName)) }
-                },
+                onClickSettings = { source -> sheetSource = source },
                 // KMK <--
             )
+
+            // KMK --> per-source sheet: details, on/off, pin, WebView, cookies and site data
+            sheetSource?.let { source ->
+                val httpSource = remember(source.id) {
+                    Injekt.get<tachiyomi.domain.source.service.SourceManager>().get(source.id)
+                        as? eu.kanade.tachiyomi.source.online.HttpSource
+                }
+                val urls = remember(source.id) {
+                    listOfNotNull(httpSource?.baseUrl, runCatching { httpSource?.getHomeUrl() }.getOrNull())
+                }
+                val extension = source.installedExtension
+                eu.kanade.presentation.browse.components.SourceInfoSheet(
+                    info = eu.kanade.presentation.browse.components.SourceSheetInfo(
+                        name = source.name,
+                        baseUrl = httpSource?.baseUrl.orEmpty(),
+                        lang = source.lang,
+                        isAnime = false,
+                        icon = remember(source.id) { source.icon },
+                        enabled = true,
+                        pinned = tachiyomi.domain.source.model.Pin.Pinned in source.pin,
+                        isNsfw = extension?.isNsfw == true,
+                        extensionName = extension?.name,
+                        versionName = extension?.versionName,
+                    ),
+                    onDismissRequest = { sheetSource = null },
+                    onToggleEnabled = { enabled ->
+                        if (!enabled) {
+                            screenModel.toggleSource(source)
+                            sheetSource = null
+                        }
+                    },
+                    onTogglePin = {
+                        screenModel.togglePin(source)
+                        sheetSource = null
+                    },
+                    onOpenWebView = httpSource?.let {
+                        {
+                            sheetSource = null
+                            navigator.push(WebViewScreen(url = it.baseUrl, initialTitle = it.name, sourceId = it.id))
+                        }
+                    },
+                    onClearCookies = {
+                        val network = Injekt.get<eu.kanade.tachiyomi.network.NetworkHelper>()
+                        urls.forEach { url ->
+                            runCatching { network.cookieJar.remove(url.toHttpUrl()) }
+                        }
+                        context.toast(MR.strings.cookies_cleared)
+                    },
+                    onClearSiteData = {
+                        eu.kanade.presentation.browse.components.clearSourceSiteData(urls)
+                        context.toast(KMR.strings.source_sheet_site_data_cleared)
+                    },
+                    onOpenLatest = {
+                        sheetSource = null
+                        navigator.push(BrowseSourceScreen(source.id, GetRemoteManga.QUERY_LATEST))
+                    }.takeIf { source.supportsLatest },
+                    onRemove = extension?.let { ext ->
+                        {
+                            sheetSource = null
+                            Injekt.get<eu.kanade.tachiyomi.extension.ExtensionManager>().uninstallExtension(ext)
+                        }
+                    },
+                    onSettings = extension?.let { ext ->
+                        {
+                            sheetSource = null
+                            navigator.push(ExtensionDetailsScreen(ext.pkgName))
+                        }
+                    },
+                )
+            }
+            // KMK <--
 
             when (val dialog = state.dialog) {
                 is SourcesScreenModel.Dialog.SourceLongClick -> {

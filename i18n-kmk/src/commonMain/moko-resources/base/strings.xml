@@ -417,4 +417,8 @@
     <string name="updates_view_chapters">Chapter list</string>
     <string name="updates_view_timeline">Timeline</string>
     <string name="updates_show_carousel">Show updated covers row</string>
+    <!-- Source sheet -->
+    <string name="source_sheet_enabled">Enabled</string>
+    <string name="source_sheet_clear_site_data">Clear site data</string>
+    <string name="source_sheet_site_data_cleared">Cookies and WebView data cleared for this source</string>
 </resources>
