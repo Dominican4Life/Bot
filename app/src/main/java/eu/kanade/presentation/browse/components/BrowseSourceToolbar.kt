@@ -4,8 +4,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.ViewModule
@@ -22,7 +25,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.dp
+import androidx.core.graphics.drawable.toBitmap
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarActions
@@ -30,7 +37,10 @@ import eu.kanade.presentation.components.AppBarTitle
 import eu.kanade.presentation.components.DropdownMenu
 import eu.kanade.presentation.components.RadioMenuItem
 import eu.kanade.presentation.components.SearchToolbar
+import eu.kanade.tachiyomi.animeextension.AnimeExtensionManager
+import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.source.Source
+import eu.kanade.tachiyomi.util.system.LocaleHelper
 import kotlinx.collections.immutable.persistentListOf
 import tachiyomi.domain.library.model.LibraryDisplayMode
 import tachiyomi.i18n.MR
@@ -38,6 +48,8 @@ import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.components.SliderItem
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.source.local.LocalSource
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 @Composable
 fun BrowseSourceToolbar(
@@ -66,6 +78,10 @@ fun BrowseSourceToolbar(
     onPreviewPanelsChange: (Int) -> Unit = {},
     /** Title when there is no manga [source] (anime sources) */
     titleOverride: String? = null,
+    /** The source whose icon shows next to the title (anime sources, which aren't a manga [source]) */
+    iconSourceId: Long? = null,
+    /** The line under the title: the source's language */
+    subtitleOverride: String? = null,
     showBulkSelection: Boolean = true,
     showIncognito: Boolean = true,
     // KMK <--
@@ -78,7 +94,14 @@ fun BrowseSourceToolbar(
 
     SearchToolbar(
         navigateUp = navigateUp,
-        titleContent = { AppBarTitle(title) },
+        titleContent = {
+            // KMK: the source's icon and language next to its name
+            SourceTitle(
+                title = title,
+                subtitle = subtitleOverride ?: source?.lang?.let { LocaleHelper.getLocalizedDisplayName(it) },
+                sourceId = iconSourceId ?: source?.id,
+            )
+        },
         searchQuery = searchQuery,
         onChangeSearchQuery = onSearchQueryChange,
         onSearch = onSearch,
@@ -228,3 +251,30 @@ fun BrowseSourceToolbar(
         scrollBehavior = scrollBehavior,
     )
 }
+
+/** KMK: A source's icon, name and language, for the top of a source's pages */
+@Composable
+fun SourceTitle(title: String?, subtitle: String?, sourceId: Long?) {
+    val icon = remember(sourceId) { sourceId?.let(::sourceIconBitmap) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        if (icon != null) {
+            androidx.compose.foundation.Image(
+                bitmap = icon,
+                contentDescription = null,
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(8.dp)),
+            )
+            Spacer(Modifier.width(12.dp))
+        }
+        AppBarTitle(title, subtitle = subtitle?.takeIf { it.isNotBlank() })
+    }
+}
+
+/** The icon of any source: a manga or anime extension's, a built-in one's, or a Code editor source's */
+fun sourceIconBitmap(sourceId: Long): ImageBitmap? = runCatching {
+    (
+        Injekt.get<ExtensionManager>().getAppIconForSource(sourceId)
+            ?: Injekt.get<AnimeExtensionManager>().getAppIconForSource(sourceId)
+        )?.toBitmap()?.asImageBitmap()
+}.getOrNull()

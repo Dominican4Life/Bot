@@ -30,7 +30,7 @@ class SumizuriManager(private val context: Application) {
     private val root = File(context.filesDir, "sumizuri_sources").apply { mkdirs() }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    private val _saved = MutableStateFlow(load())
+    private val _saved = MutableStateFlow(load().also { SumizuriIcons.prepare(context, it) })
 
     /** Every saved source, newest change first */
     val savedFlow: StateFlow<List<SumizuriSourceInfo>> = _saved.asStateFlow()
@@ -86,6 +86,7 @@ class SumizuriManager(private val context: Application) {
         File(folder, META).writeText(sumizuriJson.encodeToString(SumizuriSourceInfo.serializer(), info))
         invalidate(key)
         showLanguage(info)
+        SumizuriIcons.prepare(context, listOf(info))
         _saved.value = (listOf(info) + _saved.value.filterNot { it.key == key }).sortedByDescending { it.updatedAt }
         AppLog.add('I', "sumizuri", "Saved ${if (info.anime) "anime" else "manga"} source ${info.name} (${if (json) "JSON" else "JS"})")
         return info

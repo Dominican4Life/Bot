@@ -170,6 +170,10 @@ class AnimeSourceScreen(
                             searchQuery = searchQuery,
                             onSearchQueryChange = { searchQuery = it },
                             source = null,
+                            iconSourceId = sourceId,
+                            subtitleOverride = source?.lang?.let {
+                                eu.kanade.tachiyomi.util.system.LocaleHelper.getLocalizedDisplayName(it)
+                            },
                             displayMode = displayMode,
                             onDisplayModeChange = { displayModePref.set(it) },
                             navigateUp = {

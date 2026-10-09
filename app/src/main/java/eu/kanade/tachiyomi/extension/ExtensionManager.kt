@@ -122,7 +122,8 @@ class ExtensionManager(
             in EXHENTAI_EXT_SOURCES -> ContextCompat.getDrawable(context, R.mipmap.ic_exhentai_source)
             // KMK <--
             MERGED_SOURCE_ID -> ContextCompat.getDrawable(context, R.mipmap.ic_merged_source)
-            else -> null
+            // KMK: sources made in the Code editor
+            else -> eu.kanade.tachiyomi.sumizuri.SumizuriIcons.drawable(context, sourceId)
         }
         // SY <--
     }

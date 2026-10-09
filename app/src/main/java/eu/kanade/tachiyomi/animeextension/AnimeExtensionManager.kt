@@ -81,7 +81,9 @@ class AnimeExtensionManager(
     }
 
     fun getAppIconForSource(sourceId: Long): Drawable? {
-        val pkgName = getExtensionPackage(sourceId) ?: return null
+        // KMK: sources made in the Code editor
+        val pkgName = getExtensionPackage(sourceId)
+            ?: return eu.kanade.tachiyomi.sumizuri.SumizuriIcons.drawable(context, sourceId)
         return iconMap[pkgName] ?: installedExtensionMapFlow.value[pkgName]?.icon?.also { iconMap[pkgName] = it }
     }
 

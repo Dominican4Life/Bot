@@ -111,6 +111,8 @@ class SourceFeedScreen(val sourceId: Long) : Screen() {
                 // KMK <--
                 SourceFeedScreen(
                     name = screenModel.source.name,
+                    sourceId = screenModel.source.id,
+                    lang = screenModel.source.lang,
                     isLoading = state.isLoading,
                     items = state.items,
                     hasFilters = state.filters.isNotEmpty(),

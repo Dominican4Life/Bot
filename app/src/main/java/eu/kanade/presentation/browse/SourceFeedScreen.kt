@@ -23,7 +23,6 @@ import eu.kanade.presentation.browse.components.GlobalSearchResultItem
 import eu.kanade.presentation.browse.components.bulkSelectionButton
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarActions
-import eu.kanade.presentation.components.AppBarTitle
 import eu.kanade.presentation.components.BulkSelectionToolbar
 import eu.kanade.presentation.components.SearchToolbar
 import eu.kanade.tachiyomi.ui.browse.BulkFavoriteScreenModel
@@ -89,6 +88,9 @@ sealed class SourceFeedUI {
 @Composable
 fun SourceFeedScreen(
     name: String,
+    // KMK: for the icon and language next to the name
+    sourceId: Long? = null,
+    lang: String? = null,
     isLoading: Boolean,
     items: ImmutableList<SourceFeedUI>,
     hasFilters: Boolean,
@@ -143,6 +145,8 @@ fun SourceFeedScreen(
                 // KMK <--
                 SourceFeedToolbar(
                     title = name,
+                    sourceId = sourceId,
+                    lang = lang,
                     searchQuery = searchQuery,
                     onSearchQueryChange = onSearchQueryChange,
                     scrollBehavior = scrollBehavior,
@@ -308,6 +312,10 @@ fun SourceFeedItem(
 @Composable
 fun SourceFeedToolbar(
     title: String,
+    // KMK -->
+    sourceId: Long? = null,
+    lang: String? = null,
+    // KMK <--
     searchQuery: String?,
     onSearchQueryChange: (String?) -> Unit,
     scrollBehavior: TopAppBarScrollBehavior,
@@ -325,7 +333,13 @@ fun SourceFeedToolbar(
     // KMK <--
 ) {
     SearchToolbar(
-        titleContent = { AppBarTitle(title) },
+        titleContent = {
+            eu.kanade.presentation.browse.components.SourceTitle(
+                title = title,
+                subtitle = lang?.let { eu.kanade.tachiyomi.util.system.LocaleHelper.getLocalizedDisplayName(it) },
+                sourceId = sourceId,
+            )
+        },
         searchQuery = searchQuery,
         onChangeSearchQuery = onSearchQueryChange,
         onSearch = onClickSearch,

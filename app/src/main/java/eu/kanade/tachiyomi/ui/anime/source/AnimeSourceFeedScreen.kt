@@ -71,6 +71,8 @@ class AnimeSourceFeedScreen(private val sourceId: Long) : Screen() {
             topBar = { scrollBehavior ->
                 SourceFeedToolbar(
                     title = source?.name ?: sourceId.toString(),
+                    sourceId = sourceId,
+                    lang = source?.lang,
                     searchQuery = searchQuery,
                     onSearchQueryChange = { searchQuery = it },
                     scrollBehavior = scrollBehavior,
