@@ -17,8 +17,12 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import eu.kanade.tachiyomi.network.NetworkHelper
 import okhttp3.Headers
+import okhttp3.OkHttpClient
 import rx.Observable
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 /**
  * KMK: A Sumizuri JS / JSON anime source: browse, search with filters and catalogs, details, episodes (with their
@@ -35,6 +39,21 @@ class SumizuriAnimeSource(
     override val supportsLatest: Boolean = true
 
     val baseUrl: String = info.baseUrl.trimEnd('/')
+
+    /**
+     * Covers and video thumbnails load through this, like an Aniyomi extension's: the app's connection (shared
+     * cookies, Cloudflare handling) and the source's own headers, with the source's site as the Referer rather than
+     * the image host. A source's `headers` replace these.
+     */
+    val client: OkHttpClient get() = Injekt.get<NetworkHelper>().client
+
+    val headers: Headers by lazy {
+        Headers.Builder().apply {
+            set("User-Agent", Injekt.get<NetworkHelper>().defaultUserAgentProvider())
+            if (baseUrl.isNotBlank()) set("Referer", "$baseUrl/")
+            info.headers.forEach { (k, v) -> runCatching { set(k, v) } }
+        }.build()
+    }
 
     @Volatile
     private var described = false

@@ -67,6 +67,7 @@ fun AnimeCoverImage(
             .crossfade(true)
             .apply {
                 val headers = (source as? AnimeHttpSource)?.headers
+                    ?: (source as? eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource)?.headers
                 if (headers != null) {
                     httpHeaders(
                         NetworkHeaders.Builder().apply {
