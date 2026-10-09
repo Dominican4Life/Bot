@@ -157,11 +157,11 @@ class PlayerPreferences(
     )
     fun portraitBottomControls() = preferenceStore.getString(
         "pref_portrait_bottom_controls",
-        "Episodes,Cast,ScreenRotation,AudioTracks,SubtitleTracks,CurrentChapter,PlaybackSpeed,VideoZoom,SkipIntro,AspectRatio,PictureInPicture,LockControls,MoreOptions",
+        "Episodes,ScreenRotation,AudioTracks,SubtitleTracks,CurrentChapter,PlaybackSpeed,VideoZoom,SkipIntro,AspectRatio,PictureInPicture,LockControls,MoreOptions",
     )
 
-    /** KMK: puts the new Episodes and Cast buttons in layouts saved before they existed (once) */
-    fun addEpisodesAndCastButtons() {
+    /** KMK: puts the new Episodes button in layouts saved before it existed (once) */
+    fun addEpisodesButton() {
         val done = preferenceStore.getBoolean("kmk_player_episodes_cast_buttons", false)
         if (done.get()) return
         fun addTo(pref: tachiyomi.core.common.preference.Preference<String>, name: String) {
@@ -170,8 +170,6 @@ class PlayerPreferences(
         }
         addTo(bottomLeftControls(), "Episodes")
         addTo(portraitBottomControls(), "Episodes")
-        addTo(portraitBottomControls(), "Cast")
-        addTo(topRightControls(), "Cast")
         done.set(true)
     }
 }

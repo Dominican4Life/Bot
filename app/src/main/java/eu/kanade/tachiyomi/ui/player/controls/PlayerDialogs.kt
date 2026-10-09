@@ -23,20 +23,8 @@ fun PlayerDialogs(
 ) {
     when (dialogShown) {
         Dialogs.None -> {}
-        Dialogs.EpisodeList -> {
-            // KMK: a panel beside the video, like Sumizuri's
-            eu.kanade.tachiyomi.ui.player.controls.components.dialogs.EpisodesSidePanel(
-                currentEpisodeIndex = currentEpisodeIndex,
-                episodeList = episodeList,
-                dateRelativeTime = dateRelativeTime,
-                dateFormat = dateFormat,
-                onBookmarkClicked = onBookmarkClicked,
-                onEpisodeClicked = onEpisodeClicked,
-                onDismissRequest = onDismissRequest,
-            )
-        }
-        // Shown by the player controls, which have the player
-        Dialogs.Cast -> {}
+        // KMK: shown by the player controls as a panel beside the video
+        Dialogs.EpisodeList -> {}
         is Dialogs.IntegerPicker -> {
             IntegerPickerDialog(
                 defaultValue = dialogShown.defaultValue,

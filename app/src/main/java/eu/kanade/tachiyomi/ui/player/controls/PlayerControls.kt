@@ -17,28 +17,32 @@
 
 package eu.kanade.tachiyomi.ui.player.controls
 
+import android.content.res.Configuration
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Lock
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.LocalRippleConfiguration
 import androidx.compose.material3.MaterialTheme
@@ -48,52 +52,48 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import eu.kanade.tachiyomi.ui.player.VideoTrack
-import kotlinx.collections.immutable.persistentListOf
-import kotlinx.collections.immutable.toImmutableList
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.constraintlayout.compose.ConstraintLayout
 import androidx.constraintlayout.compose.Dimension
-import eu.kanade.presentation.more.settings.screen.player.custombutton.getButtons
 import eu.kanade.presentation.theme.playerRippleConfiguration
 import eu.kanade.tachiyomi.ui.player.Dialogs
 import eu.kanade.tachiyomi.ui.player.Panels
 import eu.kanade.tachiyomi.ui.player.PlayerActivity
 import eu.kanade.tachiyomi.ui.player.PlayerUpdates
 import eu.kanade.tachiyomi.ui.player.PlayerViewModel
-import eu.kanade.tachiyomi.ui.player.execute
-import eu.kanade.tachiyomi.ui.player.executeLongPress
-import eu.kanade.tachiyomi.ui.player.controls.components.DoubleTapToSeekOvals
 import eu.kanade.tachiyomi.ui.player.Sheets
-import eu.kanade.tachiyomi.ui.player.VideoAspect
+import eu.kanade.tachiyomi.ui.player.VideoTrack
 import eu.kanade.tachiyomi.ui.player.controls.components.BrightnessOverlay
 import eu.kanade.tachiyomi.ui.player.controls.components.BrightnessSlider
-import eu.kanade.tachiyomi.ui.player.controls.components.ControlsButton
-import eu.kanade.tachiyomi.ui.player.controls.components.DoubleSpeedPlayerUpdate
+import eu.kanade.tachiyomi.ui.player.controls.components.DoubleTapToSeekOvals
 import eu.kanade.tachiyomi.ui.player.controls.components.FilledControlsButton
 import eu.kanade.tachiyomi.ui.player.controls.components.SeekbarWithTimers
-import eu.kanade.tachiyomi.ui.player.controls.components.videoTimerWidth
-import eu.kanade.tachiyomi.ui.player.controls.components.ThumbnailPreview
 import eu.kanade.tachiyomi.ui.player.controls.components.TextPlayerUpdate
+import eu.kanade.tachiyomi.ui.player.controls.components.ThumbnailPreview
 import eu.kanade.tachiyomi.ui.player.controls.components.VolumeSlider
 import eu.kanade.tachiyomi.ui.player.controls.components.sheets.toFixed
-import eu.kanade.tachiyomi.ui.player.settings.AdvancedPlayerPreferences
+import eu.kanade.tachiyomi.ui.player.controls.components.videoTimerWidth
+import eu.kanade.tachiyomi.ui.player.execute
+import eu.kanade.tachiyomi.ui.player.executeLongPress
+import eu.kanade.tachiyomi.ui.player.parseButtons
 import eu.kanade.tachiyomi.ui.player.settings.AudioPreferences
 import eu.kanade.tachiyomi.ui.player.settings.GesturePreferences
 import eu.kanade.tachiyomi.ui.player.settings.PlayerPreferences
 import eu.kanade.tachiyomi.ui.player.settings.SubtitlePreferences
-import `is`.xyz.mpv.MPV
-import kotlinx.collections.immutable.toImmutableList
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toPersistentList
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.update
@@ -103,17 +103,6 @@ import tachiyomi.core.common.preference.plusAssign
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalDensity
-import android.content.res.Configuration
-import eu.kanade.tachiyomi.ui.player.PlayerButton
-import eu.kanade.tachiyomi.ui.player.parseButtons
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
@@ -902,14 +891,20 @@ fun PlayerControls(
             onDismissRequest = { viewModel.showDialog(Dialogs.None) },
         )
 
-        // KMK: Cast to a device
-        if (dialog == Dialogs.Cast) {
-            eu.kanade.tachiyomi.ui.player.controls.components.dialogs.CastSidePanel(
+        // KMK: the episode list, as a panel beside the video
+        if (dialog == Dialogs.EpisodeList) {
+            eu.kanade.tachiyomi.ui.player.controls.components.dialogs.EpisodesSidePanel(
                 viewModel = viewModel,
+                episodeList = playlist,
+                currentEpisodeIndex = viewModel.getCurrentEpisodeIndex(),
+                onEpisodeClicked = {
+                    viewModel.showDialog(Dialogs.None)
+                    activity.changeEpisode(it)
+                },
                 onDismissRequest = { viewModel.showDialog(Dialogs.None) },
             )
         }
-        LaunchedEffect(Unit) { playerPreferences.addEpisodesAndCastButtons() }
+        LaunchedEffect(Unit) { playerPreferences.addEpisodesButton() }
 
         BrightnessOverlay(
             brightness = currentBrightness,

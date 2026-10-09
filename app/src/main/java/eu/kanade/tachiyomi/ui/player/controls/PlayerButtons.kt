@@ -25,11 +25,9 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AspectRatio
@@ -52,11 +50,9 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.BorderStroke
 import eu.kanade.tachiyomi.ui.player.Panels
 import eu.kanade.tachiyomi.ui.player.PlayerActivity
 import eu.kanade.tachiyomi.ui.player.PlayerButton
-import eu.kanade.tachiyomi.ui.player.Dialogs
 import eu.kanade.tachiyomi.ui.player.PlayerViewModel
 import eu.kanade.tachiyomi.ui.player.Sheets
 import eu.kanade.tachiyomi.ui.player.VideoAspect
@@ -65,7 +61,6 @@ import eu.kanade.tachiyomi.ui.player.controls.components.ControlsButton
 import eu.kanade.tachiyomi.ui.player.controls.components.CurrentChapter
 import eu.kanade.tachiyomi.ui.player.getIcon
 import eu.kanade.tachiyomi.ui.player.controls.components.sheets.toFixed
-import tachiyomi.i18n.MR
 import tachiyomi.i18n.ank.AMR
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
@@ -129,14 +124,9 @@ fun RenderPlayerButton(
                     .size(width = 48.dp, height = 24.dp),
             )
         }
-        // KMK: Cast to a device (Google Cast), and the episode list, as panels beside the video
-        PlayerButton.Cast -> {
-            ControlsButton(
-                icon = button.getIcon(),
-                onClick = { viewModel.showDialog(Dialogs.Cast) },
-                horizontalSpacing = MaterialTheme.padding.mediumSmall,
-            )
-        }
+        // KMK: casting isn't merged yet
+        PlayerButton.Cast -> {}
+        // KMK: the episode list, as a panel beside the video
         PlayerButton.Episodes -> {
             ControlsButton(
                 icon = button.getIcon(),

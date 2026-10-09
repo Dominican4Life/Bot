@@ -2268,6 +2268,15 @@ class PlayerViewModel @JvmOverloads constructor(
         }
     }
 
+    // KMK -->
+    /** Marks an episode watched or unwatched, from the episodes panel */
+    fun setEpisodeSeen(episodeId: Long?, seen: Boolean) {
+        viewModelScope.launchNonCancellable {
+            animeRepository.updateEpisode(id = episodeId!!, seen = seen)
+        }
+    }
+    // KMK <--
+
     /**
      * Fillermarks the currently active episode.
      */

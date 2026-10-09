@@ -325,6 +325,3 @@
 -keep class com.dokar.quickjs.** { *; }
 -keep interface com.dokar.quickjs.** { *; }
 -keep class kotlin.UByteArray { *; }
-
-# KMK: named in the manifest for Google Cast
--keep class eu.kanade.tachiyomi.ui.player.cast.CastOptionsProvider { *; }

@@ -302,9 +302,6 @@ dependencies {
 
     // HTML parser
     implementation(libs.jsoup)
-    // KMK: casting the player's video to a Google Cast device (TV, Chromecast)
-    implementation(libs.play.services.cast.framework)
-    implementation(libs.androidx.mediarouter)
     // KMK: Sumizuri-compatible JS / JSON sources (see unpackQuickjsKt below)
     quickjsKt("${libs.quickjs.kt.get()}@aar")
     implementation(files(quickjsKtDir.map { it.file("jar/classes.jar") }).builtBy(unpackQuickjsKt))
