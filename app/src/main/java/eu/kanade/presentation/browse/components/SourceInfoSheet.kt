@@ -85,7 +85,7 @@ fun clearSourceSiteData(urls: List<String>): Int {
             val parsed = url.toHttpUrl()
             WebStorage.getInstance().deleteOrigin("${parsed.scheme}://${parsed.host}")
         } catch (e: Exception) {
-            logcat(LogPriority.ERROR, e) { "Failed to clear site data for $url" }
+            network.logcat(LogPriority.ERROR, e) { "Failed to clear site data for $url" }
         }
     }
     return cleared
