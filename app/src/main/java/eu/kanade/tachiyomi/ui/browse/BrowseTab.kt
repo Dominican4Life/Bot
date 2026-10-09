@@ -127,15 +127,18 @@ data object BrowseTab : Tab {
         val browseAnimePref = remember { Injekt.get<SourcePreferences>().browseShowAnime() }
         val browseAnime by browseAnimePref.collectAsState()
 
+        val switchTitle = stringResource(KMR.strings.library_switch_type)
+        val switchTint = MaterialTheme.colorScheme.primary
+
         fun TabContent.withAnimeSwitch(anime: @Composable (PaddingValues) -> Unit): TabContent {
             val mangaContent = content
             return copy(
                 actions = (
                     listOf(
                         AppBar.Action(
-                            title = stringResource(KMR.strings.library_switch_type),
+                            title = switchTitle,
                             icon = if (browseAnime) Icons.Outlined.Movie else Icons.AutoMirrored.Outlined.MenuBook,
-                            iconTint = MaterialTheme.colorScheme.primary,
+                            iconTint = switchTint,
                             onClick = { browseAnimePref.set(!browseAnime) },
                         ),
                     ) + actions
