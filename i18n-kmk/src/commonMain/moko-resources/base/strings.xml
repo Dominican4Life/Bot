@@ -351,4 +351,26 @@
     <string name="badge_pinned">Pin button</string>
     <string name="badge_latest">Latest button</string>
     <string name="badge_corner_note">A badge can only be in one corner. Picking it here takes it out of the others. Badges in no corner are hidden.</string>
+    <string name="label_suggestions">Suggestions</string>
+    <string name="suggestions_enable">Enable suggestions</string>
+    <string name="suggestions_wifi">Only on Wi-Fi</string>
+    <string name="suggestions_wifi_summary">Do not update suggestions using metered network connections</string>
+    <string name="suggestions_disabled_sources">Include disabled sources</string>
+    <string name="suggestions_disabled_sources_summary">Show suggestions from all content sources, including disabled ones</string>
+    <string name="suggestions_notifications">Enable notifications</string>
+    <string name="suggestions_notifications_summary">Sometimes show notifications with suggested manga</string>
+    <string name="suggestions_exclude_genres">Exclude genres</string>
+    <string name="suggestions_exclude_genres_summary">Specify genres that you do not want to see in the suggestions (comma separated)</string>
+    <string name="suggestions_preferred_genres">Preferred genres</string>
+    <string name="suggestions_preferred_genres_summary">Specify genres that you want to see prioritized in the suggestions (comma separated)</string>
+    <string name="suggestions_preferred_sources">Preferred sources</string>
+    <string name="suggestions_preferred_sources_summary">Prioritize suggestions from selected sources</string>
+    <string name="suggestions_excluded_sources">Excluded sources</string>
+    <string name="suggestions_excluded_sources_summary">Do not fetch suggestions from selected sources</string>
+    <string name="suggestions_local_note">All data is only analyzed locally on this device and never sent anywhere.</string>
+    <string name="suggestions_disabled">Suggestions are off. Turn them on to get manga picked from what you read.</string>
+    <string name="suggestions_turn_on">Turn on suggestions</string>
+    <string name="suggestions_finding">Finding manga you may like…</string>
+    <string name="suggestions_empty">No suggestions yet. Add some manga to your library, then refresh.</string>
+    <string name="suggestions_notification_title">You may like this</string>
 </resources>

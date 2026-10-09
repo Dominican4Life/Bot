@@ -519,6 +519,8 @@ class MainActivity : BaseActivity() {
                     if (!LibraryUpdateJob.isPeriodicUpdateScheduled(context)) {
                         LibraryUpdateJob.setupTask(context)
                     }
+                    // KMK: suggestions refresh every few hours
+                    eu.kanade.tachiyomi.data.suggestions.SuggestionsJob.setupTask(context)
                 } catch (e: Exception) {
                     logcat(LogPriority.ERROR, e)
                     withContext(Dispatchers.Main) {

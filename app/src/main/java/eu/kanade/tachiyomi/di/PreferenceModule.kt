@@ -77,6 +77,9 @@ class PreferenceModule(val app: Application) : InjektModule {
         addSingletonFactory {
             UiPreferences(get())
         }
+        // KMK -->
+        addSingletonFactory { eu.kanade.domain.suggestions.SuggestionsPreferences(get()) }
+        // KMK <--
         addSingletonFactory {
             BasePreferences(app, get())
         }

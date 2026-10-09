@@ -80,6 +80,9 @@ object HomeScreen : Screen() {
         UpdatesTab,
         HistoryTab,
         BrowseTab,
+        // KMK -->
+        eu.kanade.tachiyomi.ui.suggestions.SuggestionsTab,
+        // KMK <--
         MoreTab,
     )
 
