@@ -60,7 +60,8 @@ object HlsRelay {
     }
 
     private fun relayUrl(id: String, url: String, playlist: Boolean): String =
-        "http://127.0.0.1:${port()}/${if (playlist) "p" else "s"}/$id?u=${Uri.encode(url)}"
+        // Ends in .m3u8 / .ts: newer FFmpeg checks a piece's extension, and a host's ".png" would be refused
+        "http://127.0.0.1:${port()}/${if (playlist) "p" else "s"}/$id?u=${Uri.encode(url)}&x=${if (playlist) "list.m3u8" else "piece.ts"}"
 
     private fun serve(client: Socket) {
         client.use { socket ->
