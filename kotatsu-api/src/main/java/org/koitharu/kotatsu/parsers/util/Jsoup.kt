@@ -190,8 +190,7 @@ public fun Element.requireSrc(): String = parseNotNull(src()) {
 	"Image src not found"
 }
 
-// KMK: the bundled Tsuki copy of CSSBackground hides its parser; plugins use their own copy of this file
-public fun Element.backgroundOrNull(): CSSBackground? = null
+public fun Element.backgroundOrNull(): CSSBackground? = CSSBackground.parse(this)
 
 public fun Element.metaValue(itemprop: String): String? = getElementsByAttributeValue("itemprop", itemprop)
 	.firstNotNullOfOrNull { element ->

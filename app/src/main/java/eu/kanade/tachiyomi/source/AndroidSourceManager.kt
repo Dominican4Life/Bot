@@ -72,7 +72,6 @@ class AndroidSourceManager(
     // SY <--
     // KMK -->
     private val getMergedReferencesById: GetMergedReferencesById by injectLazy()
-    private val jarExtensionManager: eu.kanade.tachiyomi.jarextension.JarExtensionManager by lazy { Injekt.get() }
     // KMK <--
 
     init {
@@ -86,12 +85,9 @@ class AndroidSourceManager(
                 .combine(
                     exhPreferences.isHentaiEnabled().changes(),
                 ) { (a, b), c -> Triple(a, b, c) }
-                // JAR (Kotatsu / Tsuki) parser sources join the manga sources
-                .combine(jarExtensionManager.sourcesFlow) { triple, jarSources -> triple to jarSources }
                 // KMK <--
                 // SY <--
-                .collectLatest { (triple, jarSources) ->
-                    val (extensions, enableExhentai/* KMK --> */, isHentaiEnabled/* KMK <-- */) = triple
+                .collectLatest { (extensions, enableExhentai/* KMK --> */, isHentaiEnabled/* KMK <-- */) ->
                     val mutableMap = ConcurrentHashMap<Long, Source>(
                         mapOf(
                             LocalSource.ID to LocalSource(
@@ -126,12 +122,6 @@ class AndroidSourceManager(
                             registerStubSource(StubSource.from(it))
                         }
                     }
-                    // KMK -->
-                    jarSources.forEach {
-                        mutableMap[it.id] = it
-                        registerStubSource(StubSource.from(it))
-                    }
-                    // KMK <--
                     sourcesMapFlow.value = mutableMap
                     _isInitialized.value = true
                 }

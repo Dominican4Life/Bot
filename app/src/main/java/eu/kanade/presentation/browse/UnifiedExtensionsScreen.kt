@@ -108,7 +108,6 @@ fun UnifiedExtensionsContent(
     onPackageCancel: (UnifiedPackage) -> Unit,
     onPackageRemove: (UnifiedPackage) -> Unit,
     onPackageDetails: (UnifiedPackage) -> Unit,
-    onImportJar: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     val tab = pagerState.currentPage
@@ -188,7 +187,6 @@ fun UnifiedExtensionsContent(
                     onCancel = onPackageCancel,
                     onRemove = onPackageRemove,
                     onDetails = onPackageDetails,
-                    onImportJar = onImportJar,
                 )
             }
         }
@@ -349,7 +347,7 @@ private fun EmptyState(text: String) {
 /** JAR and Cloudstream come later: say so instead of a bare empty list */
 @Composable
 private fun emptyText(kinds: Set<ExtensionKind>, default: String): String {
-    val pending = kinds.filter { it == ExtensionKind.CLOUDSTREAM }
+    val pending = kinds.filter { it == ExtensionKind.JAR || it == ExtensionKind.CLOUDSTREAM }
     return if (pending.isNotEmpty() && pending.size == kinds.size) {
         stringResource(KMR.strings.ext_kind_coming, pending.joinToString(" / ") { it.label })
     } else {
@@ -509,15 +507,6 @@ private fun RepoList(
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.padding(top = 2.dp),
                         )
-                        repo.error?.let {
-                            Text(
-                                text = it,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
                     }
                     IconButton(onClick = { onDelete(repo) }) {
                         Icon(Icons.Outlined.Delete, contentDescription = stringResource(MR.strings.action_delete))
@@ -540,20 +529,12 @@ private fun PackageList(
     onCancel: (UnifiedPackage) -> Unit,
     onRemove: (UnifiedPackage) -> Unit,
     onDetails: (UnifiedPackage) -> Unit,
-    onImportJar: () -> Unit,
 ) {
     LazyColumn(
         contentPadding = padding,
         verticalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier.fillMaxSize(),
     ) {
-        item(key = "import_jar") {
-            AssistChip(
-                onClick = onImportJar,
-                leadingIcon = { Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                label = { Text(stringResource(KMR.strings.ext_import_local_jar)) },
-            )
-        }
         if (updateCount > 0) {
             item(key = "update_all") {
                 ElevatedCard(
@@ -664,15 +645,6 @@ private fun PackageRow(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            item.error?.let {
-                Text(
-                    text = it,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
             }

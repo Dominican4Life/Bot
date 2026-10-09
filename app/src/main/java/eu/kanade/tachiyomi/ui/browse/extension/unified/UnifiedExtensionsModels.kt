@@ -68,10 +68,6 @@ data class UnifiedPackage(
     val manga: Extension? = null,
     val anime: AnimeExtension? = null,
     val animeOther: Extension? = null,
-    /** JAR package offered by a repo (install / update source) */
-    val jarAvailable: eu.kanade.tachiyomi.jarextension.JarExtensionManager.Available? = null,
-    /** Why an installed JAR failed to load */
-    val error: String? = null,
 )
 
 /** One source of an installed package */
@@ -101,7 +97,6 @@ data class UnifiedRepo(
     val packageCount: Int,
     val installedCount: Int,
     val enabled: Boolean,
-    val error: String? = null,
 )
 
 @Immutable

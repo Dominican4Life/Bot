@@ -1,8 +1,6 @@
 package eu.kanade.tachiyomi.ui.browse.extension.unified
 
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.FilterList
@@ -10,7 +8,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -41,7 +38,6 @@ import eu.kanade.tachiyomi.ui.browse.extension.details.ExtensionDetailsScreen
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreen
 import eu.kanade.tachiyomi.ui.browse.source.feed.SourceFeedScreen
 import eu.kanade.tachiyomi.util.system.isPackageInstalled
-import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.launch
 import tachiyomi.domain.source.interactor.GetRemoteManga
@@ -86,17 +82,6 @@ fun unifiedExtensionsTab(
 
             BackHandler(enabled = state.filters.query.isNotEmpty()) { screenModel.search("") }
 
-            // JAR import from storage, and messages from JAR installs
-            val importJar = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-                if (uri != null) screenModel.importJar(uri)
-            }
-            LaunchedEffect(state.message) {
-                state.message?.let {
-                    context.toast(it)
-                    screenModel.consumeMessage()
-                }
-            }
-
             fun openDetails(kind: ExtensionKind, pkgName: String) {
                 if (kind == ExtensionKind.ANIYOMI) {
                     navigator.push(AnimeExtensionDetailsScreen(pkgName))
@@ -128,13 +113,7 @@ fun unifiedExtensionsTab(
                         },
                     )
                 },
-                onSourceSettings = { source ->
-                    if (source.kind == ExtensionKind.JAR) {
-                        navigator.push(BrowseSourceScreen(source.id, GetRemoteManga.QUERY_POPULAR))
-                    } else {
-                        openDetails(source.kind, source.pkgName)
-                    }
-                },
+                onSourceSettings = { openDetails(it.kind, it.pkgName) },
                 onAddRepo = { mangaStores.showDialog(ExtensionStoreDialog.Create()) },
                 onRepoEnabled = screenModel::setRepoEnabled,
                 onRepoDelete = { deleteRepo = it },
@@ -151,15 +130,11 @@ fun unifiedExtensionsTab(
                 onPackageRemove = { item ->
                     if (context.isPackageInstalled(item.pkgName)) screenModel.uninstall(item) else removeItem = item
                 },
-                onImportJar = { importJar.launch(arrayOf("*/*")) },
                 onPackageDetails = { item ->
-                    when {
-                        item.kind == ExtensionKind.JAR -> item.error?.let { context.toast(it) }
-                        else -> when (item.state) {
+                    when (item.state) {
                         PackageState.UNTRUSTED -> trustItem = item
                         PackageState.AVAILABLE, PackageState.INSTALLING -> Unit
                         else -> openDetails(item.kind, item.pkgName)
-                        }
                     }
                 },
             )
@@ -201,11 +176,8 @@ fun unifiedExtensionsTab(
                 ExtensionStoreDeleteDialog(
                     onDismissRequest = { deleteRepo = null },
                     onDelete = {
-                        when (repo.kind) {
-                            ExtensionKind.JAR -> screenModel.removeJarRepo(repo.indexUrl)
-                            ExtensionKind.ANIYOMI -> animeStores.deleteRepo(repo.indexUrl)
-                            else -> mangaStores.deleteRepo(repo.indexUrl)
-                        }
+                        val stores = if (repo.kind == ExtensionKind.ANIYOMI) animeStores else mangaStores
+                        stores.deleteRepo(repo.indexUrl)
                         deleteRepo = null
                     },
                     storeName = repo.name,
@@ -217,10 +189,7 @@ fun unifiedExtensionsTab(
             when (val dialog = success?.dialog) {
                 is ExtensionStoreDialog.Create -> ExtensionStoreCreateDialog(
                     onDismissRequest = mangaStores::dismissDialog,
-                    onCreate = { url ->
-                        // A GitHub repository is a JAR repo; anything else goes to the APK repos
-                        if (screenModel.addJarRepoIfMatches(url)) mangaStores.dismissDialog() else mangaStores.createRepo(url)
-                    },
+                    onCreate = { mangaStores.createRepo(it) },
                     storeIndexUrls = state.allRepos.map { it.indexUrl }.toSet(),
                     processing = dialog.processing,
                     errorMessage = dialog.errorMessage,
