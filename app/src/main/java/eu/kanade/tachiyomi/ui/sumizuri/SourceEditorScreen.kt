@@ -34,6 +34,7 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Android
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteOutline
@@ -129,6 +130,7 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
         var showSaved by remember { mutableStateOf(false) }
         var confirmDelete by remember { mutableStateOf(false) }
         var showApkChoice by remember { mutableStateOf(false) }
+        var showAutoCode by remember { mutableStateOf(false) }
         var showInstalled by remember { mutableStateOf(false) }
         var query by rememberSaveable { mutableStateOf("") }
 
@@ -228,6 +230,9 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
                             KindTabs(json = state.json, onJson = model::setJson, modifier = Modifier.width(380.dp))
                             Spacer(Modifier.weight(0.65f))
                         }
+                        IconButton(onClick = { showAutoCode = true }) {
+                            Icon(Icons.Outlined.AutoAwesome, contentDescription = "Auto Code", tint = MaterialTheme.colorScheme.tertiary)
+                        }
                         IconButton(onClick = { model.runAll(query) }) {
                             Icon(Icons.Outlined.PlayArrow, contentDescription = "Run all", tint = MaterialTheme.colorScheme.primary)
                         }
@@ -325,6 +330,17 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
             }
         }
 
+        if (showAutoCode) {
+            AutoCodeDialog(
+                initialUrl = state.baseUrl,
+                json = state.json,
+                onGo = { url, kind ->
+                    showAutoCode = false
+                    model.autoCode(url, kind)
+                },
+                onDismiss = { showAutoCode = false },
+            )
+        }
         if (showApkChoice) {
             AlertDialog(
                 onDismissRequest = { showApkChoice = false },
@@ -569,6 +585,11 @@ private fun DetailsPanel(
             }
         }
         OutlinedButton(onClick = model::loadInfo) { Text("Read details from the code") }
+        Text(
+            "Auto Code (the ✦ button at the top) visits a site and writes the whole source for you.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -957,5 +978,59 @@ private fun InstalledExtensionsDialog(
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+/** Asks for the site to write a source for, and whether it's manga or anime */
+@Composable
+private fun AutoCodeDialog(
+    initialUrl: String,
+    json: Boolean,
+    onGo: (String, eu.kanade.tachiyomi.sumizuri.AutoCode.Kind) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var url by remember { mutableStateOf(initialUrl) }
+    var kind by remember { mutableStateOf(eu.kanade.tachiyomi.sumizuri.AutoCode.Kind.Auto) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Outlined.AutoAwesome, contentDescription = null) },
+        title = { Text("Auto Code") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Visits the site and writes a ${if (json) "JSON definition" else "JS source"} for it: its lists, " +
+                        "covers, descriptions, chapters or episodes, and pages or videos. Then it tests the source. " +
+                        "Start from the home page, or from a page that lists titles.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = { url = it },
+                    label = { Text("Site address") },
+                    placeholder = { Text("https://example.com") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    eu.kanade.tachiyomi.sumizuri.AutoCode.Kind.entries.forEach { k ->
+                        FilterChip(
+                            selected = kind == k,
+                            onClick = { kind = k },
+                            label = { Text(if (k == eu.kanade.tachiyomi.sumizuri.AutoCode.Kind.Auto) "Detect" else k.name) },
+                        )
+                    }
+                }
+                Text(
+                    "Sites behind a bot check: open the site once in WebView first. Sites that load everything from an " +
+                        "API may need finishing by hand.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onGo(url, kind) }, enabled = url.isNotBlank()) { Text("Write it") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }

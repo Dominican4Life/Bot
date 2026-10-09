@@ -11,6 +11,7 @@ import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.extension.util.ExtensionLoader
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.sumizuri.ApkImport
+import eu.kanade.tachiyomi.sumizuri.AutoCode
 import eu.kanade.tachiyomi.sumizuri.SumizuriManager
 import eu.kanade.tachiyomi.sumizuri.SumizuriPreferences
 import eu.kanade.tachiyomi.sumizuri.SumizuriRuntime
@@ -308,6 +309,55 @@ class SourceEditorScreenModel(
                 append(". Test it, adjust, then save")
             },
         )
+    }
+
+    // Auto Code
+
+    /** Visits [url], writes a source for it (JS or JSON, as the tab says) and tests it */
+    fun autoCode(url: String, kind: AutoCode.Kind) {
+        job?.cancel()
+        job = screenModelScope.launchIO {
+            val started = System.currentTimeMillis()
+            val lines = mutableListOf<String>()
+            mutableState.update { it.copy(running = "Auto Code", console = emptyList(), results = emptyList()) }
+            runCatching {
+                AutoCode.run(context, url, kind, state.value.json) { line ->
+                    lines += line
+                    AppLog.add('I', "autocode", line)
+                    mutableState.update { it.copy(running = "Auto Code: $line", console = it.console + "[auto] $line") }
+                }
+            }.onSuccess { r ->
+                closeRuntime()
+                val report = Result("Auto Code", true, System.currentTimeMillis() - started, text = lines.joinToString("\n"))
+                mutableState.update {
+                    State(
+                        key = if (it.saved) manager.newKey() else it.key,
+                        json = r.json,
+                        anime = r.anime,
+                        code = r.code,
+                        name = r.name,
+                        lang = r.lang,
+                        baseUrl = r.baseUrl,
+                        iconUrl = r.iconUrl,
+                        dirty = true,
+                        results = listOf(report),
+                        console = it.console,
+                        message = "Auto Code wrote a source for ${r.name}. Testing it now",
+                    )
+                }
+                runAll("")
+            }.onFailure { e ->
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                AppLog.add('W', "autocode", "Auto Code failed: $e")
+                val report = Result(
+                    "Auto Code",
+                    false,
+                    System.currentTimeMillis() - started,
+                    text = (lines + (e.message ?: e.toString())).joinToString("\n"),
+                )
+                mutableState.update { it.copy(running = null, results = listOf(report) + it.results) }
+            }
+        }
     }
 
     fun open(key: String) {

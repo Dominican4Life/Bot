@@ -47,12 +47,23 @@ internal object SumizuriRender {
 
         return withContext(Dispatchers.Main) {
             val loaded = CompletableDeferred<Unit>()
+            // Every address the page and its frames ask for: a player inside an iframe loads its stream there,
+            // where the page's own performance entries can't see it
+            val requested = java.util.Collections.synchronizedList(mutableListOf<String>())
             val webView = WebView(context).apply {
                 setDefaultSettings()
                 settings.userAgentString = userAgent
                 settings.blockNetworkImage = true
                 webViewClient = object : WebViewClient() {
                     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) = Unit
+
+                    override fun shouldInterceptRequest(
+                        view: WebView?,
+                        request: android.webkit.WebResourceRequest?,
+                    ): android.webkit.WebResourceResponse? {
+                        request?.url?.toString()?.let { if (requested.size < 3000) requested.add(it) }
+                        return null
+                    }
 
                     override fun onPageFinished(view: WebView?, url: String?) {
                         loaded.complete(Unit)
@@ -69,7 +80,7 @@ internal object SumizuriRender {
                     val state = webView.evalJson(probeScript(waitFor))
                     val complete = (state["complete"] as? JsonPrimitive)?.content == "true"
                     val hasSelector = (state["hasSelector"] as? JsonPrimitive)?.content == "true"
-                    val resources = state.strings("resources")
+                    val resources = state.strings("resources") + synchronized(requested) { requested.toList() }
                     val resourceReady = waitForResource == null || resources.any { waitForResource.containsMatchIn(it) }
                     if (complete && hasSelector && resourceReady) break
                     if (System.currentTimeMillis() - started >= timeout) {
@@ -106,7 +117,8 @@ internal object SumizuriRender {
                     "resources" to if (capture == null) {
                         emptyList()
                     } else {
-                        page.strings("resources").filter { capture.containsMatchIn(it) && seen.add(it) }
+                        (page.strings("resources") + synchronized(requested) { requested.toList() })
+                            .filter { capture.containsMatchIn(it) && seen.add(it) }
                     },
                     "result" to result,
                     "timedOut" to timedOut,
