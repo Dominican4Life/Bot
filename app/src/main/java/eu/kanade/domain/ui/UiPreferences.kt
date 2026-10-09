@@ -87,7 +87,7 @@ class UiPreferences(
 
     fun previewsRowCount() = preferenceStore.getInt("pref_previews_row_count", 4)
 
-    fun useNewSourceNavigation() = preferenceStore.getBoolean("use_new_source_navigation", true)
+    fun useNewSourceNavigation() = preferenceStore.getBoolean("use_new_source_navigation", false)
 
     fun bottomBarLabels() = preferenceStore.getBoolean("pref_show_bottom_bar_labels", true)
 
