@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.sumizuri
 
+import android.app.Application
 import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.PreferenceScreen
 import eu.kanade.tachiyomi.source.model.Filter
@@ -14,6 +15,8 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.Headers
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 /**
  * KMK: A Sumizuri JS / JSON manga source as a regular source: Browse (popular, latest, search with its filters and
@@ -39,6 +42,8 @@ class SumizuriMangaSource(
     @Volatile
     private var described = false
 
+    private val webUrls by lazy { SumizuriWebUrls(Injekt.get<Application>(), id, baseUrl) }
+
     private suspend fun runtime(): SumizuriRuntime = manager.runtime(info).also {
         if (!described) {
             described = true
@@ -48,6 +53,7 @@ class SumizuriMangaSource(
 
     private suspend fun listing(method: String, vararg args: Any?): MangasPage {
         val list = SumizuriMapping.list(runtime().call(method, *args))
+        webUrls.remember(list)
         val mangas = list.mapNotNull { SumizuriMapping.toSManga(it) }
         return MangasPage(mangas, hasNextPage = mangas.isNotEmpty())
     }
@@ -71,7 +77,10 @@ class SumizuriMangaSource(
         val rt = runtime()
         val details = if (fetchDetails) {
             val fresh = if (info.hasDetails) {
-                (rt.call("getDetails", manga.url) as? JsonObject)?.let { SumizuriMapping.toSManga(it, manga) }
+                (rt.call("getDetails", manga.url) as? JsonObject)?.let {
+                    webUrls.remember(listOf(JsonObject(it + ("url" to JsonPrimitive(manga.url)))))
+                    SumizuriMapping.toSManga(it, manga)
+                }
             } else {
                 null
             }
@@ -80,7 +89,9 @@ class SumizuriMangaSource(
             manga
         }
         val newChapters = if (fetchChapters) {
-            SumizuriMapping.toSChapters(SumizuriMapping.list(rt.call("getChapterList", manga.url)))
+            SumizuriMapping.list(rt.call("getChapterList", manga.url))
+                .also(webUrls::remember)
+                .let(SumizuriMapping::toSChapters)
         } else {
             chapters
         }
@@ -97,16 +108,9 @@ class SumizuriMangaSource(
 
     override suspend fun getImageUrl(page: Page): String = page.imageUrl.orEmpty()
 
-    override fun getMangaUrl(manga: SManga): String = absolute(manga.url)
+    override fun getMangaUrl(manga: SManga): String = webUrls.pageFor(manga.url)
 
-    override fun getChapterUrl(chapter: SChapter): String = absolute(chapter.url)
-
-    private fun absolute(url: String): String = when {
-        url.startsWith("http://") || url.startsWith("https://") -> url
-        url.startsWith("//") -> "https:$url"
-        url.startsWith("/") -> "$baseUrl$url"
-        else -> "$baseUrl/$url"
-    }
+    override fun getChapterUrl(chapter: SChapter): String = webUrls.pageFor(chapter.url)
 
     // Filters and catalogs
 

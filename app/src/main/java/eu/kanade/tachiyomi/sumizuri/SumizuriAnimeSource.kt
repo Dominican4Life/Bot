@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.sumizuri
 
+import android.app.Application
 import eu.kanade.tachiyomi.animesource.AnimeCatalogueSource
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.PreferenceScreen
@@ -13,11 +14,11 @@ import eu.kanade.tachiyomi.animesource.model.TimeStamp
 import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.model.VideoType
+import eu.kanade.tachiyomi.network.NetworkHelper
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import eu.kanade.tachiyomi.network.NetworkHelper
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import rx.Observable
@@ -58,6 +59,13 @@ class SumizuriAnimeSource(
     @Volatile
     private var described = false
 
+    private val webUrls by lazy { SumizuriWebUrls(Injekt.get<Application>(), id, baseUrl) }
+
+    /** The title's page on the site, for WebView and sharing */
+    fun getAnimeUrl(anime: SAnime): String = webUrls.pageFor(anime.url)
+
+    fun getEpisodeUrl(episode: SEpisode): String = webUrls.pageFor(episode.url)
+
     private suspend fun runtime(): SumizuriRuntime = manager.runtime(info).also {
         if (!described) {
             described = true
@@ -66,7 +74,9 @@ class SumizuriAnimeSource(
     }
 
     private suspend fun listing(method: String, vararg args: Any?): AnimesPage {
-        val animes = SumizuriMapping.list(runtime().call(method, *args)).mapNotNull { SumizuriMapping.toSAnime(it) }
+        val animes = SumizuriMapping.list(runtime().call(method, *args))
+            .also(webUrls::remember)
+            .mapNotNull { SumizuriMapping.toSAnime(it) }
         return AnimesPage(animes, hasNextPage = animes.isNotEmpty())
     }
 
@@ -82,7 +92,10 @@ class SumizuriAnimeSource(
 
     override suspend fun getAnimeDetails(anime: SAnime): SAnime {
         val fresh = if (info.hasDetails) {
-            (runtime().call("getDetails", anime.url) as? JsonObject)?.let { SumizuriMapping.toSAnime(it, anime) }
+            (runtime().call("getDetails", anime.url) as? JsonObject)?.let {
+                webUrls.remember(listOf(JsonObject(it + ("url" to JsonPrimitive(anime.url)))))
+                SumizuriMapping.toSAnime(it, anime)
+            }
         } else {
             null
         }
@@ -90,7 +103,9 @@ class SumizuriAnimeSource(
     }
 
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> =
-        SumizuriMapping.toSEpisodes(SumizuriMapping.list(runtime().call("getChapterList", anime.url)))
+        SumizuriMapping.list(runtime().call("getChapterList", anime.url))
+            .also(webUrls::remember)
+            .let(SumizuriMapping::toSEpisodes)
 
     override suspend fun getSeasonList(anime: SAnime): List<SAnime> = emptyList()
 

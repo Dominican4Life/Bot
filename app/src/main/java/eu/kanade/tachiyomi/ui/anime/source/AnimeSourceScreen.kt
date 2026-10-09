@@ -182,6 +182,8 @@ class AnimeSourceScreen(
                             },
                             onWebViewClick = {
                                 (source as? AnimeHttpSource)?.let { openWebView(it.baseUrl, it.name) }
+                                    ?: (source as? eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource)
+                                        ?.let { openWebView(it.baseUrl, it.name) }
                             },
                             onHelpClick = {},
                             onToggleIncognito = {},
@@ -302,6 +304,8 @@ class AnimeSourceScreen(
                                     val url = runCatching { httpSource.getAnimeUrl(anime.toSAnime()) }
                                         .getOrElse { httpSource.baseUrl + anime.url }
                                     openWebView(url, anime.title)
+                                } ?: (source as? eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource)?.let { js ->
+                                    openWebView(js.getAnimeUrl(anime.toSAnime()), anime.title)
                                 }
                             },
                             onOpenDetails = { navigator.push(AnimeScreen(it.id)) },

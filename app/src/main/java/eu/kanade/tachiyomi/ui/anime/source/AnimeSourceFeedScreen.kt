@@ -80,6 +80,8 @@ class AnimeSourceFeedScreen(private val sourceId: Long) : Screen() {
                     },
                     onWebViewClick = (source as? AnimeHttpSource)?.let { http ->
                         { navigator.push(WebViewScreen(http.baseUrl, http.name)) }
+                    } ?: (source as? eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource)?.let { js ->
+                        { navigator.push(WebViewScreen(js.baseUrl, js.name)) }
                     },
                     onToggleIncognito = {},
                     onSourceSettingClick = {
