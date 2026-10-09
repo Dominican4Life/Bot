@@ -902,6 +902,15 @@ fun PlayerControls(
             onDismissRequest = { viewModel.showDialog(Dialogs.None) },
         )
 
+        // KMK: Cast to a device
+        if (dialog == Dialogs.Cast) {
+            eu.kanade.tachiyomi.ui.player.controls.components.dialogs.CastSidePanel(
+                viewModel = viewModel,
+                onDismissRequest = { viewModel.showDialog(Dialogs.None) },
+            )
+        }
+        LaunchedEffect(Unit) { playerPreferences.addEpisodesAndCastButtons() }
+
         BrightnessOverlay(
             brightness = currentBrightness,
         )

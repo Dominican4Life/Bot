@@ -18,6 +18,7 @@
 package eu.kanade.tachiyomi.ui.player
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.FormatListBulleted
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.AspectRatio
 import androidx.compose.material.icons.outlined.Audiotrack
@@ -179,6 +180,9 @@ enum class Panels {
 sealed class Dialogs {
     data object None : Dialogs()
     data object EpisodeList : Dialogs()
+
+    // KMK: cast the video to a Google Cast device
+    data object Cast : Dialogs()
     data class IntegerPicker(
         val defaultValue: Int,
         val minValue: Int,
@@ -358,6 +362,8 @@ enum class PlayerButton(
 ) {
     BackArrow(AMR.strings.player_button_back_arrow),
     VideoTitle(AMR.strings.player_button_video_title),
+    // KMK: the episode list, as a panel beside the video
+    Episodes(AMR.strings.episodes),
     AutoPlay(AMR.strings.player_button_autoplay),
     Cast(AMR.strings.player_button_cast),
     SubtitleTracks(AMR.strings.player_button_subtitle_tracks),
@@ -378,6 +384,7 @@ enum class PlayerButton(
 fun PlayerButton.getIcon(): ImageVector = when (this) {
     PlayerButton.BackArrow -> Icons.AutoMirrored.Outlined.ArrowBack
     PlayerButton.VideoTitle -> Icons.Outlined.Title
+    PlayerButton.Episodes -> Icons.AutoMirrored.Outlined.FormatListBulleted
     PlayerButton.AutoPlay -> Icons.Outlined.PlayCircle
     PlayerButton.Cast -> Icons.Outlined.Cast
     PlayerButton.SubtitleTracks -> Icons.Outlined.Subtitles

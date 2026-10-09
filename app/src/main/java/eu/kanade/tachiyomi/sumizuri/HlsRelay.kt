@@ -32,6 +32,9 @@ object HlsRelay {
 
     /** The streams handed out: id -> headers to fetch them with */
     private val sessions = ConcurrentHashMap<String, Headers>()
+
+    /** The stream each relayed address stands for, for casting (a TV can't reach this device's relay) */
+    private val originals = ConcurrentHashMap<String, String>()
     private val nextId = AtomicInteger(1)
 
     @Volatile
@@ -55,8 +58,15 @@ object HlsRelay {
     fun wrap(url: String, headers: Headers): String {
         val id = nextId.getAndIncrement().toString()
         sessions[id] = headers
-        if (sessions.size > 500) sessions.keys.take(100).forEach { sessions.remove(it) }
+        originals[id] = url
+        if (sessions.size > 500) sessions.keys.take(100).forEach { sessions.remove(it); originals.remove(it) }
         return relayUrl(id, url, playlist = true)
+    }
+
+    /** The stream behind a relayed address, or the address itself when it isn't one */
+    fun original(url: String): String {
+        val match = Regex("""^http://127\.0\.0\.1:\d+/p/(\d+)\?""").find(url) ?: return url
+        return originals[match.groupValues[1]] ?: url
     }
 
     private fun relayUrl(id: String, url: String, playlist: Boolean): String =

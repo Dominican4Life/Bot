@@ -3,7 +3,6 @@ package eu.kanade.tachiyomi.ui.player.controls
 import androidx.compose.runtime.Composable
 import eu.kanade.tachiyomi.ui.player.compat.Episode
 import eu.kanade.tachiyomi.ui.player.Dialogs
-import eu.kanade.tachiyomi.ui.player.controls.components.dialogs.EpisodeListDialog
 import eu.kanade.tachiyomi.ui.player.controls.components.dialogs.IntegerPickerDialog
 import java.time.format.DateTimeFormatter
 
@@ -25,8 +24,8 @@ fun PlayerDialogs(
     when (dialogShown) {
         Dialogs.None -> {}
         Dialogs.EpisodeList -> {
-            EpisodeListDialog(
-                displayMode = episodeDisplayMode,
+            // KMK: a panel beside the video, like Sumizuri's
+            eu.kanade.tachiyomi.ui.player.controls.components.dialogs.EpisodesSidePanel(
                 currentEpisodeIndex = currentEpisodeIndex,
                 episodeList = episodeList,
                 dateRelativeTime = dateRelativeTime,
@@ -36,6 +35,8 @@ fun PlayerDialogs(
                 onDismissRequest = onDismissRequest,
             )
         }
+        // Shown by the player controls, which have the player
+        Dialogs.Cast -> {}
         is Dialogs.IntegerPicker -> {
             IntegerPickerDialog(
                 defaultValue = dialogShown.defaultValue,

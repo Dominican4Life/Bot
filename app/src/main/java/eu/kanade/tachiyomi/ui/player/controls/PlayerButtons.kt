@@ -56,6 +56,7 @@ import androidx.compose.foundation.BorderStroke
 import eu.kanade.tachiyomi.ui.player.Panels
 import eu.kanade.tachiyomi.ui.player.PlayerActivity
 import eu.kanade.tachiyomi.ui.player.PlayerButton
+import eu.kanade.tachiyomi.ui.player.Dialogs
 import eu.kanade.tachiyomi.ui.player.PlayerViewModel
 import eu.kanade.tachiyomi.ui.player.Sheets
 import eu.kanade.tachiyomi.ui.player.VideoAspect
@@ -128,8 +129,21 @@ fun RenderPlayerButton(
                     .size(width = 48.dp, height = 24.dp),
             )
         }
-        // KMK: casting isn't merged yet
-        PlayerButton.Cast -> {}
+        // KMK: Cast to a device (Google Cast), and the episode list, as panels beside the video
+        PlayerButton.Cast -> {
+            ControlsButton(
+                icon = button.getIcon(),
+                onClick = { viewModel.showDialog(Dialogs.Cast) },
+                horizontalSpacing = MaterialTheme.padding.mediumSmall,
+            )
+        }
+        PlayerButton.Episodes -> {
+            ControlsButton(
+                icon = button.getIcon(),
+                onClick = { viewModel.showEpisodeListDialog() },
+                horizontalSpacing = MaterialTheme.padding.mediumSmall,
+            )
+        }
         PlayerButton.SubtitleTracks -> {
             ControlsButton(
                 icon = button.getIcon(),
