@@ -44,6 +44,16 @@ jobs:
           mkdir -p ~/.android
           cp .github/custom-debug.keystore ~/.android/debug.keystore
 
+      # Private repos get a smaller runner (7 GB memory); add swap so the build isn't killed
+      - name: Add swap space
+        run: |
+          sudo swapoff -a || true
+          sudo fallocate -l 12G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          free -h
+
       - name: Build app
         shell: bash
         run: |
@@ -51,7 +61,7 @@ jobs:
           # JitPack downloads are flaky, so retry a few times before giving up
           extra=""
           for attempt in 1 2 3 4; do
-            if ./gradlew assemblePreview --stacktrace $extra 2>&1 | tee build.log; then exit 0; fi
+            if ./gradlew assemblePreview --stacktrace --max-workers=2 -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" -Pkotlin.compiler.execution.strategy=in-process $extra 2>&1 | tee build.log; then exit 0; fi
             # Gradle remembers failed downloads, so force it to try again
             extra="--refresh-dependencies"
             if ! grep -q "Could not resolve\|Could not find\|Could not GET\|Read timed out" build.log; then exit 1; fi
