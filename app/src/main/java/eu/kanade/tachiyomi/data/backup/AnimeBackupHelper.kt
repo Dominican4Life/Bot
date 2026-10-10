@@ -23,9 +23,12 @@ class AnimeBackupHelper(
     private val database: Database = Injekt.get(),
 ) {
 
-    suspend fun createAnime(): List<BackupAnime> {
-        val history = repository.getAllHistory()
-        return repository.getFavorites().map { anime ->
+    suspend fun createAnime(): List<BackupAnime> = createAnime(repository.getFavorites(), includeHistory = true)
+
+    /** KMK: [animes] with their episodes, and their watch history when [includeHistory] (device sync picks these) */
+    suspend fun createAnime(animes: List<Anime>, includeHistory: Boolean): List<BackupAnime> {
+        val history = if (includeHistory) repository.getAllHistory() else emptyMap()
+        return animes.map { anime ->
             val episodes = repository.getEpisodes(anime.id)
             BackupAnime(
                 source = anime.source,

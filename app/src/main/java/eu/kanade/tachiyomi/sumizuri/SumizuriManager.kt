@@ -145,6 +145,36 @@ class SumizuriManager(private val context: Application) {
         }
     }
 
+    // KMK --> device sync
+
+    /** Saved sources (all, or those with [keys]) as (details as JSON, code), to send to a paired device */
+    fun exportSources(keys: Set<String>? = null): List<Pair<String, String>> = _saved.value
+        .filter { keys == null || it.key in keys }
+        .mapNotNull { info ->
+            code(info.key)?.let { sumizuriJson.encodeToString(SumizuriSourceInfo.serializer(), info) to it }
+        }
+
+    /**
+     * Adds a source received from a paired device, as it was saved there (it isn't run). Returns false when this
+     * device already has the same or a newer copy.
+     */
+    fun importSource(infoJson: String, code: String): Boolean {
+        val info = sumizuriJson.decodeFromString(SumizuriSourceInfo.serializer(), infoJson)
+        val existing = get(info.key)
+        if (existing != null && existing.updatedAt >= info.updatedAt) return false
+        val folder = dir(info.key).apply { mkdirs() }
+        File(folder, codeFile(!info.json)).delete()
+        File(folder, codeFile(info.json)).writeText(code)
+        File(folder, META).writeText(sumizuriJson.encodeToString(SumizuriSourceInfo.serializer(), info))
+        invalidate(info.key)
+        showLanguage(info)
+        SumizuriIcons.prepare(context, listOf(info))
+        _saved.value = (listOf(info) + _saved.value.filterNot { it.key == info.key }).sortedByDescending { it.updatedAt }
+        AppLog.add('I', "sumizuri", "Got ${info.name} from a paired device")
+        return true
+    }
+    // KMK <--
+
     fun delete(key: String) {
         invalidate(key)
         dir(key).deleteRecursively()
