@@ -82,10 +82,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Next number after the newest custom-rN release in this repo (first build is custom-r1)
+          # Next number after the newest rN release in this repo (first build is r1)
           last=$(gh release list --repo "${{ github.repository }}" --limit 1000 --json tagName -q '.[].tagName' \
-            | sed -n 's/^custom-r\([0-9]\+\)$/\1/p' | sort -n | tail -1)
-          tag="custom-r$(( ${last:-0} + 1 ))"
+            | sed -n 's/^r\([0-9]\+\)$/\1/p' | sort -n | tail -1)
+          tag="r$(( ${last:-0} + 1 ))"
           ls app/build/outputs/apk/preview/
           for f in app/build/outputs/apk/preview/*.apk; do
             abi=$(basename "$f" .apk | sed 's/^app-//; s/-preview.*//')
