@@ -51,7 +51,9 @@ import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.MutableFloatState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -102,6 +104,7 @@ import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.pluralStringResource
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.clickableNoIndication
+import tachiyomi.presentation.core.util.collectAsState
 import tachiyomi.presentation.core.util.secondaryItemAlpha
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -120,6 +123,12 @@ fun MangaInfoBox(
     doSearch: (query: String, global: Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // SY -->
+    val uiPreferences = remember { Injekt.get<UiPreferences>() }
+    val usePanoramaCover by uiPreferences.usePanoramaCoverEntryInfo.collectAsState()
+    val topAlignCover by uiPreferences.topAlignCover.collectAsState()
+    val coverRatio = remember { mutableFloatStateOf(1f) }
+    // SY <--
     Box(modifier = modifier) {
         // Backdrop
         val backdropGradientColors = listOf(
@@ -155,6 +164,11 @@ fun MangaInfoBox(
                     isStubSource = isStubSource,
                     onCoverClick = onCoverClick,
                     doSearch = doSearch,
+                    // SY -->
+                    coverRatio = coverRatio,
+                    usePanoramaCover = usePanoramaCover,
+                    topAlignCover = topAlignCover,
+                    // SY <--
                 )
             } else {
                 MangaAndSourceTitlesLarge(
@@ -164,6 +178,10 @@ fun MangaInfoBox(
                     isStubSource = isStubSource,
                     onCoverClick = onCoverClick,
                     doSearch = doSearch,
+                    // SY -->
+                    coverRatio = coverRatio,
+                    usePanoramaCover = usePanoramaCover,
+                    // SY <--
                 )
             }
         }
@@ -386,6 +404,10 @@ private fun MangaAndSourceTitlesLarge(
     isStubSource: Boolean,
     onCoverClick: () -> Unit,
     doSearch: (query: String, global: Boolean) -> Unit,
+    // SY -->
+    coverRatio: MutableFloatState,
+    usePanoramaCover: Boolean,
+    // SY <--
 ) {
     Column(
         modifier = Modifier
@@ -393,7 +415,14 @@ private fun MangaAndSourceTitlesLarge(
             .padding(start = 16.dp, top = appBarPadding + 16.dp, end = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        MangaCover.Book(
+        // SY -->
+        val cover = if (usePanoramaCover && coverRatio.floatValue <= RatioSwitchToPanorama) {
+            MangaCover.Panorama
+        } else {
+            MangaCover.Book
+        }
+        cover(
+            // SY <--
             modifier = Modifier.fillMaxWidth(0.65f),
             data = ImageRequest.Builder(LocalContext.current)
                 .data(manga)
@@ -401,6 +430,9 @@ private fun MangaAndSourceTitlesLarge(
                 .build(),
             contentDescription = stringResource(MR.strings.manga_cover),
             onClick = onCoverClick,
+            // SY -->
+            onCoverLoaded = { coverRatio.floatValue = it },
+            // SY <--
         )
         Spacer(modifier = Modifier.height(16.dp))
         MangaContentInfo(
@@ -424,24 +456,38 @@ private fun MangaAndSourceTitlesSmall(
     isStubSource: Boolean,
     onCoverClick: () -> Unit,
     doSearch: (query: String, global: Boolean) -> Unit,
+    // SY -->
+    coverRatio: MutableFloatState,
+    usePanoramaCover: Boolean,
+    topAlignCover: Boolean,
+    // SY <--
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(start = 16.dp, top = appBarPadding + 16.dp, end = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        // SY -->
+        verticalAlignment = if (topAlignCover) Alignment.Top else Alignment.CenterVertically,
+        // SY <--
     ) {
-        MangaCover.Book(
+        // SY -->
+        val isPanorama = usePanoramaCover && coverRatio.floatValue <= RatioSwitchToPanorama
+        val cover = if (isPanorama) MangaCover.Panorama else MangaCover.Book
+        cover(
             modifier = Modifier
-                .sizeIn(maxWidth = 100.dp)
-                .align(Alignment.Top),
+                .sizeIn(maxWidth = if (isPanorama) 150.dp else 100.dp)
+                .align(if (topAlignCover) Alignment.Top else Alignment.CenterVertically),
+            // SY <--
             data = ImageRequest.Builder(LocalContext.current)
                 .data(manga)
                 .crossfade(true)
                 .build(),
             contentDescription = stringResource(MR.strings.manga_cover),
             onClick = onCoverClick,
+            // SY -->
+            onCoverLoaded = { coverRatio.floatValue = it },
+            // SY <--
         )
         Column(
             verticalArrangement = Arrangement.spacedBy(2.dp),

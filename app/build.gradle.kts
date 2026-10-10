@@ -320,6 +320,9 @@ dependencies {
 
     // ZXing Android Embedded
     implementation(sylibs.zxing.android.embedded)
+
+    // Cover based theme
+    implementation(sylibs.palette.ktx)
 }
 
 androidComponents {

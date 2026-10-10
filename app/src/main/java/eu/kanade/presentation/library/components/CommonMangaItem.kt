@@ -25,6 +25,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.contentColorFor
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.MutableFloatState
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -33,12 +36,14 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.kanade.presentation.manga.components.MangaCover
+import eu.kanade.presentation.manga.components.RatioSwitchToPanorama
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.BadgeGroup
 import tachiyomi.presentation.core.i18n.stringResource
@@ -185,7 +190,18 @@ fun MangaComfortableGridItem(
     coverBadgeStart: (@Composable RowScope.() -> Unit)? = null,
     coverBadgeEnd: (@Composable RowScope.() -> Unit)? = null,
     onClickContinueReading: (() -> Unit)? = null,
+    // SY -->
+    /** Show wide covers uncropped inside the regular book-shaped cell */
+    usePanoramaCover: Boolean = false,
+    /** Resize the whole cell to the panorama shape when the cover is wide */
+    fitToPanoramaCover: Boolean = false,
+    coverRatio: MutableFloatState = remember { mutableFloatStateOf(1f) },
+    // SY <--
 ) {
+    // SY -->
+    val coverIsWide = coverRatio.floatValue <= RatioSwitchToPanorama
+    val fitPanorama = fitToPanoramaCover && usePanoramaCover && coverIsWide
+    // SY <--
     GridItemSelectable(
         isSelected = isSelected,
         onClick = onClick,
@@ -194,13 +210,27 @@ fun MangaComfortableGridItem(
         Column {
             MangaGridCover(
                 cover = {
-                    MangaCover.Book(
+                    // SY -->
+                    val cover = if (fitPanorama) MangaCover.Panorama else MangaCover.Book
+                    cover(
+                        // SY <--
                         modifier = Modifier
                             .fillMaxWidth()
                             .alpha(if (isSelected) GRID_SELECTED_COVER_ALPHA else coverAlpha),
                         data = coverData,
+                        // SY -->
+                        onCoverLoaded = { coverRatio.floatValue = it },
+                        contentScale = if (usePanoramaCover && coverIsWide && !fitPanorama) {
+                            ContentScale.Fit
+                        } else {
+                            ContentScale.Crop
+                        },
+                        // SY <--
                     )
                 },
+                // SY -->
+                ratio = if (fitPanorama) MangaCover.Panorama.ratio else MangaCover.Book.ratio,
+                // SY <--
                 badgesStart = coverBadgeStart,
                 badgesEnd = coverBadgeEnd,
                 content = {
@@ -237,11 +267,14 @@ private fun MangaGridCover(
     badgesStart: (@Composable RowScope.() -> Unit)? = null,
     badgesEnd: (@Composable RowScope.() -> Unit)? = null,
     content: @Composable (BoxScope.() -> Unit)? = null,
+    // SY -->
+    ratio: Float = MangaCover.Book.ratio,
+    // SY <--
 ) {
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .aspectRatio(MangaCover.Book.ratio),
+            .aspectRatio(ratio),
     ) {
         cover()
         content?.invoke(this)

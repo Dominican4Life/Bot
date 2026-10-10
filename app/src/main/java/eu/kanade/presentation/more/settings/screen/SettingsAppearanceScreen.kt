@@ -10,6 +10,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.app.ActivityCompat
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
+import com.materialkolor.PaletteStyle
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.domain.ui.model.TabletUiMode
 import eu.kanade.domain.ui.model.ThemeMode
@@ -40,6 +41,9 @@ object SettingsAppearanceScreen : SearchableSettings {
 
         return listOf(
             getThemeGroup(uiPreferences = uiPreferences),
+            // SY -->
+            getLibraryInfoGroup(uiPreferences = uiPreferences),
+            // SY <--
             getDisplayGroup(uiPreferences = uiPreferences),
             // SY -->
             getNavbarGroup(uiPreferences = uiPreferences),
@@ -157,12 +161,48 @@ object SettingsAppearanceScreen : SearchableSettings {
 
     // SY -->
     @Composable
+    private fun getLibraryInfoGroup(uiPreferences: UiPreferences): Preference.PreferenceGroup {
+        val themeCoverBased by uiPreferences.themeCoverBased.collectAsState()
+
+        return Preference.PreferenceGroup(
+            title = stringResource(SYMR.strings.pref_library_info),
+            preferenceItems = listOf(
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = uiPreferences.themeCoverBased,
+                    title = stringResource(SYMR.strings.pref_theme_cover_based),
+                ),
+                Preference.PreferenceItem.ListPreference(
+                    preference = uiPreferences.themeCoverBasedStyle,
+                    entries = PaletteStyle.entries.associateWith { stringResource(it.titleRes) },
+                    title = stringResource(SYMR.strings.pref_theme_cover_based_style),
+                    enabled = themeCoverBased,
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = uiPreferences.usePanoramaCoverEntryInfo,
+                    title = stringResource(SYMR.strings.pref_panorama_cover),
+                    subtitle = stringResource(SYMR.strings.pref_panorama_cover_summary),
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = uiPreferences.topAlignCover,
+                    title = stringResource(SYMR.strings.pref_top_align_cover),
+                    subtitle = stringResource(SYMR.strings.pref_top_align_cover_summary),
+                ),
+            ),
+        )
+    }
+
+    @Composable
     fun getForkGroup(uiPreferences: UiPreferences): Preference.PreferenceGroup {
         val previewsRowCount by uiPreferences.previewsRowCount.collectAsState()
 
         return Preference.PreferenceGroup(
             stringResource(SYMR.strings.pref_category_fork),
             preferenceItems = listOf(
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = uiPreferences.usePanoramaCoverFlow,
+                    title = stringResource(SYMR.strings.pref_panorama_cover_flow),
+                    subtitle = stringResource(SYMR.strings.pref_panorama_cover_flow_summary),
+                ),
                 Preference.PreferenceItem.SwitchPreference(
                     preference = uiPreferences.expandFilters,
                     title = stringResource(SYMR.strings.toggle_expand_search_filters),
@@ -221,6 +261,21 @@ object SettingsAppearanceScreen : SearchableSettings {
     }
     // SY <--
 }
+
+// SY -->
+private val PaletteStyle.titleRes
+    get() = when (this) {
+        PaletteStyle.TonalSpot -> SYMR.strings.pref_theme_cover_based_style_tonalspot
+        PaletteStyle.Neutral -> SYMR.strings.pref_theme_cover_based_style_neutral
+        PaletteStyle.Vibrant -> SYMR.strings.pref_theme_cover_based_style_vibrant
+        PaletteStyle.Expressive -> SYMR.strings.pref_theme_cover_based_style_expressive
+        PaletteStyle.Rainbow -> SYMR.strings.pref_theme_cover_based_style_rainbow
+        PaletteStyle.FruitSalad -> SYMR.strings.pref_theme_cover_based_style_fruitsalad
+        PaletteStyle.Monochrome -> SYMR.strings.pref_theme_cover_based_style_monochrome
+        PaletteStyle.Fidelity -> SYMR.strings.pref_theme_cover_based_style_fidelity
+        PaletteStyle.Content -> SYMR.strings.pref_theme_cover_based_style_content
+    }
+// SY <--
 
 private val DateFormats = listOf(
     "", // Default

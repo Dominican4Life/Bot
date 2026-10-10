@@ -36,6 +36,7 @@ import eu.kanade.presentation.manga.components.DeleteChaptersDialog
 import eu.kanade.presentation.manga.components.MangaCoverDialog
 import eu.kanade.presentation.manga.components.ScanlatorFilterDialog
 import eu.kanade.presentation.manga.components.SetIntervalDialog
+import eu.kanade.presentation.theme.CoverBasedTheme
 import eu.kanade.presentation.util.AssistContentScreen
 import eu.kanade.presentation.util.Screen
 import eu.kanade.presentation.util.isTabletUi
@@ -147,95 +148,101 @@ class MangaScreen(
         }
         // SY <--
 
-        MangaScreen(
-            state = successState,
-            snackbarHostState = screenModel.snackbarHostState,
-            nextUpdate = successState.manga.expectedNextUpdate,
-            isTabletUi = isTabletUi(),
-            chapterSwipeStartAction = screenModel.chapterSwipeStartAction,
-            chapterSwipeEndAction = screenModel.chapterSwipeEndAction,
-            navigateUp = navigator::pop,
-            onChapterClicked = { openChapter(context, it) },
-            onDownloadChapter = screenModel::runChapterDownloadActions.takeIf { !successState.source.isLocalOrStub() },
-            onAddToLibraryClicked = {
-                screenModel.toggleFavorite()
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-            },
-            // SY -->
-            onWebViewClicked = {
-                if (successState.mergedData == null) {
-                    openMangaInWebView(
-                        navigator,
+        // SY -->
+        val manga = successState.manga
+        val coverData = remember(manga.id, manga.thumbnailUrl, manga.coverLastModified) { manga }
+        CoverBasedTheme(coverData = coverData) {
+            MangaScreen(
+                state = successState,
+                snackbarHostState = screenModel.snackbarHostState,
+                nextUpdate = successState.manga.expectedNextUpdate,
+                isTabletUi = isTabletUi(),
+                chapterSwipeStartAction = screenModel.chapterSwipeStartAction,
+                chapterSwipeEndAction = screenModel.chapterSwipeEndAction,
+                navigateUp = navigator::pop,
+                onChapterClicked = { openChapter(context, it) },
+                onDownloadChapter = screenModel::runChapterDownloadActions.takeIf { !successState.source.isLocalOrStub() },
+                onAddToLibraryClicked = {
+                    screenModel.toggleFavorite()
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                },
+                // SY -->
+                onWebViewClicked = {
+                    if (successState.mergedData == null) {
+                        openMangaInWebView(
+                            navigator,
+                            screenModel.manga,
+                            screenModel.source,
+                        )
+                    } else {
+                        openMergedMangaWebview(
+                            context,
+                            navigator,
+                            successState.mergedData,
+                        )
+                    }
+                }.takeIf { isHttpSource },
+                // SY <--
+                onWebViewLongClicked = {
+                    copyMangaUrl(
+                        context,
                         screenModel.manga,
                         screenModel.source,
                     )
-                } else {
-                    openMergedMangaWebview(
-                        context,
-                        navigator,
-                        successState.mergedData,
-                    )
-                }
-            }.takeIf { isHttpSource },
-            // SY <--
-            onWebViewLongClicked = {
-                copyMangaUrl(
-                    context,
-                    screenModel.manga,
-                    screenModel.source,
-                )
-            }.takeIf { isHttpSource },
-            onTrackingClicked = {
-                if (!successState.hasLoggedInTrackers) {
-                    navigator.push(SettingsScreen(SettingsScreen.Destination.Tracking))
-                } else {
-                    screenModel.showTrackDialog()
-                }
-            },
-            onTagSearch = { scope.launch { performGenreSearch(navigator, it, screenModel.source!!) } },
-            onFilterButtonClicked = screenModel::showSettingsDialog,
-            onRefresh = screenModel::fetchAllFromSource,
-            onContinueReading = { continueReading(context, screenModel.getNextUnreadChapter()) },
-            onSearch = { query, global -> scope.launch { performSearch(navigator, query, global) } },
-            onCoverClicked = screenModel::showCoverDialog,
-            onShareClicked = { shareManga(context, screenModel.manga, screenModel.source) }.takeIf { isHttpSource },
-            onDownloadActionClicked = screenModel::runDownloadAction.takeIf { !successState.source.isLocalOrStub() },
-            onEditCategoryClicked = screenModel::showChangeCategoryDialog.takeIf { successState.manga.favorite },
-            onEditFetchIntervalClicked = screenModel::showSetFetchIntervalDialog.takeIf {
-                successState.manga.favorite
-            },
-            previewsRowCount = successState.previewsRowCount,
-            onMigrateClicked = {
-                navigator.push(MigrationConfigScreen(successState.manga.id))
-            }.takeIf {
-                successState.manga.favorite /* SY --> */ && successState.manga.source != MERGED_SOURCE_ID /* SY <-- */
-            },
-            onEditNotesClicked = { navigator.push(MangaNotesScreen(manga = successState.manga)) },
-            // SY -->
-            onMetadataViewerClicked = { openMetadataViewer(navigator, successState.manga) },
-            onEditInfoClicked = screenModel::showEditMangaInfoDialog,
-            onRecommendClicked = {
-                openRecommends(navigator, screenModel.source?.getMainSource(), successState.manga)
-            },
-            onMergedSettingsClicked = screenModel::showEditMergedSettingsDialog,
-            onMergeClicked = { openSmartSearch(navigator, successState.manga) },
-            onMergeWithAnotherClicked = {
-                mergeWithAnother(navigator, context, successState.manga, screenModel::smartSearchMerge)
-            },
-            onOpenPagePreview = {
-                openPagePreview(context, successState.chapters.minByOrNull { it.chapter.sourceOrder }?.chapter, it)
-            },
-            onMorePreviewsClicked = { openMorePagePreviews(navigator, successState.manga) },
-            // SY <--
-            onMultiBookmarkClicked = screenModel::bookmarkChapters,
-            onMultiMarkAsReadClicked = screenModel::markChaptersRead,
-            onMarkPreviousAsReadClicked = screenModel::markPreviousChapterRead,
-            onMultiDeleteClicked = screenModel::showDeleteChapterDialog,
-            onChapterSwipe = screenModel::chapterSwipe,
-            onChapterSelected = screenModel::toggleSelection,
-            onAllChapterSelected = screenModel::toggleAllSelection,
-            onInvertSelection = screenModel::invertSelection,
-        )
+                }.takeIf { isHttpSource },
+                onTrackingClicked = {
+                    if (!successState.hasLoggedInTrackers) {
+                        navigator.push(SettingsScreen(SettingsScreen.Destination.Tracking))
+                    } else {
+                        screenModel.showTrackDialog()
+                    }
+                },
+                onTagSearch = { scope.launch { performGenreSearch(navigator, it, screenModel.source!!) } },
+                onFilterButtonClicked = screenModel::showSettingsDialog,
+                onRefresh = screenModel::fetchAllFromSource,
+                onContinueReading = { continueReading(context, screenModel.getNextUnreadChapter()) },
+                onSearch = { query, global -> scope.launch { performSearch(navigator, query, global) } },
+                onCoverClicked = screenModel::showCoverDialog,
+                onShareClicked = { shareManga(context, screenModel.manga, screenModel.source) }.takeIf { isHttpSource },
+                onDownloadActionClicked = screenModel::runDownloadAction.takeIf { !successState.source.isLocalOrStub() },
+                onEditCategoryClicked = screenModel::showChangeCategoryDialog.takeIf { successState.manga.favorite },
+                onEditFetchIntervalClicked = screenModel::showSetFetchIntervalDialog.takeIf {
+                    successState.manga.favorite
+                },
+                previewsRowCount = successState.previewsRowCount,
+                onMigrateClicked = {
+                    navigator.push(MigrationConfigScreen(successState.manga.id))
+                }.takeIf {
+                    successState.manga.favorite /* SY --> */ && successState.manga.source != MERGED_SOURCE_ID /* SY <-- */
+                },
+                onEditNotesClicked = { navigator.push(MangaNotesScreen(manga = successState.manga)) },
+                // SY -->
+                onMetadataViewerClicked = { openMetadataViewer(navigator, successState.manga) },
+                onEditInfoClicked = screenModel::showEditMangaInfoDialog,
+                onRecommendClicked = {
+                    openRecommends(navigator, screenModel.source?.getMainSource(), successState.manga)
+                },
+                onMergedSettingsClicked = screenModel::showEditMergedSettingsDialog,
+                onMergeClicked = { openSmartSearch(navigator, successState.manga) },
+                onMergeWithAnotherClicked = {
+                    mergeWithAnother(navigator, context, successState.manga, screenModel::smartSearchMerge)
+                },
+                onOpenPagePreview = {
+                    openPagePreview(context, successState.chapters.minByOrNull { it.chapter.sourceOrder }?.chapter, it)
+                },
+                onMorePreviewsClicked = { openMorePagePreviews(navigator, successState.manga) },
+                // SY <--
+                onMultiBookmarkClicked = screenModel::bookmarkChapters,
+                onMultiMarkAsReadClicked = screenModel::markChaptersRead,
+                onMarkPreviousAsReadClicked = screenModel::markPreviousChapterRead,
+                onMultiDeleteClicked = screenModel::showDeleteChapterDialog,
+                onChapterSwipe = screenModel::chapterSwipe,
+                onChapterSelected = screenModel::toggleSelection,
+                onAllChapterSelected = screenModel::toggleAllSelection,
+                onInvertSelection = screenModel::invertSelection,
+            )
+        }
+        // SY <--
 
         var showScanlatorsDialog by remember { mutableStateOf(false) }
 

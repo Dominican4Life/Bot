@@ -147,7 +147,7 @@ fun BrowseSourceContent(
     // SY <--
 
     when (displayMode) {
-        LibraryDisplayMode.ComfortableGrid -> {
+        LibraryDisplayMode.ComfortableGrid, LibraryDisplayMode.ComfortableGridPanorama -> {
             BrowseSourceComfortableGrid(
                 mangaList = mangaList,
                 columns = columns,

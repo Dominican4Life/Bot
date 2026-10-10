@@ -1,6 +1,7 @@
 package eu.kanade.domain.ui
 
 import android.os.Build
+import com.materialkolor.PaletteStyle
 import eu.kanade.domain.ui.model.AppTheme
 import eu.kanade.domain.ui.model.TabletUiMode
 import eu.kanade.domain.ui.model.ThemeMode
@@ -46,6 +47,19 @@ class UiPreferences(
     val imagesInDescription: Preference<Boolean> = preferenceStore.getBoolean("pref_render_images_description", true)
 
     // SY -->
+
+    // Library Info: shared by manga and anime entries
+    val themeCoverBased: Preference<Boolean> = preferenceStore.getBoolean("pref_theme_cover_based_key", true)
+
+    val themeCoverBasedStyle: Preference<PaletteStyle> =
+        preferenceStore.getEnum("pref_theme_cover_based_style_key", PaletteStyle.Vibrant)
+
+    val usePanoramaCoverEntryInfo: Preference<Boolean> =
+        preferenceStore.getBoolean("use_panorama_cover_manga_info", false)
+
+    val topAlignCover: Preference<Boolean> = preferenceStore.getBoolean("top_align_cover", false)
+
+    val usePanoramaCoverFlow: Preference<Boolean> = preferenceStore.getBoolean("use_panorama_cover_flow", false)
 
     val expandFilters: Preference<Boolean> = preferenceStore.getBoolean("eh_expand_filters", false)
 

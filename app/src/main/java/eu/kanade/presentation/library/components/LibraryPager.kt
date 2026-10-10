@@ -105,7 +105,7 @@ fun LibraryPager(
                     onGlobalSearchClicked = onGlobalSearchClicked,
                 )
             }
-            LibraryDisplayMode.ComfortableGrid -> {
+            LibraryDisplayMode.ComfortableGrid, LibraryDisplayMode.ComfortableGridPanorama -> {
                 LibraryComfortableGrid(
                     items = items,
                     columns = columns,
@@ -116,6 +116,9 @@ fun LibraryPager(
                     onClickContinueReading = onClickContinueReading,
                     searchQuery = searchQuery,
                     onGlobalSearchClicked = onGlobalSearchClicked,
+                    // SY -->
+                    usePanoramaCover = displayMode == LibraryDisplayMode.ComfortableGridPanorama,
+                    // SY <--
                 )
             }
         }
