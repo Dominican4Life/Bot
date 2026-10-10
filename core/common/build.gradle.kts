@@ -63,4 +63,7 @@ dependencies {
     implementation(libs.injekt)
     implementation(sylibs.exifinterface)
     // SY <--
+
+    // Torrent streaming for anime sources
+    implementation(aniyomilibs.torrentserver)
 }

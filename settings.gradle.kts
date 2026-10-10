@@ -16,6 +16,10 @@ dependencyResolutionManagement {
         create("sylibs") {
             from(files("gradle/sy.versions.toml"))
         }
+        // Anime support (Anikku / AniZen)
+        create("aniyomilibs") {
+            from(files("gradle/aniyomi.versions.toml"))
+        }
     }
 
     @Suppress("UnstableApiUsage")
