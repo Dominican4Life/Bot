@@ -41,6 +41,10 @@ class DeleteCategory(
             downloadPreferences.removeExcludeCategories,
             downloadPreferences.downloadNewChapterCategories,
             downloadPreferences.downloadNewChapterCategoriesExclude,
+            // SY -->
+            libraryPreferences.filterCategoriesInclude,
+            libraryPreferences.filterCategoriesExclude,
+            // SY <--
         )
         val categoryIdString = categoryId.toString()
         categoryPreferences.forEach { preference ->

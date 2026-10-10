@@ -286,7 +286,7 @@ class LibraryScreenModel(
             getLibraryItemPreferencesFlow(),
             getTrackingFiltersFlow(),
         ) { prefs, trackFilters ->
-            listOf(
+            val hasActiveTriStateFilter = listOf(
                 prefs.filterDownloaded,
                 prefs.filterUnread,
                 prefs.filterStarted,
@@ -299,6 +299,7 @@ class LibraryScreenModel(
                 *trackFilters.values.toTypedArray(),
             )
                 .any { it != TriState.DISABLED }
+            hasActiveTriStateFilter /* SY --> */ || prefs.filterCategories /* SY <-- */
         }
             .distinctUntilChanged()
             .onEach {
@@ -397,6 +398,21 @@ class LibraryScreenModel(
         val filterFnLewd: (LibraryItem) -> Boolean = {
             applyFilter(filterLewd) { it.libraryManga.manga.isLewd() }
         }
+
+        val includedCategories = preferences.includedCategories
+        val excludedCategories = preferences.excludedCategories
+        val filterFnCategories: (LibraryItem) -> Boolean = categories@{ item ->
+            if (!preferences.filterCategories) return@categories true
+
+            // Entries in the default category (id 0) count as having no category
+            val mangaCategories = item.libraryManga.categories.filterNot { it == 0L }.toSet()
+            if (mangaCategories.isEmpty()) return@categories includedCategories.isEmpty()
+
+            val isExcluded = excludedCategories.any { it in mangaCategories }
+            val isIncluded = includedCategories.all { it in mangaCategories }
+
+            !isExcluded && isIncluded
+        }
         // SY <--
 
         val filterFnTracking: (LibraryItem) -> Boolean = tracking@{ item ->
@@ -419,7 +435,8 @@ class LibraryScreenModel(
                 filterFnIntervalCustom(it) &&
                 filterFnTracking(it) &&
                 // SY -->
-                filterFnLewd(it)
+                filterFnLewd(it) &&
+                filterFnCategories(it)
             // SY <--
         }
     }
@@ -613,6 +630,9 @@ class LibraryScreenModel(
             libraryPreferences.filterLewd.changes(),
             libraryPreferences.useLangIcon.changes(),
             libraryPreferences.sourceBadge.changes(),
+            libraryPreferences.filterCategories.changes(),
+            libraryPreferences.filterCategoriesInclude.changes(),
+            libraryPreferences.filterCategoriesExclude.changes(),
             // SY <--
         ) {
             ItemPreferences(
@@ -632,6 +652,9 @@ class LibraryScreenModel(
                 filterLewd = it[12] as TriState,
                 useLangIcon = it[13] as Boolean,
                 sourceBadge = it[14] as Boolean,
+                filterCategories = it[15] as Boolean,
+                includedCategories = (it[16] as Set<*>).mapNotNullTo(mutableSetOf()) { id -> (id as String).toLongOrNull() },
+                excludedCategories = (it[17] as Set<*>).mapNotNullTo(mutableSetOf()) { id -> (id as String).toLongOrNull() },
                 // SY <--
             )
         }
@@ -1492,6 +1515,9 @@ class LibraryScreenModel(
         val filterLewd: TriState,
         val useLangIcon: Boolean,
         val sourceBadge: Boolean,
+        val filterCategories: Boolean,
+        val includedCategories: Set<Long>,
+        val excludedCategories: Set<Long>,
         // SY <--
     )
 

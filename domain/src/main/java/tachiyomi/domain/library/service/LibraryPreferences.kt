@@ -102,6 +102,16 @@ class LibraryPreferences(
         "pref_filter_library_lewd_v2",
         TriState.DISABLED,
     )
+
+    val filterCategories: Preference<Boolean> = preferenceStore.getBoolean("pref_filter_library_categories", false)
+
+    /** Ids of the categories an entry must all be in, stored as strings */
+    val filterCategoriesInclude: Preference<Set<String>> =
+        preferenceStore.getStringSet("pref_filter_library_categories_include", emptySet())
+
+    /** Ids of the categories an entry must not be in, stored as strings */
+    val filterCategoriesExclude: Preference<Set<String>> =
+        preferenceStore.getStringSet("pref_filter_library_categories_exclude", emptySet())
     // SY <--
 
     fun filterTracking(id: Int): Preference<TriState> = preferenceStore.getEnum(

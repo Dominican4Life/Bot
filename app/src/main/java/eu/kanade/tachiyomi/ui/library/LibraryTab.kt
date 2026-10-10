@@ -283,6 +283,7 @@ data object LibraryTab : Tab {
                     category = state.activeCategory,
                     // SY -->
                     hasCategories = state.libraryData.categories.fastAny { !it.isSystemCategory },
+                    categories = state.libraryData.categories.filterNot { it.isSystemCategory },
                     // SY <--
                 )
             }
