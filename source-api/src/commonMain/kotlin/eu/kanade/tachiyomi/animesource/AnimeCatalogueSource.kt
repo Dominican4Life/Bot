@@ -3,7 +3,6 @@ package eu.kanade.tachiyomi.animesource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
-import eu.kanade.tachiyomi.source.model.SManga
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -13,6 +12,7 @@ import rx.Observable
 import tachiyomi.core.common.util.QuerySanitizer.sanitize
 import tachiyomi.core.common.util.lang.awaitSingle
 import tachiyomi.core.common.util.system.logcat
+import eu.kanade.tachiyomi.animesource.model.SAnime as SManga
 
 interface AnimeCatalogueSource : AnimeSource {
 

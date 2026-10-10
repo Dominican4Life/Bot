@@ -1,6 +1,6 @@
 package eu.kanade.tachiyomi.animesource.model
 
-import eu.kanade.tachiyomi.source.model.SManga
+import eu.kanade.tachiyomi.animesource.model.SAnime as SManga
 
 open class AnimesPage(open val animes: List<SAnime>, open val hasNextPage: Boolean) {
     val mangas: List<SManga>
