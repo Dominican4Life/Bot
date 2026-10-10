@@ -134,93 +134,93 @@ fun UpdateScreen(
             contentPadding = outerPadding,
             anime = { padding -> eu.kanade.presentation.anime.AnimeUpdatesPane(contentPadding = padding) },
             manga = { contentPadding ->
-        // KMK <--
-        when {
-            state.isLoading -> LoadingScreen(Modifier.padding(contentPadding))
-            state.items.isEmpty() -> EmptyScreen(
-                stringRes = MR.strings.information_no_recent,
-                modifier = Modifier.padding(contentPadding),
-            )
-            else -> {
-                val scope = rememberCoroutineScope()
-                var isRefreshing by remember { mutableStateOf(false) }
-                // KMK -->
-                val uiModels = remember(state.items) { state.getUiModel() }
                 // KMK <--
-
-                PullRefresh(
-                    refreshing = isRefreshing,
-                    onRefresh = {
-                        val started = onUpdateLibrary()
-                        if (!started) return@PullRefresh
-                        scope.launch {
-                            // Fake refresh status but hide it after a second as it's a long running task
-                            isRefreshing = true
-                            delay(1.seconds)
-                            isRefreshing = false
-                        }
-                    },
-                    enabled = !state.selectionMode,
-                    indicatorPadding = contentPadding,
-                ) {
-                    FastScrollLazyColumn(
-                        contentPadding = contentPadding,
-                    ) {
-                        updatesLastUpdatedItem(lastUpdated)
-
+                when {
+                    state.isLoading -> LoadingScreen(Modifier.padding(contentPadding))
+                    state.items.isEmpty() -> EmptyScreen(
+                        stringRes = MR.strings.information_no_recent,
+                        modifier = Modifier.padding(contentPadding),
+                    )
+                    else -> {
+                        val scope = rememberCoroutineScope()
+                        var isRefreshing by remember { mutableStateOf(false) }
                         // KMK -->
-                        if (timelineView) {
-                            updatesTimeline(
-                                items = state.items,
-                                showCarousel = showCarousel,
-                                selectionMode = state.selectionMode,
-                                onUpdateLibrary = { onUpdateLibrary() },
-                                onAllRead = {
-                                    onMultiMarkAsReadClicked(state.items.filter { !it.update.read }, true)
-                                },
-                                onClickGroup = { onClickCover(it.leader) },
-                                onSelectGroup = { group ->
-                                    onUpdateSelected(
-                                        group.leader,
-                                        UpdatesScreenModel.UpdateSelectionOptions(
-                                            selected = !group.selected,
-                                            isGroup = true,
-                                            isExpanded = false,
-                                        ),
-                                    )
-                                },
-                                onContinue = { onOpenChapter(it.continueItem) },
-                            )
-                            return@FastScrollLazyColumn
-                        }
+                        val uiModels = remember(state.items) { state.getUiModel() }
                         // KMK <--
 
-                        updatesUiItems(
-                            // KMK -->
-                            uiModels = uiModels,
-                            expandedState = state.expandedState,
-                            collapseToggle = collapseToggle,
-                            usePanoramaCover = usePanoramaCover,
-                            // KMK <--
-                            selectionMode = state.selectionMode,
-                            // SY -->
-                            preserveReadingPosition = preserveReadingPosition,
-                            // SY <--
-                            onUpdateSelected = onUpdateSelected,
-                            onClickCover = onClickCover,
-                            onClickUpdate = onOpenChapter,
-                            onDownloadChapter = onDownloadChapter,
-                            // KMK -->
-                            updateSwipeStartAction = updateSwipeStartAction,
-                            updateSwipeEndAction = updateSwipeEndAction,
-                            onUpdateSwipe = onUpdateSwipe,
-                            // KMK <--
-                        )
+                        PullRefresh(
+                            refreshing = isRefreshing,
+                            onRefresh = {
+                                val started = onUpdateLibrary()
+                                if (!started) return@PullRefresh
+                                scope.launch {
+                                    // Fake refresh status but hide it after a second as it's a long running task
+                                    isRefreshing = true
+                                    delay(1.seconds)
+                                    isRefreshing = false
+                                }
+                            },
+                            enabled = !state.selectionMode,
+                            indicatorPadding = contentPadding,
+                        ) {
+                            FastScrollLazyColumn(
+                                contentPadding = contentPadding,
+                            ) {
+                                updatesLastUpdatedItem(lastUpdated)
+
+                                // KMK -->
+                                if (timelineView) {
+                                    updatesTimeline(
+                                        items = state.items,
+                                        showCarousel = showCarousel,
+                                        selectionMode = state.selectionMode,
+                                        onUpdateLibrary = { onUpdateLibrary() },
+                                        onAllRead = {
+                                            onMultiMarkAsReadClicked(state.items.filter { !it.update.read }, true)
+                                        },
+                                        onClickGroup = { onClickCover(it.leader) },
+                                        onSelectGroup = { group ->
+                                            onUpdateSelected(
+                                                group.leader,
+                                                UpdatesScreenModel.UpdateSelectionOptions(
+                                                    selected = !group.selected,
+                                                    isGroup = true,
+                                                    isExpanded = false,
+                                                ),
+                                            )
+                                        },
+                                        onContinue = { onOpenChapter(it.continueItem) },
+                                    )
+                                    return@FastScrollLazyColumn
+                                }
+                                // KMK <--
+
+                                updatesUiItems(
+                                    // KMK -->
+                                    uiModels = uiModels,
+                                    expandedState = state.expandedState,
+                                    collapseToggle = collapseToggle,
+                                    usePanoramaCover = usePanoramaCover,
+                                    // KMK <--
+                                    selectionMode = state.selectionMode,
+                                    // SY -->
+                                    preserveReadingPosition = preserveReadingPosition,
+                                    // SY <--
+                                    onUpdateSelected = onUpdateSelected,
+                                    onClickCover = onClickCover,
+                                    onClickUpdate = onOpenChapter,
+                                    onDownloadChapter = onDownloadChapter,
+                                    // KMK -->
+                                    updateSwipeStartAction = updateSwipeStartAction,
+                                    updateSwipeEndAction = updateSwipeEndAction,
+                                    onUpdateSwipe = onUpdateSwipe,
+                                    // KMK <--
+                                )
+                            }
+                        }
                     }
                 }
-            }
-        }
-        // KMK -->
+                // KMK -->
             },
         )
         // KMK <--

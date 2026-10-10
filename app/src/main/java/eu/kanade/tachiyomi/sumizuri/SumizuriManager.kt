@@ -30,19 +30,19 @@ class SumizuriManager(private val context: Application) {
     private val root = File(context.filesDir, "sumizuri_sources").apply { mkdirs() }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    private val _saved = MutableStateFlow(load().also { SumizuriIcons.prepare(context, it) })
+    private val saved = MutableStateFlow(load().also { SumizuriIcons.prepare(context, it) })
 
     /** Every saved source, newest change first */
-    val savedFlow: StateFlow<List<SumizuriSourceInfo>> = _saved.asStateFlow()
+    val savedFlow: StateFlow<List<SumizuriSourceInfo>> = saved.asStateFlow()
 
     private val runtimes = HashMap<String, SumizuriRuntime>()
     private val runtimeLock = Mutex()
 
-    val mangaSourcesFlow: StateFlow<List<SumizuriMangaSource>> = _saved
+    val mangaSourcesFlow: StateFlow<List<SumizuriMangaSource>> = saved
         .map { list -> list.filterNot { it.anime }.map { SumizuriMangaSource(it, this) } }
         .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
-    val animeSourcesFlow: StateFlow<List<SumizuriAnimeSource>> = _saved
+    val animeSourcesFlow: StateFlow<List<SumizuriAnimeSource>> = saved
         .map { list -> list.filter { it.anime }.map { SumizuriAnimeSource(it, this) } }
         .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
@@ -58,7 +58,7 @@ class SumizuriManager(private val context: Application) {
         }
         .sortedByDescending { it.updatedAt }
 
-    fun get(key: String): SumizuriSourceInfo? = _saved.value.firstOrNull { it.key == key }
+    fun get(key: String): SumizuriSourceInfo? = saved.value.firstOrNull { it.key == key }
 
     fun code(key: String): String? = get(key)?.let { info ->
         runCatching { File(dir(key), codeFile(info.json)).readText() }.getOrNull()
@@ -87,7 +87,7 @@ class SumizuriManager(private val context: Application) {
         invalidate(key)
         showLanguage(info)
         SumizuriIcons.prepare(context, listOf(info))
-        _saved.value = (listOf(info) + _saved.value.filterNot { it.key == key }).sortedByDescending { it.updatedAt }
+        saved.value = (listOf(info) + saved.value.filterNot { it.key == key }).sortedByDescending { it.updatedAt }
         AppLog.add('I', "sumizuri", "Saved ${if (info.anime) "anime" else "manga"} source ${info.name} (${if (json) "JSON" else "JS"})")
         return info
     }
@@ -148,7 +148,7 @@ class SumizuriManager(private val context: Application) {
     // KMK --> device sync
 
     /** Saved sources (all, or those with [keys]) as (details as JSON, code), to send to a paired device */
-    fun exportSources(keys: Set<String>? = null): List<Pair<String, String>> = _saved.value
+    fun exportSources(keys: Set<String>? = null): List<Pair<String, String>> = saved.value
         .filter { keys == null || it.key in keys }
         .mapNotNull { info ->
             code(info.key)?.let { sumizuriJson.encodeToString(SumizuriSourceInfo.serializer(), info) to it }
@@ -169,7 +169,7 @@ class SumizuriManager(private val context: Application) {
         invalidate(info.key)
         showLanguage(info)
         SumizuriIcons.prepare(context, listOf(info))
-        _saved.value = (listOf(info) + _saved.value.filterNot { it.key == info.key }).sortedByDescending { it.updatedAt }
+        saved.value = (listOf(info) + saved.value.filterNot { it.key == info.key }).sortedByDescending { it.updatedAt }
         AppLog.add('I', "sumizuri", "Got ${info.name} from a paired device")
         return true
     }
@@ -179,7 +179,7 @@ class SumizuriManager(private val context: Application) {
         invalidate(key)
         dir(key).deleteRecursively()
         File(context.filesDir, "sumizuri_storage/$key").deleteRecursively()
-        _saved.value = _saved.value.filterNot { it.key == key }
+        saved.value = saved.value.filterNot { it.key == key }
     }
 
     private fun invalidate(key: String) {
@@ -206,7 +206,7 @@ class SumizuriManager(private val context: Application) {
                 val fresh = describe(runtime(info), info.key, info.json, info.anime, info).copy(updatedAt = info.updatedAt)
                 if (fresh.filters != info.filters || fresh.catalogs != info.catalogs || fresh.preferences != info.preferences) {
                     File(dir(info.key), META).writeText(sumizuriJson.encodeToString(SumizuriSourceInfo.serializer(), fresh))
-                    _saved.value = _saved.value.map { if (it.key == info.key) fresh else it }
+                    saved.value = saved.value.map { if (it.key == info.key) fresh else it }
                 }
             }
         }

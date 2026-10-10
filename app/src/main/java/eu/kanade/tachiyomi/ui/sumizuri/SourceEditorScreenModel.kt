@@ -146,7 +146,7 @@ class SourceEditorScreenModel(
                 saved = false,
                 json = json,
                 code = text,
-                anime = json && "\"videos\"" in text || !json && "getVideoList" in text,
+                anime = (json && "\"videos\"" in text) || (!json && "getVideoList" in text),
                 // Straight from the file's text, so the Details show at once (the run below fills any gaps)
                 name = info["name"].orEmpty(),
                 lang = info["lang"] ?: "en",

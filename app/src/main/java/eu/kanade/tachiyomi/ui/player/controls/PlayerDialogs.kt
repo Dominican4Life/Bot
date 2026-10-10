@@ -1,8 +1,8 @@
 package eu.kanade.tachiyomi.ui.player.controls
 
 import androidx.compose.runtime.Composable
-import eu.kanade.tachiyomi.ui.player.compat.Episode
 import eu.kanade.tachiyomi.ui.player.Dialogs
+import eu.kanade.tachiyomi.ui.player.compat.Episode
 import eu.kanade.tachiyomi.ui.player.controls.components.dialogs.IntegerPickerDialog
 import java.time.format.DateTimeFormatter
 

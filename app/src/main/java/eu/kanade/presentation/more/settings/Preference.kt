@@ -128,9 +128,6 @@ sealed class Preference {
             override val onValueChanged: suspend (value: Set<String>) -> Boolean = { true },
         ) : PreferenceItem<Set<String>, Boolean>()
 
-        /**
-         * A [PreferenceItem] that shows a EditText in the dialog.
-         */
         // KMK --> anime player settings (from AniZen)
         /**
          * An edit text preference whose dialog shows an explanation, and which accepts an empty value.
@@ -164,6 +161,9 @@ sealed class Preference {
         }
         // KMK <--
 
+        /**
+         * A [PreferenceItem] that shows a EditText in the dialog.
+         */
         data class EditTextPreference(
             val preference: PreferenceData<String>,
             override val title: String,

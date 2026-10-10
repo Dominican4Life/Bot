@@ -194,47 +194,47 @@ fun HistoryScreen(
                 eu.kanade.presentation.anime.AnimeHistoryPane(contentPadding = padding, searchQuery = state.searchQuery)
             },
             manga = { contentPadding ->
-        // KMK <--
-        state.list.let {
-            // KMK -->
-            if (state.isLoading) {
                 // KMK <--
-                LoadingScreen(Modifier.padding(contentPadding))
-            } else if (it.isEmpty()) {
-                val msg = if (!state.searchQuery.isNullOrEmpty()) {
-                    MR.strings.no_results_found
-                } else {
-                    MR.strings.information_no_recent_manga
+                state.list.let {
+                    // KMK -->
+                    if (state.isLoading) {
+                        // KMK <--
+                        LoadingScreen(Modifier.padding(contentPadding))
+                    } else if (it.isEmpty()) {
+                        val msg = if (!state.searchQuery.isNullOrEmpty()) {
+                            MR.strings.no_results_found
+                        } else {
+                            MR.strings.information_no_recent_manga
+                        }
+                        EmptyScreen(
+                            stringRes = msg,
+                            modifier = Modifier.padding(contentPadding),
+                        )
+                    } else {
+                        // KMK -->
+                        val uiModels = remember(state.list) { state.getUiModel() }
+                        // KMK <--
+                        HistoryScreenContent(
+                            // KMK -->
+                            state = state,
+                            history = uiModels,
+                            // KMK <--
+                            contentPadding = contentPadding,
+                            onClickCover = { history -> onClickCover(history.mangaId) },
+                            onClickResume = { history -> onClickResume(history.mangaId, history.chapterId) },
+                            onClickDelete = { item -> onDialogChange(HistoryScreenModel.Dialog.Delete(item)) },
+                            onClickFavorite = { history -> onClickFavorite(history.mangaId) },
+                            // KMK -->
+                            selectionMode = state.selectionMode,
+                            onHistorySelected = onHistorySelected,
+                            usePanoramaCover = usePanoramaCover,
+                            gridMode = gridMode,
+                            showSummary = showSummary && state.searchQuery.isNullOrEmpty(),
+                            // KMK <--
+                        )
+                    }
                 }
-                EmptyScreen(
-                    stringRes = msg,
-                    modifier = Modifier.padding(contentPadding),
-                )
-            } else {
                 // KMK -->
-                val uiModels = remember(state.list) { state.getUiModel() }
-                // KMK <--
-                HistoryScreenContent(
-                    // KMK -->
-                    state = state,
-                    history = uiModels,
-                    // KMK <--
-                    contentPadding = contentPadding,
-                    onClickCover = { history -> onClickCover(history.mangaId) },
-                    onClickResume = { history -> onClickResume(history.mangaId, history.chapterId) },
-                    onClickDelete = { item -> onDialogChange(HistoryScreenModel.Dialog.Delete(item)) },
-                    onClickFavorite = { history -> onClickFavorite(history.mangaId) },
-                    // KMK -->
-                    selectionMode = state.selectionMode,
-                    onHistorySelected = onHistorySelected,
-                    usePanoramaCover = usePanoramaCover,
-                    gridMode = gridMode,
-                    showSummary = showSummary && state.searchQuery.isNullOrEmpty(),
-                    // KMK <--
-                )
-            }
-        }
-        // KMK -->
             },
         )
         // KMK <--

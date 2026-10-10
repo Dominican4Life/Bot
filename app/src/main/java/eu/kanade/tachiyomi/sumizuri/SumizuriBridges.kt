@@ -347,6 +347,7 @@ internal class SumizuriHtmlPages(private val maxPages: Int = 24) {
     /** host.query(html, selector): elements as text, html and attributes */
     fun query(html: String, selector: String): List<Map<String, Any?>> {
         val id = parse(html)
+
         @Suppress("UNCHECKED_CAST")
         val items = select(id, null, selector, null, true, null)["items"] as List<Map<String, Any?>>
         return items.map { mapOf("text" to it["text"], "html" to it["html"], "attributes" to it["attributes"]) }

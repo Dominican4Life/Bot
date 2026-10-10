@@ -63,11 +63,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import eu.kanade.presentation.player.components.PlayerSheet
-import androidx.compose.ui.platform.LocalContext
 import eu.kanade.tachiyomi.ui.player.Decoder
 import eu.kanade.tachiyomi.ui.player.LongPressAction
 import eu.kanade.tachiyomi.ui.player.PausedLongPressAction
@@ -179,7 +179,7 @@ fun MoreSheet(
             ) {
                 itemsIndexed(
                     items = Decoder.entries.minus(Decoder.Auto),
-                    key = { _, it -> "ms-decoder-${it.name}" }
+                    key = { _, it -> "ms-decoder-${it.name}" },
                 ) { _, decoder ->
                     FilterChip(
                         selected = decoder == selectedDecoder,
@@ -195,7 +195,7 @@ fun MoreSheet(
             ) {
                 items(
                     count = 7,
-                    key = { "ms-stats-page-$it" }
+                    key = { "ms-stats-page-$it" },
                 ) { page ->
                     FilterChip(
                         label = {
@@ -217,7 +217,7 @@ fun MoreSheet(
                             val wasInternalPage = statisticsPage in 1..5
                             val isPageSix = page == 6
                             val wasPageSix = statisticsPage == 6
-                            
+
                             if (isPageSix) {
                                 // If switching TO page 6, hide internal stats and show native Page 6
                                 // ANZ -->
@@ -293,7 +293,7 @@ fun MoreSheet(
             ) {
                 itemsIndexed(
                     items = AudioChannels.entries,
-                    key = { _, it -> "ms-audio-channels-${it.name}" }
+                    key = { _, it -> "ms-audio-channels-${it.name}" },
                 ) { _, it ->
                     FilterChip(
                         selected = audioChannels == it,
@@ -319,7 +319,7 @@ fun MoreSheet(
             ) {
                 itemsIndexed(
                     items = LongPressAction.entries,
-                    key = { _, it -> "ms-lp-playing-${it.name}" }
+                    key = { _, it -> "ms-lp-playing-${it.name}" },
                 ) { _, action ->
                     FilterChip(
                         selected = longPressAction == action,
@@ -335,7 +335,7 @@ fun MoreSheet(
             ) {
                 itemsIndexed(
                     items = PausedLongPressAction.entries,
-                    key = { _, it -> "ms-lp-paused-${it.name}" }
+                    key = { _, it -> "ms-lp-paused-${it.name}" },
                 ) { _, action ->
                     FilterChip(
                         selected = pausedLongPressAction == action,

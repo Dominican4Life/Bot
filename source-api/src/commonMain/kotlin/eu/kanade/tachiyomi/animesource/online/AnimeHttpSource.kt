@@ -462,14 +462,6 @@ abstract class AnimeHttpSource : AnimeCatalogueSource {
      */
     protected abstract fun videoListParse(response: Response, hoster: Hoster): List<Video>
 
-    /**
-     * Returns the resolved video of the episode link. Override only if it's needed to resolve
-     * the video.
-     *
-     * @since extensions-lib 16
-     * @param video the video information.
-     * @return the resolved video, or null on failure
-     */
     // KMK --> seek bar thumbnails (from AniZen)
     /**
      * Returns the seek bar preview tiles for a video, or null if the source has none.
@@ -489,6 +481,14 @@ abstract class AnimeHttpSource : AnimeCatalogueSource {
     }
     // KMK <--
 
+    /**
+     * Returns the resolved video of the episode link. Override only if it's needed to resolve
+     * the video.
+     *
+     * @since extensions-lib 16
+     * @param video the video information.
+     * @return the resolved video, or null on failure
+     */
     open suspend fun resolveVideo(video: Video): Video? {
         return video
     }
@@ -747,5 +747,4 @@ abstract class AnimeHttpSource : AnimeCatalogueSource {
      * Returns the list of filters for the source.
      */
     override fun getFilterList() = AnimeFilterList()
-
 }

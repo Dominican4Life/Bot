@@ -18,8 +18,8 @@
 package eu.kanade.tachiyomi.ui.player
 
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.FormatListBulleted
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.FormatListBulleted
 import androidx.compose.material.icons.outlined.AspectRatio
 import androidx.compose.material.icons.outlined.Audiotrack
 import androidx.compose.material.icons.outlined.Bookmarks
@@ -399,7 +399,7 @@ fun PlayerButton.getIcon(): ImageVector = when (this) {
     PlayerButton.CustomButton -> Icons.Outlined.TouchApp
 }
 
-val allPlayerButtons = PlayerButton.entries.filter { 
+val allPlayerButtons = PlayerButton.entries.filter {
     it != PlayerButton.BackArrow && it != PlayerButton.VideoTitle
 }
 

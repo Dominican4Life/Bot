@@ -115,7 +115,6 @@ fun PlayerControls(
     onBackPress: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-
     val spacing = MaterialTheme.padding
     val playerPreferences = remember { Injekt.get<PlayerPreferences>() }
     val gesturePreferences = remember { Injekt.get<GesturePreferences>() }
@@ -373,7 +372,7 @@ fun PlayerControls(
                             stringResource((currentPlayerUpdate as PlayerUpdates.ShowTextResource).textResource),
                         )
                         is PlayerUpdates.VideoZoom -> TextPlayerUpdate(
-                            "Zoom: ${((currentPlayerUpdate as PlayerUpdates.VideoZoom).zoom * 100).toInt()}%"
+                            "Zoom: ${((currentPlayerUpdate as PlayerUpdates.VideoZoom).zoom * 100).toInt()}%",
                         )
                         else -> {}
                     }
@@ -397,7 +396,7 @@ fun PlayerControls(
                 // ANZ -->
                 AnimatedVisibility(
                     visible = (
-                        (controlsShown && !areControlsLocked || gestureSeekAmount != null) ||
+                        ((controlsShown && !areControlsLocked) || gestureSeekAmount != null) ||
                             (isBuffering && !isStopped) ||
                             isLoadingEpisode
                         ) && !isLongPressing,
@@ -499,73 +498,73 @@ fun PlayerControls(
                         // ANZ -->
                         val readAhead by viewModel.demuxerCacheTime.collectAsState()
                         // ANZ <--
-                    val preciseSeeking by gesturePreferences.playerSmoothSeek().collectAsState()
+                        val preciseSeeking by gesturePreferences.playerSmoothSeek().collectAsState()
 
-                    var wasPlayerAlreadyPause by remember { mutableStateOf(false) }
-                    var sliderPosition by remember { androidx.compose.runtime.mutableFloatStateOf(currentPosition) }
-                    var lastTargetSeekPos by remember { mutableStateOf<Float?>(null) }
+                        var wasPlayerAlreadyPause by remember { mutableStateOf(false) }
+                        var sliderPosition by remember { androidx.compose.runtime.mutableFloatStateOf(currentPosition) }
+                        var lastTargetSeekPos by remember { mutableStateOf<Float?>(null) }
 
-                    LaunchedEffect(currentPosition, seekPosition, isSeekingUI) {
-                        if (isSeekingUI) {
-                            sliderPosition = seekPosition
-                        } else {
-                            val target = lastTargetSeekPos
-                            if (target != null) {
-                                if (kotlin.math.abs(currentPosition - target) > 1.5f) {
-                                    sliderPosition = target
+                        LaunchedEffect(currentPosition, seekPosition, isSeekingUI) {
+                            if (isSeekingUI) {
+                                sliderPosition = seekPosition
+                            } else {
+                                val target = lastTargetSeekPos
+                                if (target != null) {
+                                    if (kotlin.math.abs(currentPosition - target) > 1.5f) {
+                                        sliderPosition = target
+                                    } else {
+                                        sliderPosition = currentPosition
+                                        lastTargetSeekPos = null
+                                    }
                                 } else {
                                     sliderPosition = currentPosition
-                                    lastTargetSeekPos = null
                                 }
-                            } else {
-                                sliderPosition = currentPosition
                             }
                         }
-                    }
 
-                    LaunchedEffect(isSeekingUI) {
-                        if (!isSeekingUI && lastTargetSeekPos != null) {
-                            kotlinx.coroutines.delay(1000)
-                            lastTargetSeekPos = null
+                        LaunchedEffect(isSeekingUI) {
+                            if (!isSeekingUI && lastTargetSeekPos != null) {
+                                kotlinx.coroutines.delay(1000)
+                                lastTargetSeekPos = null
+                            }
                         }
-                    }
 
-                    SeekbarWithTimers(
-                        position = sliderPosition,
-                        duration = totalDuration,
-                        readAheadValue = readAhead ?: 0f,
-                        onValueChange = {
-                            if (!viewModel.isSeekingUI.value) {
-                                wasPlayerAlreadyPause = viewModel.paused.value == true
-                                viewModel.pause()
-                                viewModel.updateIsSeeking(true)
-                            }
-                            sliderPosition = it
-                            lastTargetSeekPos = it
-                            viewModel.updateSeekPos(it)
-                            viewModel.scrubSeekTo(it.toInt(), false)
-                        },
-                        onValueChangeFinished = {
-                            val target = sliderPosition
-                            lastTargetSeekPos = target
-                            viewModel.updateSeekPos(target)
-                            viewModel.updateIsSeeking(false)
-                            viewModel.seekTo(target.toInt(), preciseSeeking)
-                            if (!wasPlayerAlreadyPause) {
-                                viewModel.unpause()
-                            }
-                        },
-                        timersInverted = Pair(false, invertDuration),
-                        durationTimerOnCLick = { playerPreferences.invertDuration().set(!invertDuration) },
-                        positionTimerOnClick = {},
-                        onDurationTextLayout = { layoutResult ->
-                            if (layoutResult.lineCount > 0) {
-                                durationInkWidthPx =
-                                    layoutResult.getLineRight(0) - layoutResult.getLineLeft(0)
-                            }
-                        },
-                        chapters = chaptersList,
-                    )
+                        SeekbarWithTimers(
+                            position = sliderPosition,
+                            duration = totalDuration,
+                            readAheadValue = readAhead ?: 0f,
+                            onValueChange = {
+                                if (!viewModel.isSeekingUI.value) {
+                                    wasPlayerAlreadyPause = viewModel.paused.value == true
+                                    viewModel.pause()
+                                    viewModel.updateIsSeeking(true)
+                                }
+                                sliderPosition = it
+                                lastTargetSeekPos = it
+                                viewModel.updateSeekPos(it)
+                                viewModel.scrubSeekTo(it.toInt(), false)
+                            },
+                            onValueChangeFinished = {
+                                val target = sliderPosition
+                                lastTargetSeekPos = target
+                                viewModel.updateSeekPos(target)
+                                viewModel.updateIsSeeking(false)
+                                viewModel.seekTo(target.toInt(), preciseSeeking)
+                                if (!wasPlayerAlreadyPause) {
+                                    viewModel.unpause()
+                                }
+                            },
+                            timersInverted = Pair(false, invertDuration),
+                            durationTimerOnCLick = { playerPreferences.invertDuration().set(!invertDuration) },
+                            positionTimerOnClick = {},
+                            onDurationTextLayout = { layoutResult ->
+                                if (layoutResult.lineCount > 0) {
+                                    durationInkWidthPx =
+                                        layoutResult.getLineRight(0) - layoutResult.getLineLeft(0)
+                                }
+                            },
+                            chapters = chaptersList,
+                        )
                     }
                 }
                 val mediaTitle by viewModel.mediaTitle.collectAsState()
@@ -645,7 +644,7 @@ fun PlayerControls(
                             .fillMaxWidth()
                             .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         portraitBottomButtonsList.forEach { button ->
                             RenderPlayerButton(

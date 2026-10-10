@@ -95,9 +95,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import tachiyomi.domain.category.interactor.GetCategories
-import tachiyomi.presentation.core.util.collectAsState as collectPreference
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import tachiyomi.presentation.core.util.collectAsState as collectPreference
 
 /** The Bluetooth permissions this needs, by Android version */
 private fun bluetoothPermissions(): Array<String> = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -552,8 +552,9 @@ private fun SelectionCard(selection: SyncSelection, onChange: (SyncSelection) ->
                 title = "Manga",
                 subtitle = when (val picked = selection.mangaCategories) {
                     null -> "All categories"
-                    else -> "${picked.size} of ${categories.size} categories: " +
-                        picked.joinToString { it.ifEmpty { "Default" } }
+                    else ->
+                        "${picked.size} of ${categories.size} categories: " +
+                            picked.joinToString { it.ifEmpty { "Default" } }
                 },
                 checked = selection.mangaLibrary,
                 onCheckedChange = { onChange(selection.copy(mangaLibrary = it)) },
@@ -580,8 +581,9 @@ private fun SelectionCard(selection: SyncSelection, onChange: (SyncSelection) ->
                 title = "Sources",
                 subtitle = when (val picked = selection.sourceKeys) {
                     null -> "All ${sources.size} sources you made"
-                    else -> "${picked.size} of ${sources.size}: " +
-                        sources.filter { it.key in picked }.joinToString { it.name }
+                    else ->
+                        "${picked.size} of ${sources.size}: " +
+                            sources.filter { it.key in picked }.joinToString { it.name }
                 },
                 checked = selection.sources,
                 onCheckedChange = { onChange(selection.copy(sources = it)) },

@@ -83,48 +83,48 @@ fun extensionsTab(
                     onRefresh = extensionsScreenModel::findAvailableExtensions,
                     onOpenRepos = { navigator.push(ExtensionStoresScreen()) },
                 )
-            ExtensionScreen(
-                state = state,
-                contentPadding = PaddingValues(
-                    start = contentPadding.calculateStartPadding(layoutDirection),
-                    end = contentPadding.calculateEndPadding(layoutDirection),
-                    bottom = contentPadding.calculateBottomPadding(),
-                ),
-                // KMK <--
-                searchQuery = state.searchQuery,
-                onLongClickItem = { extension ->
-                    when (extension) {
-                        is Extension.Available -> extensionsScreenModel.installExtension(extension)
-                        else -> {
-                            if (context.isPackageInstalled(extension.pkgName)) {
-                                extensionsScreenModel.uninstallExtension(extension)
-                            } else {
-                                privateExtensionToUninstall = extension
+                ExtensionScreen(
+                    state = state,
+                    contentPadding = PaddingValues(
+                        start = contentPadding.calculateStartPadding(layoutDirection),
+                        end = contentPadding.calculateEndPadding(layoutDirection),
+                        bottom = contentPadding.calculateBottomPadding(),
+                    ),
+                    // KMK <--
+                    searchQuery = state.searchQuery,
+                    onLongClickItem = { extension ->
+                        when (extension) {
+                            is Extension.Available -> extensionsScreenModel.installExtension(extension)
+                            else -> {
+                                if (context.isPackageInstalled(extension.pkgName)) {
+                                    extensionsScreenModel.uninstallExtension(extension)
+                                } else {
+                                    privateExtensionToUninstall = extension
+                                }
                             }
                         }
-                    }
-                },
-                onClickItemCancel = extensionsScreenModel::cancelInstallUpdateExtension,
-                onClickUpdateAll = extensionsScreenModel::updateAllExtensions,
-                onOpenWebView = { extension ->
-                    extension.sources.getOrNull(0)?.let {
-                        navigator.push(
-                            WebViewScreen(
-                                url = it.baseUrl,
-                                initialTitle = it.name,
-                                sourceId = it.id,
-                            ),
-                        )
-                    }
-                },
-                onInstallExtension = extensionsScreenModel::installExtension,
-                onOpenExtension = { navigator.push(ExtensionDetailsScreen(it.pkgName)) },
-                onTrustExtension = { extensionsScreenModel.trustExtension(it) },
-                onUninstallExtension = { extensionsScreenModel.uninstallExtension(it) },
-                onUpdateExtension = extensionsScreenModel::updateExtension,
-                onRefresh = extensionsScreenModel::findAvailableExtensions,
-            )
-            // KMK -->
+                    },
+                    onClickItemCancel = extensionsScreenModel::cancelInstallUpdateExtension,
+                    onClickUpdateAll = extensionsScreenModel::updateAllExtensions,
+                    onOpenWebView = { extension ->
+                        extension.sources.getOrNull(0)?.let {
+                            navigator.push(
+                                WebViewScreen(
+                                    url = it.baseUrl,
+                                    initialTitle = it.name,
+                                    sourceId = it.id,
+                                ),
+                            )
+                        }
+                    },
+                    onInstallExtension = extensionsScreenModel::installExtension,
+                    onOpenExtension = { navigator.push(ExtensionDetailsScreen(it.pkgName)) },
+                    onTrustExtension = { extensionsScreenModel.trustExtension(it) },
+                    onUninstallExtension = { extensionsScreenModel.uninstallExtension(it) },
+                    onUpdateExtension = extensionsScreenModel::updateExtension,
+                    onRefresh = extensionsScreenModel::findAvailableExtensions,
+                )
+                // KMK -->
             }
             // KMK <--
 

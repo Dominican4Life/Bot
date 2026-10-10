@@ -278,8 +278,17 @@ class AnimeRepository(
     fun subscribeHistory(): Flow<List<AnimeHistoryItem>> =
         handler.subscribeToList {
             anime_historyQueries.getHistory {
-                    animeId, source, title, thumbnailUrl, favorite, episodeId, episodeName, episodeNumber,
-                    lastSecondSeen, totalSeconds, lastSeen,
+                    animeId,
+                    source,
+                    title,
+                    thumbnailUrl,
+                    favorite,
+                    episodeId,
+                    episodeName,
+                    episodeNumber,
+                    lastSecondSeen,
+                    totalSeconds,
+                    lastSeen,
                 ->
                 AnimeHistoryItem(
                     animeId = animeId,
@@ -318,8 +327,18 @@ class AnimeRepository(
     fun subscribeUpdates(after: Long, limit: Long = 500): Flow<List<AnimeUpdateItem>> =
         handler.subscribeToList {
             episodesQueries.getUpdates(after, limit) {
-                    animeId, source, title, thumbnailUrl, episodeId, episodeName, episodeNumber, seen, bookmark,
-                    lastSecondSeen, totalSeconds, dateFetch,
+                    animeId,
+                    source,
+                    title,
+                    thumbnailUrl,
+                    episodeId,
+                    episodeName,
+                    episodeNumber,
+                    seen,
+                    bookmark,
+                    lastSecondSeen,
+                    totalSeconds,
+                    dateFetch,
                 ->
                 AnimeUpdateItem(
                     animeId = animeId,

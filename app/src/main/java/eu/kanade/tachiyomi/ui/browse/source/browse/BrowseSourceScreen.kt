@@ -243,7 +243,7 @@ data class BrowseSourceScreen(
         // KMK -->
         // The whole screen takes on the selected cover's colors, like the details page
         CoverSeedTheme(seedColor = previewState.seedColor) {
-        // KMK <--
+            // KMK <--
             Scaffold(
                 topBar = {
                     Column(
@@ -580,7 +580,7 @@ data class BrowseSourceScreen(
                 }
                 // KMK <--
             }
-        // KMK -->
+            // KMK -->
         }
         // KMK <--
 

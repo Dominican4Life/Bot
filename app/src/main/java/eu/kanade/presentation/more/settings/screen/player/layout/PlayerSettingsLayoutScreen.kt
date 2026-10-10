@@ -93,7 +93,7 @@ class PlayerSettingsLayoutScreen(val initialRegion: LayoutRegion) : Screen() {
                                 contentDescription = "Reset to default",
                             )
                         }
-                    }
+                    },
                 )
             },
         ) { paddingValues ->
@@ -120,14 +120,14 @@ class PlayerSettingsLayoutScreen(val initialRegion: LayoutRegion) : Screen() {
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier.fillMaxSize(),
                 ) {
                     item(span = { GridItemSpan(maxLineSpan) }) {
                         Text(
                             text = "Long press to reorder items. Tap '-' icon to remove.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(bottom = 12.dp, start = 4.dp)
+                            modifier = Modifier.padding(bottom = 12.dp, start = 4.dp),
                         )
                     }
 
@@ -141,13 +141,13 @@ class PlayerSettingsLayoutScreen(val initialRegion: LayoutRegion) : Screen() {
                                 color = MaterialTheme.colorScheme.surfaceContainerLowest,
                                 border = BorderStroke(
                                     1.dp,
-                                    MaterialTheme.colorScheme.outlineVariant
+                                    MaterialTheme.colorScheme.outlineVariant,
                                 ),
                             ) {
                                 Column(
                                     modifier = Modifier.fillMaxSize(),
                                     horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.Center
+                                    verticalArrangement = Arrangement.Center,
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.AddCircle,
@@ -155,7 +155,7 @@ class PlayerSettingsLayoutScreen(val initialRegion: LayoutRegion) : Screen() {
                                         modifier = Modifier
                                             .size(32.dp)
                                             .padding(bottom = 8.dp),
-                                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+                                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
                                     )
                                     Text(
                                         text = "Drop zone is empty",
@@ -177,13 +177,13 @@ class PlayerSettingsLayoutScreen(val initialRegion: LayoutRegion) : Screen() {
                                 } else {
                                     GridItemSpan(1)
                                 }
-                            }
+                            },
                         ) { index ->
                             val button = selectedButtons[index]
                             ReorderableItem(reorderableState, key = button) { isDragging ->
                                 val elevation by animateFloatAsState(
                                     targetValue = if (isDragging) 8f else 0f,
-                                    label = "drag_elevation"
+                                    label = "drag_elevation",
                                 )
 
                                 Surface(
@@ -194,11 +194,11 @@ class PlayerSettingsLayoutScreen(val initialRegion: LayoutRegion) : Screen() {
                                                 Modifier.wrapContentWidth(Alignment.Start)
                                             } else {
                                                 Modifier
-                                            }
+                                            },
                                         ),
                                     shape = RoundedCornerShape(24.dp),
                                     shadowElevation = elevation.dp,
-                                    color = Color.Transparent
+                                    color = Color.Transparent,
                                 ) {
                                     PlayerButtonChip(
                                         button = button,
@@ -223,7 +223,7 @@ class PlayerSettingsLayoutScreen(val initialRegion: LayoutRegion) : Screen() {
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(16.dp),
                             colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceContainer
+                                containerColor = MaterialTheme.colorScheme.surfaceContainer,
                             ),
                         ) {
                             Column(modifier = Modifier.padding(16.dp)) {
@@ -231,7 +231,7 @@ class PlayerSettingsLayoutScreen(val initialRegion: LayoutRegion) : Screen() {
                                     text = "Available Palette",
                                     style = MaterialTheme.typography.labelLarge,
                                     color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.padding(bottom = 12.dp)
+                                    modifier = Modifier.padding(bottom = 12.dp),
                                 )
                                 FlowRow(
                                     modifier = Modifier.fillMaxWidth(),
@@ -239,7 +239,7 @@ class PlayerSettingsLayoutScreen(val initialRegion: LayoutRegion) : Screen() {
                                     verticalArrangement = Arrangement.spacedBy(10.dp),
                                 ) {
                                     val isCastEnabled = screenModel.isCastEnabled()
-                                    val availableButtons = allPlayerButtons.filter { 
+                                    val availableButtons = allPlayerButtons.filter {
                                         it !in selectedButtons && (it != PlayerButton.Cast || isCastEnabled)
                                     }
                                     availableButtons.forEach { button ->
@@ -251,8 +251,11 @@ class PlayerSettingsLayoutScreen(val initialRegion: LayoutRegion) : Screen() {
                                                 screenModel.updateButtons(selectedButtons + button)
                                             },
                                             badgeIcon = Icons.Default.AddCircle,
-                                            badgeColor = if (isEnabled) MaterialTheme.colorScheme.primary
-                                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                                            badgeColor = if (isEnabled) {
+                                                MaterialTheme.colorScheme.primary
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                                            },
                                         )
                                     }
                                 }
@@ -301,12 +304,12 @@ class PlayerSettingsLayoutScreen(val initialRegion: LayoutRegion) : Screen() {
                 .padding(top = 24.dp),
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
             ),
         ) {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text(
                     text = "Icons Legend",
@@ -316,23 +319,23 @@ class PlayerSettingsLayoutScreen(val initialRegion: LayoutRegion) : Screen() {
                 FlowRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     allPlayerButtons.filter { it != PlayerButton.Cast || isCastEnabled }.forEach { button ->
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
                             Icon(
                                 imageVector = button.getIcon(),
                                 contentDescription = null,
                                 modifier = Modifier.size(16.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             Text(
                                 text = stringResource(button.titleRes),
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     }

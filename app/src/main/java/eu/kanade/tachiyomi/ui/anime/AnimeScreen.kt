@@ -289,79 +289,79 @@ private class AnimeActions(
 @Composable
 private fun VideoDialogs(state: AnimeScreenModel.State, screenModel: AnimeScreenModel, context: Context) {
     val anime = state.anime
-        when (val dialog = state.videoDialog) {
-            null -> {}
-            is AnimeScreenModel.VideoDialog.Loading -> AlertDialog(
-                onDismissRequest = screenModel::dismissVideoDialog,
-                confirmButton = {},
-                dismissButton = {
-                    TextButton(onClick = screenModel::dismissVideoDialog) {
-                        Text(stringResource(MR.strings.action_cancel))
-                    }
-                },
-                title = { Text(dialog.episode.name) },
-                text = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                        Spacer(Modifier.width(16.dp))
-                        Text(stringResource(KMR.strings.anime_loading_videos))
-                    }
-                },
-            )
-            is AnimeScreenModel.VideoDialog.Pick -> AlertDialog(
-                onDismissRequest = screenModel::dismissVideoDialog,
-                confirmButton = {},
-                dismissButton = {
-                    TextButton(onClick = screenModel::dismissVideoDialog) {
-                        Text(stringResource(MR.strings.action_cancel))
-                    }
-                },
-                title = { Text(stringResource(KMR.strings.anime_choose_video)) },
-                text = {
-                    ScrollbarLazyColumn {
-                        items(dialog.videos) { video ->
-                            Text(
-                                text = video.videoTitle.ifBlank { video.videoUrl },
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .clickable {
-                                        screenModel.resolveAndPlay(dialog.episode, video) { resolved ->
-                                            openExternalPlayer(context, resolved, anime?.title, dialog.episode)
-                                        }
+    when (val dialog = state.videoDialog) {
+        null -> {}
+        is AnimeScreenModel.VideoDialog.Loading -> AlertDialog(
+            onDismissRequest = screenModel::dismissVideoDialog,
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = screenModel::dismissVideoDialog) {
+                    Text(stringResource(MR.strings.action_cancel))
+                }
+            },
+            title = { Text(dialog.episode.name) },
+            text = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                    Spacer(Modifier.width(16.dp))
+                    Text(stringResource(KMR.strings.anime_loading_videos))
+                }
+            },
+        )
+        is AnimeScreenModel.VideoDialog.Pick -> AlertDialog(
+            onDismissRequest = screenModel::dismissVideoDialog,
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = screenModel::dismissVideoDialog) {
+                    Text(stringResource(MR.strings.action_cancel))
+                }
+            },
+            title = { Text(stringResource(KMR.strings.anime_choose_video)) },
+            text = {
+                ScrollbarLazyColumn {
+                    items(dialog.videos) { video ->
+                        Text(
+                            text = video.videoTitle.ifBlank { video.videoUrl },
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    screenModel.resolveAndPlay(dialog.episode, video) { resolved ->
+                                        openExternalPlayer(context, resolved, anime?.title, dialog.episode)
                                     }
-                                    .padding(horizontal = 8.dp, vertical = 12.dp),
-                            )
-                        }
+                                }
+                                .padding(horizontal = 8.dp, vertical = 12.dp),
+                        )
                     }
-                },
-            )
-            is AnimeScreenModel.VideoDialog.Empty -> AlertDialog(
-                onDismissRequest = screenModel::dismissVideoDialog,
-                confirmButton = {
-                    TextButton(onClick = screenModel::dismissVideoDialog) { Text(stringResource(MR.strings.action_ok)) }
-                },
-                title = { Text(dialog.episode.name) },
-                text = { Text(stringResource(KMR.strings.anime_no_videos)) },
-            )
-            is AnimeScreenModel.VideoDialog.Failed -> AlertDialog(
-                onDismissRequest = screenModel::dismissVideoDialog,
-                confirmButton = {
-                    TextButton(
-                        onClick = { screenModel.loadVideos(dialog.episode) },
-                    ) { Text(stringResource(MR.strings.action_retry)) }
-                },
-                dismissButton = {
-                    TextButton(onClick = screenModel::dismissVideoDialog) {
-                        Text(stringResource(MR.strings.action_cancel))
-                    }
-                },
-                title = { Text(dialog.episode.name) },
-                text = { Text(dialog.message) },
-            )
-        }
+                }
+            },
+        )
+        is AnimeScreenModel.VideoDialog.Empty -> AlertDialog(
+            onDismissRequest = screenModel::dismissVideoDialog,
+            confirmButton = {
+                TextButton(onClick = screenModel::dismissVideoDialog) { Text(stringResource(MR.strings.action_ok)) }
+            },
+            title = { Text(dialog.episode.name) },
+            text = { Text(stringResource(KMR.strings.anime_no_videos)) },
+        )
+        is AnimeScreenModel.VideoDialog.Failed -> AlertDialog(
+            onDismissRequest = screenModel::dismissVideoDialog,
+            confirmButton = {
+                TextButton(
+                    onClick = { screenModel.loadVideos(dialog.episode) },
+                ) { Text(stringResource(MR.strings.action_retry)) }
+            },
+            dismissButton = {
+                TextButton(onClick = screenModel::dismissVideoDialog) {
+                    Text(stringResource(MR.strings.action_cancel))
+                }
+            },
+            title = { Text(dialog.episode.name) },
+            text = { Text(dialog.message) },
+        )
+    }
 }
 
 /** The manga details toolbar, with the options anime supports */

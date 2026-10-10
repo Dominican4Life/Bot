@@ -10,6 +10,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Audiotrack
 import androidx.compose.material.icons.outlined.Code
+import androidx.compose.material.icons.outlined.Dashboard
 import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.Gesture
 import androidx.compose.material.icons.outlined.Memory
@@ -50,7 +51,6 @@ import tachiyomi.i18n.MR
 import tachiyomi.i18n.ank.AMR
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
-import androidx.compose.material.icons.outlined.Dashboard
 import cafe.adriel.voyager.core.screen.Screen as VoyagerScreen
 
 object PlayerSettingsMainScreen : Screen() {

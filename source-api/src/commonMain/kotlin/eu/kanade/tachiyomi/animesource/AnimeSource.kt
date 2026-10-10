@@ -2,11 +2,11 @@ package eu.kanade.tachiyomi.animesource
 
 import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
-import eu.kanade.tachiyomi.animesource.model.SAnime as SManga
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.util.awaitSingle
 import rx.Observable
+import eu.kanade.tachiyomi.animesource.model.SAnime as SManga
 
 /**
  * A basic interface for creating a source. It could be an online source, a local source, etc.

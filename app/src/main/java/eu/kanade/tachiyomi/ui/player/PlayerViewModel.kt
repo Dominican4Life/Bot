@@ -22,24 +22,13 @@
 
 package eu.kanade.tachiyomi.ui.player
 
+import android.app.Application
+import android.graphics.Bitmap
+import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
-import android.graphics.Bitmap
-import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
-import eu.kanade.tachiyomi.animesource.model.ThumbnailInfo
-import eu.kanade.tachiyomi.animesource.model.TileInfo
-import eu.kanade.tachiyomi.data.filler.AnimeFillerListFetcher
-import eu.kanade.tachiyomi.ui.player.utils.DefaultStreamPreferenceStore
-import eu.kanade.tachiyomi.ui.player.utils.DefaultStreamSelector
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.stateIn
-
-
-import android.app.Application
-import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
@@ -48,15 +37,27 @@ import com.yubyf.truetypeparser.TTFFile
 import dev.icerock.moko.resources.StringResource
 import eu.kanade.domain.base.BasePreferences
 import eu.kanade.domain.ui.UiPreferences
+import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
 import eu.kanade.tachiyomi.animesource.AnimeSource
 import eu.kanade.tachiyomi.animesource.model.ChapterType
 import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SerializableHoster.Companion.toHosterList
+import eu.kanade.tachiyomi.animesource.model.ThumbnailInfo
+import eu.kanade.tachiyomi.animesource.model.TileInfo
 import eu.kanade.tachiyomi.animesource.model.TimeStamp
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
+import eu.kanade.tachiyomi.data.anime.Anime
+import eu.kanade.tachiyomi.data.anime.AnimeRepository
+import eu.kanade.tachiyomi.data.filler.AnimeFillerListFetcher
 import eu.kanade.tachiyomi.data.saver.Image
 import eu.kanade.tachiyomi.data.saver.ImageSaver
 import eu.kanade.tachiyomi.data.saver.Location
+import eu.kanade.tachiyomi.ui.player.compat.Episode
+import eu.kanade.tachiyomi.ui.player.compat.skipIntroDisable
+import eu.kanade.tachiyomi.ui.player.compat.skipIntroLength
+import eu.kanade.tachiyomi.ui.player.compat.toDbEpisode
+import eu.kanade.tachiyomi.ui.player.compat.toDomainEpisode
 import eu.kanade.tachiyomi.ui.player.controls.components.IndexedSegment
 import eu.kanade.tachiyomi.ui.player.controls.components.sheets.HosterState
 import eu.kanade.tachiyomi.ui.player.controls.components.sheets.getChangedAt
@@ -73,6 +74,8 @@ import eu.kanade.tachiyomi.ui.player.settings.SubtitlePreferences
 import eu.kanade.tachiyomi.ui.player.utils.AniSkipApi
 import eu.kanade.tachiyomi.ui.player.utils.ChapterUtils
 import eu.kanade.tachiyomi.ui.player.utils.ChapterUtils.Companion.getStringRes
+import eu.kanade.tachiyomi.ui.player.utils.DefaultStreamPreferenceStore
+import eu.kanade.tachiyomi.ui.player.utils.DefaultStreamSelector
 import eu.kanade.tachiyomi.ui.reader.SaveImageNotifier
 import eu.kanade.tachiyomi.util.lang.byteSize
 import eu.kanade.tachiyomi.util.lang.takeBytes
@@ -93,6 +96,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
@@ -104,6 +108,7 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -121,7 +126,6 @@ import tachiyomi.domain.storage.service.StorageManager
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.ank.AMR
 import tachiyomi.i18n.kmk.KMR
-
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.File
@@ -129,14 +133,6 @@ import java.io.InputStream
 import java.util.Date
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.cancellation.CancellationException
-import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
-import eu.kanade.tachiyomi.data.anime.Anime
-import eu.kanade.tachiyomi.data.anime.AnimeRepository
-import eu.kanade.tachiyomi.ui.player.compat.Episode
-import eu.kanade.tachiyomi.ui.player.compat.skipIntroDisable
-import eu.kanade.tachiyomi.ui.player.compat.skipIntroLength
-import eu.kanade.tachiyomi.ui.player.compat.toDbEpisode
-import eu.kanade.tachiyomi.ui.player.compat.toDomainEpisode
 import eu.kanade.tachiyomi.data.anime.Episode as DomainEpisode
 
 class PlayerViewModel @JvmOverloads constructor(
@@ -286,10 +282,10 @@ class PlayerViewModel @JvmOverloads constructor(
     }.stateIn(viewModelScope, SharingStarted.Eagerly, -1)
 
     // ANZ -->
-    private val _manualDecoder = MutableStateFlow<Decoder?>(null)
+    private val manualDecoder = MutableStateFlow<Decoder?>(null)
     val currentDecoder = combine(
         mpv.propFlow<String>("hwdec-current"),
-        _manualDecoder,
+        manualDecoder,
     ) { hwdecCurrent, manual ->
         manual ?: when (hwdecCurrent) {
             "mediacodec" -> Decoder.HWPlus
@@ -336,7 +332,7 @@ class PlayerViewModel @JvmOverloads constructor(
         .map { (it?.toObject<List<ChapterNode>>(json) ?: persistentListOf()).map { it.toSegment() }.toImmutableList() }
         // ANZ -->
         .flowOn(Dispatchers.Default)
-        // ANZ <--
+    // ANZ <--
 
     val currentChapter = chapters.combine(mpv.propFlow<Int>("chapter")) { list, idx ->
         idx?.let { list.getOrNull(it) }
@@ -371,7 +367,7 @@ class PlayerViewModel @JvmOverloads constructor(
         }
         // ANZ -->
         .flowOn(Dispatchers.Default)
-        // ANZ <--
+    // ANZ <--
 
     val audioTracks = mpv.propFlow<MPVNode>("track-list")
         .map { node ->
@@ -384,7 +380,7 @@ class PlayerViewModel @JvmOverloads constructor(
         }
         // ANZ -->
         .flowOn(Dispatchers.Default)
-        // ANZ <--
+    // ANZ <--
 
     private val _skipIntroText = MutableStateFlow<String?>(null)
     val skipIntroText = _skipIntroText.asStateFlow()
@@ -577,7 +573,7 @@ class PlayerViewModel @JvmOverloads constructor(
 
     fun clearTracks() {
         // ANZ -->
-        _manualDecoder.update { null }
+        manualDecoder.update { null }
         // ANZ <--
         hasLoadedTracks.update { _ -> false }
         // ANK -->
@@ -1157,8 +1153,8 @@ class PlayerViewModel @JvmOverloads constructor(
         playerPreferences.autoplayEnabled().set(value)
     }
 
-    @Suppress("DEPRECATION")
     // ANZ -->
+    @Suppress("DEPRECATION")
     fun changeVideoAspect(aspect: VideoAspect, showUpdate: Boolean = true) {
         viewModelScope.launch {
             eventChannel.send(Event.ChangeVideoAspect(aspect, showUpdate))
@@ -1500,7 +1496,6 @@ class PlayerViewModel @JvmOverloads constructor(
             savedState["episode_id"] = value
             field = value
         }
-
 
     // KMK: only "skip seen" for now; episode filters come with the anime details filters
     private fun filterEpisodeList(
@@ -2110,7 +2105,7 @@ class PlayerViewModel @JvmOverloads constructor(
                     val hosterState = EpisodeLoader.loadHosterVideos(
                         source = currentSource.value!!,
                         hoster = hosterList.value[index],
-                        
+
                     )
                     _hosterState.updateAt(index, hosterState)
 
@@ -2447,8 +2442,9 @@ class PlayerViewModel @JvmOverloads constructor(
     /**
      * Returns the response of the AniSkipApi for this episode.
      * just works if tracking is enabled.
+     *
+     * KMK: AniSkip needs a MyAnimeList/AniList id from tracking, which isn't merged yet
      */
-    /** KMK: AniSkip needs a MyAnimeList/AniList id from tracking, which isn't merged yet */
     @Suppress("UNUSED_PARAMETER", "RedundantSuspendModifier")
     suspend fun aniSkipResponse(playerDuration: Int?): List<TimeStamp>? = null
 
@@ -2561,7 +2557,7 @@ class PlayerViewModel @JvmOverloads constructor(
         val newComposite = DefaultStreamSelector.updateCompositeSelector(
             currentComposite,
             hoster.name,
-            DefaultStreamSelector.selectorFor(video, hoster.name)
+            DefaultStreamSelector.selectorFor(video, hoster.name),
         )
         DefaultStreamPreferenceStore(playerPreferences).setSelector(
             animeId = currentAnime.value?.id,
@@ -2575,13 +2571,13 @@ class PlayerViewModel @JvmOverloads constructor(
 
     // ANZ -->
     fun updateDecoder(decoder: Decoder) {
-        _manualDecoder.update { decoder }
+        manualDecoder.update { decoder }
         mpv.setPropertyString("hwdec", decoder.value)
     }
 
     fun getDecoder() {
         val active = mpv.getPropertyString("hwdec-current") ?: "no"
-        _manualDecoder.update { getDecoderFromValue(active) }
+        manualDecoder.update { getDecoderFromValue(active) }
     }
     // ANZ <--
 
@@ -2785,7 +2781,6 @@ class PlayerViewModel @JvmOverloads constructor(
         }
     }
     // ANZ <--
-
 }
 
 private val FONT_EXTENSION_REGEX = Regex($$""".*\.[ot]tf$""")

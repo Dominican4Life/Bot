@@ -1,6 +1,5 @@
 package eu.kanade.tachiyomi.animesource.model
 
-
 open class AnimesPage(open val animes: List<SAnime>, open val hasNextPage: Boolean) {
     val mangas: List<SAnime>
         get() = animes

@@ -33,8 +33,8 @@ import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Icon
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -145,46 +145,46 @@ fun BrowseChapterPanel(
                                 style = MaterialTheme.typography.titleMedium,
                                 modifier = Modifier.weight(1f),
                             )
-                    var showDownloadMenu by remember { mutableStateOf(false) }
-                    Box {
-                        IconButton(onClick = { showDownloadMenu = true }, enabled = state.manga != null) {
-                            Icon(
-                                imageVector = Icons.Outlined.Download,
-                                contentDescription = stringResource(MR.strings.manga_download),
-                                tint = MaterialTheme.colorScheme.primary,
-                            )
-                        }
-                        DropdownMenu(
-                            expanded = showDownloadMenu,
-                            onDismissRequest = { showDownloadMenu = false },
-                        ) {
-                            listOf(
-                                DownloadAction.UNREAD_CHAPTERS to stringResource(MR.strings.download_unread),
-                                null to stringResource(KMR.strings.browse_download_all_chapters),
-                                DownloadAction.BOOKMARKED_CHAPTERS to stringResource(MR.strings.download_bookmarked),
-                            ).forEach { (action, label) ->
-                                DropdownMenuItem(
-                                    text = { Text(text = label) },
-                                    onClick = {
-                                        showDownloadMenu = false
-                                        onDownloadAction(action)
+                            var showDownloadMenu by remember { mutableStateOf(false) }
+                            Box {
+                                IconButton(onClick = { showDownloadMenu = true }, enabled = state.manga != null) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Download,
+                                        contentDescription = stringResource(MR.strings.manga_download),
+                                        tint = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
+                                DropdownMenu(
+                                    expanded = showDownloadMenu,
+                                    onDismissRequest = { showDownloadMenu = false },
+                                ) {
+                                    listOf(
+                                        DownloadAction.UNREAD_CHAPTERS to stringResource(MR.strings.download_unread),
+                                        null to stringResource(KMR.strings.browse_download_all_chapters),
+                                        DownloadAction.BOOKMARKED_CHAPTERS to stringResource(MR.strings.download_bookmarked),
+                                    ).forEach { (action, label) ->
+                                        DropdownMenuItem(
+                                            text = { Text(text = label) },
+                                            onClick = {
+                                                showDownloadMenu = false
+                                                onDownloadAction(action)
+                                            },
+                                        )
+                                    }
+                                }
+                            }
+                            val filterActive = state.manga?.chaptersFiltered() == true || state.scanlatorFilterActive
+                            IconButton(onClick = onOpenFilters, enabled = state.manga != null) {
+                                Icon(
+                                    imageVector = Icons.Outlined.FilterList,
+                                    contentDescription = stringResource(MR.strings.action_filter),
+                                    tint = if (filterActive) {
+                                        MaterialTheme.colorScheme.tertiary
+                                    } else {
+                                        MaterialTheme.colorScheme.primary
                                     },
                                 )
                             }
-                        }
-                    }
-                    val filterActive = state.manga?.chaptersFiltered() == true || state.scanlatorFilterActive
-                    IconButton(onClick = onOpenFilters, enabled = state.manga != null) {
-                        Icon(
-                            imageVector = Icons.Outlined.FilterList,
-                            contentDescription = stringResource(MR.strings.action_filter),
-                            tint = if (filterActive) {
-                                MaterialTheme.colorScheme.tertiary
-                            } else {
-                                MaterialTheme.colorScheme.primary
-                            },
-                        )
-                    }
                         }
                     }
                 }

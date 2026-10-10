@@ -1,7 +1,5 @@
 package eu.kanade.presentation.anime
 
-import `is`.xyz.mpv.BaseMPVView
-import `is`.xyz.mpv.MPV
 import android.os.Handler
 import android.os.Looper
 import androidx.compose.animation.AnimatedVisibility
@@ -91,6 +89,8 @@ import eu.kanade.tachiyomi.ui.player.resolveUri
 import eu.kanade.tachiyomi.ui.player.settings.DecoderPreferences
 import eu.kanade.tachiyomi.ui.player.settings.PlayerPreferences
 import eu.kanade.tachiyomi.ui.player.utils.Anime4KManager
+import `is`.xyz.mpv.BaseMPVView
+import `is`.xyz.mpv.MPV
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -303,7 +303,7 @@ fun AnimePreviewSection(
                 duration = instance.getPropertyDouble("duration") ?: 0.0
                 paused = instance.getPropertyBoolean("pause") ?: false
                 buffering = instance.getPropertyBoolean("paused-for-cache") == true ||
-                    instance.getPropertyBoolean("core-idle") == true && !paused
+                    (instance.getPropertyBoolean("core-idle") == true && !paused)
             }
             delay(400)
         }
@@ -343,7 +343,12 @@ fun AnimePreviewSection(
             val instance = mpv
             if (phase == PreviewPhase.Playing && instance != null) {
                 AndroidView(
-                    factory = { ctx -> BaseMPVView(ctx, null).also { it.mpv = instance; it.setVo("gpu") } },
+                    factory = { ctx ->
+                        BaseMPVView(ctx, null).also {
+                            it.mpv = instance
+                            it.setVo("gpu")
+                        }
+                    },
                     modifier = Modifier.fillMaxSize(),
                 )
                 if (view == PreviewView.Split && !comparing) {

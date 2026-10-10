@@ -22,14 +22,6 @@
 
 package eu.kanade.tachiyomi.ui.player
 
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
-import eu.kanade.domain.ui.UiPreferences
-import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
-import tachiyomi.presentation.core.util.collectAsState as collectAsStatePref
-
-
 import android.annotation.SuppressLint
 import android.app.PictureInPictureParams
 import android.content.BroadcastReceiver
@@ -58,6 +50,9 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -74,11 +69,13 @@ import androidx.media.AudioManagerCompat
 import animiru.feature.mpvfiles.MpvConfig
 import animiru.feature.mpvfiles.MpvConfig.Companion.MPV_DIR
 import com.hippo.unifile.UniFile
+import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.presentation.theme.TachiyomiTheme
 import eu.kanade.tachiyomi.animesource.model.ChapterType
 import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SerializableHoster.Companion.serialize
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.ui.base.activity.BaseActivity
 import eu.kanade.tachiyomi.ui.main.MainActivity
 import eu.kanade.tachiyomi.ui.player.controls.PlayerControls
@@ -109,13 +106,13 @@ import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.ank.AMR
-
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.util.Calendar
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.time.Duration.Companion.milliseconds
+import tachiyomi.presentation.core.util.collectAsState as collectAsStatePref
 
 class PlayerActivity : BaseActivity() {
     // ANZ -->
@@ -271,8 +268,6 @@ class PlayerActivity : BaseActivity() {
         setupPlayerAudio()
         setupMediaSession()
         setupPlayerOrientation()
-
-
 
         Thread.setDefaultUncaughtExceptionHandler { _, throwable ->
             runOnUiThread {
@@ -547,7 +542,6 @@ class PlayerActivity : BaseActivity() {
                 if (it != -1f) viewModel.changeBrightnessTo(it)
             }
         }
-
     }
 
     private fun UniFile.writeText(text: String) {
@@ -793,7 +787,7 @@ class PlayerActivity : BaseActivity() {
 
     // ANZ -->
     fun createPipParams(isPaused: Boolean? = null): PictureInPictureParams {
-    // ANZ <--
+        // ANZ <--
         val builder = PictureInPictureParams.Builder()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val anime = viewModel.currentAnime.value
@@ -1313,7 +1307,7 @@ class PlayerActivity : BaseActivity() {
 
     // ANZ -->
     private fun changeVideoAspect(aspect: VideoAspect, showUpdate: Boolean = true) {
-    // ANZ <--
+        // ANZ <--
         var ratio = -1.0
         val pan: Double
         when (aspect) {

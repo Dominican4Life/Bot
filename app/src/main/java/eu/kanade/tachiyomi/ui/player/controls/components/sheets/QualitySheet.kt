@@ -36,9 +36,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.first
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -51,6 +48,9 @@ import eu.kanade.presentation.player.components.PlayerSheet
 import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.ui.player.utils.DefaultStreamSelector
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.ank.AMR
 import tachiyomi.presentation.core.components.material.DISABLED_ALPHA
@@ -87,7 +87,7 @@ private data class DefaultScrollTarget(
 )
 
 private val DefaultHighlightShape = RoundedCornerShape(14.dp)
-private const val HostExpandSettleMs = 200L
+private const val HOST_EXPAND_SETTLE_MS = 200L
 
 @Composable
 fun QualitySheet(
@@ -281,7 +281,7 @@ private fun ScrollToDefaultEffect(
             snapshotFlow { expandedState.getOrNull(target.hosterIndex) == true }
                 .filter { it }
                 .first()
-            delay(HostExpandSettleMs)
+            delay(HOST_EXPAND_SETTLE_MS)
         }
 
         val lazyIndex = if (target.hosterIndex < 0) {
@@ -491,7 +491,7 @@ internal fun LazyListScope.hosterContent(
                     video = video,
                     videoState = hoster.videoState[videoIdx],
                     selected = selectedVideoIndex == Pair(hosterIdx, videoIdx),
-                                      defaultSelected = highlightDefaultStream && videoIdx == defaultVideoIdx,
+                    defaultSelected = highlightDefaultStream && videoIdx == defaultVideoIdx,
                     onClick = { onClickVideo(hosterIdx, videoIdx) },
                     noHoster = false,
                 )

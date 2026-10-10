@@ -59,7 +59,12 @@ object HlsRelay {
         val id = nextId.getAndIncrement().toString()
         sessions[id] = headers
         originals[id] = url
-        if (sessions.size > 500) sessions.keys.take(100).forEach { sessions.remove(it); originals.remove(it) }
+        if (sessions.size > 500) {
+            sessions.keys.take(100).forEach {
+                sessions.remove(it)
+                originals.remove(it)
+            }
+        }
         return relayUrl(id, url, playlist = true)
     }
 

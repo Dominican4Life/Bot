@@ -1,9 +1,9 @@
 package eu.kanade.presentation.theme
 
+import androidx.compose.material.ripple.RippleAlpha
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RippleConfiguration
-import androidx.compose.material.ripple.RippleAlpha
 import androidx.compose.runtime.Composable
 
 // KMK: ripple used by the anime player controls (from AniZen)
