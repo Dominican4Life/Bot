@@ -5,7 +5,10 @@ name: Build custom APK
 on:
   push:
     branches:
+      - master
       - 'feature/**'
+    paths-ignore:
+      - '**.md'
   workflow_dispatch:
 
 concurrency:
@@ -79,7 +82,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tag="custom-r${{ github.run_number }}"
+          # Numbering continues from the old fork, whose last build was custom-r86
+          tag="custom-r$(( ${{ github.run_number }} + 86 ))"
           ls app/build/outputs/apk/preview/
           for f in app/build/outputs/apk/preview/*.apk; do
             abi=$(basename "$f" .apk | sed 's/^app-//; s/-preview.*//')
@@ -88,7 +92,7 @@ jobs:
           gh release create "$tag" \
             --repo "${{ github.repository }}" \
             --target "${{ github.sha }}" \
-            --title "Komikku beta (reader side sheet) ${tag}" \
+            --title "Komikku beta ${tag}" \
             --notes "Built from branch ${{ github.ref_name }} at ${{ github.sha }}. Installs as Komikku beta next to the regular app." \
             --prerelease \
             Komikku-beta-*.apk
