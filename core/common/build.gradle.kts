@@ -65,5 +65,5 @@ dependencies {
     // SY <--
 
     // Torrent streaming for anime sources
-    implementation(aniyomilibs.torrentserver)
+    implementation(aniyomilibs.torrserver)
 }

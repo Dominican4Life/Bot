@@ -21,7 +21,7 @@ interface ResolvableAnimeSource : AnimeSource {
 
     /**
      * Called if [getUriType] is [UriType.Anime].
-     * Returns the corresponding SAnime, if possible.
+     * Returns the corresponding SManga, if possible.
      *
      * @since extensions-lib 1.5
      */
@@ -29,7 +29,7 @@ interface ResolvableAnimeSource : AnimeSource {
 
     /**
      * Called if [getUriType] is [UriType.Episode].
-     * Returns the corresponding SEpisode, if possible.
+     * Returns the corresponding SChapter, if possible.
      *
      * @since extensions-lib 1.5
      */

@@ -17,6 +17,13 @@ android {
                 schemaOutputDirectory.set(project.file("./src/main/sqldelight"))
                 generateAsync.set(true)
             }
+            // Anime (from Aniyomi): kept in its own database file so its tables don't clash with manga
+            create("AnimeDatabase") {
+                packageName.set("tachiyomi.mi.data")
+                dialect(libs.sqldelight.sqliteDialect338)
+                schemaOutputDirectory.set(project.file("./src/main/sqldelightanime"))
+                srcDirs.from(project.file("./src/main/sqldelightanime"))
+            }
         }
     }
 }

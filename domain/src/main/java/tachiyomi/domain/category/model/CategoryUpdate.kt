@@ -8,4 +8,6 @@ data class CategoryUpdate(
     val version: Long? = null,
     val uid: Long? = null,
     val lastModifiedAt: Long? = null,
+    // Used by anime categories (from Aniyomi)
+    val hidden: Boolean? = null,
 )

@@ -39,6 +39,9 @@ kotlin {
         api(projects.i18nSy)
         api(libs.kotlin.reflect)
         // SY <--
+
+        // Anime extensions: local HTTP server for video sources
+        api(aniyomilibs.nanohttpd)
     }
 
     sourceSets {

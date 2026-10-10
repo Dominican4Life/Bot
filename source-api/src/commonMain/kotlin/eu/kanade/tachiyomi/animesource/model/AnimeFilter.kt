@@ -8,7 +8,10 @@ sealed class AnimeFilter<T>(val name: String, var state: T) {
         state,
     )
     abstract class Text(name: String, state: String = "") : AnimeFilter<String>(name, state)
-    abstract class CheckBox(name: String, state: Boolean = false) : AnimeFilter<Boolean>(name, state)
+    abstract class CheckBox(name: String, state: Boolean = false) : AnimeFilter<Boolean>(
+        name,
+        state,
+    )
     abstract class TriState(name: String, state: Int = STATE_IGNORE) : AnimeFilter<Int>(name, state) {
         fun isIgnored() = state == STATE_IGNORE
         fun isIncluded() = state == STATE_INCLUDE
@@ -27,17 +30,6 @@ sealed class AnimeFilter<T>(val name: String, var state: T) {
         AnimeFilter<Sort.Selection?>(name, state) {
         data class Selection(val index: Int, val ascending: Boolean)
     }
-
-    // SY -->
-    abstract class AutoComplete(
-        name: String,
-        val hint: String,
-        val values: List<String>,
-        val skipAutoFillTags: List<String> = emptyList(),
-        val validPrefixes: List<String> = emptyList(),
-        state: List<String>,
-    ) : AnimeFilter<List<String>>(name, state)
-    // SY <--
 
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
