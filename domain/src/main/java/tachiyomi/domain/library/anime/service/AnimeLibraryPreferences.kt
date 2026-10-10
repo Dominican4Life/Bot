@@ -19,14 +19,14 @@ class AnimeLibraryPreferences(
     private val preferenceStore: PreferenceStore,
 ) {
 
-    fun displayMode() = preferenceStore.getObject(
+    fun displayMode() = preferenceStore.getObjectFromString(
         "pref_display_mode_animelib",
         LibraryDisplayMode.default,
         LibraryDisplayMode.Serializer::serialize,
         LibraryDisplayMode.Serializer::deserialize,
     )
 
-    fun animeSortingMode() = preferenceStore.getObject(
+    fun animeSortingMode() = preferenceStore.getObjectFromString(
         "animelib_sorting_mode",
         AnimeLibrarySort.default,
         AnimeLibrarySort.Serializer::serialize,
