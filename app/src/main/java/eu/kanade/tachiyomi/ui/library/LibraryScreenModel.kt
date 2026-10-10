@@ -102,6 +102,7 @@ import tachiyomi.domain.manga.model.CustomMangaInfo
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaUpdate
 import tachiyomi.domain.manga.model.applyFilter
+import tachiyomi.domain.source.model.StubSource
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.track.interactor.GetTracks
 import tachiyomi.domain.track.interactor.GetTracksPerManga
@@ -114,6 +115,7 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import kotlin.random.Random
 import kotlin.time.Duration.Companion.seconds
+import tachiyomi.domain.source.model.Source as DomainSource
 
 class LibraryScreenModel(
     private val getLibraryManga: GetLibraryManga = Injekt.get(),
@@ -609,6 +611,8 @@ class LibraryScreenModel(
             libraryPreferences.filterIntervalCustom.changes(),
             // SY -->
             libraryPreferences.filterLewd.changes(),
+            libraryPreferences.useLangIcon.changes(),
+            libraryPreferences.sourceBadge.changes(),
             // SY <--
         ) {
             ItemPreferences(
@@ -626,6 +630,8 @@ class LibraryScreenModel(
                 filterIntervalCustom = it[11] as TriState,
                 // SY -->
                 filterLewd = it[12] as TriState,
+                useLangIcon = it[13] as Boolean,
+                sourceBadge = it[14] as Boolean,
                 // SY <--
             )
         }
@@ -675,6 +681,21 @@ class LibraryScreenModel(
                         } else {
                             ""
                         },
+                        // SY -->
+                        useLangIcon = preferences.useLangIcon,
+                        source = if (preferences.sourceBadge) {
+                            val source = sourceManager.getOrStub(manga.manga.source)
+                            DomainSource(
+                                id = source.id,
+                                lang = source.lang,
+                                name = source.name,
+                                supportsLatest = false,
+                                isStub = source is StubSource,
+                            )
+                        } else {
+                            null
+                        },
+                        // SY <--
                     ),
                 )
             }
@@ -1469,6 +1490,8 @@ class LibraryScreenModel(
         val filterIntervalCustom: TriState,
         // SY -->
         val filterLewd: TriState,
+        val useLangIcon: Boolean,
+        val sourceBadge: Boolean,
         // SY <--
     )
 
