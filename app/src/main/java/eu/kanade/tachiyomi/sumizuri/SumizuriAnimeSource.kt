@@ -8,6 +8,8 @@ import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.ChapterType
+import eu.kanade.tachiyomi.animesource.model.Hoster
+import eu.kanade.tachiyomi.animesource.model.Hoster.Companion.toHosterList
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.TimeStamp
@@ -113,7 +115,21 @@ class SumizuriAnimeSource(
 
     override suspend fun getSeasonList(anime: SAnime): List<SAnime> = emptyList()
 
-    override suspend fun getVideoList(episode: SEpisode): List<Video> =
+    override suspend fun getVideoList(episode: SEpisode): List<Video> = serverVideos(episode).map { it.second }
+
+    /**
+     * The videos grouped by their `server`, so the player's quality list shows one group per server, like an Aniyomi
+     * extension with hosters. A source whose videos name no server gets the plain list.
+     */
+    override suspend fun getHosterList(episode: SEpisode): List<Hoster> {
+        val videos = serverVideos(episode)
+        if (videos.all { it.first == null }) return videos.map { it.second }.toHosterList()
+        return videos.groupBy({ it.first ?: "Other" }, { it.second })
+            .map { (server, list) -> Hoster(hosterName = server, videoList = list) }
+    }
+
+    /** Each video of the episode with the server it names (`server`, or `hoster`), if any */
+    private suspend fun serverVideos(episode: SEpisode): List<Pair<String?, Video>> =
         SumizuriMapping.list(runtime().call("getVideoList", episode.url)).mapNotNull { video ->
             var url = video.str("url")?.trim() ?: return@mapNotNull null
             if (url.startsWith("//")) url = "https:$url"
@@ -128,6 +144,7 @@ class SumizuriAnimeSource(
                 video.obj("outro")?.let { stamp(it, "Outro", ChapterType.Ending) },
             )
             val quality = video.str("quality").orEmpty()
+            val server = (video.str("server") ?: video.str("hoster"))?.trim()?.takeIf { it.isNotEmpty() }
             val isHls = url.substringBefore('?').lowercase().let { it.endsWith(".m3u8") || "m3u8" in it }
             Video(
                 // HLS goes through the relay, which removes fake picture headers some hosts put on each piece
@@ -146,7 +163,7 @@ class SumizuriAnimeSource(
                     path.endsWith(".mpd") -> VideoType.DASH
                     else -> VideoType.VIDEO
                 }
-            }
+            }.let { server to it }
         }
 
     private fun stamp(obj: JsonObject, name: String, type: ChapterType): TimeStamp? {
