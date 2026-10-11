@@ -81,7 +81,6 @@ data object MoreTab : Tab {
             showNavHistory = screenModel.showNavHistory,
             // SY <--
             onClickDownloadQueue = { navigator.push(DownloadQueueScreen) },
-            onClickAnimeDownloadQueue = { navigator.push(eu.kanade.tachiyomi.ui.anime.AnimeDownloadQueueScreen()) },
             onClickCategories = { navigator.push(CategoryScreen()) },
             onClickStats = { navigator.push(StatsScreen()) },
             onClickDataAndStorage = { navigator.push(SettingsScreen(SettingsScreen.Destination.DataAndStorage)) },

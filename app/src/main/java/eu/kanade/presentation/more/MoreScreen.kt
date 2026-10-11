@@ -49,7 +49,6 @@ fun MoreScreen(
     showNavHistory: Boolean,
     // SY <--
     onClickDownloadQueue: () -> Unit,
-    onClickAnimeDownloadQueue: () -> Unit,
     onClickCategories: () -> Unit,
     onClickStats: () -> Unit,
     onClickDataAndStorage: () -> Unit,
@@ -124,47 +123,40 @@ fun MoreScreen(
 
             item {
                 val downloadQueueState = downloadQueueStateProvider()
+                // KMK: one queue for manga and anime
+                val animeManager = remember { Injekt.get<eu.kanade.tachiyomi.data.anime.download.AnimeDownloadManager>() }
+                val animeQueue by animeManager.queue.collectAsState()
+                val mangaSummary = when (downloadQueueState) {
+                    DownloadQueueState.Stopped -> null
+                    is DownloadQueueState.Paused -> {
+                        val pending = downloadQueueState.pending
+                        if (pending == 0) {
+                            stringResource(MR.strings.paused)
+                        } else {
+                            "${stringResource(MR.strings.paused)} • ${
+                                pluralStringResource(
+                                    MR.plurals.download_queue_summary,
+                                    count = pending,
+                                    pending,
+                                )
+                            }"
+                        }
+                    }
+                    is DownloadQueueState.Downloading -> {
+                        val pending = downloadQueueState.pending
+                        pluralStringResource(MR.plurals.download_queue_summary, count = pending, pending)
+                    }
+                }
+                val animeSummary = animeQueue.size.takeIf { it > 0 }?.let {
+                    stringResource(KMR.strings.download_queue_anime_count, it)
+                }
                 TextPreferenceWidget(
                     title = stringResource(MR.strings.label_download_queue),
-                    subtitle = when (downloadQueueState) {
-                        DownloadQueueState.Stopped -> null
-                        is DownloadQueueState.Paused -> {
-                            val pending = downloadQueueState.pending
-                            if (pending == 0) {
-                                stringResource(MR.strings.paused)
-                            } else {
-                                "${stringResource(MR.strings.paused)} • ${
-                                    pluralStringResource(
-                                        MR.plurals.download_queue_summary,
-                                        count = pending,
-                                        pending,
-                                    )
-                                }"
-                            }
-                        }
-                        is DownloadQueueState.Downloading -> {
-                            val pending = downloadQueueState.pending
-                            pluralStringResource(MR.plurals.download_queue_summary, count = pending, pending)
-                        }
-                    },
+                    subtitle = listOfNotNull(mangaSummary, animeSummary).joinToString(" • ").ifEmpty { null },
                     icon = Icons.Outlined.GetApp,
                     onPreferenceClick = onClickDownloadQueue,
                 )
             }
-            // KMK -->
-            item {
-                val animeManager = remember { Injekt.get<eu.kanade.tachiyomi.data.anime.download.AnimeDownloadManager>() }
-                val animeQueue by animeManager.queue.collectAsState()
-                TextPreferenceWidget(
-                    title = stringResource(KMR.strings.anime_download_queue),
-                    subtitle = animeQueue.size.takeIf { it > 0 }?.let {
-                        pluralStringResource(MR.plurals.download_queue_summary, count = it, it)
-                    },
-                    icon = Icons.Outlined.GetApp,
-                    onPreferenceClick = onClickAnimeDownloadQueue,
-                )
-            }
-            // KMK <--
             item {
                 TextPreferenceWidget(
                     title = stringResource(MR.strings.categories),

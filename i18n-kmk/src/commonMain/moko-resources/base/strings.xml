@@ -459,4 +459,7 @@
     <string name="source_category_anime_sources">Anime sources</string>
     <string name="source_category_pick_help">Check the sources to show under this category in Browse › Sources.</string>
     <string name="source_category_switch">Switch between manga and anime sources</string>
+    <!-- Download queue: All | Manga | Anime -->
+    <string name="download_queue_anime_count">%d anime</string>
+    <string name="download_queue_tab_all">All</string>
 </resources>
