@@ -320,7 +320,7 @@ data class BrowseSourceScreen(
                             )
                         }
 
-                        // KMK: a JS / JSON source's own names for Popular / Latest, and its catalogs as buttons
+                        // KMK: a JS / JSON source's tab catalogs, as buttons
                         val sourceTabs = screenModel.source as? SumizuriTabs
                         val selectedCatalog = (state.listing as? Listing.Search)
                             ?.takeIf { it.savedSearchId == null && it.query.isNullOrBlank() }
@@ -350,7 +350,7 @@ data class BrowseSourceScreen(
                                         )
                                     },
                                     label = {
-                                        Text(text = sourceTabs?.tabNames?.popular ?: stringResource(MR.strings.popular))
+                                        Text(text = stringResource(MR.strings.popular))
                                     },
                                 )
                                 if (screenModel.source.supportsLatest) {
@@ -369,7 +369,7 @@ data class BrowseSourceScreen(
                                             )
                                         },
                                         label = {
-                                            Text(text = sourceTabs?.tabNames?.latest ?: stringResource(MR.strings.latest))
+                                            Text(text = stringResource(MR.strings.latest))
                                         },
                                     )
                                 }

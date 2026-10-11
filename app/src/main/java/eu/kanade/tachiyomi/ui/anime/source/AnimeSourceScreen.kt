@@ -229,7 +229,7 @@ class AnimeSourceScreen(
                                 screenModel.setListing(AnimeSourceScreenModel.Listing.Latest)
                             },
                             onFilter = { showFilters = true },
-                            // KMK: a JS / JSON source's own names for Popular / Latest, and its catalogs as buttons
+                            // KMK: a JS / JSON source's tab catalogs, as buttons
                             tabs = source as? SumizuriTabs,
                             onCatalog = { id ->
                                 searchQuery = null
@@ -421,7 +421,7 @@ private fun ListingChips(
                 leadingIcon = {
                     Icon(Icons.Outlined.Favorite, null, Modifier.size(FilterChipDefaults.IconSize))
                 },
-                label = { Text(text = tabs?.tabNames?.popular ?: stringResource(MR.strings.popular)) },
+                label = { Text(text = stringResource(MR.strings.popular)) },
             )
             if (supportsLatest) {
                 FilterChip(
@@ -430,7 +430,7 @@ private fun ListingChips(
                     leadingIcon = {
                         Icon(Icons.Outlined.NewReleases, null, Modifier.size(FilterChipDefaults.IconSize))
                     },
-                    label = { Text(text = tabs?.tabNames?.latest ?: stringResource(MR.strings.latest)) },
+                    label = { Text(text = stringResource(MR.strings.latest)) },
                 )
             }
         }

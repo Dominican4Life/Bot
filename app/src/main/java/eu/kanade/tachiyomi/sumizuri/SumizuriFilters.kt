@@ -78,21 +78,4 @@ internal object SumizuriFilters {
         val id = obj.str("id") ?: return@mapNotNull null
         Catalog(id, obj.str("name") ?: id, tab = obj.bool("tab") == true)
     }
-
-    /**
-     * KMK: The names a source gives its Popular and Latest buttons, from `tabNames: { popular, latest }`. Anything
-     * missing, blank or of the wrong kind keeps the app's own name, so a source (or a copy of one) can't break Browse.
-     */
-    fun tabNames(element: JsonElement?): SumizuriTabNames {
-        val obj = element as? JsonObject ?: return SumizuriTabNames()
-        fun name(key: String) = (obj[key] as? JsonPrimitive)
-            ?.takeIf { it.isString }
-            ?.content
-            ?.trim()
-            ?.takeIf { it.isNotEmpty() }
-            ?.take(MAX_TAB_NAME)
-        return SumizuriTabNames(popular = name("popular"), latest = name("latest"))
-    }
-
-    private const val MAX_TAB_NAME = 30
 }
