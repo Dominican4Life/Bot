@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.kanade.domain.ui.model.PanoramaStyle
 import eu.kanade.presentation.components.CoverProgressBar
+import eu.kanade.presentation.components.rememberCoverFillColor
 import eu.kanade.presentation.manga.components.MangaCover
 import eu.kanade.presentation.manga.components.MangaCoverHide
 import eu.kanade.presentation.manga.components.RatioSwitchToPanorama
@@ -246,6 +247,8 @@ fun MangaComfortableGridItem(
     val showWide = usePanoramaCover && coverIsWide
     val fitWide = showWide && style == PanoramaStyle.FIT
     val doubleWide = showWide && style == PanoramaStyle.WIDE
+    // Color fill: the cover's own color, styled like Settings › Appearance › Cover based theme style
+    val fillColor = rememberCoverFillColor(coverData, enabled = showWide && style == PanoramaStyle.FILL)
     val bgColor = coverData.dominantCoverColors?.first?.let { Color(it) }.takeIf { libraryColored }
     val onBgColor = coverData.dominantCoverColors?.second.takeIf { libraryColored }
     // KMK <--
@@ -297,7 +300,7 @@ fun MangaComfortableGridItem(
                                 // KMK -->
                                 alpha = if (isSelected) GRID_SELECTED_COVER_ALPHA else coverAlpha,
                                 // Color fill: the cover's own color around a wide cover
-                                bgColor = bgColor ?: MaterialTheme.colorScheme.surface.takeIf { isSelected }
+                                bgColor = fillColor ?: bgColor ?: MaterialTheme.colorScheme.surface.takeIf { isSelected }
                                     ?: MaterialTheme.colorScheme.surfaceContainerHighest.takeIf { showWide },
                                 tint = onBgColor,
                                 onCoverLoaded = { _, result ->
