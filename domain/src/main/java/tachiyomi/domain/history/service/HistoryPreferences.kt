@@ -3,7 +3,6 @@ package tachiyomi.domain.history.service
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.preference.TriState
 import tachiyomi.core.common.preference.getEnum
-import tachiyomi.core.common.preference.getObjectFromString
 import tachiyomi.domain.library.model.LibraryDisplayMode
 import tachiyomi.domain.updates.service.USE_PANORAMA_COVER_PREF
 
