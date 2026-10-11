@@ -1,9 +1,11 @@
 package eu.kanade.tachiyomi.sumizuri
 
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
 
 /**
  * KMK: A Sumizuri source's search filters (getFilters) and catalogs (getCatalogs), read once and shown with the
@@ -11,7 +13,11 @@ import kotlinx.serialization.json.booleanOrNull
  */
 internal object SumizuriFilters {
 
-    enum class Type { Select, MultiSelect, Checkbox }
+    /**
+     * AutoComplete is a box the user types tags into, with suggestions from the filter's options and from the
+     * tag lists the source's getTags() gave (see [SumizuriTags]). The picked tags go to search() as an array.
+     */
+    enum class Type { Select, MultiSelect, Checkbox, AutoComplete }
 
     data class Option(val label: String, val value: JsonElement)
 
@@ -22,6 +28,12 @@ internal object SumizuriFilters {
         val options: List<Option>,
         val defaultIndex: Int,
         val defaultChecked: Boolean,
+        /** AutoComplete: the text shown in the empty box */
+        val hint: String = "",
+        /** AutoComplete: marks the user may type before a tag, like "-" to leave it out */
+        val prefixes: List<String> = emptyList(),
+        /** AutoComplete: which of getTags()'s lists suggest tags here */
+        val tagLists: List<String> = emptyList(),
     )
 
     data class Catalog(val id: String, val name: String)
@@ -31,6 +43,7 @@ internal object SumizuriFilters {
         val type = when (obj.str("type")?.lowercase()) {
             "multiselect", "multi", "tags" -> Type.MultiSelect
             "checkbox", "switch", "toggle" -> Type.Checkbox
+            "autocomplete" -> Type.AutoComplete
             else -> Type.Select
         }
         val options = obj.arr("options")?.mapNotNull { option ->
@@ -47,7 +60,17 @@ internal object SumizuriFilters {
             options = options,
             defaultIndex = obj.int("defaultIndex") ?: 0,
             defaultChecked = (obj["defaultValue"] as? JsonPrimitive)?.booleanOrNull ?: false,
+            hint = obj.str("hint") ?: obj.str("placeholder") ?: "",
+            prefixes = strings(obj["prefixes"]) ?: listOf("-"),
+            // "tags": "female" or ["female", "male"]; without it, a list named like the filter's key
+            tagLists = strings(obj["tags"]) ?: listOf(key),
         )
+    }
+
+    private fun strings(element: JsonElement?): List<String>? = when (element) {
+        is JsonArray -> element.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+        is JsonPrimitive -> element.contentOrNull?.let(::listOf)
+        else -> null
     }
 
     fun catalogs(element: JsonElement?): List<Catalog> = SumizuriMapping.list(element ?: return emptyList()).mapNotNull { obj ->

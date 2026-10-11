@@ -122,6 +122,8 @@ class SumizuriMangaSource(
     private val catalogs by lazy { SumizuriFilters.catalogs(info.catalogs) }
 
     override fun getFilterList(): FilterList {
+        // KMK: the tag boxes' suggestions are read from the site in the background, when missing or old
+        if (groups.any { it.type == SumizuriFilters.Type.AutoComplete }) manager.tags.ensure(info)
         val filters = mutableListOf<Filter<*>>()
         if (catalogs.isNotEmpty()) {
             filters += CatalogFilter(catalogs)
@@ -133,6 +135,10 @@ class SumizuriMangaSource(
                 SumizuriFilters.Type.Select -> SelectFilter(group)
                 SumizuriFilters.Type.MultiSelect -> MultiFilter(group)
                 SumizuriFilters.Type.Checkbox -> CheckFilter(group)
+                SumizuriFilters.Type.AutoComplete -> TagFilter(
+                    group,
+                    manager.tags.suggestions(info.key, group.tagLists, group.options.map { it.label }),
+                )
             }
         }
         return FilterList(filters)
@@ -147,6 +153,7 @@ class SumizuriMangaSource(
                     kotlinx.serialization.json.JsonArray(filter.state.filter { it.state }.map { it.option.value }),
                 )
                 is CheckFilter -> put(filter.group.key, JsonPrimitive(filter.state))
+                is TagFilter -> put(filter.group.key, kotlinx.serialization.json.JsonArray(filter.state.map { JsonPrimitive(it) }))
                 else -> Unit
             }
         }
@@ -171,10 +178,20 @@ class SumizuriMangaSource(
 
     private class CheckFilter(val group: SumizuriFilters.Group) : Filter.CheckBox(group.name, group.defaultChecked)
 
+    private class TagFilter(val group: SumizuriFilters.Group, suggestions: List<String>) :
+        Filter.AutoComplete(
+            name = group.name,
+            hint = group.hint,
+            values = suggestions,
+            validPrefixes = group.prefixes,
+            state = emptyList(),
+        )
+
     // Settings
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        SumizuriPreferences.setup(screen, SumizuriPreferences.parse(info.preferences ?: return))
+        info.preferences?.let { SumizuriPreferences.setup(screen, SumizuriPreferences.parse(it)) }
+        if (info.hasTags) manager.tags.addRefreshButton(screen, info)
     }
 
     override fun toString(): String = "$name (${if (info.json) "JSON" else "JS"})"

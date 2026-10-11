@@ -167,6 +167,8 @@ class SumizuriAnimeSource(
     private val catalogs by lazy { SumizuriFilters.catalogs(info.catalogs) }
 
     override fun getFilterList(): AnimeFilterList {
+        // KMK: the tag boxes' suggestions are read from the site in the background, when missing or old
+        if (groups.any { it.type == SumizuriFilters.Type.AutoComplete }) manager.tags.ensure(info)
         val filters = mutableListOf<AnimeFilter<*>>()
         if (catalogs.isNotEmpty()) {
             filters += CatalogFilter(catalogs)
@@ -178,6 +180,10 @@ class SumizuriAnimeSource(
                 SumizuriFilters.Type.Select -> SelectFilter(group)
                 SumizuriFilters.Type.MultiSelect -> MultiFilter(group)
                 SumizuriFilters.Type.Checkbox -> CheckFilter(group)
+                SumizuriFilters.Type.AutoComplete -> TagFilter(
+                    group,
+                    manager.tags.suggestions(info.key, group.tagLists, group.options.map { it.label }),
+                )
             }
         }
         return AnimeFilterList(filters)
@@ -189,6 +195,7 @@ class SumizuriAnimeSource(
                 is SelectFilter -> filter.group.options.getOrNull(filter.state)?.let { put(filter.group.key, it.value) }
                 is MultiFilter -> put(filter.group.key, JsonArray(filter.state.filter { it.state }.map { it.option.value }))
                 is CheckFilter -> put(filter.group.key, JsonPrimitive(filter.state))
+                is TagFilter -> put(filter.group.key, JsonArray(filter.state.map { JsonPrimitive(it) }))
                 else -> Unit
             }
         }
@@ -213,10 +220,20 @@ class SumizuriAnimeSource(
 
     private class CheckFilter(val group: SumizuriFilters.Group) : AnimeFilter.CheckBox(group.name, group.defaultChecked)
 
+    private class TagFilter(val group: SumizuriFilters.Group, suggestions: List<String>) :
+        AnimeFilter.AutoComplete(
+            name = group.name,
+            hint = group.hint,
+            values = suggestions,
+            validPrefixes = group.prefixes,
+            state = emptyList(),
+        )
+
     // Settings
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        SumizuriPreferences.setup(screen, SumizuriPreferences.parse(info.preferences ?: return))
+        info.preferences?.let { SumizuriPreferences.setup(screen, SumizuriPreferences.parse(it)) }
+        if (info.hasTags) manager.tags.addRefreshButton(screen, info)
     }
 
     // RxJava entry points are not used by this source

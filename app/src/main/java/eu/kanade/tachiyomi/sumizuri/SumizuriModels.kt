@@ -31,6 +31,8 @@ data class SumizuriSourceInfo(
     val filters: JsonElement? = null,
     val catalogs: JsonElement? = null,
     val preferences: JsonElement? = null,
+    /** The source has getTags(), which gives the suggestions of its autocomplete filters */
+    val hasTags: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
 ) {

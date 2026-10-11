@@ -35,6 +35,9 @@ class SumizuriManager(private val context: Application) {
     /** Every saved source, newest change first */
     val savedFlow: StateFlow<List<SumizuriSourceInfo>> = _saved.asStateFlow()
 
+    /** Tag lists for the sources' autocomplete filters */
+    val tags = SumizuriTags(context, ::code)
+
     private val runtimes = HashMap<String, SumizuriRuntime>()
     private val runtimeLock = Mutex()
 
@@ -124,6 +127,7 @@ class SumizuriManager(private val context: Application) {
             filters = optional("getFilters", "hasFilters"),
             catalogs = optional("getCatalogs", "hasCatalogs"),
             preferences = optional("getSourcePreferences", "hasPreferences"),
+            hasTags = meta.bool("hasTags") == true,
             createdAt = existing?.createdAt ?: System.currentTimeMillis(),
             updatedAt = System.currentTimeMillis(),
         )
@@ -179,6 +183,7 @@ class SumizuriManager(private val context: Application) {
         invalidate(key)
         dir(key).deleteRecursively()
         File(context.filesDir, "sumizuri_storage/$key").deleteRecursively()
+        tags.forget(key)
         _saved.value = _saved.value.filterNot { it.key == key }
     }
 
@@ -204,7 +209,9 @@ class SumizuriManager(private val context: Application) {
         scope.launch {
             runCatching {
                 val fresh = describe(runtime(info), info.key, info.json, info.anime, info).copy(updatedAt = info.updatedAt)
-                if (fresh.filters != info.filters || fresh.catalogs != info.catalogs || fresh.preferences != info.preferences) {
+                val changed = fresh.filters != info.filters || fresh.catalogs != info.catalogs ||
+                    fresh.preferences != info.preferences || fresh.hasTags != info.hasTags
+                if (changed) {
                     File(dir(info.key), META).writeText(sumizuriJson.encodeToString(SumizuriSourceInfo.serializer(), fresh))
                     _saved.value = _saved.value.map { if (it.key == info.key) fresh else it }
                 }
