@@ -47,6 +47,8 @@ object SettingsSuggestionsScreen : SearchableSettings {
         val suggestFrom by prefs.suggestFrom().collectPrefAsState()
         val preferred by prefs.preferredSources().collectPrefAsState()
         val excluded by prefs.excludedSources().collectPrefAsState()
+        val animePreferred by prefs.animePreferredSources().collectPrefAsState()
+        val animeExcluded by prefs.animeExcludedSources().collectPrefAsState()
 
         val refresh: suspend (Any) -> Boolean = {
             SuggestionsJob.startNow(context)
@@ -120,7 +122,11 @@ object SettingsSuggestionsScreen : SearchableSettings {
                 preferenceItems = persistentListOf(
                     Preference.PreferenceItem.TextPreference(
                         title = stringResource(KMR.strings.suggestions_sources),
-                        subtitle = stringResource(KMR.strings.suggestions_sources_summary, preferred.size, excluded.size),
+                        subtitle = stringResource(
+                            KMR.strings.suggestions_sources_summary,
+                            preferred.size + animePreferred.size,
+                            excluded.size + animeExcluded.size,
+                        ),
                         onClick = { navigator.push(SuggestionSourcesScreen()) },
                     ),
                     Preference.PreferenceItem.SwitchPreference(

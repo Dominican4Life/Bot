@@ -13,8 +13,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.core.screen.Screen
 import cafe.adriel.voyager.core.stack.StackEvent
 import cafe.adriel.voyager.navigator.LocalNavigator
@@ -29,6 +33,8 @@ import eu.kanade.presentation.browse.components.SourceFeedDeleteDialog
 import eu.kanade.presentation.browse.components.bulkSelectionButton
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.TabContent
+import eu.kanade.tachiyomi.ui.anime.AnimeScreen
+import eu.kanade.tachiyomi.ui.anime.source.AnimeSourceScreen
 import eu.kanade.tachiyomi.ui.browse.BulkFavoriteScreenModel
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreen
 import eu.kanade.tachiyomi.ui.home.HomeScreen
@@ -57,6 +63,12 @@ fun Screen.feedTab(
     val showingFeedOrderScreen = rememberSaveable { mutableStateOf(false) }
 
     val haptic = LocalHapticFeedback.current
+
+    // Anime rows of the feed (a source's Latest or Popular)
+    val animeFeed = rememberScreenModel { AnimeFeedScreenModel() }
+    val animeState by animeFeed.state.collectAsState()
+    var addAnime by remember { mutableStateOf<AnimeFeedScreenModel.Option?>(null) }
+    var removeAnime by remember { mutableStateOf<AnimeFeedScreenModel.Entry?>(null) }
 
     LaunchedEffect(bulkFavoriteState.selectionMode) {
         HomeScreen.showBottomNav(!bulkFavoriteState.selectionMode)
@@ -183,8 +195,35 @@ fun Screen.feedTab(
                         },
                         selection = bulkFavoriteState.selection,
                         // KMK <--
-                        onRefresh = screenModel::init,
+                        onRefresh = {
+                            screenModel.init()
+                            // KMK
+                            animeFeed.refresh()
+                        },
                         getMangaState = { manga -> screenModel.getManga(initialManga = manga) },
+                        // KMK -->
+                        hasAnimeRows = animeState.rows.isNotEmpty(),
+                        animeRows = {
+                            animeState.rows.forEach { row ->
+                                item(key = row.entry.key) {
+                                    AnimeFeedRow(
+                                        row = row,
+                                        onClickHeader = {
+                                            navigator.push(
+                                                AnimeSourceScreen(row.entry.sourceId, initialLatest = row.entry.latest),
+                                            )
+                                        },
+                                        onLongClickHeader = { removeAnime = row.entry },
+                                        onClickAnime = { navigator.push(AnimeScreen(it.id)) },
+                                        onLongClickAnime = {
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            animeFeed.toggleFavorite(it)
+                                        },
+                                    )
+                                }
+                            }
+                        },
+                        // KMK <--
                     )
                 }
             }
@@ -193,6 +232,8 @@ fun Screen.feedTab(
                 val onDismissRequest = screenModel::dismissDialog
                 when (dialog) {
                     is FeedScreenModel.Dialog.AddFeed -> {
+                        // KMK: anime sources in the dialog's Anime tab
+                        val animeOptions = remember(dialog) { animeFeed.options() }
                         FeedAddDialog(
                             sources = dialog.options,
                             onDismiss = onDismissRequest,
@@ -202,6 +243,13 @@ fun Screen.feedTab(
                                 }
                                 onDismissRequest()
                             },
+                            // KMK -->
+                            animeSources = animeOptions.map { it.id to "${it.name} (${it.lang.uppercase()})" },
+                            onClickAddAnime = { id ->
+                                addAnime = animeOptions.firstOrNull { it.id == id }
+                                onDismissRequest()
+                            },
+                            // KMK <--
                         )
                     }
                     is FeedScreenModel.Dialog.AddFeedSearch -> {
@@ -237,7 +285,27 @@ fun Screen.feedTab(
                 }
             }
 
-            // KMK -->
+            // KMK --> anime feed rows: pick Latest or Popular, and remove
+            addAnime?.let { option ->
+                AnimeFeedAddDialog(
+                    option = option,
+                    onDismiss = { addAnime = null },
+                    onAdd = { latest ->
+                        animeFeed.add(option.id, latest)
+                        addAnime = null
+                    },
+                )
+            }
+            removeAnime?.let { entry ->
+                SourceFeedDeleteDialog(
+                    onDismissRequest = { removeAnime = null },
+                    deleteFeed = {
+                        animeFeed.remove(entry)
+                        removeAnime = null
+                    },
+                )
+            }
+
             BulkFavoriteDialogs(
                 bulkFavoriteScreenModel = bulkFavoriteScreenModel,
                 dialog = bulkFavoriteState.dialog,

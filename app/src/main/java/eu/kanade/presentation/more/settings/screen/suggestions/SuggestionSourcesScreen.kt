@@ -5,10 +5,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -22,8 +25,10 @@ import eu.kanade.domain.suggestions.SuggestionsPreferences
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.SourcesSearchBox
 import eu.kanade.presentation.util.Screen
+import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
 import eu.kanade.tachiyomi.data.suggestions.SuggestionsJob
 import eu.kanade.tachiyomi.source.CatalogueSource
+import eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource
 import eu.kanade.tachiyomi.sumizuri.SumizuriMangaSource
 import tachiyomi.core.common.preference.TriState
 import tachiyomi.domain.source.service.SourceManager
@@ -37,7 +42,7 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
 /**
- * KMK: Preferred and excluded sources for suggestions in one list, with the tri-state boxes of Mihon's library
+ * KMK: Preferred and excluded sources for suggestions, manga and anime on their own tabs, in one list each, with the tri-state boxes of Mihon's library
  * filters: tap once to prefer a source (✓), again to exclude it (✕), again to clear it. JS sources are listed too.
  * Suggestions are refreshed once, when leaving the screen after a change.
  */
@@ -50,12 +55,17 @@ class SuggestionSourcesScreen : Screen() {
         val navigator = LocalNavigator.currentOrThrow
         val context = LocalContext.current
         val prefs = remember { Injekt.get<SuggestionsPreferences>() }
-        val preferred by prefs.preferredSources().collectAsState()
-        val excluded by prefs.excludedSources().collectAsState()
+        // KMK: Manga | Anime, each with its own preferred / excluded lists
+        var tab by rememberSaveable { mutableIntStateOf(0) }
+        val isAnime = tab == 1
+        val preferredPref = if (isAnime) prefs.animePreferredSources() else prefs.preferredSources()
+        val excludedPref = if (isAnime) prefs.animeExcludedSources() else prefs.excludedSources()
+        val preferred by preferredPref.collectAsState()
+        val excluded by excludedPref.collectAsState()
         var query by rememberSaveable { mutableStateOf("") }
         var changed by remember { mutableStateOf(false) }
 
-        val sources = remember {
+        val mangaSources = remember {
             Injekt.get<SourceManager>().getVisibleOnlineSources()
                 .filterIsInstance<CatalogueSource>()
                 .map { source ->
@@ -64,6 +74,15 @@ class SuggestionSourcesScreen : Screen() {
                 }
                 .sortedBy { it.label.lowercase() }
         }
+        val animeSources = remember {
+            Injekt.get<AnimeSourceManager>().getCatalogueSources()
+                .map { source ->
+                    val js = if (source is SumizuriAnimeSource) " · JS" else ""
+                    Row(source.id, "${source.name} (${source.lang.uppercase()})$js")
+                }
+                .sortedBy { it.label.lowercase() }
+        }
+        val sources = if (isAnime) animeSources else mangaSources
 
         DisposableEffect(Unit) {
             onDispose { if (changed) SuggestionsJob.startNow(context) }
@@ -71,10 +90,10 @@ class SuggestionSourcesScreen : Screen() {
 
         fun set(id: Long, state: TriState) {
             val key = id.toString()
-            prefs.preferredSources().set(
+            preferredPref.set(
                 if (state == TriState.ENABLED_IS) preferred + key else preferred - key,
             )
-            prefs.excludedSources().set(
+            excludedPref.set(
                 if (state == TriState.ENABLED_NOT) excluded + key else excluded - key,
             )
             changed = true
@@ -94,6 +113,16 @@ class SuggestionSourcesScreen : Screen() {
                 if (q.isEmpty()) sources else sources.filter { it.label.contains(q, ignoreCase = true) }
             }
             LazyColumn(contentPadding = contentPadding) {
+                item(key = "tabs") {
+                    PrimaryTabRow(selectedTabIndex = tab) {
+                        listOf(
+                            stringResource(KMR.strings.feed_tab_manga) + " (${mangaSources.size})",
+                            stringResource(KMR.strings.feed_tab_anime) + " (${animeSources.size})",
+                        ).forEachIndexed { index, title ->
+                            Tab(selected = tab == index, onClick = { tab = index }, text = { Text(title) })
+                        }
+                    }
+                }
                 item(key = "help") {
                     Text(
                         text = stringResource(KMR.strings.suggestions_sources_help),
@@ -115,7 +144,7 @@ class SuggestionSourcesScreen : Screen() {
                             .padding(horizontal = SettingsItemsPaddings.Horizontal, vertical = 4.dp),
                     )
                 }
-                items(shown, key = { it.id }) { source ->
+                items(shown, key = { (if (isAnime) "a" else "m") + it.id }) { source ->
                     val key = source.id.toString()
                     TriStateItem(
                         label = source.label,

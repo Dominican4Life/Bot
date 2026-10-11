@@ -18,12 +18,17 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
@@ -43,7 +48,10 @@ import eu.kanade.presentation.library.components.CommonMangaItemDefaults
 import eu.kanade.presentation.library.components.MangaComfortableGridItem
 import eu.kanade.presentation.more.settings.screen.SettingsSuggestionsScreen
 import eu.kanade.presentation.util.Tab
+import eu.kanade.tachiyomi.data.anime.Anime
+import eu.kanade.tachiyomi.data.anime.AnimeRepository
 import eu.kanade.tachiyomi.data.suggestions.SuggestionsJob
+import eu.kanade.tachiyomi.ui.anime.AnimeScreen
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
@@ -58,6 +66,7 @@ import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import eu.kanade.presentation.anime.asMangaCover as animeCover
 import tachiyomi.presentation.core.util.collectAsState as collectPrefAsState
 
 /**
@@ -115,47 +124,79 @@ data object SuggestionsTab : Tab {
                 )
             },
         ) { contentPadding ->
-            when {
-                !enabled -> Message(
-                    text = stringResource(KMR.strings.suggestions_disabled),
-                    button = stringResource(KMR.strings.suggestions_turn_on),
-                    onButton = {
-                        prefs.enabled().set(true)
-                        SuggestionsJob.setupTask(context)
-                        SuggestionsJob.startNow(context)
-                    },
-                    modifier = Modifier.padding(contentPadding),
-                )
-                state.items.isEmpty() && running -> Message(
-                    text = stringResource(KMR.strings.suggestions_finding),
-                    modifier = Modifier.padding(contentPadding),
-                )
-                state.items.isEmpty() && state.loaded -> Message(
-                    text = stringResource(KMR.strings.suggestions_empty),
-                    button = stringResource(MR.strings.action_webview_refresh),
-                    onButton = { SuggestionsJob.startNow(context) },
-                    modifier = Modifier.padding(contentPadding),
-                )
-                else -> FastScrollLazyVerticalGrid(
-                    columns = GridCells.Adaptive(128.dp),
-                    contentPadding = PaddingValues(
-                        start = 8.dp,
-                        end = 8.dp,
-                        top = contentPadding.calculateTopPadding() + 8.dp,
-                        bottom = contentPadding.calculateBottomPadding() + 8.dp,
-                    ),
-                    verticalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridVerticalSpacer),
-                    horizontalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridHorizontalSpacer),
-                ) {
-                    items(state.items, key = { it.id }) { manga ->
-                        MangaComfortableGridItem(
-                            title = manga.title,
-                            coverData = manga.asMangaCover(),
-                            onClick = { navigator.push(MangaScreen(manga.id, true)) },
-                            onLongClick = { navigator.push(MangaScreen(manga.id, true)) },
-                            usePanoramaCover = false,
-                            coverAlpha = if (manga.favorite) CommonMangaItemDefaults.BrowseFavoriteCoverAlpha else 1f,
-                        )
+            // KMK: Manga | Anime
+            var tab by rememberSaveable { mutableIntStateOf(0) }
+            val isAnime = tab == 1
+            val count = if (isAnime) state.animeItems.size else state.items.size
+            Column(modifier = Modifier.padding(top = contentPadding.calculateTopPadding())) {
+                if (enabled) {
+                    PrimaryTabRow(selectedTabIndex = tab) {
+                        listOf(
+                            stringResource(KMR.strings.feed_tab_manga) + " (${state.items.size})",
+                            stringResource(KMR.strings.feed_tab_anime) + " (${state.animeItems.size})",
+                        ).forEachIndexed { index, title ->
+                            Tab(selected = tab == index, onClick = { tab = index }, text = { Text(title) })
+                        }
+                    }
+                }
+                val bottom = Modifier.padding(bottom = contentPadding.calculateBottomPadding())
+                when {
+                    !enabled -> Message(
+                        text = stringResource(KMR.strings.suggestions_disabled),
+                        button = stringResource(KMR.strings.suggestions_turn_on),
+                        onButton = {
+                            prefs.enabled().set(true)
+                            SuggestionsJob.setupTask(context)
+                            SuggestionsJob.startNow(context)
+                        },
+                        modifier = bottom,
+                    )
+                    count == 0 && running -> Message(
+                        text = stringResource(KMR.strings.suggestions_finding),
+                        modifier = bottom,
+                    )
+                    count == 0 && state.loaded -> Message(
+                        text = stringResource(
+                            if (isAnime) KMR.strings.suggestions_empty_anime else KMR.strings.suggestions_empty,
+                        ),
+                        button = stringResource(MR.strings.action_webview_refresh),
+                        onButton = { SuggestionsJob.startNow(context) },
+                        modifier = bottom,
+                    )
+                    else -> FastScrollLazyVerticalGrid(
+                        columns = GridCells.Adaptive(128.dp),
+                        contentPadding = PaddingValues(
+                            start = 8.dp,
+                            end = 8.dp,
+                            top = 8.dp,
+                            bottom = contentPadding.calculateBottomPadding() + 8.dp,
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridVerticalSpacer),
+                        horizontalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridHorizontalSpacer),
+                    ) {
+                        if (isAnime) {
+                            items(state.animeItems, key = { "anime_" + it.id }) { anime ->
+                                MangaComfortableGridItem(
+                                    title = anime.title,
+                                    coverData = anime.animeCover(),
+                                    onClick = { navigator.push(AnimeScreen(anime.id)) },
+                                    onLongClick = { navigator.push(AnimeScreen(anime.id)) },
+                                    usePanoramaCover = false,
+                                    coverAlpha = if (anime.favorite) CommonMangaItemDefaults.BrowseFavoriteCoverAlpha else 1f,
+                                )
+                            }
+                        } else {
+                            items(state.items, key = { "manga_" + it.id }) { manga ->
+                                MangaComfortableGridItem(
+                                    title = manga.title,
+                                    coverData = manga.asMangaCover(),
+                                    onClick = { navigator.push(MangaScreen(manga.id, true)) },
+                                    onLongClick = { navigator.push(MangaScreen(manga.id, true)) },
+                                    usePanoramaCover = false,
+                                    coverAlpha = if (manga.favorite) CommonMangaItemDefaults.BrowseFavoriteCoverAlpha else 1f,
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -196,6 +237,8 @@ private fun Message(
 class SuggestionsScreenModel(
     private val preferences: SuggestionsPreferences = Injekt.get(),
     private val getManga: GetManga = Injekt.get(),
+    // KMK
+    private val animeRepository: AnimeRepository = Injekt.get(),
 ) : StateScreenModel<SuggestionsScreenModel.State>(State()) {
 
     init {
@@ -203,7 +246,15 @@ class SuggestionsScreenModel(
             preferences.results().changes().collectLatest { raw ->
                 val ids = raw.split(',').mapNotNull { it.toLongOrNull() }
                 val items = ids.mapNotNull { getManga.await(it) }
-                mutableState.update { State(items = items, loaded = true) }
+                mutableState.update { it.copy(items = items, loaded = true) }
+            }
+        }
+        // KMK: anime suggestions
+        screenModelScope.launchIO {
+            preferences.animeResults().changes().collectLatest { raw ->
+                val ids = raw.split(',').mapNotNull { it.toLongOrNull() }
+                val items = ids.mapNotNull { animeRepository.getAnime(it) }
+                mutableState.update { it.copy(animeItems = items, loaded = true) }
             }
         }
     }
@@ -211,6 +262,7 @@ class SuggestionsScreenModel(
     @Immutable
     data class State(
         val items: List<Manga> = emptyList(),
+        val animeItems: List<Anime> = emptyList(),
         val loaded: Boolean = false,
     )
 }

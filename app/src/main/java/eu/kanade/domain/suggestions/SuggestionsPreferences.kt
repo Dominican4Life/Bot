@@ -2,7 +2,7 @@ package eu.kanade.domain.suggestions
 
 import tachiyomi.core.common.preference.PreferenceStore
 
-/** KMK: Settings for the Suggestions tab (same options as Kototoro's suggestions). */
+/** KMK: Settings for the Suggestions tab (started from Kototoro's options); manga and anime. */
 class SuggestionsPreferences(private val preferenceStore: PreferenceStore) {
 
     fun enabled() = preferenceStore.getBoolean("suggestions", true)
@@ -31,6 +31,15 @@ class SuggestionsPreferences(private val preferenceStore: PreferenceStore) {
 
     /** The last results, as manga ids in ranked order */
     fun results() = preferenceStore.getString("suggestions_result_ids", "")
+
+    /** Anime source ids */
+    fun animePreferredSources() = preferenceStore.getStringSet("suggestions_anime_preferred_sources", emptySet())
+
+    /** Anime source ids */
+    fun animeExcludedSources() = preferenceStore.getStringSet("suggestions_anime_excluded_sources", emptySet())
+
+    /** The last anime results, as anime ids in ranked order */
+    fun animeResults() = preferenceStore.getString("suggestions_anime_result_ids", "")
 
     fun lastUpdated() = preferenceStore.getLong("suggestions_last_updated", 0L)
 

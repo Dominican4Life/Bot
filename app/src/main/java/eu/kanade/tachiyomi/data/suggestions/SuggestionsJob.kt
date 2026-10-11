@@ -12,6 +12,10 @@ import androidx.work.WorkerParameters
 import eu.kanade.domain.manga.model.toSManga
 import eu.kanade.domain.suggestions.SuggestionsPreferences
 import eu.kanade.domain.suggestions.splitGenres
+import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
+import eu.kanade.tachiyomi.animesource.AnimeCatalogueSource
+import eu.kanade.tachiyomi.animesource.model.SAnime
+import eu.kanade.tachiyomi.data.anime.AnimeRepository
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.util.system.workManager
@@ -33,6 +37,7 @@ import tachiyomi.domain.source.service.SourceManager
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.util.concurrent.TimeUnit
+import eu.kanade.tachiyomi.data.anime.Anime as AnimeModel
 
 /**
  * KMK: Finds manga you may like, in the background (ported from Kototoro's suggestions, adapted to Komikku's
@@ -54,6 +59,10 @@ class SuggestionsJob(context: Context, params: WorkerParameters) : CoroutineWork
     private val getHistory: GetHistory = Injekt.get()
     private val getManga: GetManga = Injekt.get()
 
+    // KMK: anime
+    private val animeRepository: AnimeRepository = Injekt.get()
+    private val animeSourceManager: AnimeSourceManager = Injekt.get()
+
     private class Candidate(val sourceId: Long, val manga: SManga) {
         var score = 0.0
     }
@@ -62,10 +71,19 @@ class SuggestionsJob(context: Context, params: WorkerParameters) : CoroutineWork
         if (!preferences.enabled().get()) return Result.success()
         running.value = true
         try {
-            withTimeoutOrNull(TimeUnit.MINUTES.toMillis(5)) { collect() }
-        } catch (e: Throwable) {
-            if (e is CancellationException) throw e
-            logcat(LogPriority.ERROR, e) { "Suggestions failed" }
+            try {
+                withTimeoutOrNull(TimeUnit.MINUTES.toMillis(5)) { collect() }
+            } catch (e: Throwable) {
+                if (e is CancellationException) throw e
+                logcat(LogPriority.ERROR, e) { "Suggestions failed" }
+            }
+            // KMK: anime suggestions, on their own so one failing doesn't stop the other
+            try {
+                withTimeoutOrNull(TimeUnit.MINUTES.toMillis(5)) { collectAnime() }
+            } catch (e: Throwable) {
+                if (e is CancellationException) throw e
+                logcat(LogPriority.ERROR, e) { "Anime suggestions failed" }
+            }
         } finally {
             running.value = false
         }
@@ -176,6 +194,108 @@ class SuggestionsJob(context: Context, params: WorkerParameters) : CoroutineWork
         if (ranked.isEmpty()) return
         val local = networkToLocalManga(ranked.map { it.manga.toDomainManga(it.sourceId) }, updateInfo = false)
         preferences.results().set(local.joinToString(",") { it.id.toString() })
+        preferences.lastUpdated().set(System.currentTimeMillis())
+    }
+
+    /**
+     * KMK: The same for anime: seeds from watch history or the anime library (anime have no categories, so
+     * "Chosen categories" uses the whole anime library), related anime and genre searches on anime sources.
+     */
+    private suspend fun collectAnime() {
+        val favorites = animeRepository.getFavorites()
+        val inLibrary = favorites.map { it.source to it.url }.toSet()
+        val excludedGenres = preferences.excludedGenres().get().splitGenres().map { it.lowercase() }.toSet()
+        val preferredGenres = preferences.preferredGenres().get().splitGenres().map { it.lowercase() }
+        val preferredSources = preferences.animePreferredSources().get().mapNotNull { it.toLongOrNull() }.toSet()
+        val excludedSources = preferences.animeExcludedSources().get().mapNotNull { it.toLongOrNull() }.toSet()
+
+        val base: List<AnimeModel> = when (preferences.suggestFrom().get()) {
+            SuggestionsPreferences.FROM_HISTORY -> runCatching {
+                animeRepository.subscribeHistory().first()
+                    .sortedByDescending { it.lastSeen }
+                    .map { it.animeId }
+                    .distinct()
+                    .take(HISTORY_TITLES)
+                    .mapNotNull { animeRepository.getAnime(it) }
+            }.getOrDefault(emptyList())
+            else -> favorites.shuffled()
+        }.ifEmpty { favorites.sortedByDescending { it.lastUpdate } }
+        if (base.isEmpty()) return
+        val seeds = base.take(SEED_COUNT)
+        val seedGenres = base.flatMap { it.genre.orEmpty() }
+            .map { it.trim().lowercase() }
+            .filter { it.isNotEmpty() && it !in excludedGenres }
+            .groupingBy { it }.eachCount()
+            .entries.sortedByDescending { it.value }
+            .map { it.key }
+            .take(SEED_GENRES)
+        val searchGenres = (preferredGenres + seedGenres).distinct()
+
+        val disabled = sourcePreferences.animeDisabledSources().get()
+        val disabledLanguages = sourcePreferences.animeDisabledLanguages().get()
+        val includeDisabled = preferences.includeDisabledSources().get()
+        val sources = animeSourceManager.getCatalogueSources()
+            .filter { it.id !in excludedSources }
+            .filter { includeDisabled || (it.id.toString() !in disabled && it.lang !in disabledLanguages) }
+        val askSources = sources.filter { it.id in preferredSources }.shuffled() +
+            sources.filter { it.id !in preferredSources }.shuffled()
+
+        class AnimeCandidate(val sourceId: Long, val anime: SAnime) {
+            var score = 0.0
+        }
+        val candidates = linkedMapOf<Pair<Long, String>, AnimeCandidate>()
+        fun add(sourceId: Long, list: List<SAnime>, weight: Double) = synchronized(candidates) {
+            list.take(PER_QUERY).forEach { anime ->
+                if ((sourceId to anime.url) in inLibrary) return@forEach
+                candidates.getOrPut(sourceId to anime.url) { AnimeCandidate(sourceId, anime) }.score += weight
+            }
+        }
+
+        seeds.shuffled().take(RELATED_SEEDS).forEach { seed ->
+            val source = animeSourceManager.get(seed.source) as? AnimeCatalogueSource ?: return@forEach
+            if (source.id in excludedSources) return@forEach
+            if (!includeDisabled && source.id.toString() in disabled) return@forEach
+            withTimeoutOrNull(TimeUnit.SECONDS.toMillis(40)) {
+                runCatching {
+                    source.getRelatedAnimeList(
+                        anime = seed.toSAnime(),
+                        exceptionHandler = {},
+                        pushResults = { (_, list), _ -> add(source.id, list, RELATED_WEIGHT) },
+                    )
+                }
+            }
+        }
+
+        askSources.take(SEARCH_SOURCES).forEachIndexed { index, source ->
+            withTimeoutOrNull(TimeUnit.SECONDS.toMillis(30)) {
+                runCatching {
+                    val page = if (searchGenres.isNotEmpty()) {
+                        source.getSearchAnime(1, searchGenres[index % searchGenres.size], source.getFilterList())
+                    } else {
+                        source.getPopularAnime(1)
+                    }
+                    add(source.id, page.animes, SEARCH_WEIGHT)
+                }.onFailure { logcat(LogPriority.WARN, it) { "Anime suggestions: ${source.name} failed" } }
+            }
+        }
+
+        val ranked = candidates.values
+            .filter { c -> c.anime.genre?.split(',')?.map { it.trim().lowercase() }.orEmpty().none { it in excludedGenres } }
+            .onEach { c ->
+                val genres = c.anime.genre?.split(',')?.map { it.trim().lowercase() }.orEmpty()
+                c.score += genres.count { it in preferredGenres } * PREFERRED_GENRE_WEIGHT
+                c.score += genres.count { it in seedGenres } * SEED_GENRE_WEIGHT
+                if (c.sourceId in preferredSources) c.score += PREFERRED_SOURCE_WEIGHT
+            }
+            .sortedByDescending { it.score }
+            .groupBy { it.sourceId }
+            .flatMap { (_, list) -> list.take(MAX_PER_SOURCE) }
+            .sortedByDescending { it.score }
+            .take(MAX_RESULTS)
+        if (ranked.isEmpty()) return
+
+        val local = ranked.mapNotNull { runCatching { animeRepository.networkToLocal(it.anime, it.sourceId) }.getOrNull() }
+        preferences.animeResults().set(local.joinToString(",") { it.id.toString() })
         preferences.lastUpdated().set(System.currentTimeMillis())
     }
 

@@ -11,20 +11,26 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.SecondaryTabRow
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,8 +44,10 @@ import eu.kanade.presentation.browse.components.SourceIcon
 import eu.kanade.presentation.components.SourcesSearchBox
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.getNameForMangaInfo
+import eu.kanade.tachiyomi.ui.browse.feed.AnimeFeedScreenModel
 import eu.kanade.tachiyomi.ui.browse.feed.FeedScreenState
 import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.delay
 import tachiyomi.core.common.i18n.stringResource
@@ -47,6 +55,7 @@ import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.model.FeedSavedSearch
 import tachiyomi.domain.source.model.SavedSearch
 import tachiyomi.i18n.MR
+import tachiyomi.i18n.kmk.KMR
 import tachiyomi.i18n.sy.SYMR
 import tachiyomi.presentation.core.components.ScrollbarLazyColumn
 import tachiyomi.presentation.core.components.material.PullRefresh
@@ -84,10 +93,14 @@ fun FeedScreen(
     // KMK <--
     onRefresh: () -> Unit,
     getMangaState: @Composable (Manga) -> State<Manga>,
+    // KMK --> anime rows, shown after the manga rows
+    hasAnimeRows: Boolean = false,
+    animeRows: LazyListScope.() -> Unit = {},
+    // KMK <--
 ) {
     when {
         state.isLoading -> LoadingScreen()
-        state.isEmpty -> EmptyScreen(
+        state.isEmpty && !hasAnimeRows -> EmptyScreen(
             SYMR.strings.feed_tab_empty,
             modifier = Modifier.padding(contentPadding),
         )
@@ -146,6 +159,8 @@ fun FeedScreen(
                             )
                         }
                     }
+                    // KMK
+                    animeRows()
                 }
             }
         }
@@ -188,19 +203,22 @@ fun FeedAddDialog(
     sources: ImmutableList<Source>,
     onDismiss: () -> Unit,
     onClickAdd: (Source?) -> Unit,
+    // KMK --> Anime tab: (source id, name) pairs; empty hides the tabs
+    animeSources: List<Pair<Long, String>> = emptyList(),
+    onClickAddAnime: (Long) -> Unit = {},
+    // KMK <--
 ) {
     // KMK -->
+    var tab by rememberSaveable { mutableIntStateOf(0) }
     var query by remember { mutableStateOf("") }
-    val sourceList = sources
-        .filter { source ->
-            if (query.isBlank()) return@filter true
-            query.split(",").any {
-                val input = it.trim()
-                if (input.isEmpty()) return@any false
-                source.name.contains(input, ignoreCase = true) ||
-                    source.id == input.toLongOrNull()
-            }
+    fun matches(name: String, id: Long): Boolean {
+        if (query.isBlank()) return true
+        return query.split(",").any {
+            val input = it.trim()
+            input.isNotEmpty() && (name.contains(input, ignoreCase = true) || id == input.toLongOrNull())
         }
+    }
+    val sourceList = sources.filter { matches(it.name, it.id) }
     val composeOptions: List<@Composable () -> Unit> = sourceList
         .map {
             {
@@ -216,6 +234,8 @@ fun FeedAddDialog(
                 Text(text = it.getNameForMangaInfo())
             }
         }
+    val animeList = animeSources.filter { (id, name) -> matches(name, id) }
+    val animeOptions: List<@Composable () -> Unit> = animeList.map { (_, name) -> { Text(text = name) } }
     // KMK <--
     var selected by remember { mutableStateOf<Int?>(null) }
     AlertDialog(
@@ -224,21 +244,49 @@ fun FeedAddDialog(
         },
         text = {
             // KMK -->
-            RadioSelectorSearchable(
-                options = composeOptions,
-                queryString = query,
-                onChangeSearchQuery = {
-                    query = it ?: ""
-                },
-                // KMK <--
-                selected = selected,
-            ) {
-                selected = it
+            Column {
+                if (animeSources.isNotEmpty()) {
+                    PrimaryTabRow(selectedTabIndex = tab, modifier = Modifier.padding(bottom = MaterialTheme.padding.small)) {
+                        listOf(stringResource(KMR.strings.feed_tab_manga), stringResource(KMR.strings.feed_tab_anime))
+                            .forEachIndexed { index, title ->
+                                Tab(
+                                    selected = tab == index,
+                                    onClick = {
+                                        if (tab != index) selected = null
+                                        tab = index
+                                    },
+                                    text = { Text(title) },
+                                )
+                            }
+                    }
+                }
+                RadioSelectorSearchable(
+                    options = if (tab == 0) composeOptions else animeOptions,
+                    queryString = query,
+                    onChangeSearchQuery = {
+                        query = it ?: ""
+                        selected = null
+                    },
+                    selected = selected,
+                ) {
+                    selected = it
+                }
             }
+            // KMK <--
         },
         onDismissRequest = onDismiss,
         confirmButton = {
-            TextButton(onClick = { onClickAdd(selected?.let { sourceList[it] }) }) {
+            TextButton(
+                onClick = {
+                    // KMK -->
+                    if (tab == 1) {
+                        selected?.let { animeList.getOrNull(it) }?.let { onClickAddAnime(it.first) } ?: onDismiss()
+                    } else {
+                        // KMK <--
+                        onClickAdd(selected?.let { sourceList.getOrNull(it) })
+                    }
+                },
+            ) {
                 Text(text = stringResource(MR.strings.action_ok))
             }
         },
