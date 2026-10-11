@@ -973,7 +973,8 @@ class EHentai(
                     // KMK -->
                     ?.associate { it.substringBefore("=").trim() to it.substringAfter("=").trim() }
                 val newCookies = cookiesHeader(cfCookies ?: emptyMap())
-                xLogI("Overwritten Cookie: $newCookies")
+                // Log cookie names only: values are login credentials
+                xLogI("Overwritten Cookie: ${newCookies.split("; ").joinToString { it.substringBefore("=") }}")
                 // KMK <--
 
                 val newReq =
