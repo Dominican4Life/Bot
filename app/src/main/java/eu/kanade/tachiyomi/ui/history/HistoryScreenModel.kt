@@ -116,16 +116,11 @@ class HistoryScreenModel(
                         .flowOn(Dispatchers.IO)
                 }
                 .collect { newList ->
-                    // KMK: all-time reading time for the summary card
-                    val total = withIOContext {
-                        runCatching { Injekt.get<HistoryRepository>().getTotalReadDuration() }.getOrDefault(0L)
-                    }
                     mutableState.update {
                         it.copy(
                             // KMK -->
                             isLoading = false,
                             list = newList.toImmutableList(),
-                            totalReadDuration = total,
                             // KMK <--
                         )
                     }
@@ -201,45 +196,6 @@ class HistoryScreenModel(
         }
         toggleSelectionMode(false)
     }
-
-    // KMK -->
-    /** Kototoro's "Clear history" choices */
-    enum class ClearRange { LAST_2_HOURS, TODAY, NOT_IN_LIBRARY, EVERYTHING }
-
-    fun clearHistory(range: ClearRange) {
-        if (range == ClearRange.EVERYTHING) {
-            removeAllHistory()
-            return
-        }
-        screenModelScope.launchIO {
-            val list = state.value.list
-            when (range) {
-                ClearRange.NOT_IN_LIBRARY -> {
-                    val ids = list.filterNot { it.coverData.isMangaFavorite }.map { it.mangaId }.distinct()
-                    if (ids.isNotEmpty()) removeHistory.awaitManga(ids)
-                }
-                else -> {
-                    val cutoff = if (range == ClearRange.LAST_2_HOURS) {
-                        System.currentTimeMillis() - 2 * 60 * 60 * 1000L
-                    } else {
-                        java.time.LocalDate.now().atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
-                    }
-                    val repository = Injekt.get<HistoryRepository>()
-                    val ids = list.filter { (it.readAt?.time ?: 0L) >= cutoff }
-                        .map { it.mangaId }
-                        .distinct()
-                        .flatMap { mangaId ->
-                            repository.getHistoryByMangaId(mangaId).filter { (it.readAt?.time ?: 0L) >= cutoff }
-                        }
-                        .map { it.id }
-                    if (ids.isNotEmpty()) removeHistory.await(ids)
-                }
-            }
-            _events.send(Event.HistoryCleared)
-        }
-        toggleSelectionMode(false)
-    }
-    // KMK <--
 
     fun updateSearchQuery(query: String?) {
         mutableState.update { it.copy(searchQuery = query) }
@@ -495,7 +451,6 @@ class HistoryScreenModel(
         val selection: Set<Long> = emptySet(),
         val hasActiveFilters: Boolean = false,
         val selectionMode: Boolean = false,
-        val totalReadDuration: Long = 0L,
     ) {
         val selected
             get() = list.fastFilter { it.chapterId in selection }
@@ -528,7 +483,6 @@ class HistoryScreenModel(
         data class Migrate(val target: Manga, val current: Manga) : Dialog
         // KMK -->
         data object FilterSheet : Dialog
-        data object Clear : Dialog
         // KMK <--
     }
 

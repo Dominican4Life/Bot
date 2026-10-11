@@ -35,9 +35,9 @@ class SourcePreferences(
     /** Browse › Sources shows anime sources instead of manga ones (one panel, switched from the toolbar) */
     fun browseShowAnime() = preferenceStore.getBoolean("pref_browse_show_anime", false)
 
-    /** History and Updates show the anime list instead of the manga one (one panel, switched from the toolbar) */
-    fun historyShowAnime() = preferenceStore.getBoolean("pref_history_show_anime", false)
-    fun updatesShowAnime() = preferenceStore.getBoolean("pref_updates_show_anime", false)
+    /** The All | Manga | Anime tab History and Updates were left on (see MediaTab) */
+    fun historyMediaTab() = preferenceStore.getInt("pref_history_media_tab", 0)
+    fun updatesMediaTab() = preferenceStore.getInt("pref_updates_media_tab", 0)
 
     /** Which preview panels open on the first tap of a cover: [PREVIEW_PANELS_LEFT], [PREVIEW_PANELS_BOTH] or [PREVIEW_PANELS_NONE] */
     fun browsePreviewPanels() = preferenceStore.getInt("pref_browse_preview_panels", PREVIEW_PANELS_BOTH)

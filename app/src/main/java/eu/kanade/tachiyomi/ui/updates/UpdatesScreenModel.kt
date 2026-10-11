@@ -620,6 +620,8 @@ class UpdatesScreenModel(
                     when (it) {
                         is UpdatesUiModel.Header -> it.hashCode()
                         is UpdatesUiModel.Item -> "${it.item.update.mangaId}-${it.item.update.chapterId}"
+                        // KMK: anime are added after this, by the screen
+                        is UpdatesUiModel.Anime -> "anime-${it.item.episodeId}"
                     }
                 }
             // KMK <--

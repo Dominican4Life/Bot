@@ -19,9 +19,9 @@ import cafe.adriel.voyager.navigator.tab.LocalTabNavigator
 import cafe.adriel.voyager.navigator.tab.TabOptions
 import eu.kanade.core.preference.asState
 import eu.kanade.domain.ui.UiPreferences
+import eu.kanade.presentation.components.MediaDisplayDialog
 import eu.kanade.presentation.updates.UpdateScreen
 import eu.kanade.presentation.updates.UpdatesDeleteConfirmationDialog
-import eu.kanade.presentation.updates.UpdatesFilterDialog
 import eu.kanade.presentation.util.Tab
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.connections.discord.DiscordRPCService
@@ -35,7 +35,6 @@ import eu.kanade.tachiyomi.ui.updates.UpdatesScreenModel.Event
 import kotlinx.coroutines.flow.collectLatest
 import mihon.feature.upcoming.UpcomingScreen
 import tachiyomi.core.common.i18n.stringResource
-import tachiyomi.core.common.preference.toggle
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
@@ -83,10 +82,21 @@ data object UpdatesTab : Tab {
 
         // KMK -->
         val usePanoramaCover by settingsScreenModel.updatesPreferences.usePanoramaCover().collectAsState()
-        // KMK -->
-        val timelineView by settingsScreenModel.updatesPreferences.timelineView().collectAsState()
-        val showCarousel by settingsScreenModel.updatesPreferences.showUpdatedCarousel().collectAsState()
-        // KMK <--
+        // All | Manga | Anime, and the library's display modes
+        val mediaTabPref = remember { Injekt.get<eu.kanade.domain.source.service.SourcePreferences>().updatesMediaTab() }
+        val mediaTab by mediaTabPref.collectAsState()
+        val displayMode by settingsScreenModel.updatesPreferences.displayMode().collectAsState()
+        val columns by settingsScreenModel.updatesPreferences.columns().collectAsState()
+        // The filters left the toolbar (only display modes now), so none may stay on unseen
+        LaunchedEffect(Unit) {
+            with(settingsScreenModel.updatesPreferences) {
+                filterDownloaded().delete()
+                filterUnread().delete()
+                filterStarted().delete()
+                filterBookmarked().delete()
+                filterExcludedScanlators().delete()
+            }
+        }
         // KMK <--
 
         UpdateScreen(
@@ -115,14 +125,14 @@ data object UpdatesTab : Tab {
                 context.startActivity(intent)
             },
             onCalendarClicked = { navigator.push(UpcomingScreen()) },
-            onFilterClicked = screenModel::showFilterDialog,
-            hasActiveFilters = state.hasActiveFilters,
+            onDisplayClicked = screenModel::showFilterDialog,
             // KMK -->
             usePanoramaCover = usePanoramaCover,
             collapseToggle = screenModel::toggleExpandedState,
-            timelineView = timelineView,
-            showCarousel = showCarousel,
-            onToggleTimeline = { settingsScreenModel.updatesPreferences.timelineView().toggle() },
+            mediaTab = mediaTab,
+            onMediaTabChange = mediaTabPref::set,
+            displayMode = displayMode,
+            columns = columns,
             // KMK <--
         )
 
@@ -135,9 +145,10 @@ data object UpdatesTab : Tab {
                 )
             }
             is UpdatesScreenModel.Dialog.FilterSheet -> {
-                UpdatesFilterDialog(
+                MediaDisplayDialog(
                     onDismissRequest = onDismissDialog,
-                    screenModel = settingsScreenModel,
+                    displayModePref = settingsScreenModel.updatesPreferences.displayMode(),
+                    columnsPref = settingsScreenModel.updatesPreferences.columns(),
                 )
             }
             null -> {}

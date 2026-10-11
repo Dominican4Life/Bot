@@ -1,8 +1,13 @@
 package eu.kanade.presentation.updates
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.automirrored.outlined.ViewList
@@ -19,28 +24,52 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastAll
 import androidx.compose.ui.util.fastAny
+import cafe.adriel.voyager.navigator.LocalNavigator
+import eu.kanade.presentation.anime.AnimeUpdateRow
+import eu.kanade.presentation.anime.rememberPlayAnimeEpisode
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarActions
+import eu.kanade.presentation.components.MediaGridItem
+import eu.kanade.presentation.components.MediaTab
+import eu.kanade.presentation.components.MediaTabRow
+import eu.kanade.presentation.components.animeCover
+import eu.kanade.presentation.components.mediaDisplayAction
+import eu.kanade.presentation.components.relativeDateText
+import eu.kanade.presentation.components.rememberMediaGridCells
+import eu.kanade.presentation.library.components.CommonMangaItemDefaults
 import eu.kanade.presentation.manga.components.ChapterDownloadAction
 import eu.kanade.presentation.manga.components.MangaBottomActionMenu
+import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
+import eu.kanade.tachiyomi.data.anime.AnimeLibraryUpdateJob
+import eu.kanade.tachiyomi.data.anime.AnimeRepository
+import eu.kanade.tachiyomi.data.anime.AnimeUpdateItem
 import eu.kanade.tachiyomi.data.download.model.Download
+import eu.kanade.tachiyomi.ui.anime.AnimeScreen
 import eu.kanade.tachiyomi.ui.updates.UpdatesItem
 import eu.kanade.tachiyomi.ui.updates.UpdatesScreenModel
+import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.domain.library.model.LibraryDisplayMode
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.components.FastScrollLazyColumn
+import tachiyomi.presentation.core.components.FastScrollLazyVerticalGrid
+import tachiyomi.presentation.core.components.ListGroupHeader
 import tachiyomi.presentation.core.components.material.PullRefresh
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
@@ -50,7 +79,10 @@ import tachiyomi.presentation.core.theme.active
 import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
+import java.util.concurrent.TimeUnit
 import kotlin.time.Duration.Companion.seconds
 
 @Composable
@@ -77,45 +109,63 @@ fun UpdateScreen(
     // KMK <--
     onUpdateSelected: (UpdatesItem, /* KMK --> */ UpdatesScreenModel.UpdateSelectionOptions /* KMK <-- */) -> Unit,
     onOpenChapter: (UpdatesItem) -> Unit,
-    onFilterClicked: () -> Unit,
-    hasActiveFilters: Boolean,
+    onDisplayClicked: () -> Unit,
     // KMK -->
     usePanoramaCover: Boolean,
     collapseToggle: (key: String) -> Unit,
-    timelineView: Boolean = false,
-    showCarousel: Boolean = true,
-    onToggleTimeline: () -> Unit = {},
+    mediaTab: Int = MediaTab.ALL,
+    onMediaTabChange: (Int) -> Unit = {},
+    displayMode: LibraryDisplayMode = LibraryDisplayMode.List,
+    columns: Int = 0,
     // KMK <--
 ) {
     BackHandler(enabled = state.selectionMode, onBack = { onSelectAll(false) })
-    // KMK: one panel, manga or anime, switched from the toolbar
-    val showAnimePref = remember { Injekt.get<eu.kanade.domain.source.service.SourcePreferences>().updatesShowAnime() }
-    val showAnime by showAnimePref.collectAsState()
-    val switchAction = AppBar.Action(
-        title = stringResource(KMR.strings.library_switch_type),
-        icon = if (showAnime) Icons.Outlined.Movie else Icons.AutoMirrored.Outlined.MenuBook,
-        iconTint = MaterialTheme.colorScheme.primary,
-        onClick = { showAnimePref.set(!showAnime) },
-    )
+    // KMK -->
+    // Anime updates next to the manga ones: All | Manga | Anime
+    val context = LocalContext.current
+    val navigator = LocalNavigator.current
+    val animeRepository = remember { Injekt.get<AnimeRepository>() }
+    val animeSourceManager = remember { Injekt.get<AnimeSourceManager>() }
+    val after = remember { System.currentTimeMillis() - TimeUnit.DAYS.toMillis(90) }
+    val animeUpdates by remember { animeRepository.subscribeUpdates(after) }.collectAsState(initial = emptyList())
+    val playEpisode = rememberPlayAnimeEpisode()
+    val showsManga = MediaTab.showsManga(mediaTab)
+    val showsAnime = MediaTab.showsAnime(mediaTab)
+    val updateLibrary: () -> Boolean = {
+        var started = false
+        if (showsManga) started = onUpdateLibrary()
+        if (showsAnime) {
+            AnimeLibraryUpdateJob.startNow(context)
+            context.toast(KMR.strings.anime_updating_library)
+            started = true
+        }
+        started
+    }
+    // KMK <--
 
     Scaffold(
         topBar = { scrollBehavior ->
-            UpdatesAppBar(
-                onCalendarClicked = { onCalendarClicked() },
-                onUpdateLibrary = { onUpdateLibrary() },
-                onFilterClicked = { onFilterClicked() },
-                hasFilters = hasActiveFilters,
-                // KMK -->
-                timelineView = timelineView,
-                onToggleTimeline = onToggleTimeline,
-                switchAction = switchAction,
+            // KMK -->
+            Column {
                 // KMK <--
-                actionModeCounter = state.selected.size,
-                onSelectAll = { onSelectAll(true) },
-                onInvertSelection = { onInvertSelection() },
-                onCancelActionMode = { onSelectAll(false) },
-                scrollBehavior = scrollBehavior,
-            )
+                UpdatesAppBar(
+                    onCalendarClicked = { onCalendarClicked() },
+                    onUpdateLibrary = { updateLibrary() },
+                    // KMK -->
+                    displayAction = mediaDisplayAction(displayMode, onDisplayClicked),
+                    // KMK <--
+                    actionModeCounter = state.selected.size,
+                    onSelectAll = { onSelectAll(true) },
+                    onInvertSelection = { onInvertSelection() },
+                    onCancelActionMode = { onSelectAll(false) },
+                    scrollBehavior = scrollBehavior,
+                )
+                // KMK -->
+                if (!state.selectionMode) {
+                    MediaTabRow(selected = mediaTab, onSelect = onMediaTabChange)
+                }
+            }
+            // KMK <--
         },
         bottomBar = {
             UpdatesBottomBar(
@@ -127,31 +177,30 @@ fun UpdateScreen(
             )
         },
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
-    ) { outerPadding ->
-        // KMK --> manga updates on the left, anime on the right
-        eu.kanade.presentation.browse.anime.MangaAnimeSwitch(
-            showAnime = showAnime,
-            contentPadding = outerPadding,
-            anime = { padding -> eu.kanade.presentation.anime.AnimeUpdatesPane(contentPadding = padding) },
-            manga = { contentPadding ->
+    ) { contentPadding ->
+        // KMK -->
+        val uiModels = remember(state.items, animeUpdates, mediaTab) {
+            mixUpdates(
+                manga = if (showsManga) state.getUiModel() else emptyList(),
+                anime = if (showsAnime) animeUpdates else emptyList(),
+            )
+        }
         // KMK <--
         when {
-            state.isLoading -> LoadingScreen(Modifier.padding(contentPadding))
-            state.items.isEmpty() -> EmptyScreen(
-                stringRes = MR.strings.information_no_recent,
+            /* KMK --> */showsManga && /* KMK <-- */state.isLoading -> LoadingScreen(Modifier.padding(contentPadding))
+            uiModels.isEmpty() -> EmptyScreen(
+                // KMK
+                stringRes = if (mediaTab == MediaTab.ANIME) KMR.strings.anime_no_updates else MR.strings.information_no_recent,
                 modifier = Modifier.padding(contentPadding),
             )
             else -> {
                 val scope = rememberCoroutineScope()
                 var isRefreshing by remember { mutableStateOf(false) }
-                // KMK -->
-                val uiModels = remember(state.items) { state.getUiModel() }
-                // KMK <--
 
                 PullRefresh(
                     refreshing = isRefreshing,
                     onRefresh = {
-                        val started = onUpdateLibrary()
+                        val started = updateLibrary()
                         if (!started) return@PullRefresh
                         scope.launch {
                             // Fake refresh status but hide it after a second as it's a long running task
@@ -163,37 +212,27 @@ fun UpdateScreen(
                     enabled = !state.selectionMode,
                     indicatorPadding = contentPadding,
                 ) {
+                    // KMK --> the library's grids
+                    if (displayMode != LibraryDisplayMode.List) {
+                        UpdatesGrid(
+                            uiModels = uiModels,
+                            displayMode = displayMode,
+                            columns = columns,
+                            contentPadding = contentPadding,
+                            selectionMode = state.selectionMode,
+                            onUpdateSelected = onUpdateSelected,
+                            onClickCover = onClickCover,
+                            onClickAnime = { playEpisode(it.animeId, it.episodeId) },
+                            onLongClickAnime = { navigator?.push(AnimeScreen(it.animeId)) },
+                        )
+                        return@PullRefresh
+                    }
+                    // KMK <--
                     FastScrollLazyColumn(
                         contentPadding = contentPadding,
                     ) {
-                        updatesLastUpdatedItem(lastUpdated)
-
-                        // KMK -->
-                        if (timelineView) {
-                            updatesTimeline(
-                                items = state.items,
-                                showCarousel = showCarousel,
-                                selectionMode = state.selectionMode,
-                                onUpdateLibrary = { onUpdateLibrary() },
-                                onAllRead = {
-                                    onMultiMarkAsReadClicked(state.items.filter { !it.update.read }, true)
-                                },
-                                onClickGroup = { onClickCover(it.leader) },
-                                onSelectGroup = { group ->
-                                    onUpdateSelected(
-                                        group.leader,
-                                        UpdatesScreenModel.UpdateSelectionOptions(
-                                            selected = !group.selected,
-                                            isGroup = true,
-                                            isExpanded = false,
-                                        ),
-                                    )
-                                },
-                                onContinue = { onOpenChapter(it.continueItem) },
-                            )
-                            return@FastScrollLazyColumn
-                        }
-                        // KMK <--
+                        // KMK
+                        if (showsManga) updatesLastUpdatedItem(lastUpdated)
 
                         updatesUiItems(
                             // KMK -->
@@ -214,29 +253,155 @@ fun UpdateScreen(
                             updateSwipeStartAction = updateSwipeStartAction,
                             updateSwipeEndAction = updateSwipeEndAction,
                             onUpdateSwipe = onUpdateSwipe,
+                            animeContent = { item ->
+                                AnimeUpdateRow(
+                                    item = item,
+                                    sourceManager = animeSourceManager,
+                                    onClick = { playEpisode(item.animeId, item.episodeId) },
+                                    onClickCover = { navigator?.push(AnimeScreen(item.animeId)) },
+                                    onToggleSeen = {
+                                        scope.launchIO {
+                                            animeRepository.updateEpisode(id = item.episodeId, seen = !item.seen)
+                                        }
+                                    },
+                                )
+                            },
                             // KMK <--
                         )
                     }
                 }
             }
         }
-        // KMK -->
-            },
-        )
-        // KMK <--
     }
 }
+
+// KMK -->
+/**
+ * Manga and anime updates together: one header per day (newest first), the day's manga chapters, then its anime
+ * episodes. The header counts both.
+ */
+private fun mixUpdates(manga: List<UpdatesUiModel>, anime: List<AnimeUpdateItem>): List<UpdatesUiModel> {
+    if (anime.isEmpty()) return manga
+    val zone = ZoneId.systemDefault()
+    val days = linkedMapOf<LocalDate, Pair<Int, MutableList<UpdatesUiModel>>>()
+    var current: LocalDate? = null
+    manga.forEach { model ->
+        if (model is UpdatesUiModel.Header) {
+            current = model.date
+            days[model.date] = model.mangaCount to mutableListOf()
+        } else {
+            current?.let { days[it]?.second?.add(model) }
+        }
+    }
+    val animeDays = anime.groupBy { Instant.ofEpochMilli(it.dateFetch).atZone(zone).toLocalDate() }
+    return (days.keys + animeDays.keys)
+        .distinct()
+        .sortedDescending()
+        .flatMap { date ->
+            val (mangaCount, mangaItems) = days[date] ?: (0 to mutableListOf<UpdatesUiModel>())
+            val animeItems = animeDays[date].orEmpty()
+            listOf(UpdatesUiModel.Header(date, mangaCount + animeItems.distinctBy { it.animeId }.size)) +
+                mangaItems +
+                animeItems.map { UpdatesUiModel.Anime(it) }
+        }
+}
+
+/** Updates in one of the library's grids: one cover per title per day */
+@Composable
+private fun UpdatesGrid(
+    uiModels: List<UpdatesUiModel>,
+    displayMode: LibraryDisplayMode,
+    columns: Int,
+    contentPadding: PaddingValues,
+    selectionMode: Boolean,
+    onUpdateSelected: (UpdatesItem, UpdatesScreenModel.UpdateSelectionOptions) -> Unit,
+    onClickCover: (UpdatesItem) -> Unit,
+    onClickAnime: (AnimeUpdateItem) -> Unit,
+    onLongClickAnime: (AnimeUpdateItem) -> Unit,
+) {
+    val cells = remember(uiModels) {
+        val seen = HashSet<String>()
+        uiModels.filter { model ->
+            when (model) {
+                is UpdatesUiModel.Header -> {
+                    seen.clear()
+                    true
+                }
+                is UpdatesUiModel.Item -> seen.add("m${model.item.update.mangaId}")
+                is UpdatesUiModel.Anime -> seen.add("a${model.item.animeId}")
+            }
+        }
+    }
+    FastScrollLazyVerticalGrid(
+        columns = rememberMediaGridCells(columns),
+        contentPadding = PaddingValues(
+            start = 8.dp,
+            end = 8.dp,
+            top = contentPadding.calculateTopPadding(),
+            bottom = contentPadding.calculateBottomPadding() + 8.dp,
+        ),
+        verticalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridVerticalSpacer),
+        horizontalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridHorizontalSpacer),
+    ) {
+        items(
+            items = cells,
+            key = {
+                when (it) {
+                    is UpdatesUiModel.Header -> "header-${it.date}"
+                    is UpdatesUiModel.Item -> "manga-${it.item.update.chapterId}"
+                    is UpdatesUiModel.Anime -> "anime-${it.item.episodeId}"
+                }
+            },
+            span = { if (it is UpdatesUiModel.Header) GridItemSpan(maxLineSpan) else GridItemSpan(1) },
+        ) { model ->
+            when (model) {
+                is UpdatesUiModel.Header -> ListGroupHeader(text = relativeDateText(model.date))
+                is UpdatesUiModel.Item -> {
+                    val updatesItem = model.item
+                    val select = {
+                        onUpdateSelected(
+                            updatesItem,
+                            UpdatesScreenModel.UpdateSelectionOptions(
+                                selected = !updatesItem.selected,
+                                fromLongPress = true,
+                                isGroup = model is UpdatesUiModel.Leader && model.isExpandable,
+                                isExpanded = false,
+                            ),
+                        )
+                    }
+                    MediaGridItem(
+                        displayMode = displayMode,
+                        cover = updatesItem.update.coverData,
+                        title = updatesItem.update.mangaTitle,
+                        isSelected = updatesItem.selected,
+                        coverAlpha = if (updatesItem.update.read) 0.5f else 1f,
+                        onClick = { if (selectionMode) select() else onClickCover(updatesItem) },
+                        onLongClick = select,
+                    )
+                }
+                is UpdatesUiModel.Anime -> {
+                    val item = model.item
+                    MediaGridItem(
+                        displayMode = displayMode,
+                        cover = animeCover(item.animeId, item.source, true, item.thumbnailUrl),
+                        title = item.title,
+                        coverAlpha = if (item.seen) 0.5f else 1f,
+                        onClick = { onClickAnime(item) },
+                        onLongClick = { onLongClickAnime(item) },
+                    )
+                }
+            }
+        }
+    }
+}
+// KMK <--
 
 @Composable
 private fun UpdatesAppBar(
     onCalendarClicked: () -> Unit,
     onUpdateLibrary: () -> Unit,
-    onFilterClicked: () -> Unit,
-    hasFilters: Boolean,
     // KMK -->
-    timelineView: Boolean,
-    onToggleTimeline: () -> Unit,
-    switchAction: AppBar.Action,
+    displayAction: AppBar.Action,
     // KMK <--
     // For action mode
     actionModeCounter: Int,
@@ -252,23 +417,8 @@ private fun UpdatesAppBar(
         actions = {
             AppBarActions(
                 persistentListOf(
-                    // KMK: manga / anime switch
-                    switchAction,
-                    AppBar.Action(
-                        title = stringResource(MR.strings.action_filter),
-                        icon = Icons.Outlined.FilterList,
-                        iconTint = if (hasFilters) MaterialTheme.colorScheme.active else LocalContentColor.current,
-                        onClick = onFilterClicked,
-                    ),
-                    // KMK -->
-                    AppBar.Action(
-                        title = stringResource(
-                            if (timelineView) KMR.strings.updates_view_chapters else KMR.strings.updates_view_timeline,
-                        ),
-                        icon = if (timelineView) Icons.AutoMirrored.Outlined.ViewList else Icons.Outlined.ViewTimeline,
-                        onClick = onToggleTimeline,
-                    ),
-                    // KMK <--
+                    // KMK: the library's display modes, like a source's button
+                    displayAction,
                     AppBar.Action(
                         title = stringResource(MR.strings.action_view_upcoming),
                         icon = Icons.Outlined.CalendarMonth,
@@ -345,5 +495,8 @@ sealed interface UpdatesUiModel {
     // KMK -->
     /** The first [Item] in a group of chapters from same manga */
     data class Leader(override val item: UpdatesItem, override val isExpandable: Boolean) : Item(item)
+
+    /** A new episode of an anime, in the All and Anime tabs */
+    data class Anime(val item: AnimeUpdateItem) : UpdatesUiModel
     // KMK <--
 }

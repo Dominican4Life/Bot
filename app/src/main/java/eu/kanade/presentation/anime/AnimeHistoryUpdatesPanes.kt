@@ -71,7 +71,7 @@ import java.util.concurrent.TimeUnit
 
 /** KMK: Plays an episode in the built-in player, or opens the anime when the outside player is chosen. */
 @Composable
-private fun rememberPlayEpisode(): (animeId: Long, episodeId: Long) -> Unit {
+internal fun rememberPlayAnimeEpisode(): (animeId: Long, episodeId: Long) -> Unit {
     val context = LocalContext.current
     val navigator = LocalNavigator.currentOrThrow
     val playerPreferences = remember { Injekt.get<PlayerPreferences>() }
@@ -84,90 +84,9 @@ private fun rememberPlayEpisode(): (animeId: Long, episodeId: Long) -> Unit {
     }
 }
 
-/** KMK: Anime side of the History tab */
+/** KMK: One anime of the History tab */
 @Composable
-fun AnimeHistoryPane(
-    contentPadding: PaddingValues,
-    searchQuery: String?,
-) {
-    val navigator = LocalNavigator.currentOrThrow
-    val repository = remember { Injekt.get<AnimeRepository>() }
-    val sourceManager = remember { Injekt.get<AnimeSourceManager>() }
-    val scope = rememberCoroutineScope()
-    val history by remember { repository.subscribeHistory() }.collectAsState(initial = null)
-    val playEpisode = rememberPlayEpisode()
-    var removeAnimeId by remember { mutableStateOf<Long?>(null) }
-    var confirmClearAll by remember { mutableStateOf(false) }
-
-    // KMK: Device files keep their own history, behind the History toolbar's folder button
-    val all = history ?: return
-    val items = remember(all) { all.filterNot { it.source == eu.kanade.tachiyomi.devicefiles.DeviceFilesIds.ANIME } }
-    val filtered = remember(items, searchQuery) {
-        if (searchQuery.isNullOrBlank()) items else items.filter { it.title.contains(searchQuery, ignoreCase = true) }
-    }
-
-    Column(modifier = Modifier.fillMaxSize().padding(top = contentPadding.calculateTopPadding())) {
-        if (items.isNotEmpty()) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp),
-            ) {
-                Text(
-                    text = stringResource(MR.strings.history),
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.weight(1f),
-                )
-                IconButton(onClick = { confirmClearAll = true }) {
-                    Icon(Icons.Outlined.DeleteSweep, contentDescription = stringResource(KMR.strings.anime_clear_history))
-                }
-            }
-        }
-        if (filtered.isEmpty()) {
-            EmptyScreen(
-                message = stringResource(
-                    if (searchQuery.isNullOrBlank()) KMR.strings.anime_no_history else MR.strings.no_results_found,
-                ),
-            )
-        } else {
-            FastScrollLazyColumn(
-                contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding() + 8.dp),
-            ) {
-                items(filtered, key = { it.animeId }) { item ->
-                    HistoryRow(
-                        item = item,
-                        sourceManager = sourceManager,
-                        onClick = { navigator.push(AnimeScreen(item.animeId)) },
-                        onResume = { playEpisode(item.animeId, item.episodeId) },
-                        onDelete = { removeAnimeId = item.animeId },
-                    )
-                }
-            }
-        }
-    }
-
-    removeAnimeId?.let { animeId ->
-        ConfirmDialog(
-            text = stringResource(KMR.strings.anime_remove_history_confirm),
-            onConfirm = { scope.launchIO { repository.removeHistory(animeId) } },
-            onDismiss = { removeAnimeId = null },
-        )
-    }
-    if (confirmClearAll) {
-        ConfirmDialog(
-            text = stringResource(KMR.strings.anime_clear_history_confirm),
-            // Device files history stays (it isn't shown here)
-            onConfirm = {
-                val ids = items.map { it.animeId }.distinct()
-                scope.launchIO { ids.forEach { repository.removeHistory(it) } }
-            },
-            onDismiss = { confirmClearAll = false },
-        )
-    }
-}
-
-@Composable
-private fun HistoryRow(
+internal fun AnimeHistoryRow(
     item: AnimeHistoryItem,
     sourceManager: AnimeSourceManager,
     onClick: () -> Unit,
@@ -221,76 +140,9 @@ private fun HistoryRow(
     }
 }
 
-/** KMK: Anime side of the Updates tab */
+/** KMK: One new episode of the Updates tab */
 @Composable
-fun AnimeUpdatesPane(contentPadding: PaddingValues) {
-    val context = LocalContext.current
-    val navigator = LocalNavigator.currentOrThrow
-    val repository = remember { Injekt.get<AnimeRepository>() }
-    val sourceManager = remember { Injekt.get<AnimeSourceManager>() }
-    val scope = rememberCoroutineScope()
-    val after = remember { System.currentTimeMillis() - TimeUnit.DAYS.toMillis(90) }
-    val updates by remember { repository.subscribeUpdates(after) }.collectAsState(initial = null)
-    val playEpisode = rememberPlayEpisode()
-    val dateFormat = remember { DateFormat.getDateInstance(DateFormat.MEDIUM) }
-
-    val items = updates ?: return
-    Column(modifier = Modifier.fillMaxSize().padding(top = contentPadding.calculateTopPadding())) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp),
-        ) {
-            Text(
-                text = stringResource(MR.strings.label_recent_updates),
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.weight(1f),
-            )
-            IconButton(
-                onClick = {
-                    AnimeLibraryUpdateJob.startNow(context)
-                    context.toast(KMR.strings.anime_updating_library)
-                },
-            ) {
-                Icon(Icons.Outlined.Refresh, contentDescription = stringResource(MR.strings.action_update_library))
-            }
-        }
-        if (items.isEmpty()) {
-            EmptyScreen(message = stringResource(KMR.strings.anime_no_updates))
-            return@Column
-        }
-        val grouped = remember(items) { items.groupBy { startOfDay(it.dateFetch) } }
-        FastScrollLazyColumn(
-            contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding() + 8.dp),
-        ) {
-            grouped.forEach { (day, dayItems) ->
-                item(key = "day-$day") {
-                    Text(
-                        text = dateFormat.format(Date(day)),
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier
-                            .padding(horizontal = 16.dp, vertical = 8.dp)
-                            .secondaryItemAlpha(),
-                    )
-                }
-                items(dayItems, key = { "ep-${it.episodeId}" }) { item ->
-                    UpdateRow(
-                        item = item,
-                        sourceManager = sourceManager,
-                        onClick = { playEpisode(item.animeId, item.episodeId) },
-                        onClickCover = { navigator.push(AnimeScreen(item.animeId)) },
-                        onToggleSeen = {
-                            scope.launch { repository.updateEpisode(id = item.episodeId, seen = !item.seen) }
-                        },
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun UpdateRow(
+internal fun AnimeUpdateRow(
     item: AnimeUpdateItem,
     sourceManager: AnimeSourceManager,
     onClick: () -> Unit,
@@ -345,7 +197,7 @@ private fun UpdateRow(
 }
 
 @Composable
-private fun ConfirmDialog(text: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+internal fun AnimeConfirmDialog(text: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = {

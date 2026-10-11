@@ -3,6 +3,8 @@ package tachiyomi.domain.history.service
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.preference.TriState
 import tachiyomi.core.common.preference.getEnum
+import tachiyomi.core.common.preference.getObjectFromString
+import tachiyomi.domain.library.model.LibraryDisplayMode
 import tachiyomi.domain.updates.service.USE_PANORAMA_COVER_PREF
 
 class HistoryPreferences(
@@ -30,10 +32,15 @@ class HistoryPreferences(
     )
 
     // KMK -->
-    /** History as a cover grid (Kototoro style) instead of a list */
-    fun gridMode() = preferenceStore.getBoolean("pref_history_grid_mode", false)
+    /** How history is shown: a list (default) or one of the library's grids */
+    fun displayMode() = preferenceStore.getObjectFromString(
+        "pref_history_display_mode",
+        LibraryDisplayMode.List,
+        LibraryDisplayMode.Serializer::serialize,
+        LibraryDisplayMode.Serializer::deserialize,
+    )
 
-    /** The reading summary card at the top of history */
-    fun showSummary() = preferenceStore.getBoolean("pref_history_show_summary", true)
+    /** Covers per row in the grid modes, 0 = auto */
+    fun columns() = preferenceStore.getInt("pref_history_columns", 0)
     // KMK <--
 }

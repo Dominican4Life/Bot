@@ -3,6 +3,8 @@ package tachiyomi.domain.updates.service
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.preference.TriState
 import tachiyomi.core.common.preference.getEnum
+import tachiyomi.core.common.preference.getObjectFromString
+import tachiyomi.domain.library.model.LibraryDisplayMode
 
 class UpdatesPreferences(
     private val preferenceStore: PreferenceStore,
@@ -39,11 +41,16 @@ class UpdatesPreferences(
         false,
     )
 
-    /** Kototoro-style timeline (one row per title per day) instead of the chapter list */
-    fun timelineView() = preferenceStore.getBoolean("pref_updates_timeline_view", true)
+    /** How updates are shown: a list (default) or one of the library's grids */
+    fun displayMode() = preferenceStore.getObjectFromString(
+        "pref_updates_display_mode",
+        LibraryDisplayMode.List,
+        LibraryDisplayMode.Serializer::serialize,
+        LibraryDisplayMode.Serializer::deserialize,
+    )
 
-    /** The "Updated" cover carousel above the timeline */
-    fun showUpdatedCarousel() = preferenceStore.getBoolean("pref_updates_show_carousel", true)
+    /** Covers per row in the grid modes, 0 = auto */
+    fun columns() = preferenceStore.getInt("pref_updates_columns", 0)
     // KMK <--
 }
 

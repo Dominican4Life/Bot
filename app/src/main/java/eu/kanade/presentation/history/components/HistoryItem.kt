@@ -1,7 +1,6 @@
 package eu.kanade.presentation.history.components
 
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -23,7 +22,6 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -32,7 +30,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.PreviewLightDark
 import androidx.compose.ui.tooling.preview.PreviewParameter
 import androidx.compose.ui.unit.dp
-import eu.kanade.presentation.components.CoverProgressBar
 import eu.kanade.presentation.manga.components.DotSeparatorText
 import eu.kanade.presentation.manga.components.MangaCover
 import eu.kanade.presentation.manga.components.MangaCoverHide
@@ -68,7 +65,6 @@ fun HistoryItem(
     hasUnread: Boolean,
     usePanoramaCover: Boolean,
     coverRatio: MutableFloatState = remember { mutableFloatStateOf(1f) },
-    progress: Float? = null,
     // KMK <--
 ) {
     // KMK -->
@@ -96,66 +92,62 @@ fun HistoryItem(
         val coverIsWide = coverRatio.floatValue <= RatioSwitchToPanorama
         val bgColor = mangaCover.dominantCoverColors?.first?.let { Color(it) }
         val onBgColor = mangaCover.dominantCoverColors?.second
-        Box(modifier = Modifier.fillMaxHeight().clip(MaterialTheme.shapes.extraSmall)) {
-            if (DebugToggles.HIDE_COVER_IMAGE_ONLY_SHOW_COLOR.enabled) {
-                MangaCoverHide.Book(
-                    modifier = Modifier.fillMaxHeight(),
-                    bgColor = bgColor ?: MaterialTheme.colorScheme.surface.takeIf { selected },
+        if (DebugToggles.HIDE_COVER_IMAGE_ONLY_SHOW_COLOR.enabled) {
+            MangaCoverHide.Book(
+                modifier = Modifier.fillMaxHeight(),
+                bgColor = bgColor ?: MaterialTheme.colorScheme.surface.takeIf { selected },
+                tint = onBgColor,
+                size = MangaCover.Size.Medium,
+            )
+        } else {
+            if (usePanoramaCover && coverIsWide) {
+                MangaCover.Panorama(
+                    modifier = Modifier.fillMaxHeight()
+                        // KMK -->
+                        .combinedClickable(
+                            onClick = onClickCover,
+                            onLongClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onLongClick()
+                            },
+                        ),
+                    // KMK <--
+                    data = mangaCover,
+                    // KMK -->
+                    bgColor = bgColor,
                     tint = onBgColor,
                     size = MangaCover.Size.Medium,
+                    onCoverLoaded = { _, result ->
+                        val image = result.result.image
+                        coverRatio.floatValue = image.height.toFloat() / image.width
+                    },
+                    // KMK <--
                 )
             } else {
-                if (usePanoramaCover && coverIsWide) {
-                    MangaCover.Panorama(
-                        modifier = Modifier.fillMaxHeight()
-                            // KMK -->
-                            .combinedClickable(
-                                onClick = onClickCover,
-                                onLongClick = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    onLongClick()
-                                },
-                            ),
-                        // KMK <--
-                        data = mangaCover,
+                // KMK <--
+                MangaCover.Book(
+                    modifier = Modifier.fillMaxHeight()
                         // KMK -->
-                        bgColor = bgColor,
-                        tint = onBgColor,
-                        size = MangaCover.Size.Medium,
-                        onCoverLoaded = { _, result ->
-                            val image = result.result.image
-                            coverRatio.floatValue = image.height.toFloat() / image.width
-                        },
-                        // KMK <--
-                    )
-                } else {
+                        .combinedClickable(
+                            onClick = onClickCover,
+                            onLongClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onLongClick()
+                            },
+                        ),
                     // KMK <--
-                    MangaCover.Book(
-                        modifier = Modifier.fillMaxHeight()
-                            // KMK -->
-                            .combinedClickable(
-                                onClick = onClickCover,
-                                onLongClick = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    onLongClick()
-                                },
-                            ),
-                        // KMK <--
-                        data = mangaCover,
-                        // KMK -->
-                        bgColor = bgColor,
-                        tint = onBgColor,
-                        size = MangaCover.Size.Medium,
-                        onCoverLoaded = { _, result ->
-                            val image = result.result.image
-                            coverRatio.floatValue = image.height.toFloat() / image.width
-                        },
-                        // KMK <--
-                    )
-                }
+                    data = mangaCover,
+                    // KMK -->
+                    bgColor = bgColor,
+                    tint = onBgColor,
+                    size = MangaCover.Size.Medium,
+                    onCoverLoaded = { _, result ->
+                        val image = result.result.image
+                        coverRatio.floatValue = image.height.toFloat() / image.width
+                    },
+                    // KMK <--
+                )
             }
-            // KMK: reading progress along the bottom of the cover
-            CoverProgressBar(percent = progress, modifier = Modifier.align(Alignment.BottomCenter))
         }
         Column(
             modifier = Modifier

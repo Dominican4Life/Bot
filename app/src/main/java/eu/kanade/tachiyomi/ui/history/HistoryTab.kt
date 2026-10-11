@@ -21,10 +21,10 @@ import cafe.adriel.voyager.navigator.tab.TabOptions
 import eu.kanade.core.preference.asState
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.presentation.category.components.ChangeCategoryDialog
+import eu.kanade.presentation.components.MediaDisplayDialog
 import eu.kanade.presentation.history.HistoryScreen
 import eu.kanade.presentation.history.components.HistoryDeleteAllDialog
 import eu.kanade.presentation.history.components.HistoryDeleteDialog
-import eu.kanade.presentation.history.components.HistoryFilterDialog
 import eu.kanade.presentation.manga.DuplicateMangaDialog
 import eu.kanade.presentation.util.Tab
 import eu.kanade.tachiyomi.R
@@ -39,7 +39,6 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.receiveAsFlow
 import mihon.feature.migration.dialog.MigrateMangaDialog
 import tachiyomi.core.common.i18n.stringResource
-import tachiyomi.core.common.preference.toggle
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.i18n.MR
@@ -91,8 +90,19 @@ data object HistoryTab : Tab {
         // KMK -->
         val settingsScreenModel = rememberScreenModel { HistorySettingsScreenModel() }
         val usePanoramaCover by settingsScreenModel.historyPreferences.usePanoramaCover().collectAsState()
-        val gridMode by settingsScreenModel.historyPreferences.gridMode().collectAsState()
-        val showSummary by settingsScreenModel.historyPreferences.showSummary().collectAsState()
+        // All | Manga | Anime, and the library's display modes
+        val mediaTabPref = remember { Injekt.get<eu.kanade.domain.source.service.SourcePreferences>().historyMediaTab() }
+        val mediaTab by mediaTabPref.collectAsState()
+        val displayMode by settingsScreenModel.historyPreferences.displayMode().collectAsState()
+        val columns by settingsScreenModel.historyPreferences.columns().collectAsState()
+        // The filters left the toolbar (only display modes now), so none may stay on unseen
+        LaunchedEffect(Unit) {
+            with(settingsScreenModel.historyPreferences) {
+                filterUnfinishedManga().delete()
+                filterUnfinishedChapter().delete()
+                filterNonLibraryManga().delete()
+            }
+        }
         // KMK <--
 
         HistoryScreen(
@@ -108,12 +118,12 @@ data object HistoryTab : Tab {
             onSelectAll = screenModel::toggleAllSelection,
             onInvertSelection = screenModel::invertSelection,
             onHistorySelected = screenModel::toggleSelection,
-            onFilterClicked = screenModel::showFilterDialog,
-            hasActiveFilters = state.hasActiveFilters,
+            onDisplayClicked = screenModel::showFilterDialog,
             usePanoramaCover = usePanoramaCover,
-            gridMode = gridMode,
-            showSummary = showSummary,
-            onToggleGridMode = { settingsScreenModel.historyPreferences.gridMode().toggle() },
+            mediaTab = mediaTab,
+            onMediaTabChange = mediaTabPref::set,
+            displayMode = displayMode,
+            columns = columns,
             // KMK <--
         )
 
@@ -133,14 +143,6 @@ data object HistoryTab : Tab {
                     },
                 )
             }
-            // KMK -->
-            is HistoryScreenModel.Dialog.Clear -> {
-                eu.kanade.presentation.history.components.HistoryClearDialog(
-                    onDismissRequest = onDismissRequest,
-                    onClear = screenModel::clearHistory,
-                )
-            }
-            // KMK <--
             is HistoryScreenModel.Dialog.DeleteAll -> {
                 HistoryDeleteAllDialog(
                     onDismissRequest = onDismissRequest,
@@ -180,9 +182,10 @@ data object HistoryTab : Tab {
             }
             // KMK -->
             is HistoryScreenModel.Dialog.FilterSheet -> {
-                HistoryFilterDialog(
+                MediaDisplayDialog(
                     onDismissRequest = onDismissRequest,
-                    screenModel = settingsScreenModel,
+                    displayModePref = settingsScreenModel.historyPreferences.displayMode(),
+                    columnsPref = settingsScreenModel.historyPreferences.columns(),
                 )
             }
             // KMK <--

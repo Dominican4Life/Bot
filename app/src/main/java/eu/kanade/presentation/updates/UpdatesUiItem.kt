@@ -56,6 +56,7 @@ import eu.kanade.presentation.manga.components.swipeActionThreshold
 import eu.kanade.presentation.util.animateItemFastScroll
 import eu.kanade.presentation.util.relativeTimeSpanString
 import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.data.anime.AnimeUpdateItem
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.ui.updates.UpdatesItem
 import eu.kanade.tachiyomi.ui.updates.UpdatesScreenModel.UpdateSelectionOptions
@@ -107,6 +108,8 @@ internal fun LazyListScope.updatesUiItems(
     updateSwipeStartAction: LibraryPreferences.ChapterSwipeAction,
     updateSwipeEndAction: LibraryPreferences.ChapterSwipeAction,
     onUpdateSwipe: (UpdatesItem, LibraryPreferences.ChapterSwipeAction) -> Unit,
+    /** How an anime episode of the All and Anime tabs is drawn */
+    animeContent: @Composable (AnimeUpdateItem) -> Unit = {},
     // KMK <--
 ) {
     items(
@@ -115,16 +118,22 @@ internal fun LazyListScope.updatesUiItems(
             when (it) {
                 is UpdatesUiModel.Header -> "header"
                 is UpdatesUiModel.Item -> "item"
+                // KMK
+                is UpdatesUiModel.Anime -> "anime"
             }
         },
         key = {
             when (it) {
                 is UpdatesUiModel.Header -> "updatesHeader-${it.hashCode()}"
                 is UpdatesUiModel.Item -> "updates-${it.item.update.mangaId}-${it.item.update.chapterId}"
+                // KMK
+                is UpdatesUiModel.Anime -> "updates-anime-${it.item.episodeId}"
             }
         },
     ) { item ->
         when (item) {
+            // KMK
+            is UpdatesUiModel.Anime -> animeContent(item.item)
             is UpdatesUiModel.Header -> {
                 // KMK -->
                 DateHeading(
