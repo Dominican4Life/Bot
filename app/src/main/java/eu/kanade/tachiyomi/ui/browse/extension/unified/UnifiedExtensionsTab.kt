@@ -35,13 +35,16 @@ import eu.kanade.tachiyomi.ui.anime.source.AnimeSourceScreen
 import eu.kanade.tachiyomi.ui.browse.anime.AnimeExtensionDetailsScreen
 import eu.kanade.tachiyomi.ui.browse.extension.ExtensionFilterScreen
 import eu.kanade.tachiyomi.ui.browse.extension.details.ExtensionDetailsScreen
+import eu.kanade.tachiyomi.ui.browse.extension.details.SourcePreferencesScreen
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreen
 import eu.kanade.tachiyomi.ui.browse.source.feed.SourceFeedScreen
+import eu.kanade.tachiyomi.ui.sumizuri.SourceEditorScreen
 import eu.kanade.tachiyomi.util.system.isPackageInstalled
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.launch
 import tachiyomi.domain.source.interactor.GetRemoteManga
 import tachiyomi.i18n.MR
+import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.i18n.stringResource
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -79,6 +82,8 @@ fun unifiedExtensionsTab(
             var trustItem by remember { mutableStateOf<UnifiedPackage?>(null) }
             var removeItem by remember { mutableStateOf<UnifiedPackage?>(null) }
             var deleteRepo by remember { mutableStateOf<UnifiedRepo?>(null) }
+            // KMK
+            var deleteJs by remember { mutableStateOf<UnifiedJsSource?>(null) }
 
             BackHandler(enabled = state.filters.query.isNotEmpty()) { screenModel.search("") }
 
@@ -137,7 +142,45 @@ fun unifiedExtensionsTab(
                         else -> openDetails(item.kind, item.pkgName)
                     }
                 },
+                // KMK --> JS tab
+                onJsOpen = { source ->
+                    navigator.push(
+                        if (source.anime) {
+                            AnimeSourceScreen(source.id)
+                        } else {
+                            BrowseSourceScreen(source.id, GetRemoteManga.QUERY_POPULAR)
+                        },
+                    )
+                },
+                onJsEnabled = screenModel::setJsEnabled,
+                onJsAllEnabled = screenModel::setAllJsEnabled,
+                onJsSettings = { navigator.push(SourcePreferencesScreen(it.id, anime = it.anime)) },
+                onJsEdit = { navigator.push(SourceEditorScreen(it.key)) },
+                onJsDelete = { deleteJs = it },
+                onJsNew = { navigator.push(SourceEditorScreen()) },
+                // KMK <--
             )
+
+            // KMK -->
+            deleteJs?.let { source ->
+                AlertDialog(
+                    onDismissRequest = { deleteJs = null },
+                    title = { Text(stringResource(KMR.strings.ext_js_delete_title)) },
+                    text = { Text(stringResource(KMR.strings.ext_js_delete_message, source.name)) },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                screenModel.deleteJs(source)
+                                deleteJs = null
+                            },
+                        ) { Text(stringResource(MR.strings.action_delete)) }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { deleteJs = null }) { Text(stringResource(MR.strings.action_cancel)) }
+                    },
+                )
+            }
+            // KMK <--
 
             trustItem?.let { item ->
                 ExtensionTrustDialog(

@@ -56,9 +56,9 @@ import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.components.FastScrollLazyVerticalGrid
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
-import tachiyomi.presentation.core.util.collectAsState as collectPrefAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import tachiyomi.presentation.core.util.collectAsState as collectPrefAsState
 
 /**
  * KMK: Suggestions tab (below Browse): manga picked from what you read, refreshed in the background
@@ -77,6 +77,13 @@ data object SuggestionsTab : Tab {
                 icon = rememberVectorPainter(if (isSelected) Icons.Filled.Lightbulb else Icons.Outlined.Lightbulb),
             )
         }
+
+    /** In the navigation only while suggestions are on (Settings › Suggestions › Enable suggestions) */
+    @Composable
+    override fun isEnabled(): Boolean {
+        val enabled by remember { Injekt.get<SuggestionsPreferences>().enabled() }.collectPrefAsState()
+        return enabled
+    }
 
     @Composable
     override fun Content() {

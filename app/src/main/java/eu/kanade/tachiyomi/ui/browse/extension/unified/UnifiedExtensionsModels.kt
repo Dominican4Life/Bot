@@ -10,6 +10,9 @@ import eu.kanade.tachiyomi.extension.model.InstallStep
 enum class ExtensionKind(val label: String) {
     MIHON("Mihon"),
     ANIYOMI("Aniyomi"),
+
+    /** Sumizuri JS / JSON sources from the Code editor; they have their own tab, not packages or repos */
+    JS("JS"),
 }
 
 enum class PackageState {
@@ -103,4 +106,20 @@ data class UnifiedFilters(
     val kinds: Set<ExtensionKind> = emptySet(),
     val repoUrl: String? = null,
     val status: PackageStatusFilter = PackageStatusFilter.ALL,
+)
+
+/** One JS / JSON source made in the Code editor or imported, for the JS tab */
+@Immutable
+data class UnifiedJsSource(
+    /** The source's key in SumizuriManager */
+    val key: String,
+    val id: Long,
+    val name: String,
+    val lang: String,
+    val baseUrl: String,
+    val iconUrl: String?,
+    /** A JSON definition rather than JavaScript */
+    val json: Boolean,
+    val anime: Boolean,
+    val enabled: Boolean,
 )

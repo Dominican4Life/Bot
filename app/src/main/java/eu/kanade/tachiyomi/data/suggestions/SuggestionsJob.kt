@@ -1,8 +1,6 @@
 package eu.kanade.tachiyomi.data.suggestions
 
-import android.app.PendingIntent
 import android.content.Context
-import android.content.Intent
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -14,26 +12,24 @@ import androidx.work.WorkerParameters
 import eu.kanade.domain.manga.model.toSManga
 import eu.kanade.domain.suggestions.SuggestionsPreferences
 import eu.kanade.domain.suggestions.splitGenres
-import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.model.SManga
-import eu.kanade.tachiyomi.ui.main.MainActivity
-import eu.kanade.tachiyomi.util.system.notify
 import eu.kanade.tachiyomi.util.system.workManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import logcat.LogPriority
 import mihon.domain.manga.model.toDomainManga
-import tachiyomi.core.common.Constants
-import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.history.interactor.GetHistory
 import tachiyomi.domain.manga.interactor.GetLibraryManga
+import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.interactor.NetworkToLocalManga
+import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
-import tachiyomi.i18n.kmk.KMR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.util.concurrent.TimeUnit
@@ -41,7 +37,8 @@ import java.util.concurrent.TimeUnit
 /**
  * KMK: Finds manga you may like, in the background (ported from Kototoro's suggestions, adapted to Komikku's
  * sources):
- * - seeds are the library entries read most recently, and the genres they share;
+ * - seeds come from what "Suggest from" says: reading history (default), the whole library, or some categories;
+ *   the genres they share steer the searches;
  * - candidates come from each seed's related titles and from genre searches on a few sources
  *   (preferred sources first, excluded ones skipped);
  * - candidates are scored (seen through several seeds, preferred genres/sources), anything already in the library
@@ -54,6 +51,8 @@ class SuggestionsJob(context: Context, params: WorkerParameters) : CoroutineWork
     private val sourceManager: SourceManager = Injekt.get()
     private val networkToLocalManga: NetworkToLocalManga = Injekt.get()
     private val sourcePreferences: eu.kanade.domain.source.service.SourcePreferences = Injekt.get()
+    private val getHistory: GetHistory = Injekt.get()
+    private val getManga: GetManga = Injekt.get()
 
     private class Candidate(val sourceId: Long, val manga: SManga) {
         var score = 0.0
@@ -74,16 +73,30 @@ class SuggestionsJob(context: Context, params: WorkerParameters) : CoroutineWork
     }
 
     private suspend fun collect() {
-        val library = getLibraryManga.await().sortedByDescending { it.lastRead }.map { it.manga }
-        val inLibrary = library.map { it.source to it.url }.toSet()
+        val libraryAll = getLibraryManga.await()
+        val inLibrary = libraryAll.map { it.manga.source to it.manga.url }.toSet()
         val excludedGenres = preferences.excludedGenres().get().splitGenres().map { it.lowercase() }.toSet()
         val preferredGenres = preferences.preferredGenres().get().splitGenres().map { it.lowercase() }
         val preferredSources = preferences.preferredSources().get().mapNotNull { it.toLongOrNull() }.toSet()
         val excludedSources = preferences.excludedSources().get().mapNotNull { it.toLongOrNull() }.toSet()
 
-        // Genres the recent seeds share, most common first
-        val seeds = library.take(SEED_COUNT)
-        val seedGenres = seeds.flatMap { it.genre.orEmpty() }
+        // What suggestions are based on: the genres of [base], and titles related to [seeds]
+        val recentLibrary = libraryAll.sortedByDescending { it.lastRead }.map { it.manga }
+        val base: List<Manga> = when (preferences.suggestFrom().get()) {
+            SuggestionsPreferences.FROM_LIBRARY -> libraryAll.map { it.manga }.shuffled()
+            SuggestionsPreferences.FROM_CATEGORIES -> {
+                val chosen = preferences.suggestCategories().get().mapNotNull { it.toLongOrNull() }.toSet()
+                libraryAll
+                    .filter { entry -> entry.categories.any { it in chosen } }
+                    .sortedByDescending { it.lastRead }
+                    .map { it.manga }
+            }
+            else -> historyManga()
+        }.ifEmpty { recentLibrary }
+        val seeds = base.take(SEED_COUNT)
+
+        // Genres the base shares, most common first: all of it for library / categories, so every title counts
+        val seedGenres = base.flatMap { it.genre.orEmpty() }
             .map { it.trim().lowercase() }
             .filter { it.isNotEmpty() && it !in excludedGenres }
             .groupingBy { it }.eachCount()
@@ -116,6 +129,7 @@ class SuggestionsJob(context: Context, params: WorkerParameters) : CoroutineWork
         seeds.shuffled().take(RELATED_SEEDS).forEach { seed ->
             val source = sourceManager.get(seed.source) as? CatalogueSource ?: return@forEach
             if (source.id in excludedSources) return@forEach
+            if (!includeDisabled && source.id.toString() in disabled) return@forEach
             withTimeoutOrNull(TimeUnit.SECONDS.toMillis(40)) {
                 runCatching {
                     source.getRelatedMangaList(
@@ -163,37 +177,23 @@ class SuggestionsJob(context: Context, params: WorkerParameters) : CoroutineWork
         val local = networkToLocalManga(ranked.map { it.manga.toDomainManga(it.sourceId) }, updateInfo = false)
         preferences.results().set(local.joinToString(",") { it.id.toString() })
         preferences.lastUpdated().set(System.currentTimeMillis())
-
-        if (preferences.notifications().get()) {
-            local.take((local.size / 3).coerceAtLeast(1)).randomOrNull()?.let { manga ->
-                val intent = Intent(applicationContext, MainActivity::class.java).apply {
-                    action = Constants.SHORTCUT_MANGA
-                    putExtra(Constants.MANGA_EXTRA, manga.id)
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                }
-                applicationContext.notify(Notifications.ID_SUGGESTION, Notifications.CHANNEL_COMMON) {
-                    setSmallIcon(eu.kanade.tachiyomi.R.drawable.ic_komikku)
-                    setContentTitle(applicationContext.stringResource(KMR.strings.suggestions_notification_title))
-                    setContentText(manga.title)
-                    setAutoCancel(true)
-                    setContentIntent(
-                        PendingIntent.getActivity(
-                            applicationContext,
-                            manga.id.toInt(),
-                            intent,
-                            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-                        ),
-                    )
-                }
-            }
-        }
     }
+
+    /** Titles from the reading history, most recent first, in the library or not */
+    private suspend fun historyManga(): List<Manga> = runCatching {
+        getHistory.subscribe("", null, null, null).first()
+            .map { it.mangaId }
+            .distinct()
+            .take(HISTORY_TITLES)
+            .mapNotNull { getManga.await(it) }
+    }.getOrDefault(emptyList())
 
     companion object {
         private const val TAG = "Suggestions"
         private const val TAG_NOW = "SuggestionsNow"
 
         private const val SEED_COUNT = 20
+        private const val HISTORY_TITLES = 60
         private const val SEED_GENRES = 8
         private const val RELATED_SEEDS = 4
         private const val SEARCH_SOURCES = 6

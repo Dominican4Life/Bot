@@ -14,6 +14,7 @@ import androidx.compose.material.icons.outlined.CollectionsBookmark
 import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.outlined.GetApp
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Lightbulb
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PlayCircleOutline
 import androidx.compose.material.icons.outlined.Search
@@ -229,6 +230,14 @@ object SettingsMainScreen : Screen() {
             icon = Icons.Outlined.Explore,
             screen = SettingsBrowseScreen,
         ),
+        // KMK --> reachable from here too, since the Suggestions tab hides while suggestions are off
+        Item(
+            titleRes = KMR.strings.label_suggestions,
+            subtitleRes = KMR.strings.pref_suggestions_summary,
+            icon = Icons.Outlined.Lightbulb,
+            screen = SettingsSuggestionsScreen,
+        ),
+        // KMK <--
         Item(
             titleRes = MR.strings.label_data_storage,
             subtitleRes = MR.strings.pref_backup_summary,

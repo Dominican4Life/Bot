@@ -11,8 +11,6 @@ class SuggestionsPreferences(private val preferenceStore: PreferenceStore) {
 
     fun includeDisabledSources() = preferenceStore.getBoolean("suggestions_disabled_sources", false)
 
-    fun notifications() = preferenceStore.getBoolean("suggestions_notifications", false)
-
     /** Comma separated */
     fun excludedGenres() = preferenceStore.getString("suggestions_exclude_tags", "")
 
@@ -25,11 +23,35 @@ class SuggestionsPreferences(private val preferenceStore: PreferenceStore) {
     /** Source ids */
     fun excludedSources() = preferenceStore.getStringSet("suggestions_excluded_sources", emptySet())
 
+    /** What suggestions are based on: [FROM_HISTORY], [FROM_LIBRARY] or [FROM_CATEGORIES] */
+    fun suggestFrom() = preferenceStore.getString("suggestions_from", FROM_HISTORY)
+
+    /** Category ids, for [FROM_CATEGORIES] */
+    fun suggestCategories() = preferenceStore.getStringSet("suggestions_from_categories", emptySet())
+
     /** The last results, as manga ids in ranked order */
     fun results() = preferenceStore.getString("suggestions_result_ids", "")
 
     fun lastUpdated() = preferenceStore.getLong("suggestions_last_updated", 0L)
+
+    companion object {
+        /** What you read lately, in your library or not */
+        const val FROM_HISTORY = "history"
+
+        /** Everything in your library */
+        const val FROM_LIBRARY = "library"
+
+        /** The library titles in the chosen categories */
+        const val FROM_CATEGORIES = "categories"
+    }
 }
 
 fun String.splitGenres(): List<String> =
     split(',').map { it.trim() }.filter { it.isNotEmpty() }
+
+/** The comma separated genre list with [genre] added (if it isn't there yet) or removed */
+fun String.withGenre(genre: String): String =
+    (splitGenres() + genre.trim()).filter { it.isNotEmpty() }.distinctBy { it.lowercase() }.joinToString(", ")
+
+fun String.withoutGenre(genre: String): String =
+    splitGenres().filterNot { it.equals(genre.trim(), ignoreCase = true) }.joinToString(", ")

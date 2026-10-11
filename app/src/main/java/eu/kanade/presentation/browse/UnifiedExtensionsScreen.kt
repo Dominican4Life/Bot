@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.PushPin
@@ -52,6 +53,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -64,6 +66,7 @@ import eu.kanade.tachiyomi.ui.browse.extension.unified.ExtensionKind
 import eu.kanade.tachiyomi.ui.browse.extension.unified.PackageState
 import eu.kanade.tachiyomi.ui.browse.extension.unified.PackageStatusFilter
 import eu.kanade.tachiyomi.ui.browse.extension.unified.UnifiedExtensionsScreenModel
+import eu.kanade.tachiyomi.ui.browse.extension.unified.UnifiedJsSource
 import eu.kanade.tachiyomi.ui.browse.extension.unified.UnifiedPackage
 import eu.kanade.tachiyomi.ui.browse.extension.unified.UnifiedRepo
 import eu.kanade.tachiyomi.ui.browse.extension.unified.UnifiedSource
@@ -75,7 +78,10 @@ import tachiyomi.presentation.core.i18n.stringResource
 const val UNIFIED_TAB_SOURCES = 0
 const val UNIFIED_TAB_REPOSITORIES = 1
 const val UNIFIED_TAB_PACKAGES = 2
-const val UNIFIED_TAB_COUNT = 3
+
+// KMK: JS / JSON sources from the Code editor
+const val UNIFIED_TAB_JS = 3
+const val UNIFIED_TAB_COUNT = 4
 
 private val CardShape = RoundedCornerShape(16.dp)
 private val ListPadding = 12.dp
@@ -108,6 +114,15 @@ fun UnifiedExtensionsContent(
     onPackageCancel: (UnifiedPackage) -> Unit,
     onPackageRemove: (UnifiedPackage) -> Unit,
     onPackageDetails: (UnifiedPackage) -> Unit,
+    // KMK --> JS tab
+    onJsOpen: (UnifiedJsSource) -> Unit,
+    onJsEnabled: (UnifiedJsSource, Boolean) -> Unit,
+    onJsAllEnabled: (List<UnifiedJsSource>, Boolean) -> Unit,
+    onJsSettings: (UnifiedJsSource) -> Unit,
+    onJsEdit: (UnifiedJsSource) -> Unit,
+    onJsDelete: (UnifiedJsSource) -> Unit,
+    onJsNew: () -> Unit,
+    // KMK <--
 ) {
     val scope = rememberCoroutineScope()
     val tab = pagerState.currentPage
@@ -121,6 +136,7 @@ fun UnifiedExtensionsContent(
                 stringResource(KMR.strings.ext_tab_sources, sources.size),
                 stringResource(KMR.strings.ext_tab_repositories, repos.size),
                 stringResource(KMR.strings.ext_tab_packages, packages.size),
+                stringResource(KMR.strings.ext_tab_js, state.jsSources.size),
             ).forEachIndexed { index, title ->
                 Tab(
                     selected = tab == index,
@@ -177,6 +193,17 @@ fun UnifiedExtensionsContent(
                     onDelete = onRepoDelete,
                     onOpen = onRepoOpen,
                 )
+                UNIFIED_TAB_JS -> JsList(
+                    sources = state.jsSources,
+                    padding = listPadding,
+                    onOpen = onJsOpen,
+                    onEnabled = onJsEnabled,
+                    onAllEnabled = onJsAllEnabled,
+                    onSettings = onJsSettings,
+                    onEdit = onJsEdit,
+                    onDelete = onJsDelete,
+                    onNew = onJsNew,
+                )
                 else -> PackageList(
                     packages = packages,
                     updateCount = state.updateCount,
@@ -202,6 +229,7 @@ private fun FilterRows(
     onStatusClick: (PackageStatusFilter) -> Unit,
 ) {
     val filters = state.filters
+    if (tab == UNIFIED_TAB_JS) return
     Column(
         verticalArrangement = Arrangement.spacedBy(2.dp),
         modifier = Modifier.padding(vertical = 4.dp),
@@ -241,7 +269,7 @@ private fun FilterRows(
                     leading = { Icon(Icons.Outlined.Extension, contentDescription = null, modifier = Modifier.size(16.dp)) },
                 ) { onKindClick(null) }
             }
-            items(ExtensionKind.entries, key = { it.name }) { kind ->
+            items(ExtensionKind.entries.filter { it != ExtensionKind.JS }, key = { it.name }) { kind ->
                 Chip(kind.label, kind in filters.kinds, leading = { KindDot(kind) }) { onKindClick(kind) }
             }
         }
@@ -277,7 +305,12 @@ private fun Chip(
 private fun kindColor(kind: ExtensionKind) = when (kind) {
     ExtensionKind.MIHON -> MaterialTheme.colorScheme.primary
     ExtensionKind.ANIYOMI -> MaterialTheme.colorScheme.tertiary
+    // KMK: yellow, darker on light themes so the text stays readable
+    ExtensionKind.JS -> if (MaterialTheme.colorScheme.surface.luminance() < 0.5f) JsYellowDark else JsYellowLight
 }
+
+private val JsYellowDark = androidx.compose.ui.graphics.Color(0xFFFFCA28)
+private val JsYellowLight = androidx.compose.ui.graphics.Color(0xFFA67C00)
 
 @Composable
 private fun KindDot(kind: ExtensionKind) {
@@ -434,6 +467,108 @@ private fun SourceList(
         }
     }
 }
+
+// KMK -->
+/** The JS tab: sources made in the Code editor or imported, with the yellow JS tag */
+@Composable
+private fun JsList(
+    sources: List<UnifiedJsSource>,
+    padding: PaddingValues,
+    onOpen: (UnifiedJsSource) -> Unit,
+    onEnabled: (UnifiedJsSource, Boolean) -> Unit,
+    onAllEnabled: (List<UnifiedJsSource>, Boolean) -> Unit,
+    onSettings: (UnifiedJsSource) -> Unit,
+    onEdit: (UnifiedJsSource) -> Unit,
+    onDelete: (UnifiedJsSource) -> Unit,
+    onNew: () -> Unit,
+) {
+    val yellow = kindColor(ExtensionKind.JS)
+    LazyColumn(
+        contentPadding = padding,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxSize(),
+    ) {
+        item(key = "js_actions") {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                AssistChip(
+                    onClick = onNew,
+                    label = { Text(stringResource(KMR.strings.ext_js_new)) },
+                    leadingIcon = { Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                )
+                if (sources.isNotEmpty()) {
+                    AssistChip(
+                        onClick = { onAllEnabled(sources, true) },
+                        label = { Text(stringResource(MR.strings.action_enable_all)) },
+                    )
+                    AssistChip(
+                        onClick = { onAllEnabled(sources, false) },
+                        label = { Text(stringResource(MR.strings.action_disable_all)) },
+                    )
+                }
+            }
+        }
+        if (sources.isEmpty()) {
+            item(key = "js_empty") { EmptyState(stringResource(KMR.strings.ext_js_empty)) }
+            return@LazyColumn
+        }
+        items(sources, key = { "js_${it.key}" }) { source ->
+            ElevatedCard(
+                shape = CardShape,
+                colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .combinedClickable(onClick = { onOpen(source) }, onLongClick = { onEdit(source) })
+                        .padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+                ) {
+                    PackageIcon(null, source.iconUrl)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = source.name,
+                            style = MaterialTheme.typography.titleSmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(top = 2.dp),
+                        ) {
+                            Tag(if (source.json) "JSON" else ExtensionKind.JS.label, color = yellow)
+                            Tag(stringResource(if (source.anime) KMR.strings.ext_js_anime else KMR.strings.ext_js_manga))
+                            Tag(langLabel(source.lang))
+                        }
+                        if (source.baseUrl.isNotBlank()) {
+                            Text(
+                                text = source.baseUrl.removePrefix("https://").removePrefix("http://"),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(top = 2.dp),
+                            )
+                        }
+                    }
+                    IconButton(onClick = { onEdit(source) }) {
+                        Icon(Icons.Outlined.Code, contentDescription = stringResource(KMR.strings.ext_js_edit))
+                    }
+                    IconButton(onClick = { onSettings(source) }) {
+                        Icon(Icons.Outlined.Settings, contentDescription = stringResource(MR.strings.action_settings))
+                    }
+                    IconButton(onClick = { onDelete(source) }) {
+                        Icon(Icons.Outlined.Delete, contentDescription = stringResource(MR.strings.action_delete))
+                    }
+                    Switch(checked = source.enabled, onCheckedChange = { onEnabled(source, it) })
+                }
+            }
+        }
+    }
+}
+// KMK <--
 
 @Composable
 private fun RepoList(
