@@ -17,6 +17,7 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
+import eu.kanade.tachiyomi.ui.reader.viewer.ReaderVideoButton
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.util.system.dpToPx
 import kotlinx.coroutines.Job
@@ -123,6 +124,7 @@ class WebtoonPageHolder(
 
         removeErrorLayout()
         frame.recycle()
+        ReaderVideoButton.update(frame, null)
         progressIndicator.setProgress(0)
         progressContainer.isVisible = true
     }
@@ -212,6 +214,8 @@ class WebtoonPageHolder(
                     ),
                 )
                 removeErrorLayout()
+                // KMK: a play button on video pages
+                ReaderVideoButton.update(frame, page)
             }
         } catch (e: Throwable) {
             logcat(LogPriority.ERROR, e)

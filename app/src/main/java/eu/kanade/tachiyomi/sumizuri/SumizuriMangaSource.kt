@@ -15,6 +15,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.Headers
+import okhttp3.Response
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
@@ -56,7 +57,8 @@ class SumizuriMangaSource(
     }
 
     private suspend fun listing(method: String, vararg args: Any?): MangasPage {
-        val list = SumizuriMapping.list(runtime().call(method, *args))
+        // A source whose tab catalogs replace Popular and Latest may leave those out: an empty list, not an error
+        val list = SumizuriMapping.list(optionalListing(runtime(), method, *args))
         webUrls.remember(list)
         val mangas = list.mapNotNull { SumizuriMapping.toSManga(it) }
         return MangasPage(mangas, hasNextPage = mangas.isNotEmpty())
@@ -106,11 +108,33 @@ class SumizuriMangaSource(
         SumizuriMapping.list(runtime().call("getPageList", chapter.url))
             .sortedBy { it.int("index") ?: 0 }
             .mapIndexedNotNull { index, page ->
+                // KMK: a page with a videoUrl is a video, played from the reader in the app's player
+                ReaderVideos.pageOf(index, page, videoHeaders())?.let { return@mapIndexedNotNull it }
                 val image = page.str("imageUrl") ?: return@mapIndexedNotNull null
                 Page(index, imageUrl = image)
             }
 
+    /** The headers a video page plays with unless it names its own: the site as Referer, then the source's headers */
+    private fun videoHeaders(): Map<String, String> = buildMap {
+        if (baseUrl.isNotBlank()) put("Referer", "$baseUrl/")
+        putAll(info.headers)
+    }
+
     override suspend fun getImageUrl(page: Page): String = page.imageUrl.orEmpty()
+
+    // KMK: a video page with no thumbnail shows a dark tile, made here rather than fetched; a thumbnail that
+    // fails to load falls back to the tile too, so the play button is still there
+    override suspend fun getImage(page: Page): Response {
+        if (!ReaderVideos.isVideo(page.url)) return super.getImage(page)
+        if (ReaderVideos.usesTile(page)) return ReaderVideos.tileResponse()
+        return try {
+            super.getImage(page)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            ReaderVideos.tileResponse()
+        }
+    }
 
     override fun getMangaUrl(manga: SManga): String = webUrls.pageFor(manga.url)
 

@@ -26,9 +26,12 @@ class AnimeSourceManager(
     // Videos played from Device files
     private val deviceFiles = eu.kanade.tachiyomi.devicefiles.DeviceFilesAnimeSource()
 
+    // Videos found inside manga chapters, played from the reader
+    private val readerVideos = eu.kanade.tachiyomi.sumizuri.ReaderVideosSource()
+
     private val sourcesMapFlow: StateFlow<Map<Long, AnimeSource>> = extensionManager.installedExtensionsFlow
         .combine(sumizuriManager.animeSourcesFlow) { extensions, jsSources ->
-            (extensions.flatMap { it.sources } + jsSources + deviceFiles).associateBy { it.id }
+            (extensions.flatMap { it.sources } + jsSources + deviceFiles + readerVideos).associateBy { it.id }
         }
         .stateIn(scope, SharingStarted.Eagerly, emptyMap())
 

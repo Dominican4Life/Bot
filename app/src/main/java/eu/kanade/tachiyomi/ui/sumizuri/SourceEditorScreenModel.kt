@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.compose.runtime.Immutable
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
+import eu.kanade.tachiyomi.sumizuri.SumizuriFilters
 import eu.kanade.tachiyomi.sumizuri.SumizuriManager
 import eu.kanade.tachiyomi.sumizuri.SumizuriPreferences
 import eu.kanade.tachiyomi.sumizuri.SumizuriRuntime
@@ -336,22 +337,47 @@ class SourceEditorScreenModel(
 
     fun runPreferences() = run("Source settings") { Result("Source settings", true, 0, text = pretty(it.call("getSourcePreferences"))) }
 
-    /** Popular, Latest and a search, one after another, then the first title's chapters and its first chapter */
+    /**
+     * Popular, Latest and a search, one after another, then the first title's chapters and its first chapter.
+     * A source with tab catalogs runs page 1 of each tab first, in the order Browse shows them, and takes its test
+     * title from the first tab; Popular and Latest then only run when the source has them.
+     */
     fun runAll(query: String) {
         job?.cancel()
         job = screenModelScope.launchIO {
-            val popular = execute("Popular · page 1") { entries(it.call("getPopular", 1)) }
-            execute("Latest · page 1") { entries(it.call("getLatest", 1)) }
+            val tabs = tabCatalogs()
+            val tabResults = tabs.map { tab ->
+                execute("Tab ${tab.name} · page 1") { entries(it.call("getCatalog", tab.id, 1)) }
+            }
+            val meta = if (tabs.isEmpty()) null else runCatching { runtime().metadata() }.getOrNull()
+            val popular = if (tabs.isEmpty() || meta?.flag("hasPopular") != false) {
+                execute("Popular · page 1") { entries(it.call("getPopular", 1)) }
+            } else {
+                null
+            }
+            if (tabs.isEmpty() || meta?.flag("hasLatest") != false) {
+                execute("Latest · page 1") { entries(it.call("getLatest", 1)) }
+            }
             if (query.isNotBlank()) {
                 execute("Search \"$query\"") { entries(it.call("search", query, 1, emptyMap<String, Any>())) }
             }
-            val entry = popular?.items?.firstOrNull { it.kind == Kind.Entry } ?: return@launchIO
+            val lists = if (tabs.isEmpty()) listOf(popular) else tabResults + popular
+            val entry = lists.firstNotNullOfOrNull { r -> r?.items?.firstOrNull { it.kind == Kind.Entry } } ?: return@launchIO
             val chapters = execute("Chapters of ${entry.title}") { chapters(it, entry.url) } ?: return@launchIO
             val chapter = chapters.items.firstOrNull() ?: return@launchIO
             val what = if (state.value.anime) "Videos" else "Pages"
             execute("$what of ${chapter.title}") { content(it, chapter.url) }
         }
     }
+
+    /** The source's tab catalogs ("tab": true), in the order Browse shows them; none when it has no catalogs */
+    private suspend fun tabCatalogs(): List<SumizuriFilters.Catalog> = runCatching {
+        val rt = runtime()
+        if (rt.metadata().flag("hasCatalogs") != true) return@runCatching emptyList<SumizuriFilters.Catalog>()
+        SumizuriFilters.catalogs(rt.call("getCatalogs")).filter { it.tab }
+    }.getOrDefault(emptyList())
+
+    private fun JsonObject.flag(key: String): Boolean? = (this[key] as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull()
 
     /** Opens an item of a result: a title's details and chapters, a chapter's pages or videos, a catalog's list */
     fun openItem(item: Item) {
@@ -425,15 +451,20 @@ class SourceEditorScreenModel(
             true,
             0,
             items = pages.map { p ->
+                val number = (p.s("index")?.toIntOrNull() ?: 0) + 1
+                val video = p.s("videoUrl")
                 Item(
-                    title = "Page ${(p.s("index")?.toIntOrNull() ?: 0) + 1}",
-                    subtitle = p.s("imageUrl") ?: p.s("text")?.take(120),
-                    imageUrl = p.s("imageUrl"),
+                    // KMK: a page with a videoUrl plays from the reader
+                    title = if (video != null) "Page $number · video" else "Page $number",
+                    subtitle = video ?: p.s("imageUrl") ?: p.s("text")?.take(120),
+                    imageUrl = p.s("imageUrl") ?: p.s("thumbnailUrl"),
                     kind = Kind.Page,
-                    url = p.s("imageUrl").orEmpty(),
+                    url = video ?: p.s("imageUrl").orEmpty(),
                 )
             },
-            text = "${pages.size} pages",
+            text = pages.count { it.s("videoUrl") != null }.let { videos ->
+                if (videos == 0) "${pages.size} pages" else "${pages.size} pages, $videos of them videos"
+            },
         )
     }
 

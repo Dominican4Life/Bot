@@ -166,7 +166,7 @@ object PairSyncData {
                     .map { it.animeId }
                     .forEach { id -> if (id !in this) animeRepository.getAnime(id)?.let { put(id, it) } }
             }
-        }.values.filter { it.source != DeviceFilesIds.ANIME }
+        }.values.filter { it.source != DeviceFilesIds.ANIME && it.source != eu.kanade.tachiyomi.sumizuri.ReaderVideos.SOURCE_ID }
         val backupAnime = AnimeBackupHelper().createAnime(animeList, includeHistory = animeHistory)
             .map { if (animeLibrary) it else it.copy(favorite = false) }
 

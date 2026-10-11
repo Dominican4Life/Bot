@@ -122,6 +122,8 @@ fun HistoryScreen(
         animeHistoryAll.orEmpty()
             // Device files keep their own history, behind the folder button
             .filterNot { it.source == eu.kanade.tachiyomi.devicefiles.DeviceFilesIds.ANIME }
+            // Videos played from inside a manga chapter aren't anime of their own
+            .filterNot { it.source == eu.kanade.tachiyomi.sumizuri.ReaderVideos.SOURCE_ID }
             .filter { state.searchQuery.isNullOrBlank() || it.title.contains(state.searchQuery!!, ignoreCase = true) }
     }
     val scope = rememberCoroutineScope()

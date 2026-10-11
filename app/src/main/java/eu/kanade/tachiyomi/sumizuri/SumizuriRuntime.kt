@@ -47,7 +47,7 @@ class SumizuriRuntime private constructor(
 
     fun clearConsole() = host.console.clear()
 
-    /** name, lang, iconUrl, baseUrl, hasDetails, hasFilters, hasTags, hasCatalogs, hasPreferences, rateLimitMs, headers */
+    /** name, lang, iconUrl, baseUrl, hasPopular, hasLatest, hasDetails, hasFilters, hasTags, hasCatalogs, hasPreferences, rateLimitMs, headers */
     suspend fun metadata(): JsonObject = mutex.withLock {
         val text = qjs.evaluate<String>(METADATA_SCRIPT, "<metadata>")
         sumizuriJson.parseToJsonElement(text).jsonObject.also { meta ->
@@ -471,7 +471,9 @@ class SumizuriRuntime private constructor(
         private val CONTRACT_SCRIPT = """
             (function () {
               if (typeof extension !== 'object' || extension === null) return 'no global "extension" object is defined';
-              var required = ['search', 'getPopular', 'getLatest', 'getChapterList'];
+              // getPopular and getLatest may be left out by a source whose tab catalogs replace them
+              var hasCatalogs = typeof extension.getCatalogs === 'function' && typeof extension.getCatalog === 'function';
+              var required = hasCatalogs ? ['search', 'getChapterList'] : ['search', 'getPopular', 'getLatest', 'getChapterList'];
               var missing = required.filter(function (n) { return typeof extension[n] !== 'function'; });
               if (missing.length) return 'missing required method(s): ' + missing.join(', ');
               var hasContent = ['getPageList', 'getVideoList'].some(function (n) { return typeof extension[n] === 'function'; });
@@ -497,6 +499,8 @@ class SumizuriRuntime private constructor(
                 lang: pick('lang', typeof LANG === 'undefined' ? undefined : LANG) || (cfg && cfg.lang) || null,
                 iconUrl: pick('iconUrl', typeof ICON_URL === 'undefined' ? undefined : ICON_URL) || (cfg && cfg.iconUrl) || null,
                 baseUrl: pick('baseUrl', typeof BASE_URL === 'undefined' ? undefined : BASE_URL) || (cfg && cfg.baseUrl) || null,
+                hasPopular: typeof extension.getPopular === 'function',
+                hasLatest: typeof extension.getLatest === 'function',
                 hasDetails: typeof extension.getDetails === 'function',
                 hasFilters: typeof extension.getFilters === 'function',
                 hasTags: typeof extension.getTags === 'function',

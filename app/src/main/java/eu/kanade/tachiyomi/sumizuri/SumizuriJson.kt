@@ -98,3 +98,11 @@ internal fun stripJsonComments(text: String): String {
     }
     return out.toString()
 }
+
+/** KMK: [method]'s list, or an empty one when it is getPopular / getLatest and the source doesn't have it */
+internal suspend fun optionalListing(rt: SumizuriRuntime, method: String, vararg args: Any?): kotlinx.serialization.json.JsonElement =
+    try {
+        rt.call(method, *args)
+    } catch (e: NotImplementedError) {
+        if (method == "getPopular" || method == "getLatest") kotlinx.serialization.json.JsonArray(emptyList()) else throw e
+    }

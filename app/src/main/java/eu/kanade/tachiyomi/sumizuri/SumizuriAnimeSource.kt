@@ -80,7 +80,8 @@ class SumizuriAnimeSource(
     }
 
     private suspend fun listing(method: String, vararg args: Any?): AnimesPage {
-        val animes = SumizuriMapping.list(runtime().call(method, *args))
+        // A source whose tab catalogs replace Popular and Latest may leave those out: an empty list, not an error
+        val animes = SumizuriMapping.list(optionalListing(runtime(), method, *args))
             .also(webUrls::remember)
             .mapNotNull { SumizuriMapping.toSAnime(it) }
         return AnimesPage(animes, hasNextPage = animes.isNotEmpty())
