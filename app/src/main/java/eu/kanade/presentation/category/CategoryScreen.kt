@@ -1,6 +1,7 @@
 package eu.kanade.presentation.category
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -14,6 +15,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Modifier
+import dev.icerock.moko.resources.StringResource
 import eu.kanade.presentation.category.components.CategoryFloatingActionButton
 import eu.kanade.presentation.category.components.CategoryListItem
 import eu.kanade.presentation.components.AppBar
@@ -38,18 +40,24 @@ fun CategoryScreen(
     onClickDelete: (Category) -> Unit,
     onChangeOrder: (Category, Int) -> Unit,
     // KMK -->
-    onClickHide: (Category) -> Unit,
+    onClickHide: ((Category) -> Unit)?,
     // KMK <--
     navigateUp: () -> Unit,
+    // KMK: Manga | Anime | Sources tabs under the toolbar
+    tabs: @Composable () -> Unit = {},
+    emptyText: StringResource = MR.strings.information_empty_category,
 ) {
     val lazyListState = rememberLazyListState()
     Scaffold(
         topBar = { scrollBehavior ->
-            AppBar(
-                title = stringResource(MR.strings.action_edit_categories),
-                navigateUp = navigateUp,
-                scrollBehavior = scrollBehavior,
-            )
+            Column {
+                AppBar(
+                    title = stringResource(MR.strings.action_edit_categories),
+                    navigateUp = navigateUp,
+                    scrollBehavior = scrollBehavior,
+                )
+                tabs()
+            }
         },
         floatingActionButton = {
             CategoryFloatingActionButton(
@@ -60,7 +68,7 @@ fun CategoryScreen(
     ) { paddingValues ->
         if (state.isEmpty) {
             EmptyScreen(
-                stringRes = MR.strings.information_empty_category,
+                stringRes = emptyText,
                 modifier = Modifier.padding(paddingValues),
             )
             return@Scaffold
@@ -89,7 +97,7 @@ private fun CategoryContent(
     onClickDelete: (Category) -> Unit,
     onChangeOrder: (Category, Int) -> Unit,
     // KMK -->
-    onClickHide: (Category) -> Unit,
+    onClickHide: ((Category) -> Unit)?,
     // KMK <--
 ) {
     val categoriesState = remember { categories.toMutableStateList() }
@@ -125,7 +133,7 @@ private fun CategoryContent(
                     onRename = { onClickRename(category) },
                     onDelete = { onClickDelete(category) },
                     // KMK -->
-                    onHide = { onClickHide(category) },
+                    onHide = onClickHide?.let { { it(category) } },
                     // KMK <--
                 )
             }

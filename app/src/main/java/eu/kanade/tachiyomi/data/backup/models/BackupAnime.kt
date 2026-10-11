@@ -23,6 +23,8 @@ data class BackupAnime(
     @ProtoNumber(15) var episodeFlags: Long = 0,
     @ProtoNumber(16) var episodes: List<BackupEpisode> = emptyList(),
     @ProtoNumber(17) var history: List<BackupAnimeHistory> = emptyList(),
+    // KMK: names of its anime categories
+    @ProtoNumber(18) var categories: List<String> = emptyList(),
 )
 
 @Serializable

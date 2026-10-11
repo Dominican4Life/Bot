@@ -33,7 +33,7 @@ fun ReorderableCollectionItemScope.CategoryListItem(
     onRename: () -> Unit,
     onDelete: () -> Unit,
     // KMK -->
-    onHide: () -> Unit,
+    onHide: (() -> Unit)?,
     // KMK <--
     modifier: Modifier = Modifier,
 ) {
@@ -70,20 +70,22 @@ fun ReorderableCollectionItemScope.CategoryListItem(
                     contentDescription = stringResource(MR.strings.action_rename_category),
                 )
             }
-            // KMK -->
-            IconButton(
-                onClick = onHide,
-                content = {
-                    Icon(
-                        imageVector = if (category.hidden) {
-                            Icons.Outlined.Visibility
-                        } else {
-                            Icons.Outlined.VisibilityOff
-                        },
-                        contentDescription = stringResource(KMR.strings.action_hide),
-                    )
-                },
-            )
+            // KMK: anime categories can't be hidden, so no button for them
+            if (onHide != null) {
+                IconButton(
+                    onClick = onHide,
+                    content = {
+                        Icon(
+                            imageVector = if (category.hidden) {
+                                Icons.Outlined.Visibility
+                            } else {
+                                Icons.Outlined.VisibilityOff
+                            },
+                            contentDescription = stringResource(KMR.strings.action_hide),
+                        )
+                    },
+                )
+            }
             // KMK <--
             IconButton(onClick = onDelete) {
                 Icon(

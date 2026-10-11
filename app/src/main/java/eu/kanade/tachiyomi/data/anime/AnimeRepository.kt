@@ -131,6 +131,74 @@ class AnimeRepository(
         }
     }
 
+    // Categories (KMK)
+
+    fun subscribeCategories(): Flow<List<AnimeCategory>> =
+        handler.subscribeToList { anime_categoriesQueries.getAll(::AnimeCategory) }
+
+    suspend fun getCategories(): List<AnimeCategory> =
+        handler.awaitList { anime_categoriesQueries.getAll(::AnimeCategory) }
+
+    /** anime id to the ids of its categories */
+    fun subscribeCategoryLinks(): Flow<Map<Long, Set<Long>>> =
+        handler.subscribeToList { anime_categoriesQueries.getLinks { animeId, categoryId -> animeId to categoryId } }
+            .map { links -> links.groupBy({ it.first }, { it.second }).mapValues { it.value.toSet() } }
+
+    suspend fun getCategoryIds(animeId: Long): Set<Long> =
+        handler.awaitList { anime_categoriesQueries.getCategoryIdsForAnime(animeId) }.toSet()
+
+    suspend fun createCategory(name: String) {
+        handler.await {
+            val next = (anime_categoriesQueries.getAll(::AnimeCategory).executeAsList().maxOfOrNull { it.order } ?: -1) + 1
+            anime_categoriesQueries.insert(name, next)
+        }
+    }
+
+    suspend fun renameCategory(id: Long, name: String) {
+        handler.await { anime_categoriesQueries.rename(name, id) }
+    }
+
+    suspend fun deleteCategory(id: Long) {
+        handler.await(inTransaction = true) {
+            anime_categoriesQueries.delete(id)
+            anime_categoriesQueries.getAll(::AnimeCategory).executeAsList().forEachIndexed { index, category ->
+                anime_categoriesQueries.setSort(index.toLong(), category.id)
+            }
+        }
+    }
+
+    /** Moves [category] to [newIndex] and renumbers the rest */
+    suspend fun moveCategory(category: AnimeCategory, newIndex: Int) {
+        handler.await(inTransaction = true) {
+            val list = anime_categoriesQueries.getAll(::AnimeCategory).executeAsList().toMutableList()
+            val from = list.indexOfFirst { it.id == category.id }
+            if (from < 0) return@await
+            list.add(newIndex.coerceIn(0, list.size - 1), list.removeAt(from))
+            list.forEachIndexed { index, c -> anime_categoriesQueries.setSort(index.toLong(), c.id) }
+        }
+    }
+
+    /** Adds [animeId] to the categories called [names], creating the missing ones (backup restore) */
+    suspend fun restoreCategories(animeId: Long, names: List<String>) {
+        handler.await(inTransaction = true) {
+            names.forEach { name ->
+                val existing = anime_categoriesQueries.getAll(::AnimeCategory).executeAsList()
+                val id = existing.find { it.name.equals(name, ignoreCase = true) }?.id ?: run {
+                    anime_categoriesQueries.insert(name, (existing.maxOfOrNull { it.order } ?: -1) + 1)
+                    animesQueries.selectLastInsertedRowId().executeAsOne()
+                }
+                anime_categoriesQueries.link(animeId, id)
+            }
+        }
+    }
+
+    suspend fun setCategories(animeId: Long, categoryIds: Collection<Long>) {
+        handler.await(inTransaction = true) {
+            anime_categoriesQueries.unlinkAll(animeId)
+            categoryIds.forEach { anime_categoriesQueries.link(animeId, it) }
+        }
+    }
+
     // Episodes
 
     suspend fun getEpisodes(animeId: Long): List<Episode> =
@@ -278,8 +346,17 @@ class AnimeRepository(
     fun subscribeHistory(): Flow<List<AnimeHistoryItem>> =
         handler.subscribeToList {
             anime_historyQueries.getHistory {
-                    animeId, source, title, thumbnailUrl, favorite, episodeId, episodeName, episodeNumber,
-                    lastSecondSeen, totalSeconds, lastSeen,
+                    animeId,
+                    source,
+                    title,
+                    thumbnailUrl,
+                    favorite,
+                    episodeId,
+                    episodeName,
+                    episodeNumber,
+                    lastSecondSeen,
+                    totalSeconds,
+                    lastSeen,
                 ->
                 AnimeHistoryItem(
                     animeId = animeId,
@@ -318,8 +395,18 @@ class AnimeRepository(
     fun subscribeUpdates(after: Long, limit: Long = 500): Flow<List<AnimeUpdateItem>> =
         handler.subscribeToList {
             episodesQueries.getUpdates(after, limit) {
-                    animeId, source, title, thumbnailUrl, episodeId, episodeName, episodeNumber, seen, bookmark,
-                    lastSecondSeen, totalSeconds, dateFetch,
+                    animeId,
+                    source,
+                    title,
+                    thumbnailUrl,
+                    episodeId,
+                    episodeName,
+                    episodeNumber,
+                    seen,
+                    bookmark,
+                    lastSecondSeen,
+                    totalSeconds,
+                    dateFetch,
                 ->
                 AnimeUpdateItem(
                     animeId = animeId,

@@ -1,0 +1,46 @@
+-- KMK: anime categories, kept apart from the manga ones
+CREATE TABLE anime_categories(
+    _id INTEGER NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    sort INTEGER NOT NULL
+);
+
+CREATE TABLE animes_categories(
+    _id INTEGER NOT NULL PRIMARY KEY,
+    anime_id INTEGER NOT NULL,
+    category_id INTEGER NOT NULL,
+    UNIQUE (anime_id, category_id),
+    FOREIGN KEY(anime_id) REFERENCES animes (_id)
+    ON DELETE CASCADE,
+    FOREIGN KEY(category_id) REFERENCES anime_categories (_id)
+    ON DELETE CASCADE
+);
+
+CREATE INDEX kmk_animes_categories_anime_id_index ON animes_categories(anime_id);
+
+getAll:
+SELECT _id, name, sort FROM anime_categories ORDER BY sort;
+
+insert:
+INSERT INTO anime_categories(name, sort) VALUES (:name, :sort);
+
+rename:
+UPDATE anime_categories SET name = :name WHERE _id = :id;
+
+setSort:
+UPDATE anime_categories SET sort = :sort WHERE _id = :id;
+
+delete:
+DELETE FROM anime_categories WHERE _id = :id;
+
+getLinks:
+SELECT anime_id, category_id FROM animes_categories;
+
+getCategoryIdsForAnime:
+SELECT category_id FROM animes_categories WHERE anime_id = :animeId;
+
+link:
+INSERT OR IGNORE INTO animes_categories(anime_id, category_id) VALUES (:animeId, :categoryId);
+
+unlinkAll:
+DELETE FROM animes_categories WHERE anime_id = :animeId;

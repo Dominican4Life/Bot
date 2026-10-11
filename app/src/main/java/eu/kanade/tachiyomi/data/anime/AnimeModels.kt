@@ -173,3 +173,10 @@ data class AnimeUpdateItem(
     val totalSeconds: Long,
     val dateFetch: Long,
 )
+
+/** KMK: a category of the anime library */
+data class AnimeCategory(
+    val id: Long,
+    val name: String,
+    val order: Long,
+)

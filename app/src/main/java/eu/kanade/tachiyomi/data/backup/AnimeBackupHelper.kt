@@ -28,6 +28,7 @@ class AnimeBackupHelper(
     /** KMK: [animes] with their episodes, and their watch history when [includeHistory] (device sync picks these) */
     suspend fun createAnime(animes: List<Anime>, includeHistory: Boolean): List<BackupAnime> {
         val history = if (includeHistory) repository.getAllHistory() else emptyMap()
+        val categoryNames = repository.getCategories().associate { it.id to it.name }
         return animes.map { anime ->
             val episodes = repository.getEpisodes(anime.id)
             BackupAnime(
@@ -67,6 +68,7 @@ class AnimeBackupHelper(
                 history = episodes.mapNotNull { ep ->
                     history[ep.id]?.let { BackupAnimeHistory(episodeUrl = ep.url, lastSeen = it) }
                 },
+                categories = repository.getCategoryIds(anime.id).mapNotNull { categoryNames[it] },
             )
         }
     }
@@ -120,6 +122,7 @@ class AnimeBackupHelper(
             },
             history = backup.history.associate { it.episodeUrl to it.lastSeen },
         )
+        if (backup.categories.isNotEmpty()) repository.restoreCategories(anime.id, backup.categories)
     }
 
     fun restoreStore(backupStore: BackupExtensionStore) {

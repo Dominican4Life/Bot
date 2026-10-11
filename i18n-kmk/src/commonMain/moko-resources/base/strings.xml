@@ -452,4 +452,11 @@
     <string name="source_sheet_enabled">Enabled</string>
     <string name="source_sheet_clear_site_data">Clear site data</string>
     <string name="source_sheet_site_data_cleared">Cookies and WebView data cleared for this source</string>
+    <!-- Categories: Manga | Anime | Sources -->
+    <string name="anime_categories_empty">You have no anime categories. Tap the plus button to create one for organizing your anime library.</string>
+    <string name="source_category_counts">%1$d manga · %2$d anime sources</string>
+    <string name="source_category_manga_sources">Manga sources</string>
+    <string name="source_category_anime_sources">Anime sources</string>
+    <string name="source_category_pick_help">Check the sources to show under this category in Browse › Sources.</string>
+    <string name="source_category_switch">Switch between manga and anime sources</string>
 </resources>

@@ -1,5 +1,6 @@
 package eu.kanade.presentation.category
 
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -26,15 +27,23 @@ fun SourceCategoryScreen(
     onClickRename: (String) -> Unit,
     onClickDelete: (String) -> Unit,
     navigateUp: () -> Unit,
+    // KMK -->
+    onClickCategory: (String) -> Unit,
+    tabs: @Composable () -> Unit = {},
+    // KMK <--
 ) {
     val lazyListState = rememberLazyListState()
     Scaffold(
         topBar = { scrollBehavior ->
-            AppBar(
-                navigateUp = navigateUp,
-                title = stringResource(MR.strings.action_edit_categories),
-                scrollBehavior = scrollBehavior,
-            )
+            Column {
+                AppBar(
+                    navigateUp = navigateUp,
+                    title = stringResource(MR.strings.action_edit_categories),
+                    scrollBehavior = scrollBehavior,
+                )
+                // KMK
+                tabs()
+            }
         },
         floatingActionButton = {
             CategoryFloatingActionButton(
@@ -58,6 +67,8 @@ fun SourceCategoryScreen(
                 PaddingValues(horizontal = MaterialTheme.padding.medium),
             onClickRename = onClickRename,
             onClickDelete = onClickDelete,
+            // KMK
+            onClickCategory = onClickCategory,
         )
     }
 }

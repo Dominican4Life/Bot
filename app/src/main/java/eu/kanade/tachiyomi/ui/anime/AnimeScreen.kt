@@ -68,9 +68,11 @@ import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.domain.ui.UiPreferences
+import eu.kanade.presentation.anime.AnimeCategoryDialog
 import eu.kanade.presentation.anime.AnimeGridItem
 import eu.kanade.presentation.anime.asDisplayManga
 import eu.kanade.presentation.anime.asMangaCover
+import eu.kanade.presentation.anime.rememberHasAnimeCategories
 import eu.kanade.presentation.browse.RelatedMangaTitle
 import eu.kanade.presentation.components.TabbedDialog
 import eu.kanade.presentation.components.TabbedDialogPaddings
@@ -167,10 +169,16 @@ class AnimeScreen(private val animeId: Long) : Screen() {
         val openWebView: (() -> Unit)? = animeUrl?.let { url -> { navigator.push(WebViewScreen(url, anime.title, anime.source)) } }
 
         var dialog by remember { mutableStateOf<AnimeDialog?>(null) }
+        // KMK: like manga, adding to the library asks for categories once some exist
+        val hasCategories = rememberHasAnimeCategories()
         val actions = AnimeActions(
             navigateUp = navigator::pop,
             onRefresh = screenModel::refresh,
-            onToggleFavorite = screenModel::toggleFavorite,
+            onToggleFavorite = {
+                if (!anime.favorite && hasCategories) dialog = AnimeDialog.Categories
+                screenModel.toggleFavorite()
+            },
+            onEditCategories = { dialog = AnimeDialog.Categories },
             onFilter = { dialog = AnimeDialog.Settings },
             onWebView = openWebView,
             onShare = animeUrl?.let { url ->
@@ -244,6 +252,10 @@ class AnimeScreen(private val animeId: Long) : Screen() {
                     },
                     onRemove = screenModel::removeFromMerge,
                 )
+                AnimeDialog.Categories -> AnimeCategoryDialog(
+                    animeId = anime.id,
+                    onDismissRequest = { dialog = null },
+                )
             }
             if (isTabletUi()) {
                 AnimeScreenLarge(state, anime, actions, screenModel.source)
@@ -260,13 +272,14 @@ class AnimeScreen(private val animeId: Long) : Screen() {
     }
 }
 
-private enum class AnimeDialog { Settings, Scanlators, Notes, Clear, MergeSettings }
+private enum class AnimeDialog { Settings, Scanlators, Notes, Clear, MergeSettings, Categories }
 
 /** Everything the details page can do, passed down to both layouts */
 private class AnimeActions(
     val navigateUp: () -> Unit,
     val onRefresh: () -> Unit,
     val onToggleFavorite: () -> Unit,
+    val onEditCategories: () -> Unit,
     val onFilter: () -> Unit,
     val onWebView: (() -> Unit)?,
     val onShare: (() -> Unit)?,
@@ -289,79 +302,79 @@ private class AnimeActions(
 @Composable
 private fun VideoDialogs(state: AnimeScreenModel.State, screenModel: AnimeScreenModel, context: Context) {
     val anime = state.anime
-        when (val dialog = state.videoDialog) {
-            null -> {}
-            is AnimeScreenModel.VideoDialog.Loading -> AlertDialog(
-                onDismissRequest = screenModel::dismissVideoDialog,
-                confirmButton = {},
-                dismissButton = {
-                    TextButton(onClick = screenModel::dismissVideoDialog) {
-                        Text(stringResource(MR.strings.action_cancel))
-                    }
-                },
-                title = { Text(dialog.episode.name) },
-                text = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                        Spacer(Modifier.width(16.dp))
-                        Text(stringResource(KMR.strings.anime_loading_videos))
-                    }
-                },
-            )
-            is AnimeScreenModel.VideoDialog.Pick -> AlertDialog(
-                onDismissRequest = screenModel::dismissVideoDialog,
-                confirmButton = {},
-                dismissButton = {
-                    TextButton(onClick = screenModel::dismissVideoDialog) {
-                        Text(stringResource(MR.strings.action_cancel))
-                    }
-                },
-                title = { Text(stringResource(KMR.strings.anime_choose_video)) },
-                text = {
-                    ScrollbarLazyColumn {
-                        items(dialog.videos) { video ->
-                            Text(
-                                text = video.videoTitle.ifBlank { video.videoUrl },
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .clickable {
-                                        screenModel.resolveAndPlay(dialog.episode, video) { resolved ->
-                                            openExternalPlayer(context, resolved, anime?.title, dialog.episode)
-                                        }
+    when (val dialog = state.videoDialog) {
+        null -> {}
+        is AnimeScreenModel.VideoDialog.Loading -> AlertDialog(
+            onDismissRequest = screenModel::dismissVideoDialog,
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = screenModel::dismissVideoDialog) {
+                    Text(stringResource(MR.strings.action_cancel))
+                }
+            },
+            title = { Text(dialog.episode.name) },
+            text = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                    Spacer(Modifier.width(16.dp))
+                    Text(stringResource(KMR.strings.anime_loading_videos))
+                }
+            },
+        )
+        is AnimeScreenModel.VideoDialog.Pick -> AlertDialog(
+            onDismissRequest = screenModel::dismissVideoDialog,
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = screenModel::dismissVideoDialog) {
+                    Text(stringResource(MR.strings.action_cancel))
+                }
+            },
+            title = { Text(stringResource(KMR.strings.anime_choose_video)) },
+            text = {
+                ScrollbarLazyColumn {
+                    items(dialog.videos) { video ->
+                        Text(
+                            text = video.videoTitle.ifBlank { video.videoUrl },
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    screenModel.resolveAndPlay(dialog.episode, video) { resolved ->
+                                        openExternalPlayer(context, resolved, anime?.title, dialog.episode)
                                     }
-                                    .padding(horizontal = 8.dp, vertical = 12.dp),
-                            )
-                        }
+                                }
+                                .padding(horizontal = 8.dp, vertical = 12.dp),
+                        )
                     }
-                },
-            )
-            is AnimeScreenModel.VideoDialog.Empty -> AlertDialog(
-                onDismissRequest = screenModel::dismissVideoDialog,
-                confirmButton = {
-                    TextButton(onClick = screenModel::dismissVideoDialog) { Text(stringResource(MR.strings.action_ok)) }
-                },
-                title = { Text(dialog.episode.name) },
-                text = { Text(stringResource(KMR.strings.anime_no_videos)) },
-            )
-            is AnimeScreenModel.VideoDialog.Failed -> AlertDialog(
-                onDismissRequest = screenModel::dismissVideoDialog,
-                confirmButton = {
-                    TextButton(
-                        onClick = { screenModel.loadVideos(dialog.episode) },
-                    ) { Text(stringResource(MR.strings.action_retry)) }
-                },
-                dismissButton = {
-                    TextButton(onClick = screenModel::dismissVideoDialog) {
-                        Text(stringResource(MR.strings.action_cancel))
-                    }
-                },
-                title = { Text(dialog.episode.name) },
-                text = { Text(dialog.message) },
-            )
-        }
+                }
+            },
+        )
+        is AnimeScreenModel.VideoDialog.Empty -> AlertDialog(
+            onDismissRequest = screenModel::dismissVideoDialog,
+            confirmButton = {
+                TextButton(onClick = screenModel::dismissVideoDialog) { Text(stringResource(MR.strings.action_ok)) }
+            },
+            title = { Text(dialog.episode.name) },
+            text = { Text(stringResource(KMR.strings.anime_no_videos)) },
+        )
+        is AnimeScreenModel.VideoDialog.Failed -> AlertDialog(
+            onDismissRequest = screenModel::dismissVideoDialog,
+            confirmButton = {
+                TextButton(
+                    onClick = { screenModel.loadVideos(dialog.episode) },
+                ) { Text(stringResource(MR.strings.action_retry)) }
+            },
+            dismissButton = {
+                TextButton(onClick = screenModel::dismissVideoDialog) {
+                    Text(stringResource(MR.strings.action_cancel))
+                }
+            },
+            title = { Text(dialog.episode.name) },
+            text = { Text(dialog.message) },
+        )
+    }
 }
 
 /** The manga details toolbar, with the options anime supports */
@@ -571,7 +584,7 @@ private fun AnimeInfo(
             onWebViewLongClicked = null,
             onTrackingClicked = { context.toast(KMR.strings.anime_tracking_coming) },
             onEditIntervalClicked = null,
-            onEditCategory = null,
+            onEditCategory = actions.onEditCategories.takeIf { anime.favorite },
             onMergeClicked = null,
             status = anime.status,
             interval = 0,

@@ -42,6 +42,8 @@ class SourceCategoryScreen : Screen() {
             onClickRename = { screenModel.showDialog(SourceCategoryDialog.Rename(it)) },
             onClickDelete = { screenModel.showDialog(SourceCategoryDialog.Delete(it)) },
             navigateUp = navigator::pop,
+            // KMK
+            onClickCategory = { navigator.push(SourceCategorySourcesScreen(it)) },
         )
 
         when (val dialog = successState.dialog) {

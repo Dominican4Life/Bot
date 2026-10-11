@@ -92,6 +92,7 @@ import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.icons.FlagEmoji
 import tachiyomi.presentation.core.theme.active
+import tachiyomi.presentation.core.util.collectAsState
 import tachiyomi.presentation.core.util.secondaryItemAlpha
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -237,6 +238,17 @@ fun AnimeSourcesPane(
         }
         val pinnedTitle = stringResource(MR.strings.pinned_sources)
         val pinned = sources.filter { it.id.toString() in state.pinnedSources }
+        // KMK: source categories (More › Categories › Sources) hold anime sources too
+        val inCategories by remember {
+            Injekt.get<eu.kanade.domain.source.service.SourcePreferences>().sourcesTabSourcesInCategories()
+        }.collectAsState()
+        val categorized = remember(inCategories, sources) {
+            val byId = sources.associateBy { it.id.toString() }
+            inCategories
+                .mapNotNull { entry -> byId[entry.substringBefore('|')]?.let { entry.substringAfter('|') to it } }
+                .groupBy({ it.first }, { it.second })
+                .toSortedMap(String.CASE_INSENSITIVE_ORDER)
+        }
         // KMK: tiles, like the manga sources
         val corners = rememberSourceBadgeCorners()
         FastScrollLazyVerticalGrid(
@@ -272,6 +284,12 @@ fun AnimeSourcesPane(
             if (pinned.isNotEmpty()) {
                 item(key = "header-pinned", span = { GridItemSpan(maxLineSpan) }) { SourceTileHeader(pinnedTitle) }
                 items(pinned, key = { "anime-pinned-${it.id}" }) { tile(it) }
+            }
+            categorized.forEach { (category, categorySources) ->
+                item(key = "header-category-$category", span = { GridItemSpan(maxLineSpan) }) {
+                    SourceTileHeader(category)
+                }
+                items(categorySources, key = { "anime-category-$category-${it.id}" }) { tile(it) }
             }
             sources.groupBy { it.lang }.forEach { (lang, langSources) ->
                 item(key = "header-$lang", span = { GridItemSpan(maxLineSpan) }) {
