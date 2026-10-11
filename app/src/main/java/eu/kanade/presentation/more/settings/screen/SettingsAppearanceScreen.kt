@@ -370,3 +370,12 @@ object SettingsAppearanceScreen : SearchableSettings {
     )
     // KMK <--
 }
+
+private val DateFormats = listOf(
+    "", // Default
+    "MM/dd/yy",
+    "dd/MM/yy",
+    "yyyy-MM-dd",
+    "dd MMM yyyy",
+    "MMM dd, yyyy",
+)

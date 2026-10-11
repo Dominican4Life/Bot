@@ -103,25 +103,43 @@ class UnifiedExtensionsScreenModel(
                 }
             }
         }
-        // KMK --> JS tab: the saved JS / JSON sources, on or off like any source in Browse
+        // KMK --> the saved JS / JSON sources, listed with the other sources under a JS tag
         screenModelScope.launchIO {
             combine(
                 sumizuri.savedFlow,
                 preferences.disabledSources().changes(),
                 preferences.animeDisabledSources().changes(),
-            ) { saved, disabled, animeDisabled ->
+                preferences.pinnedSources().changes(),
+                preferences.animePinnedSources().changes(),
+            ) { saved, disabled, animeDisabled, pinned, animePinned ->
                 saved
                     .map { info ->
-                        UnifiedJsSource(
-                            key = info.key,
+                        val id = info.id.toString()
+                        val enabled = id !in (if (info.anime) animeDisabled else disabled)
+                        UnifiedSource(
                             id = info.id,
+                            kind = ExtensionKind.JS,
                             name = info.name,
                             lang = info.displayLang,
-                            baseUrl = info.baseUrl,
-                            iconUrl = info.iconUrl,
-                            json = info.json,
-                            anime = info.anime,
-                            enabled = info.id.toString() !in (if (info.anime) animeDisabled else disabled),
+                            enabled = enabled,
+                            pinned = id in (if (info.anime) animePinned else pinned),
+                            isNsfw = false,
+                            pkgName = "",
+                            packageName = info.baseUrl,
+                            repoUrl = null,
+                            repoName = null,
+                            icon = null,
+                            js = UnifiedJsSource(
+                                key = info.key,
+                                id = info.id,
+                                name = info.name,
+                                lang = info.displayLang,
+                                baseUrl = info.baseUrl,
+                                iconUrl = info.iconUrl,
+                                json = info.json,
+                                anime = info.anime,
+                                enabled = enabled,
+                            ),
                         )
                     }
                     .sortedBy { it.name.lowercase() }
@@ -426,13 +444,13 @@ class UnifiedExtensionsScreenModel(
     }
 
     fun setSourceEnabled(source: UnifiedSource, enabled: Boolean) {
-        val pref = if (source.kind == ExtensionKind.ANIYOMI) preferences.animeDisabledSources() else preferences.disabledSources()
+        val pref = if (source.isAnime) preferences.animeDisabledSources() else preferences.disabledSources()
         val id = source.id.toString()
         pref.set(if (enabled) pref.get() - id else pref.get() + id)
     }
 
     fun setAllSourcesEnabled(sources: List<UnifiedSource>, enabled: Boolean) {
-        sources.groupBy { it.kind == ExtensionKind.ANIYOMI }.forEach { (isAnime, list) ->
+        sources.groupBy { it.isAnime }.forEach { (isAnime, list) ->
             val pref = if (isAnime) preferences.animeDisabledSources() else preferences.disabledSources()
             val ids = list.map { it.id.toString() }.toSet()
             pref.set(if (enabled) pref.get() - ids else pref.get() + ids)
@@ -440,26 +458,14 @@ class UnifiedExtensionsScreenModel(
     }
 
     // KMK -->
-    fun setJsEnabled(source: UnifiedJsSource, enabled: Boolean) {
-        val pref = if (source.anime) preferences.animeDisabledSources() else preferences.disabledSources()
-        val id = source.id.toString()
-        pref.set(if (enabled) pref.get() - id else pref.get() + id)
+    /** Removes a JS source and everything it saved; its manga stay in the library as unavailable */
+    fun deleteJs(source: UnifiedSource) {
+        source.js?.let { sumizuri.delete(it.key) }
     }
-
-    fun setAllJsEnabled(sources: List<UnifiedJsSource>, enabled: Boolean) {
-        sources.groupBy { it.anime }.forEach { (isAnime, list) ->
-            val pref = if (isAnime) preferences.animeDisabledSources() else preferences.disabledSources()
-            val ids = list.map { it.id.toString() }.toSet()
-            pref.set(if (enabled) pref.get() - ids else pref.get() + ids)
-        }
-    }
-
-    /** Removes the source and everything it saved; its manga stay in the library as unavailable */
-    fun deleteJs(source: UnifiedJsSource) = sumizuri.delete(source.key)
     // KMK <--
 
     fun togglePin(source: UnifiedSource) {
-        val pref = if (source.kind == ExtensionKind.ANIYOMI) preferences.animePinnedSources() else preferences.pinnedSources()
+        val pref = if (source.isAnime) preferences.animePinnedSources() else preferences.pinnedSources()
         val id = source.id.toString()
         pref.set(if (id in pref.get()) pref.get() - id else pref.get() + id)
     }
@@ -487,7 +493,7 @@ class UnifiedExtensionsScreenModel(
         val allSources: List<UnifiedSource> = emptyList(),
         val allRepos: List<UnifiedRepo> = emptyList(),
         // KMK
-        val allJsSources: List<UnifiedJsSource> = emptyList(),
+        val allJsSources: List<UnifiedSource> = emptyList(),
         val filters: UnifiedFilters = UnifiedFilters(),
     ) {
         private fun matchesQuery(vararg text: String?): Boolean {
@@ -507,15 +513,12 @@ class UnifiedExtensionsScreenModel(
             }
 
         val sources: List<UnifiedSource>
-            get() = allSources.filter { s ->
+            // KMK: JS sources join the list, under their own kind chip
+            get() = (allSources + allJsSources).filter { s ->
                 matchesKind(s.kind) &&
                     (filters.repoUrl == null || s.repoUrl == filters.repoUrl) &&
                     matchesQuery(s.name, s.packageName)
             }
-
-        // KMK: the JS tab only narrows by search
-        val jsSources: List<UnifiedJsSource>
-            get() = allJsSources.filter { matchesQuery(it.name, it.baseUrl) }
 
         val repos: List<UnifiedRepo>
             get() = allRepos.filter { r -> matchesKind(r.kind) && matchesQuery(r.name, r.indexUrl) }

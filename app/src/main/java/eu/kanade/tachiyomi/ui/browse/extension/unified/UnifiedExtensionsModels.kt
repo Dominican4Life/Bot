@@ -11,7 +11,7 @@ enum class ExtensionKind(val label: String) {
     MIHON("Mihon"),
     ANIYOMI("Aniyomi"),
 
-    /** Sumizuri JS / JSON sources from the Code editor; they have their own tab, not packages or repos */
+    /** Sumizuri JS / JSON sources from the Code editor; listed with the sources, not packages or repos */
     JS("JS"),
 }
 
@@ -86,7 +86,12 @@ data class UnifiedSource(
     val repoUrl: String?,
     val repoName: String?,
     val icon: Drawable?,
-)
+    // KMK: set for a JS / JSON source of the Code editor
+    val js: UnifiedJsSource? = null,
+) {
+    // KMK
+    val isAnime: Boolean get() = kind == ExtensionKind.ANIYOMI || js?.anime == true
+}
 
 /** One extension repository */
 @Immutable
@@ -108,7 +113,7 @@ data class UnifiedFilters(
     val status: PackageStatusFilter = PackageStatusFilter.ALL,
 )
 
-/** One JS / JSON source made in the Code editor or imported, for the JS tab */
+/** One JS / JSON source made in the Code editor or imported, shown with the sources under a yellow JS tag */
 @Immutable
 data class UnifiedJsSource(
     /** The source's key in SumizuriManager */

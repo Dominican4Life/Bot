@@ -36,6 +36,7 @@ import eu.kanade.tachiyomi.ui.browse.anime.AnimeExtensionDetailsScreen
 import eu.kanade.tachiyomi.ui.browse.extension.ExtensionFilterScreen
 import eu.kanade.tachiyomi.ui.browse.extension.details.ExtensionDetailsScreen
 import eu.kanade.tachiyomi.ui.browse.extension.details.SourcePreferencesScreen
+import eu.kanade.tachiyomi.ui.browse.extension.unified.UnifiedSource
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreen
 import eu.kanade.tachiyomi.ui.browse.source.feed.SourceFeedScreen
 import eu.kanade.tachiyomi.ui.sumizuri.SourceEditorScreen
@@ -83,7 +84,7 @@ fun unifiedExtensionsTab(
             var removeItem by remember { mutableStateOf<UnifiedPackage?>(null) }
             var deleteRepo by remember { mutableStateOf<UnifiedRepo?>(null) }
             // KMK
-            var deleteJs by remember { mutableStateOf<UnifiedJsSource?>(null) }
+            var deleteJs by remember { mutableStateOf<UnifiedSource?>(null) }
 
             BackHandler(enabled = state.filters.query.isNotEmpty()) { screenModel.search("") }
 
@@ -111,6 +112,9 @@ fun unifiedExtensionsTab(
                     val feed = Injekt.get<UiPreferences>().useNewSourceNavigation().get()
                     navigator.push(
                         when {
+                            // KMK: a JS source opens its list, manga or anime
+                            source.js != null && source.js.anime -> AnimeSourceScreen(source.id)
+                            source.js != null -> BrowseSourceScreen(source.id, GetRemoteManga.QUERY_POPULAR)
                             source.kind == ExtensionKind.ANIYOMI && feed -> AnimeSourceFeedScreen(source.id)
                             source.kind == ExtensionKind.ANIYOMI -> AnimeSourceScreen(source.id)
                             feed -> SourceFeedScreen(source.id)
@@ -118,7 +122,15 @@ fun unifiedExtensionsTab(
                         },
                     )
                 },
-                onSourceSettings = { openDetails(it.kind, it.pkgName) },
+                onSourceSettings = { source ->
+                    // KMK: a JS source's own settings
+                    val js = source.js
+                    if (js != null) {
+                        navigator.push(SourcePreferencesScreen(js.id, anime = js.anime))
+                    } else {
+                        openDetails(source.kind, source.pkgName)
+                    }
+                },
                 onAddRepo = { mangaStores.showDialog(ExtensionStoreDialog.Create()) },
                 onRepoEnabled = screenModel::setRepoEnabled,
                 onRepoDelete = { deleteRepo = it },
@@ -142,20 +154,8 @@ fun unifiedExtensionsTab(
                         else -> openDetails(item.kind, item.pkgName)
                     }
                 },
-                // KMK --> JS tab
-                onJsOpen = { source ->
-                    navigator.push(
-                        if (source.anime) {
-                            AnimeSourceScreen(source.id)
-                        } else {
-                            BrowseSourceScreen(source.id, GetRemoteManga.QUERY_POPULAR)
-                        },
-                    )
-                },
-                onJsEnabled = screenModel::setJsEnabled,
-                onJsAllEnabled = screenModel::setAllJsEnabled,
-                onJsSettings = { navigator.push(SourcePreferencesScreen(it.id, anime = it.anime)) },
-                onJsEdit = { navigator.push(SourceEditorScreen(it.key)) },
+                // KMK --> JS sources
+                onJsEdit = { source -> source.js?.let { navigator.push(SourceEditorScreen(it.key)) } },
                 onJsDelete = { deleteJs = it },
                 onJsNew = { navigator.push(SourceEditorScreen()) },
                 // KMK <--

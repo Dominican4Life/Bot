@@ -356,7 +356,6 @@
     <string name="ext_tab_sources">Sources (%1$d)</string>
     <string name="ext_tab_repositories">Repositories (%1$d)</string>
     <string name="ext_tab_packages">Packages (%1$d)</string>
-    <string name="ext_tab_js">JS (%1$d)</string>
     <string name="feed_tab_manga">Manga</string>
     <string name="feed_tab_anime">Anime</string>
     <string name="ext_js_new">New JS source</string>
