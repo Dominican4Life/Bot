@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -39,9 +40,12 @@ import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.components.SourcesSearchBox
 import eu.kanade.presentation.util.Screen
+import eu.kanade.tachiyomi.util.storage.getUriCompat
 import eu.kanade.tachiyomi.util.system.AppLog
+import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
 import tachiyomi.presentation.core.components.material.Scaffold
+import java.io.File
 
 /**
  * KMK: Everything the app logged (requests, sources, library updates, extension loading, crashes), newest first,
@@ -97,10 +101,32 @@ class LogsScreen : Screen() {
                         }
                         IconButton(
                             onClick = {
-                                clipboard.setText(AnnotatedString(shown.asReversed().joinToString("\n") { AppLog.format(it) }))
-                                context.toast("Copied ${shown.size} lines")
+                                // The clipboard holds about 1 MB at most; a bigger copy crashed the app.
+                                // Copy the newest lines that fit and point to Share for the whole log.
+                                var size = 0
+                                val fitting = shown.takeWhile { line ->
+                                    size += AppLog.format(line).length + 1
+                                    size <= CLIPBOARD_LIMIT
+                                }
+                                clipboard.setText(AnnotatedString(fitting.asReversed().joinToString("\n") { AppLog.format(it) }))
+                                if (fitting.size < shown.size) {
+                                    context.toast("Copied the newest ${fitting.size} of ${shown.size} lines. Use Share for all of them")
+                                } else {
+                                    context.toast("Copied ${shown.size} lines")
+                                }
                             },
                         ) { Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy") }
+                        // The whole log as a text file, for any size
+                        IconButton(
+                            onClick = {
+                                runCatching {
+                                    val file = File(context.cacheDir, "komikku-logs.txt")
+                                    file.writeText(shown.asReversed().joinToString("\n") { AppLog.format(it) })
+                                    val uri = file.getUriCompat(context)
+                                    context.startActivity(uri.toShareIntent(context, type = "text/plain"))
+                                }.onFailure { context.toast(it.message ?: "Couldn't share the logs") }
+                            },
+                        ) { Icon(Icons.Outlined.Share, contentDescription = "Share") }
                         IconButton(onClick = AppLog::clear) {
                             Icon(Icons.Outlined.Delete, contentDescription = "Clear")
                         }
@@ -148,3 +174,6 @@ class LogsScreen : Screen() {
         }
     }
 }
+
+/** Characters copied at most: well under the clipboard's 1 MB limit */
+private const val CLIPBOARD_LIMIT = 300_000
