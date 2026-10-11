@@ -80,11 +80,6 @@ fun BrowseSourceSimpleToolbar(
                     selectingDisplayMode = false
                     onDisplayModeChange(LibraryDisplayMode.ComfortableGrid)
                 }
-                PanoramaStyleMenuItems(
-                    displayMode = displayMode,
-                    onDisplayModeChange = onDisplayModeChange,
-                    onDismiss = { selectingDisplayMode = false },
-                )
                 RadioMenuItem(
                     text = { Text(text = stringResource(MR.strings.action_display_grid)) },
                     isChecked = displayMode == LibraryDisplayMode.CompactGrid,
@@ -108,6 +103,11 @@ fun BrowseSourceSimpleToolbar(
                     selectingDisplayMode = false
                     onDisplayModeChange(LibraryDisplayMode.List)
                 }
+                // KMK: the Panorama styles, as a row of icons like Panels
+                PanoramaStyleSection(
+                    displayMode = displayMode,
+                    onDisplayModeChange = onDisplayModeChange,
+                )
                 // KMK <--
             }
         },

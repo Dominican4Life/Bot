@@ -185,12 +185,6 @@ fun BrowseSourceToolbar(
                     selectingDisplayMode = false
                     onDisplayModeChange(LibraryDisplayMode.ComfortableGrid)
                 }
-                // KMK: one entry per Panorama style
-                PanoramaStyleMenuItems(
-                    displayMode = displayMode,
-                    onDisplayModeChange = onDisplayModeChange,
-                    onDismiss = { selectingDisplayMode = false },
-                )
                 RadioMenuItem(
                     text = { Text(text = stringResource(MR.strings.action_display_grid)) },
                     isChecked = displayMode == LibraryDisplayMode.CompactGrid,
@@ -214,6 +208,11 @@ fun BrowseSourceToolbar(
                     selectingDisplayMode = false
                     onDisplayModeChange(LibraryDisplayMode.List)
                 }
+                // KMK: the Panorama styles, as a row of icons like Panels
+                PanoramaStyleSection(
+                    displayMode = displayMode,
+                    onDisplayModeChange = onDisplayModeChange,
+                )
                 // KMK -->
                 if (columns != null && displayMode != LibraryDisplayMode.List) {
                     HorizontalDivider()
@@ -296,28 +295,42 @@ fun sourceIconBitmap(sourceId: Long): ImageBitmap? = runCatching {
 }.getOrNull()
 
 // KMK -->
-/** "Panorama comfortable grid" in its three styles: color fill, fit width and wide */
+/** "Panorama comfortable grid" in its three styles (color fill, fit width, wide), as a row of icons like Panels */
 @Composable
-internal fun PanoramaStyleMenuItems(
+internal fun PanoramaStyleSection(
     displayMode: LibraryDisplayMode?,
     onDisplayModeChange: (LibraryDisplayMode) -> Unit,
-    onDismiss: () -> Unit,
 ) {
     val stylePref = remember { Injekt.get<UiPreferences>().browsePanoramaStyle() }
     val style by stylePref.collectAsState()
-    listOf(
-        KMR.strings.panorama_style_fill to PanoramaStyle.FILL,
-        KMR.strings.panorama_style_fit to PanoramaStyle.FIT,
-        KMR.strings.panorama_style_wide to PanoramaStyle.WIDE,
-    ).forEach { (title, value) ->
-        RadioMenuItem(
-            text = { Text(text = stringResource(title)) },
-            isChecked = displayMode == LibraryDisplayMode.ComfortableGridPanorama && style == value,
-            leadingIcon = { Icon(imageVector = PanoramaIcons.of(value), contentDescription = null) },
+    HorizontalDivider()
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.width(300.dp).padding(vertical = 8.dp),
+    ) {
+        Text(
+            text = stringResource(KMR.strings.browse_panorama),
+            style = MaterialTheme.typography.titleSmall,
+        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier.padding(top = 8.dp),
         ) {
-            onDismiss()
-            stylePref.set(value)
-            onDisplayModeChange(LibraryDisplayMode.ComfortableGridPanorama)
+            listOf(
+                KMR.strings.panorama_style_fill to PanoramaStyle.FILL,
+                KMR.strings.panorama_style_fit to PanoramaStyle.FIT,
+                KMR.strings.panorama_style_wide to PanoramaStyle.WIDE,
+            ).forEach { (label, value) ->
+                FilledTonalIconToggleButton(
+                    checked = displayMode == LibraryDisplayMode.ComfortableGridPanorama && style == value,
+                    onCheckedChange = {
+                        stylePref.set(value)
+                        onDisplayModeChange(LibraryDisplayMode.ComfortableGridPanorama)
+                    },
+                ) {
+                    Icon(imageVector = PanoramaIcons.of(value), contentDescription = stringResource(label))
+                }
+            }
         }
     }
 }
