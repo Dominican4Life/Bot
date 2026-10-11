@@ -86,6 +86,15 @@ fun BrowseSourceSimpleToolbar(
                     selectingDisplayMode = false
                     onDisplayModeChange(LibraryDisplayMode.CompactGrid)
                 }
+                // KMK -->
+                RadioMenuItem(
+                    text = { Text(text = stringResource(MR.strings.action_display_cover_only_grid)) },
+                    isChecked = displayMode == LibraryDisplayMode.CoverOnlyGrid,
+                ) {
+                    selectingDisplayMode = false
+                    onDisplayModeChange(LibraryDisplayMode.CoverOnlyGrid)
+                }
+                // KMK <--
                 RadioMenuItem(
                     text = { Text(text = stringResource(MR.strings.action_display_list)) },
                     isChecked = displayMode == LibraryDisplayMode.List,

@@ -32,6 +32,8 @@ import androidx.compose.ui.tooling.preview.PreviewLightDark
 import androidx.compose.ui.tooling.preview.PreviewParameter
 import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.navigator.LocalNavigator
+import eu.kanade.domain.ui.UiPreferences
+import eu.kanade.domain.ui.model.PanoramaStyle
 import eu.kanade.presentation.anime.AnimeConfirmDialog
 import eu.kanade.presentation.anime.AnimeHistoryRow
 import eu.kanade.presentation.anime.rememberPlayAnimeEpisode
@@ -46,6 +48,8 @@ import eu.kanade.presentation.components.animeCover
 import eu.kanade.presentation.components.mediaDisplayAction
 import eu.kanade.presentation.components.relativeDateText
 import eu.kanade.presentation.components.rememberMediaGridCells
+import eu.kanade.presentation.components.rememberWideCovers
+import eu.kanade.presentation.components.wideSpan
 import eu.kanade.presentation.history.components.HistoryItem
 import eu.kanade.presentation.library.components.CommonMangaItemDefaults
 import eu.kanade.presentation.theme.TachiyomiPreviewTheme
@@ -338,6 +342,11 @@ private fun HistoryScreenContent(
 
     // The library's grids
     if (displayMode != LibraryDisplayMode.List) {
+        // "Panorama: wide": wide covers take two places; read here, not inside the span lambda
+        val panoramaStyle by remember { Injekt.get<UiPreferences>().libraryPanoramaStyle() }.collectPrefAsState()
+        val doubleWide = displayMode == LibraryDisplayMode.ComfortableGridPanorama && panoramaStyle == PanoramaStyle.WIDE
+        val wideCovers = rememberWideCovers()
+        val wide = wideCovers.ids
         FastScrollLazyVerticalGrid(
             columns = rememberMediaGridCells(columns),
             contentPadding = PaddingValues(
@@ -352,7 +361,13 @@ private fun HistoryScreenContent(
             items(
                 items = entries,
                 key = { it.key },
-                span = { if (it is HistoryEntry.Header) GridItemSpan(maxLineSpan) else GridItemSpan(1) },
+                span = {
+                    when (it) {
+                        is HistoryEntry.Header -> GridItemSpan(maxLineSpan)
+                        is HistoryEntry.Manga -> wideSpan(doubleWide, wide, it.item.coverData.mangaId)
+                        is HistoryEntry.Anime -> wideSpan(doubleWide, wide, -it.item.animeId)
+                    }
+                },
             ) { entry ->
                 when (entry) {
                     is HistoryEntry.Header -> ListGroupHeader(text = relativeDateText(entry.date))
@@ -366,6 +381,7 @@ private fun HistoryScreenContent(
                             isSelected = isSelected,
                             onClick = { onMangaClick(value, isSelected) },
                             onLongClick = { onMangaLongClick(value, isSelected) },
+                            onCoverRatio = { if (doubleWide) wideCovers.report(value.coverData.mangaId, it) },
                         )
                     }
                     is HistoryEntry.Anime -> {
@@ -376,6 +392,7 @@ private fun HistoryScreenContent(
                             title = item.title,
                             onClick = { playEpisode(item.animeId, item.episodeId) },
                             onLongClick = { navigator?.push(AnimeScreen(item.animeId)) },
+                            onCoverRatio = { if (doubleWide) wideCovers.report(-item.animeId, it) },
                         )
                     }
                 }

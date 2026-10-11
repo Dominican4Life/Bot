@@ -2,11 +2,9 @@ package eu.kanade.presentation.library.components
 
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import eu.kanade.domain.ui.BadgeCorner
@@ -15,7 +13,8 @@ import eu.kanade.domain.ui.model.PanoramaStyle
 import eu.kanade.presentation.components.readingProgress
 import eu.kanade.presentation.components.rememberCoverBadgeCorners
 import eu.kanade.presentation.components.rememberCoverProgressBarEnabled
-import eu.kanade.presentation.manga.components.RatioSwitchToPanorama
+import eu.kanade.presentation.components.rememberWideCovers
+import eu.kanade.presentation.components.wideSpan
 import eu.kanade.tachiyomi.ui.library.LibraryItem
 import tachiyomi.domain.library.model.LibraryManga
 import tachiyomi.domain.manga.model.MangaCover
@@ -43,8 +42,9 @@ internal fun LibraryComfortableGrid(
     val progressBar = rememberCoverProgressBarEnabled()
     val panoramaStyle by remember { Injekt.get<UiPreferences>().libraryPanoramaStyle() }.collectAsState()
     val doubleWide = usePanoramaCover && panoramaStyle == PanoramaStyle.WIDE
-    // Height / width of each loaded cover: wide ones take two places in the "Wide" style
-    val ratios = remember { mutableStateMapOf<Long, Float>() }
+    // Wide covers take two places in the "Wide" style; read here, not inside the span lambda
+    val wideCovers = rememberWideCovers()
+    val wide = wideCovers.ids
     // KMK <--
     LazyLibraryGrid(
         modifier = Modifier.fillMaxSize(),
@@ -57,14 +57,7 @@ internal fun LibraryComfortableGrid(
             items = items,
             contentType = { "library_comfortable_grid_item" },
             // KMK -->
-            span = { libraryItem ->
-                val ratio = ratios[libraryItem.libraryManga.manga.id]
-                if (doubleWide && ratio != null && ratio <= RatioSwitchToPanorama) {
-                    GridItemSpan(minOf(2, maxLineSpan))
-                } else {
-                    GridItemSpan(1)
-                }
-            },
+            span = { libraryItem -> wideSpan(doubleWide, wide, libraryItem.libraryManga.manga.id) },
             // KMK <--
         ) { libraryItem ->
             val manga = libraryItem.libraryManga.manga
@@ -101,7 +94,7 @@ internal fun LibraryComfortableGrid(
                 // KMK -->
                 usePanoramaCover = usePanoramaCover,
                 panoramaStyle = panoramaStyle,
-                onCoverRatio = { ratios[manga.id] = it },
+                onCoverRatio = { if (doubleWide) wideCovers.report(manga.id, it) },
                 // KMK <--
             )
         }

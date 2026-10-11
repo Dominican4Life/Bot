@@ -16,6 +16,7 @@ import com.materialkolor.PaletteStyle
 import eu.kanade.core.preference.asState
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.domain.ui.model.AppTheme
+import eu.kanade.domain.ui.model.PanoramaStyle
 import eu.kanade.domain.ui.model.TabletUiMode
 import eu.kanade.domain.ui.model.ThemeMode
 import eu.kanade.domain.ui.model.setAppCompatDelegateThemeMode
@@ -26,6 +27,7 @@ import eu.kanade.presentation.more.settings.widget.AppThemeModePreferenceWidget
 import eu.kanade.presentation.more.settings.widget.AppThemePreferenceWidget
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.toImmutableMap
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
@@ -292,6 +294,17 @@ object SettingsAppearanceScreen : SearchableSettings {
                     title = stringResource(KMR.strings.pref_panorama_cover_flow),
                     subtitle = stringResource(KMR.strings.pref_panorama_cover_flow_summary),
                 ),
+                // How wide covers look in "Panorama", in the library (also History and Updates) and in sources
+                Preference.PreferenceItem.ListPreference(
+                    preference = uiPreferences.libraryPanoramaStyle(),
+                    entries = panoramaStyleEntries(),
+                    title = stringResource(KMR.strings.pref_library_panorama_style),
+                ),
+                Preference.PreferenceItem.ListPreference(
+                    preference = uiPreferences.browsePanoramaStyle(),
+                    entries = panoramaStyleEntries(),
+                    title = stringResource(KMR.strings.pref_browse_panorama_style),
+                ),
                 // KMK <--
                 Preference.PreferenceItem.SwitchPreference(
                     preference = uiPreferences.expandFilters(),
@@ -347,13 +360,13 @@ object SettingsAppearanceScreen : SearchableSettings {
         )
     }
     // SY <--
-}
 
-private val DateFormats = listOf(
-    "", // Default
-    "MM/dd/yy",
-    "dd/MM/yy",
-    "yyyy-MM-dd",
-    "dd MMM yyyy",
-    "MMM dd, yyyy",
-)
+    // KMK -->
+    @Composable
+    private fun panoramaStyleEntries() = persistentMapOf(
+        PanoramaStyle.FILL to stringResource(KMR.strings.panorama_style_fill),
+        PanoramaStyle.FIT to stringResource(KMR.strings.panorama_style_fit),
+        PanoramaStyle.WIDE to stringResource(KMR.strings.panorama_style_wide),
+    )
+    // KMK <--
+}

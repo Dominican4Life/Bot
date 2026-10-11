@@ -40,6 +40,8 @@ fun BrowseSourceCompactGrid(
     onMangaLongClick: (Manga) -> Unit,
     // KMK -->
     selection: List<Manga>,
+    /** False for the cover-only grid */
+    showTitle: Boolean = true,
     // KMK <--
 ) {
     LazyVerticalGrid(
@@ -70,6 +72,7 @@ fun BrowseSourceCompactGrid(
                 onLongClick = { onMangaLongClick(manga) },
                 // KMK -->
                 isSelected = selection.fastAny { selected -> selected.id == manga.id },
+                showTitle = showTitle,
                 // KMK <--
             )
         }
@@ -92,13 +95,14 @@ internal fun BrowseSourceCompactGridItem(
     onLongClick: () -> Unit = onClick,
     // KMK -->
     isSelected: Boolean = false,
+    showTitle: Boolean = true,
     // KMK <--
 ) {
     // KMK -->
     val favoriteCorner = rememberFavoriteBadgeCorner()
     // KMK <--
     MangaCompactGridItem(
-        title = manga.title,
+        title = manga.title.takeIf { showTitle },
         coverData = MangaCover(
             mangaId = manga.id,
             sourceId = manga.source,

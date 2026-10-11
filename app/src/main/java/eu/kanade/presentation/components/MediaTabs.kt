@@ -3,6 +3,7 @@ package eu.kanade.presentation.components
 import android.content.res.Configuration
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -10,15 +11,20 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.ViewModule
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
+import eu.kanade.domain.ui.UiPreferences
+import eu.kanade.domain.ui.model.PanoramaStyle
 import eu.kanade.presentation.library.components.MangaComfortableGridItem
 import eu.kanade.presentation.library.components.MangaCompactGridItem
 import kotlinx.collections.immutable.persistentListOf
@@ -31,6 +37,8 @@ import tachiyomi.presentation.core.components.SettingsChipRow
 import tachiyomi.presentation.core.components.SliderItem
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 /** KMK: The All | Manga | Anime tabs of History and Updates */
 object MediaTab {
@@ -85,6 +93,9 @@ fun MediaDisplayDialog(
     displayModePref: Preference<LibraryDisplayMode>,
     columnsPref: Preference<Int>,
 ) {
+    // KMK: the Panorama styles, shared with the library
+    val panoramaStylePref = remember { Injekt.get<UiPreferences>().libraryPanoramaStyle() }
+    val panoramaStyle by panoramaStylePref.collectAsState()
     TabbedDialog(
         onDismissRequest = onDismissRequest,
         tabTitles = persistentListOf(stringResource(MR.strings.action_display)),
@@ -101,6 +112,27 @@ fun MediaDisplayDialog(
                         selected = displayMode == mode,
                         onClick = { displayModePref.set(mode) },
                         label = { Text(stringResource(titleRes)) },
+                    )
+                }
+                listOf(
+                    KMR.strings.panorama_style_fill to PanoramaStyle.FILL,
+                    KMR.strings.panorama_style_fit to PanoramaStyle.FIT,
+                    KMR.strings.panorama_style_wide to PanoramaStyle.WIDE,
+                ).map { (titleRes, style) ->
+                    FilterChip(
+                        selected = displayMode == LibraryDisplayMode.ComfortableGridPanorama && panoramaStyle == style,
+                        onClick = {
+                            panoramaStylePref.set(style)
+                            displayModePref.set(LibraryDisplayMode.ComfortableGridPanorama)
+                        },
+                        label = { Text(stringResource(titleRes)) },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = PanoramaIcons.of(style),
+                                contentDescription = null,
+                                modifier = Modifier.size(FilterChipDefaults.IconSize),
+                            )
+                        },
                     )
                 }
             }
@@ -150,7 +182,10 @@ fun MediaGridItem(
     onLongClick: () -> Unit,
     isSelected: Boolean = false,
     coverAlpha: Float = 1f,
+    /** Height / width of the cover once loaded, for the "Panorama: wide" spans */
+    onCoverRatio: ((Float) -> Unit)? = null,
 ) {
+    val panoramaStyle by remember { Injekt.get<UiPreferences>().libraryPanoramaStyle() }.collectAsState()
     when (displayMode) {
         LibraryDisplayMode.CompactGrid, LibraryDisplayMode.CoverOnlyGrid -> MangaCompactGridItem(
             coverData = cover,
@@ -167,7 +202,9 @@ fun MediaGridItem(
             onLongClick = onLongClick,
             isSelected = isSelected,
             coverAlpha = coverAlpha,
-            usePanoramaCover = false,
+            usePanoramaCover = displayMode == LibraryDisplayMode.ComfortableGridPanorama,
+            panoramaStyle = panoramaStyle,
+            onCoverRatio = onCoverRatio,
         )
     }
 }

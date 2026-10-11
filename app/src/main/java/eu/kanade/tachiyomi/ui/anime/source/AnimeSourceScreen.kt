@@ -70,6 +70,7 @@ import eu.kanade.presentation.anime.toMangaFilterList
 import eu.kanade.presentation.anime.writeBackToAnime
 import eu.kanade.presentation.browse.components.BrowseSourceToolbar
 import eu.kanade.presentation.browse.components.InLibraryBadge
+import eu.kanade.presentation.components.wideSpan
 import eu.kanade.presentation.library.components.CommonMangaItemDefaults
 import eu.kanade.presentation.library.components.MangaComfortableGridItem
 import eu.kanade.presentation.library.components.MangaCompactGridItem
@@ -471,7 +472,9 @@ private fun AnimeBrowseContent(
     }.collectAsState()
     val usePanorama = displayMode == LibraryDisplayMode.ComfortableGridPanorama
     val doubleWide = usePanorama && panoramaStyle == eu.kanade.domain.ui.model.PanoramaStyle.WIDE
-    val ratios = remember { androidx.compose.runtime.mutableStateMapOf<Long, Float>() }
+    // Read here, not inside the span lambda
+    val wideCovers = eu.kanade.presentation.components.rememberWideCovers()
+    val wide = wideCovers.ids
     LazyVerticalGrid(
         columns = columns,
         state = gridState,
@@ -487,14 +490,7 @@ private fun AnimeBrowseContent(
         items(
             state.items,
             key = { it.id },
-            span = { anime ->
-                val ratio = ratios[anime.id]
-                if (doubleWide && ratio != null && ratio <= 0.75f) {
-                    GridItemSpan(minOf(2, maxLineSpan))
-                } else {
-                    GridItemSpan(1)
-                }
-            },
+            span = { anime -> wideSpan(doubleWide, wide, anime.id) },
         ) { anime ->
             val coverAlpha = if (anime.favorite) CommonMangaItemDefaults.BrowseFavoriteCoverAlpha else 1f
             when (displayMode) {
@@ -517,7 +513,7 @@ private fun AnimeBrowseContent(
                     coverBadgeStart = { InLibraryBadge(enabled = anime.favorite) },
                     usePanoramaCover = usePanorama,
                     panoramaStyle = panoramaStyle,
-                    onCoverRatio = { ratios[anime.id] = it },
+                    onCoverRatio = { if (doubleWide) wideCovers.report(anime.id, it) },
                 )
             }
         }

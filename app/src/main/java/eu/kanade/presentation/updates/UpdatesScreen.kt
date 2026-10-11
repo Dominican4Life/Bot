@@ -36,6 +36,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastAll
 import androidx.compose.ui.util.fastAny
 import cafe.adriel.voyager.navigator.LocalNavigator
+import eu.kanade.domain.ui.UiPreferences
+import eu.kanade.domain.ui.model.PanoramaStyle
 import eu.kanade.presentation.anime.AnimeUpdateRow
 import eu.kanade.presentation.anime.rememberPlayAnimeEpisode
 import eu.kanade.presentation.components.AppBar
@@ -47,6 +49,8 @@ import eu.kanade.presentation.components.animeCover
 import eu.kanade.presentation.components.mediaDisplayAction
 import eu.kanade.presentation.components.relativeDateText
 import eu.kanade.presentation.components.rememberMediaGridCells
+import eu.kanade.presentation.components.rememberWideCovers
+import eu.kanade.presentation.components.wideSpan
 import eu.kanade.presentation.library.components.CommonMangaItemDefaults
 import eu.kanade.presentation.manga.components.ChapterDownloadAction
 import eu.kanade.presentation.manga.components.MangaBottomActionMenu
@@ -332,6 +336,11 @@ private fun UpdatesGrid(
             }
         }
     }
+    // "Panorama: wide": wide covers take two places; read here, not inside the span lambda
+    val panoramaStyle by remember { Injekt.get<UiPreferences>().libraryPanoramaStyle() }.collectAsState()
+    val doubleWide = displayMode == LibraryDisplayMode.ComfortableGridPanorama && panoramaStyle == PanoramaStyle.WIDE
+    val wideCovers = rememberWideCovers()
+    val wide = wideCovers.ids
     FastScrollLazyVerticalGrid(
         columns = rememberMediaGridCells(columns),
         contentPadding = PaddingValues(
@@ -352,7 +361,13 @@ private fun UpdatesGrid(
                     is UpdatesUiModel.Anime -> "anime-${it.item.episodeId}"
                 }
             },
-            span = { if (it is UpdatesUiModel.Header) GridItemSpan(maxLineSpan) else GridItemSpan(1) },
+            span = {
+                when (it) {
+                    is UpdatesUiModel.Header -> GridItemSpan(maxLineSpan)
+                    is UpdatesUiModel.Item -> wideSpan(doubleWide, wide, it.item.update.coverData.mangaId)
+                    is UpdatesUiModel.Anime -> wideSpan(doubleWide, wide, -it.item.animeId)
+                }
+            },
         ) { model ->
             when (model) {
                 is UpdatesUiModel.Header -> ListGroupHeader(text = relativeDateText(model.date))
@@ -377,6 +392,9 @@ private fun UpdatesGrid(
                         coverAlpha = if (updatesItem.update.read) 0.5f else 1f,
                         onClick = { if (selectionMode) select() else onClickCover(updatesItem) },
                         onLongClick = select,
+                        onCoverRatio = {
+                            if (doubleWide) wideCovers.report(updatesItem.update.coverData.mangaId, it)
+                        },
                     )
                 }
                 is UpdatesUiModel.Anime -> {
@@ -388,6 +406,7 @@ private fun UpdatesGrid(
                         coverAlpha = if (item.seen) 0.5f else 1f,
                         onClick = { onClickAnime(item) },
                         onLongClick = { onLongClickAnime(item) },
+                        onCoverRatio = { if (doubleWide) wideCovers.report(-item.animeId, it) },
                     )
                 }
             }

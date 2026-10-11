@@ -202,6 +202,7 @@ fun BrowseSourceContent(
                 onMangaLongClick = onMangaLongClick,
                 // KMK -->
                 selection = selection,
+                showTitle = displayMode == LibraryDisplayMode.CompactGrid,
                 // KMK <--
             )
         }

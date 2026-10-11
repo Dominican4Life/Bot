@@ -9,7 +9,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.unit.dp
@@ -21,9 +20,10 @@ import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.domain.ui.model.PanoramaStyle
 import eu.kanade.presentation.components.favoriteBadgeSlot
 import eu.kanade.presentation.components.rememberFavoriteBadgeCorner
+import eu.kanade.presentation.components.rememberWideCovers
+import eu.kanade.presentation.components.wideSpan
 import eu.kanade.presentation.library.components.CommonMangaItemDefaults
 import eu.kanade.presentation.library.components.MangaComfortableGridItem
-import eu.kanade.presentation.manga.components.RatioSwitchToPanorama
 import eu.kanade.tachiyomi.R
 import exh.metadata.metadata.MangaDexSearchMetadata
 import exh.metadata.metadata.RaisedSearchMetadata
@@ -53,8 +53,9 @@ fun BrowseSourceComfortableGrid(
     // KMK -->
     val panoramaStyle by remember { Injekt.get<UiPreferences>().browsePanoramaStyle() }.collectPrefAsState()
     val doubleWide = usePanoramaCover && panoramaStyle == PanoramaStyle.WIDE
-    // Height / width of each loaded cover: wide ones take two places in the "Wide" style
-    val ratios = remember { mutableStateMapOf<Long, Float>() }
+    // Wide covers take two places in the "Wide" style; read here, not inside the span lambda
+    val wideCovers = rememberWideCovers()
+    val wide = wideCovers.ids
     // KMK <--
     LazyVerticalGrid(
         columns = columns,
@@ -72,13 +73,7 @@ fun BrowseSourceComfortableGrid(
             count = mangaList.itemCount,
             // KMK -->
             span = { index ->
-                val id = if (doubleWide) mangaList.peek(index)?.value?.first?.id else null
-                val ratio = id?.let { ratios[it] }
-                if (ratio != null && ratio <= RatioSwitchToPanorama) {
-                    GridItemSpan(minOf(2, maxLineSpan))
-                } else {
-                    GridItemSpan(1)
-                }
+                wideSpan(doubleWide, wide, if (doubleWide) mangaList.peek(index)?.value?.first?.id else null)
             },
             // KMK <--
         ) { index ->
@@ -99,7 +94,7 @@ fun BrowseSourceComfortableGrid(
                 isSelected = selection.fastAny { selected -> selected.id == manga.id },
                 usePanoramaCover = usePanoramaCover,
                 panoramaStyle = panoramaStyle,
-                onCoverRatio = { ratios[manga.id] = it },
+                onCoverRatio = { if (doubleWide) wideCovers.report(manga.id, it) },
                 // KMK <--
             )
         }
