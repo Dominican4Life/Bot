@@ -74,13 +74,11 @@ fun BrowseSourceSimpleToolbar(
                     selectingDisplayMode = false
                     onDisplayModeChange(LibraryDisplayMode.ComfortableGrid)
                 }
-                RadioMenuItem(
-                    text = { Text(text = stringResource(KMR.strings.action_display_comfortable_grid_panorama)) },
-                    isChecked = displayMode == LibraryDisplayMode.ComfortableGridPanorama,
-                ) {
-                    selectingDisplayMode = false
-                    onDisplayModeChange(LibraryDisplayMode.ComfortableGridPanorama)
-                }
+                PanoramaStyleMenuItems(
+                    displayMode = displayMode,
+                    onDisplayModeChange = onDisplayModeChange,
+                    onDismiss = { selectingDisplayMode = false },
+                )
                 RadioMenuItem(
                     text = { Text(text = stringResource(MR.strings.action_display_grid)) },
                     isChecked = displayMode == LibraryDisplayMode.CompactGrid,

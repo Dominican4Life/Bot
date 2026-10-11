@@ -59,11 +59,15 @@ fun RadioMenuItem(
     text: @Composable () -> Unit,
     isChecked: Boolean,
     modifier: Modifier = Modifier,
+    // KMK
+    leadingIcon: (@Composable () -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     DropdownMenuItem(
         text = text,
         onClick = onClick,
+        // KMK
+        leadingIcon = leadingIcon,
         trailingIcon = {
             if (isChecked) {
                 Icon(

@@ -3,6 +3,7 @@ package eu.kanade.domain.ui
 import androidx.compose.material3.FabPosition
 import com.materialkolor.PaletteStyle
 import eu.kanade.domain.ui.model.AppTheme
+import eu.kanade.domain.ui.model.PanoramaStyle
 import eu.kanade.domain.ui.model.TabletUiMode
 import eu.kanade.domain.ui.model.ThemeMode
 import tachiyomi.core.common.preference.PreferenceStore
@@ -71,6 +72,10 @@ class UiPreferences(
     fun showHomeOnRelatedMangas() = preferenceStore.getBoolean("show_home_on_related_mangas", true)
 
     fun readButtonPosition() = preferenceStore.getString("reading_button_position", FabPosition.End.toString())
+
+    // KMK: how wide covers look in "Panorama comfortable grid", in the library and in a source's list
+    fun libraryPanoramaStyle() = preferenceStore.getEnum("pref_library_panorama_style", PanoramaStyle.FILL)
+    fun browsePanoramaStyle() = preferenceStore.getEnum("pref_browse_panorama_style", PanoramaStyle.FIT)
 
     fun usePanoramaCoverFlow() = preferenceStore.getBoolean("use_panorama_cover_flow", false)
 

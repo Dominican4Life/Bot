@@ -45,6 +45,9 @@ enum class MangaCover(val ratio: Float) {
 
     // KMK -->
     Panorama(3f / 2f),
+
+    /** Two book covers side by side: a wide cover as tall as the book covers next to it */
+    Wide(4f / 3f),
     // KMK <--
     ;
 

@@ -9,6 +9,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.unit.dp
@@ -16,10 +17,13 @@ import androidx.compose.ui.util.fastAny
 import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
 import eu.kanade.domain.ui.BadgeCorner
+import eu.kanade.domain.ui.UiPreferences
+import eu.kanade.domain.ui.model.PanoramaStyle
 import eu.kanade.presentation.components.favoriteBadgeSlot
 import eu.kanade.presentation.components.rememberFavoriteBadgeCorner
 import eu.kanade.presentation.library.components.CommonMangaItemDefaults
 import eu.kanade.presentation.library.components.MangaComfortableGridItem
+import eu.kanade.presentation.manga.components.RatioSwitchToPanorama
 import eu.kanade.tachiyomi.R
 import exh.metadata.metadata.MangaDexSearchMetadata
 import exh.metadata.metadata.RaisedSearchMetadata
@@ -30,6 +34,9 @@ import tachiyomi.domain.manga.model.MangaCover
 import tachiyomi.presentation.core.components.Badge
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.plus
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
+import tachiyomi.presentation.core.util.collectAsState as collectPrefAsState
 
 @Composable
 fun BrowseSourceComfortableGrid(
@@ -43,6 +50,12 @@ fun BrowseSourceComfortableGrid(
     usePanoramaCover: Boolean = false,
     // KMK <--
 ) {
+    // KMK -->
+    val panoramaStyle by remember { Injekt.get<UiPreferences>().browsePanoramaStyle() }.collectPrefAsState()
+    val doubleWide = usePanoramaCover && panoramaStyle == PanoramaStyle.WIDE
+    // Height / width of each loaded cover: wide ones take two places in the "Wide" style
+    val ratios = remember { mutableStateMapOf<Long, Float>() }
+    // KMK <--
     LazyVerticalGrid(
         columns = columns,
         contentPadding = contentPadding + PaddingValues(8.dp),
@@ -55,7 +68,20 @@ fun BrowseSourceComfortableGrid(
             }
         }
 
-        items(count = mangaList.itemCount) { index ->
+        items(
+            count = mangaList.itemCount,
+            // KMK -->
+            span = { index ->
+                val id = if (doubleWide) mangaList.peek(index)?.value?.first?.id else null
+                val ratio = id?.let { ratios[it] }
+                if (ratio != null && ratio <= RatioSwitchToPanorama) {
+                    GridItemSpan(minOf(2, maxLineSpan))
+                } else {
+                    GridItemSpan(1)
+                }
+            },
+            // KMK <--
+        ) { index ->
             // SY -->
             val pair by mangaList[index]?.collectAsState() ?: return@items
             val manga = pair.first
@@ -72,6 +98,8 @@ fun BrowseSourceComfortableGrid(
                 // KMK -->
                 isSelected = selection.fastAny { selected -> selected.id == manga.id },
                 usePanoramaCover = usePanoramaCover,
+                panoramaStyle = panoramaStyle,
+                onCoverRatio = { ratios[manga.id] = it },
                 // KMK <--
             )
         }
@@ -95,6 +123,8 @@ internal fun BrowseSourceComfortableGridItem(
     // KMK -->
     isSelected: Boolean = false,
     usePanoramaCover: Boolean,
+    panoramaStyle: PanoramaStyle = PanoramaStyle.FIT,
+    onCoverRatio: ((Float) -> Unit)? = null,
     // KMK <--
 ) {
     // KMK -->
@@ -113,6 +143,8 @@ internal fun BrowseSourceComfortableGridItem(
         isSelected = isSelected,
         usePanoramaCover = usePanoramaCover,
         fitToPanoramaCover = true,
+        panoramaStyle = panoramaStyle,
+        onCoverRatio = onCoverRatio,
         // KMK <--
         coverAlpha = if (manga.favorite) CommonMangaItemDefaults.BrowseFavoriteCoverAlpha else 1f,
         // KMK --> "In library" goes in the corner chosen in Settings › Library › Badges

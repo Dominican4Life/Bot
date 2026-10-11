@@ -9,12 +9,15 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -31,7 +34,10 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastForEach
 import dev.icerock.moko.resources.StringResource
+import eu.kanade.domain.ui.UiPreferences
+import eu.kanade.domain.ui.model.PanoramaStyle
 import eu.kanade.presentation.category.visualName
+import eu.kanade.presentation.components.PanoramaIcons
 import eu.kanade.presentation.components.TabbedDialog
 import eu.kanade.presentation.components.TabbedDialogPaddings
 import eu.kanade.presentation.more.settings.widget.TriStateListDialog
@@ -64,6 +70,8 @@ import tachiyomi.presentation.core.components.TriStateItem
 import tachiyomi.presentation.core.components.material.TextButton
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 @Composable
 fun LibrarySettingsDialog(
@@ -310,9 +318,13 @@ private val displayModes = listOf(
     MR.strings.action_display_comfortable_grid to LibraryDisplayMode.ComfortableGrid,
     MR.strings.action_display_list to LibraryDisplayMode.List,
     MR.strings.action_display_cover_only_grid to LibraryDisplayMode.CoverOnlyGrid,
-    // KMK -->
-    KMR.strings.action_display_comfortable_grid_panorama to LibraryDisplayMode.ComfortableGridPanorama,
-    // KMK <--
+)
+
+// KMK: "Panorama comfortable grid" in its three styles
+private val panoramaStyles = listOf(
+    KMR.strings.panorama_style_fill to PanoramaStyle.FILL,
+    KMR.strings.panorama_style_fit to PanoramaStyle.FIT,
+    KMR.strings.panorama_style_wide to PanoramaStyle.WIDE,
 )
 
 @Suppress("UnusedReceiverParameter")
@@ -321,6 +333,10 @@ private fun ColumnScope.DisplayPage(
     screenModel: LibrarySettingsScreenModel,
 ) {
     val displayMode by screenModel.libraryPreferences.displayMode().collectAsState()
+    // KMK -->
+    val panoramaStylePref = remember { Injekt.get<UiPreferences>().libraryPanoramaStyle() }
+    val panoramaStyle by panoramaStylePref.collectAsState()
+    // KMK <--
     SettingsChipRow(MR.strings.action_display_mode) {
         displayModes.map { (titleRes, mode) ->
             FilterChip(
@@ -329,6 +345,25 @@ private fun ColumnScope.DisplayPage(
                 label = { Text(stringResource(titleRes)) },
             )
         }
+        // KMK -->
+        panoramaStyles.map { (titleRes, style) ->
+            FilterChip(
+                selected = displayMode == LibraryDisplayMode.ComfortableGridPanorama && panoramaStyle == style,
+                onClick = {
+                    panoramaStylePref.set(style)
+                    screenModel.setDisplayMode(LibraryDisplayMode.ComfortableGridPanorama)
+                },
+                label = { Text(stringResource(titleRes)) },
+                leadingIcon = {
+                    Icon(
+                        imageVector = PanoramaIcons.of(style),
+                        contentDescription = null,
+                        modifier = Modifier.size(FilterChipDefaults.IconSize),
+                    )
+                },
+            )
+        }
+        // KMK <--
     }
 
     if (displayMode != LibraryDisplayMode.List) {

@@ -465,6 +465,13 @@ private fun AnimeBrowseContent(
     }
     val gridState = rememberLazyGridState()
     LoadMoreEffect(gridState, state.items.size, onLoadMore)
+    // KMK: the source's Panorama style; wide covers take two places in the "Wide" style
+    val panoramaStyle by remember {
+        Injekt.get<eu.kanade.domain.ui.UiPreferences>().browsePanoramaStyle()
+    }.collectAsState()
+    val usePanorama = displayMode == LibraryDisplayMode.ComfortableGridPanorama
+    val doubleWide = usePanorama && panoramaStyle == eu.kanade.domain.ui.model.PanoramaStyle.WIDE
+    val ratios = remember { androidx.compose.runtime.mutableStateMapOf<Long, Float>() }
     LazyVerticalGrid(
         columns = columns,
         state = gridState,
@@ -477,7 +484,18 @@ private fun AnimeBrowseContent(
         verticalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridVerticalSpacer),
         horizontalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridHorizontalSpacer),
     ) {
-        items(state.items, key = { it.id }) { anime ->
+        items(
+            state.items,
+            key = { it.id },
+            span = { anime ->
+                val ratio = ratios[anime.id]
+                if (doubleWide && ratio != null && ratio <= 0.75f) {
+                    GridItemSpan(minOf(2, maxLineSpan))
+                } else {
+                    GridItemSpan(1)
+                }
+            },
+        ) { anime ->
             val coverAlpha = if (anime.favorite) CommonMangaItemDefaults.BrowseFavoriteCoverAlpha else 1f
             when (displayMode) {
                 LibraryDisplayMode.CompactGrid, LibraryDisplayMode.CoverOnlyGrid -> MangaCompactGridItem(
@@ -497,7 +515,9 @@ private fun AnimeBrowseContent(
                     isSelected = anime.id == selectedId,
                     coverAlpha = coverAlpha,
                     coverBadgeStart = { InLibraryBadge(enabled = anime.favorite) },
-                    usePanoramaCover = displayMode == LibraryDisplayMode.ComfortableGridPanorama,
+                    usePanoramaCover = usePanorama,
+                    panoramaStyle = panoramaStyle,
+                    onCoverRatio = { ratios[anime.id] = it },
                 )
             }
         }

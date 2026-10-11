@@ -41,16 +41,17 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import eu.kanade.domain.ui.model.PanoramaStyle
 import eu.kanade.presentation.components.CoverProgressBar
 import eu.kanade.presentation.manga.components.MangaCover
 import eu.kanade.presentation.manga.components.MangaCoverHide
 import eu.kanade.presentation.manga.components.RatioSwitchToPanorama
 import exh.debug.DebugToggles
-import tachiyomi.domain.manga.model.MangaCover as MangaCoverModel
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.BadgeGroup
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.selectedBackground
+import tachiyomi.domain.manga.model.MangaCover as MangaCoverModel
 
 object CommonMangaItemDefaults {
     val GridHorizontalSpacer = 4.dp
@@ -233,10 +234,18 @@ fun MangaComfortableGridItem(
     usePanoramaCover: Boolean,
     fitToPanoramaCover: Boolean = false,
     progress: Float? = null,
+    /** How a wide cover is shown; null keeps [fitToPanoramaCover] */
+    panoramaStyle: PanoramaStyle? = null,
+    /** Height / width of the cover once loaded, for grids that give wide covers two places */
+    onCoverRatio: ((Float) -> Unit)? = null,
     // KMK <--
 ) {
     // KMK -->
     val coverIsWide = coverRatio.floatValue <= RatioSwitchToPanorama
+    val style = panoramaStyle ?: if (fitToPanoramaCover) PanoramaStyle.FIT else PanoramaStyle.FILL
+    val showWide = usePanoramaCover && coverIsWide
+    val fitWide = showWide && style == PanoramaStyle.FIT
+    val doubleWide = showWide && style == PanoramaStyle.WIDE
     val bgColor = coverData.dominantCoverColors?.first?.let { Color(it) }.takeIf { libraryColored }
     val onBgColor = coverData.dominantCoverColors?.second.takeIf { libraryColored }
     // KMK <--
@@ -257,8 +266,8 @@ fun MangaComfortableGridItem(
                             tint = onBgColor,
                         )
                     } else {
-                        if (fitToPanoramaCover && usePanoramaCover && coverIsWide) {
-                            MangaCover.Panorama(
+                        if (fitWide || doubleWide) {
+                            (if (doubleWide) MangaCover.Wide else MangaCover.Panorama)(
                                 modifier = Modifier
                                     // KMK -->
                                     // .alpha(if (isSelected) GridSelectedCoverAlpha else coverAlpha)
@@ -272,6 +281,7 @@ fun MangaComfortableGridItem(
                                 onCoverLoaded = { _, result ->
                                     val image = result.result.image
                                     coverRatio.floatValue = image.height.toFloat() / image.width
+                                    onCoverRatio?.invoke(coverRatio.floatValue)
                                 },
                                 // KMK <--
                             )
@@ -286,11 +296,14 @@ fun MangaComfortableGridItem(
                                 data = coverData,
                                 // KMK -->
                                 alpha = if (isSelected) GRID_SELECTED_COVER_ALPHA else coverAlpha,
-                                bgColor = bgColor ?: MaterialTheme.colorScheme.surface.takeIf { isSelected },
+                                // Color fill: the cover's own color around a wide cover
+                                bgColor = bgColor ?: MaterialTheme.colorScheme.surface.takeIf { isSelected }
+                                    ?: MaterialTheme.colorScheme.surfaceContainerHighest.takeIf { showWide },
                                 tint = onBgColor,
                                 onCoverLoaded = { _, result ->
                                     val image = result.result.image
                                     coverRatio.floatValue = image.height.toFloat() / image.width
+                                    onCoverRatio?.invoke(coverRatio.floatValue)
                                 },
                                 scale = if (usePanoramaCover && coverIsWide) {
                                     ContentScale.Fit
@@ -303,7 +316,9 @@ fun MangaComfortableGridItem(
                     }
                 },
                 // KMK -->
-                ratio = if (fitToPanoramaCover && usePanoramaCover && coverIsWide) {
+                ratio = if (doubleWide) {
+                    MangaCover.Wide.ratio
+                } else if (fitWide) {
                     MangaCover.Panorama.ratio
                 } else {
                     MangaCover.Book.ratio

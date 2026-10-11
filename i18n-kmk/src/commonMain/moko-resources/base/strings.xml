@@ -462,4 +462,8 @@
     <!-- Download queue: All | Manga | Anime -->
     <string name="download_queue_anime_count">%d anime</string>
     <string name="download_queue_tab_all">All</string>
+    <!-- Panorama comfortable grid styles -->
+    <string name="panorama_style_fill">Panorama: color fill</string>
+    <string name="panorama_style_fit">Panorama: fit width</string>
+    <string name="panorama_style_wide">Panorama: wide</string>
 </resources>

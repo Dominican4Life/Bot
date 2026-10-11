@@ -31,10 +31,13 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
 import eu.kanade.domain.source.service.SourcePreferences
+import eu.kanade.domain.ui.UiPreferences
+import eu.kanade.domain.ui.model.PanoramaStyle
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarActions
 import eu.kanade.presentation.components.AppBarTitle
 import eu.kanade.presentation.components.DropdownMenu
+import eu.kanade.presentation.components.PanoramaIcons
 import eu.kanade.presentation.components.RadioMenuItem
 import eu.kanade.presentation.components.SearchToolbar
 import eu.kanade.tachiyomi.animeextension.AnimeExtensionManager
@@ -47,6 +50,7 @@ import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.components.SliderItem
 import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.util.collectAsState
 import tachiyomi.source.local.LocalSource
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -175,15 +179,12 @@ fun BrowseSourceToolbar(
                     selectingDisplayMode = false
                     onDisplayModeChange(LibraryDisplayMode.ComfortableGrid)
                 }
-                // KMK -->
-                RadioMenuItem(
-                    text = { Text(text = stringResource(KMR.strings.action_display_comfortable_grid_panorama)) },
-                    isChecked = displayMode == LibraryDisplayMode.ComfortableGridPanorama,
-                ) {
-                    selectingDisplayMode = false
-                    onDisplayModeChange(LibraryDisplayMode.ComfortableGridPanorama)
-                }
-                // KMK <--
+                // KMK: one entry per Panorama style
+                PanoramaStyleMenuItems(
+                    displayMode = displayMode,
+                    onDisplayModeChange = onDisplayModeChange,
+                    onDismiss = { selectingDisplayMode = false },
+                )
                 RadioMenuItem(
                     text = { Text(text = stringResource(MR.strings.action_display_grid)) },
                     isChecked = displayMode == LibraryDisplayMode.CompactGrid,
@@ -278,3 +279,31 @@ fun sourceIconBitmap(sourceId: Long): ImageBitmap? = runCatching {
             ?: Injekt.get<AnimeExtensionManager>().getAppIconForSource(sourceId)
         )?.toBitmap()?.asImageBitmap()
 }.getOrNull()
+
+// KMK -->
+/** "Panorama comfortable grid" in its three styles: color fill, fit width and wide */
+@Composable
+internal fun PanoramaStyleMenuItems(
+    displayMode: LibraryDisplayMode?,
+    onDisplayModeChange: (LibraryDisplayMode) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val stylePref = remember { Injekt.get<UiPreferences>().browsePanoramaStyle() }
+    val style by stylePref.collectAsState()
+    listOf(
+        KMR.strings.panorama_style_fill to PanoramaStyle.FILL,
+        KMR.strings.panorama_style_fit to PanoramaStyle.FIT,
+        KMR.strings.panorama_style_wide to PanoramaStyle.WIDE,
+    ).forEach { (title, value) ->
+        RadioMenuItem(
+            text = { Text(text = stringResource(title)) },
+            isChecked = displayMode == LibraryDisplayMode.ComfortableGridPanorama && style == value,
+            leadingIcon = { Icon(imageVector = PanoramaIcons.of(value), contentDescription = null) },
+        ) {
+            onDismiss()
+            stylePref.set(value)
+            onDisplayModeChange(LibraryDisplayMode.ComfortableGridPanorama)
+        }
+    }
+}
+// KMK <--
