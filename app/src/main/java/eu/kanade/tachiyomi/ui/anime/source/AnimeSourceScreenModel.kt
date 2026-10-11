@@ -8,6 +8,7 @@ import eu.kanade.tachiyomi.animesource.AnimeCatalogueSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.data.anime.Anime
 import eu.kanade.tachiyomi.data.anime.AnimeRepository
+import eu.kanade.tachiyomi.sumizuri.SumizuriTabs
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.update
@@ -55,6 +56,18 @@ class AnimeSourceScreenModel(
     fun resetFilters() {
         mutableState.update { it.copy(filters = source?.getFilterList() ?: AnimeFilterList()) }
     }
+
+    // KMK -->
+    /** Lists one of a JS / JSON source's catalogs, the way picking it in the filter sheet with no search does */
+    fun showCatalog(id: String) {
+        val source = source ?: return
+        val tabs = source as? SumizuriTabs ?: return
+        val filters = source.getFilterList()
+        if (runCatching { tabs.selectCatalog(filters, id) }.getOrNull() != true) return
+        mutableState.update { it.copy(filters = filters) }
+        setListingForce(Listing.Search(""))
+    }
+    // KMK <--
 
     private fun setListingForce(listing: Listing) {
         loadJob?.cancel()

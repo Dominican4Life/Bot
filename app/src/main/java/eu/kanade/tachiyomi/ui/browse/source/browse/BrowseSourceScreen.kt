@@ -73,6 +73,7 @@ import eu.kanade.presentation.util.AssistContentScreen
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.sumizuri.SumizuriTabs
 import eu.kanade.tachiyomi.ui.browse.BulkFavoriteScreenModel
 import eu.kanade.tachiyomi.ui.browse.extension.details.SourcePreferencesScreen
 import eu.kanade.tachiyomi.ui.browse.source.SourcesScreen
@@ -319,6 +320,13 @@ data class BrowseSourceScreen(
                             )
                         }
 
+                        // KMK: a JS / JSON source's own names for Popular / Latest, and its catalogs as buttons
+                        val sourceTabs = screenModel.source as? SumizuriTabs
+                        val selectedCatalog = (state.listing as? Listing.Search)
+                            ?.takeIf { it.savedSearchId == null && it.query.isNullOrBlank() }
+                            ?.let { listing ->
+                                sourceTabs?.let { runCatching { it.selectedCatalog(listing.filters) }.getOrNull() }
+                            }
                         Row(
                             modifier = Modifier
                                 .horizontalScroll(rememberScrollState())
@@ -340,7 +348,7 @@ data class BrowseSourceScreen(
                                     )
                                 },
                                 label = {
-                                    Text(text = stringResource(MR.strings.popular))
+                                    Text(text = sourceTabs?.tabNames?.popular ?: stringResource(MR.strings.popular))
                                 },
                             )
                             if (screenModel.source.supportsLatest) {
@@ -359,15 +367,25 @@ data class BrowseSourceScreen(
                                         )
                                     },
                                     label = {
-                                        Text(text = stringResource(MR.strings.latest))
+                                        Text(text = sourceTabs?.tabNames?.latest ?: stringResource(MR.strings.latest))
                                     },
                                 )
                             }
+                            // KMK -->
+                            sourceTabs?.catalogTabs.orEmpty().forEach { catalog ->
+                                FilterChip(
+                                    selected = selectedCatalog == catalog.id,
+                                    onClick = { screenModel.showCatalog(catalog.id) },
+                                    label = { Text(text = catalog.name) },
+                                )
+                            }
+                            // KMK <--
                             if (/* SY --> */ state.filterable /* SY <-- */) {
                                 FilterChip(
                                     selected = state.listing is Listing.Search &&
                                         // KMK -->
-                                        (state.listing as Listing.Search).savedSearchId == null,
+                                        (state.listing as Listing.Search).savedSearchId == null &&
+                                        selectedCatalog == null,
                                     // KMK <--
                                     onClick = screenModel::openFilterSheet,
                                     leadingIcon = {
@@ -580,7 +598,7 @@ data class BrowseSourceScreen(
                 }
                 // KMK <--
             }
-        // KMK -->
+            // KMK -->
         }
         // KMK <--
 

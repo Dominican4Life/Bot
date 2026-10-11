@@ -34,7 +34,7 @@ import uy.kohesive.injekt.api.get
 class SumizuriAnimeSource(
     val info: SumizuriSourceInfo,
     private val manager: SumizuriManager,
-) : AnimeCatalogueSource, ConfigurableAnimeSource {
+) : AnimeCatalogueSource, ConfigurableAnimeSource, SumizuriTabs {
 
     override val name: String = info.name
     override val lang: String = info.displayLang
@@ -182,6 +182,24 @@ class SumizuriAnimeSource(
 
     private val groups by lazy { SumizuriFilters.groups(info.filters) }
     private val catalogs by lazy { SumizuriFilters.catalogs(info.catalogs) }
+
+    // KMK: the source's names for Popular / Latest, and its catalogs as buttons
+    override val tabNames: SumizuriTabNames by lazy { SumizuriFilters.tabNames(info.tabNames) }
+
+    override val catalogTabs: List<SumizuriCatalogTab> by lazy {
+        catalogs.filter { it.tab }.map { SumizuriCatalogTab(it.id, it.name) }
+    }
+
+    override fun selectCatalog(filters: Iterable<*>, id: String): Boolean {
+        val filter = filters.filterIsInstance<CatalogFilter>().firstOrNull() ?: return false
+        val index = filter.catalogs.indexOfFirst { it.id == id }
+        if (index < 0) return false
+        filter.state = index + 1
+        return true
+    }
+
+    override fun selectedCatalog(filters: Iterable<*>): String? =
+        filters.filterIsInstance<CatalogFilter>().firstOrNull()?.selected()?.id
 
     override fun getFilterList(): AnimeFilterList {
         // KMK: the tag boxes' suggestions are read from the site in the background, when missing or old

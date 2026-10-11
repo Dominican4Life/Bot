@@ -126,6 +126,7 @@ class SumizuriManager(private val context: Application) {
             headers = meta.obj("headers")?.mapNotNull { (k, v) -> (v as? JsonPrimitive)?.content?.let { k to it } }?.toMap().orEmpty(),
             filters = optional("getFilters", "hasFilters"),
             catalogs = optional("getCatalogs", "hasCatalogs"),
+            tabNames = meta["tabNames"]?.takeIf { it is kotlinx.serialization.json.JsonObject },
             preferences = optional("getSourcePreferences", "hasPreferences"),
             hasTags = meta.bool("hasTags") == true,
             createdAt = existing?.createdAt ?: System.currentTimeMillis(),
@@ -210,6 +211,7 @@ class SumizuriManager(private val context: Application) {
             runCatching {
                 val fresh = describe(runtime(info), info.key, info.json, info.anime, info).copy(updatedAt = info.updatedAt)
                 val changed = fresh.filters != info.filters || fresh.catalogs != info.catalogs ||
+                    fresh.tabNames != info.tabNames ||
                     fresh.preferences != info.preferences || fresh.hasTags != info.hasTags
                 if (changed) {
                     File(dir(info.key), META).writeText(sumizuriJson.encodeToString(SumizuriSourceInfo.serializer(), fresh))

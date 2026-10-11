@@ -36,7 +36,8 @@ internal object SumizuriFilters {
         val tagLists: List<String> = emptyList(),
     )
 
-    data class Catalog(val id: String, val name: String)
+    /** [tab]: also shown as a button beside Popular and Latest (a catalog can turn it off with "tab": false) */
+    data class Catalog(val id: String, val name: String, val tab: Boolean = true)
 
     fun groups(element: JsonElement?): List<Group> = SumizuriMapping.list(element ?: return emptyList()).mapNotNull { obj ->
         val key = obj.str("key") ?: return@mapNotNull null
@@ -75,6 +76,23 @@ internal object SumizuriFilters {
 
     fun catalogs(element: JsonElement?): List<Catalog> = SumizuriMapping.list(element ?: return emptyList()).mapNotNull { obj ->
         val id = obj.str("id") ?: return@mapNotNull null
-        Catalog(id, obj.str("name") ?: id)
+        Catalog(id, obj.str("name") ?: id, tab = obj.bool("tab") != false)
     }
+
+    /**
+     * KMK: The names a source gives its Popular and Latest buttons, from `tabNames: { popular, latest }`. Anything
+     * missing, blank or of the wrong kind keeps the app's own name, so a source (or a copy of one) can't break Browse.
+     */
+    fun tabNames(element: JsonElement?): SumizuriTabNames {
+        val obj = element as? JsonObject ?: return SumizuriTabNames()
+        fun name(key: String) = (obj[key] as? JsonPrimitive)
+            ?.takeIf { it.isString }
+            ?.content
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?.take(MAX_TAB_NAME)
+        return SumizuriTabNames(popular = name("popular"), latest = name("latest"))
+    }
+
+    private const val MAX_TAB_NAME = 30
 }

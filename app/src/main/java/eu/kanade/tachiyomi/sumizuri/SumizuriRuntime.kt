@@ -492,6 +492,12 @@ class SumizuriRuntime private constructor(
                 : (typeof HEADERS === 'object' && HEADERS !== null && !Array.isArray(HEADERS))
                   ? HEADERS
                   : (cfg && typeof cfg.headers === 'object' && !Array.isArray(cfg.headers)) ? cfg.headers : null;
+              function plainObject(value) {
+                return typeof value === 'object' && value !== null && !Array.isArray(value) ? value : null;
+              }
+              var tabNames = plainObject(extension.tabNames)
+                || (typeof TAB_NAMES === 'undefined' ? null : plainObject(TAB_NAMES))
+                || (cfg ? plainObject(cfg.tabNames) : null);
               return JSON.stringify({
                 name: pick('name', typeof NAME === 'undefined' ? undefined : NAME) || (cfg && cfg.name) || null,
                 lang: pick('lang', typeof LANG === 'undefined' ? undefined : LANG) || (cfg && cfg.lang) || null,
@@ -507,6 +513,7 @@ class SumizuriRuntime private constructor(
                 rateLimitMs: typeof extension.rateLimitMs === 'number' ? extension.rateLimitMs
                   : (typeof RATE_LIMIT_MS === 'number' ? RATE_LIMIT_MS : null),
                 headers: headers,
+                tabNames: tabNames,
               });
             })()
         """.trimIndent()

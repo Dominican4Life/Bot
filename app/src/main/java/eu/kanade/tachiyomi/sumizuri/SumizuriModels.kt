@@ -30,6 +30,8 @@ data class SumizuriSourceInfo(
     /** Saved from the last run, so the sync filter / settings screens can show them */
     val filters: JsonElement? = null,
     val catalogs: JsonElement? = null,
+    /** KMK: `tabNames: { popular, latest }`, the source's own names for those buttons. Optional */
+    val tabNames: JsonElement? = null,
     val preferences: JsonElement? = null,
     /** The source has getTags(), which gives the suggestions of its autocomplete filters */
     val hasTags: Boolean = false,

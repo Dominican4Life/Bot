@@ -81,6 +81,7 @@ import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.data.anime.Anime
+import eu.kanade.tachiyomi.sumizuri.SumizuriTabs
 import eu.kanade.tachiyomi.ui.anime.AnimeScreen
 import eu.kanade.tachiyomi.ui.browse.extension.details.SourcePreferencesScreen
 import eu.kanade.tachiyomi.ui.browse.source.browse.SourceFilterDialog
@@ -223,6 +224,12 @@ class AnimeSourceScreen(
                                 screenModel.setListing(AnimeSourceScreenModel.Listing.Latest)
                             },
                             onFilter = { showFilters = true },
+                            // KMK: a JS / JSON source's own names for Popular / Latest, and its catalogs as buttons
+                            tabs = source as? SumizuriTabs,
+                            onCatalog = { id ->
+                                searchQuery = null
+                                screenModel.showCatalog(id)
+                            },
                         )
                         HorizontalDivider()
                     }
@@ -389,7 +396,12 @@ private fun ListingChips(
     onPopular: () -> Unit,
     onLatest: () -> Unit,
     onFilter: () -> Unit,
+    tabs: SumizuriTabs? = null,
+    onCatalog: (String) -> Unit = {},
 ) {
+    val selectedCatalog = (state.listing as? AnimeSourceScreenModel.Listing.Search)
+        ?.takeIf { it.query.isBlank() }
+        ?.let { tabs?.let { t -> runCatching { t.selectedCatalog(state.filters) }.getOrNull() } }
     Row(
         modifier = Modifier
             .horizontalScroll(rememberScrollState())
@@ -402,7 +414,7 @@ private fun ListingChips(
             leadingIcon = {
                 Icon(Icons.Outlined.Favorite, null, Modifier.size(FilterChipDefaults.IconSize))
             },
-            label = { Text(text = stringResource(MR.strings.popular)) },
+            label = { Text(text = tabs?.tabNames?.popular ?: stringResource(MR.strings.popular)) },
         )
         if (supportsLatest) {
             FilterChip(
@@ -411,11 +423,18 @@ private fun ListingChips(
                 leadingIcon = {
                     Icon(Icons.Outlined.NewReleases, null, Modifier.size(FilterChipDefaults.IconSize))
                 },
-                label = { Text(text = stringResource(MR.strings.latest)) },
+                label = { Text(text = tabs?.tabNames?.latest ?: stringResource(MR.strings.latest)) },
+            )
+        }
+        tabs?.catalogTabs.orEmpty().forEach { catalog ->
+            FilterChip(
+                selected = selectedCatalog == catalog.id,
+                onClick = { onCatalog(catalog.id) },
+                label = { Text(text = catalog.name) },
             )
         }
         FilterChip(
-            selected = state.listing is AnimeSourceScreenModel.Listing.Search,
+            selected = state.listing is AnimeSourceScreenModel.Listing.Search && selectedCatalog == null,
             onClick = onFilter,
             leadingIcon = {
                 Icon(Icons.Outlined.FilterList, null, Modifier.size(FilterChipDefaults.IconSize))
