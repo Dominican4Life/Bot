@@ -183,6 +183,12 @@ open class BrowseSourceScreenModel(
                 search(filters = filters)
             }
         }
+        // KMK: a source whose tab catalogs replace Popular and Latest opens on one of them
+        if (savedSearchId == null && jsonFilters == null &&
+            (state.value.listing == Listing.Popular || state.value.listing == Listing.Latest)
+        ) {
+            showHomeTab()
+        }
 
         getExhSavedSearch.subscribe(source.id, source::getFilterList)
             .map { it.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER, EXHSavedSearch::name)) }
@@ -302,8 +308,16 @@ open class BrowseSourceScreenModel(
         val tabs = source as? SumizuriTabs ?: return
         val filters = source.getFilterList()
         if (runCatching { tabs.selectCatalog(filters, id) }.getOrNull() != true) return
+        runCatching { tabs.rememberTab(id) }
         setFilters(filters)
         setListing(Listing.Search(query = null, filters = filters))
+    }
+
+    /** For a source with tab catalogs: opens the one used last (or the first). False when it has none */
+    fun showHomeTab(): Boolean {
+        val id = runCatching { (source as? SumizuriTabs)?.homeTab() }.getOrNull() ?: return false
+        showCatalog(id)
+        return true
     }
     // KMK <--
 

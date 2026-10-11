@@ -129,7 +129,9 @@ class AnimeSourceScreen(
         LaunchedEffect(Unit) {
             when {
                 !initialQuery.isNullOrBlank() -> screenModel.search(initialQuery)
-                initialLatest -> screenModel.setListing(AnimeSourceScreenModel.Listing.Latest)
+                // KMK: a source with tab catalogs already opened on one
+                initialLatest && (source as? SumizuriTabs)?.hasCatalogTabs != true ->
+                    screenModel.setListing(AnimeSourceScreenModel.Listing.Latest)
             }
         }
 
@@ -181,7 +183,10 @@ class AnimeSourceScreen(
                             navigateUp = {
                                 if (searchQuery != null) {
                                     searchQuery = null
-                                    screenModel.setListing(AnimeSourceScreenModel.Listing.Popular)
+                                    // KMK: back to the tab catalog, for a source that has them
+                                    if (!screenModel.showHomeTab()) {
+                                        screenModel.setListing(AnimeSourceScreenModel.Listing.Popular)
+                                    }
                                 } else {
                                     navigator.pop()
                                 }
@@ -408,23 +413,26 @@ private fun ListingChips(
             .padding(horizontal = MaterialTheme.padding.small),
         horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
     ) {
-        FilterChip(
-            selected = state.listing == AnimeSourceScreenModel.Listing.Popular,
-            onClick = onPopular,
-            leadingIcon = {
-                Icon(Icons.Outlined.Favorite, null, Modifier.size(FilterChipDefaults.IconSize))
-            },
-            label = { Text(text = tabs?.tabNames?.popular ?: stringResource(MR.strings.popular)) },
-        )
-        if (supportsLatest) {
+        // KMK: tab catalogs replace Popular and Latest
+        if (tabs?.hasCatalogTabs != true) {
             FilterChip(
-                selected = state.listing == AnimeSourceScreenModel.Listing.Latest,
-                onClick = onLatest,
+                selected = state.listing == AnimeSourceScreenModel.Listing.Popular,
+                onClick = onPopular,
                 leadingIcon = {
-                    Icon(Icons.Outlined.NewReleases, null, Modifier.size(FilterChipDefaults.IconSize))
+                    Icon(Icons.Outlined.Favorite, null, Modifier.size(FilterChipDefaults.IconSize))
                 },
-                label = { Text(text = tabs?.tabNames?.latest ?: stringResource(MR.strings.latest)) },
+                label = { Text(text = tabs?.tabNames?.popular ?: stringResource(MR.strings.popular)) },
             )
+            if (supportsLatest) {
+                FilterChip(
+                    selected = state.listing == AnimeSourceScreenModel.Listing.Latest,
+                    onClick = onLatest,
+                    leadingIcon = {
+                        Icon(Icons.Outlined.NewReleases, null, Modifier.size(FilterChipDefaults.IconSize))
+                    },
+                    label = { Text(text = tabs?.tabNames?.latest ?: stringResource(MR.strings.latest)) },
+                )
+            }
         }
         tabs?.catalogTabs.orEmpty().forEach { catalog ->
             FilterChip(

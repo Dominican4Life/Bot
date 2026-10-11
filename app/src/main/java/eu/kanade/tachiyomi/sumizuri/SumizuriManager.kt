@@ -180,7 +180,18 @@ class SumizuriManager(private val context: Application) {
     }
     // KMK <--
 
+    // KMK --> the tab catalog each source was last opened on
+    private val tabPrefs by lazy { context.getSharedPreferences("sumizuri_tabs", android.content.Context.MODE_PRIVATE) }
+
+    fun lastTab(key: String): String? = runCatching { tabPrefs.getString(key, null) }.getOrNull()
+
+    fun rememberTab(key: String, id: String) {
+        runCatching { tabPrefs.edit().putString(key, id).apply() }
+    }
+    // KMK <--
+
     fun delete(key: String) {
+        runCatching { tabPrefs.edit().remove(key).apply() }
         invalidate(key)
         dir(key).deleteRecursively()
         File(context.filesDir, "sumizuri_storage/$key").deleteRecursively()

@@ -139,6 +139,10 @@ class SumizuriMangaSource(
     override fun selectedCatalog(filters: Iterable<*>): String? =
         filters.filterIsInstance<CatalogFilter>().firstOrNull()?.selected()?.id
 
+    override fun lastTab(): String? = manager.lastTab(info.key)
+
+    override fun rememberTab(id: String) = manager.rememberTab(info.key, id)
+
     override fun getFilterList(): FilterList {
         // KMK: the tag boxes' suggestions are read from the site in the background, when missing or old
         if (groups.any { it.type == SumizuriFilters.Type.AutoComplete }) manager.tags.ensure(info)

@@ -33,7 +33,8 @@ class AnimeSourceScreenModel(
 
     init {
         mutableState.update { it.copy(filters = source?.getFilterList() ?: AnimeFilterList()) }
-        loadNextPage()
+        // KMK: a source whose tab catalogs replace Popular and Latest opens on one of them
+        if (!showHomeTab()) loadNextPage()
     }
 
     fun setListing(listing: Listing) {
@@ -64,8 +65,16 @@ class AnimeSourceScreenModel(
         val tabs = source as? SumizuriTabs ?: return
         val filters = source.getFilterList()
         if (runCatching { tabs.selectCatalog(filters, id) }.getOrNull() != true) return
+        runCatching { tabs.rememberTab(id) }
         mutableState.update { it.copy(filters = filters) }
         setListingForce(Listing.Search(""))
+    }
+
+    /** For a source with tab catalogs: opens the one used last (or the first). False when it has none */
+    fun showHomeTab(): Boolean {
+        val id = runCatching { (source as? SumizuriTabs)?.homeTab() }.getOrNull() ?: return false
+        showCatalog(id)
+        return true
     }
     // KMK <--
 

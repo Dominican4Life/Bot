@@ -333,43 +333,46 @@ data class BrowseSourceScreen(
                                 .padding(horizontal = MaterialTheme.padding.small),
                             horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
                         ) {
-                            FilterChip(
-                                selected = state.listing == Listing.Popular,
-                                onClick = {
-                                    screenModel.resetFilters()
-                                    screenModel.setListing(Listing.Popular)
-                                },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Outlined.Favorite,
-                                        contentDescription = null,
-                                        modifier = Modifier
-                                            .size(FilterChipDefaults.IconSize),
-                                    )
-                                },
-                                label = {
-                                    Text(text = sourceTabs?.tabNames?.popular ?: stringResource(MR.strings.popular))
-                                },
-                            )
-                            if (screenModel.source.supportsLatest) {
+                            // KMK: tab catalogs replace Popular and Latest
+                            if (sourceTabs?.hasCatalogTabs != true) {
                                 FilterChip(
-                                    selected = state.listing == Listing.Latest,
+                                    selected = state.listing == Listing.Popular,
                                     onClick = {
                                         screenModel.resetFilters()
-                                        screenModel.setListing(Listing.Latest)
+                                        screenModel.setListing(Listing.Popular)
                                     },
                                     leadingIcon = {
                                         Icon(
-                                            imageVector = Icons.Outlined.NewReleases,
+                                            imageVector = Icons.Outlined.Favorite,
                                             contentDescription = null,
                                             modifier = Modifier
                                                 .size(FilterChipDefaults.IconSize),
                                         )
                                     },
                                     label = {
-                                        Text(text = sourceTabs?.tabNames?.latest ?: stringResource(MR.strings.latest))
+                                        Text(text = sourceTabs?.tabNames?.popular ?: stringResource(MR.strings.popular))
                                     },
                                 )
+                                if (screenModel.source.supportsLatest) {
+                                    FilterChip(
+                                        selected = state.listing == Listing.Latest,
+                                        onClick = {
+                                            screenModel.resetFilters()
+                                            screenModel.setListing(Listing.Latest)
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = Icons.Outlined.NewReleases,
+                                                contentDescription = null,
+                                                modifier = Modifier
+                                                    .size(FilterChipDefaults.IconSize),
+                                            )
+                                        },
+                                        label = {
+                                            Text(text = sourceTabs?.tabNames?.latest ?: stringResource(MR.strings.latest))
+                                        },
+                                    )
+                                }
                             }
                             // KMK -->
                             sourceTabs?.catalogTabs.orEmpty().forEach { catalog ->

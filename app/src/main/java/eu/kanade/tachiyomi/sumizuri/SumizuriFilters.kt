@@ -36,8 +36,8 @@ internal object SumizuriFilters {
         val tagLists: List<String> = emptyList(),
     )
 
-    /** [tab]: also shown as a button beside Popular and Latest (a catalog can turn it off with "tab": false) */
-    data class Catalog(val id: String, val name: String, val tab: Boolean = true)
+    /** [tab]: shown as a button at the top of Browse ("tab": true), not only in the filter sheet */
+    data class Catalog(val id: String, val name: String, val tab: Boolean = false)
 
     fun groups(element: JsonElement?): List<Group> = SumizuriMapping.list(element ?: return emptyList()).mapNotNull { obj ->
         val key = obj.str("key") ?: return@mapNotNull null
@@ -76,7 +76,7 @@ internal object SumizuriFilters {
 
     fun catalogs(element: JsonElement?): List<Catalog> = SumizuriMapping.list(element ?: return emptyList()).mapNotNull { obj ->
         val id = obj.str("id") ?: return@mapNotNull null
-        Catalog(id, obj.str("name") ?: id, tab = obj.bool("tab") != false)
+        Catalog(id, obj.str("name") ?: id, tab = obj.bool("tab") == true)
     }
 
     /**
