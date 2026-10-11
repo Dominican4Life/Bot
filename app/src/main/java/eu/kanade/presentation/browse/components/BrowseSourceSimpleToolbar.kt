@@ -1,5 +1,6 @@
 package eu.kanade.presentation.browse.components
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.ViewModule
@@ -10,6 +11,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.window.PopupProperties
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarActions
 import eu.kanade.presentation.components.DropdownMenu
@@ -62,9 +64,13 @@ fun BrowseSourceSimpleToolbar(
                     .build(),
             )
             // KMK <--
+            // KMK: Back closes the menu
+            BackHandler(enabled = selectingDisplayMode) { selectingDisplayMode = false }
             DropdownMenu(
                 expanded = selectingDisplayMode,
                 onDismissRequest = { selectingDisplayMode = false },
+                // KMK: not focusable, so closing it doesn't hand focus back to the screen and flash the keyboard
+                properties = PopupProperties(focusable = false),
             ) {
                 // KMK -->
                 RadioMenuItem(

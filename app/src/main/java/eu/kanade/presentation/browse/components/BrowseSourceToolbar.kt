@@ -1,5 +1,6 @@
 package eu.kanade.presentation.browse.components
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +30,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.PopupProperties
 import androidx.core.graphics.drawable.toBitmap
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.domain.ui.UiPreferences
@@ -168,9 +170,13 @@ fun BrowseSourceToolbar(
                     .build(),
             )
 
+            // KMK: Back closes the menu
+            BackHandler(enabled = selectingDisplayMode) { selectingDisplayMode = false }
             DropdownMenu(
                 expanded = selectingDisplayMode,
                 onDismissRequest = { selectingDisplayMode = false },
+                // KMK: not focusable, so closing it doesn't hand focus back to the screen and flash the keyboard
+                properties = PopupProperties(focusable = false),
             ) {
                 RadioMenuItem(
                     text = { Text(text = stringResource(MR.strings.action_display_comfortable_grid)) },
