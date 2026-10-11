@@ -180,7 +180,7 @@ object ReaderVideos {
     suspend fun play(context: Context, page: ReaderPage) {
         val chapter = page.chapter.chapter
         val (animeId, episodeId) = withIOContext {
-            val manga = Injekt.get<GetManga>().await(chapter.mangaId)
+            val manga = chapter.manga_id?.let { Injekt.get<GetManga>().await(it) }
             val pages = page.chapter.pages.orEmpty().ifEmpty { listOf(page) }
             val sAnime = SAnime.create().apply {
                 url = "${manga?.source ?: 0}\n${chapter.url}"
