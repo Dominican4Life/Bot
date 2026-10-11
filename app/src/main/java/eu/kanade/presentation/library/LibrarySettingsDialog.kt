@@ -36,11 +36,13 @@ import eu.kanade.presentation.components.TabbedDialog
 import eu.kanade.presentation.components.TabbedDialogPaddings
 import eu.kanade.presentation.more.settings.widget.TriStateListDialog
 import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.ui.library.AnimeLibraryScreenModel
 import eu.kanade.tachiyomi.ui.library.LibrarySettingsScreenModel
 import eu.kanade.tachiyomi.util.system.isReleaseBuildType
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.flow.map
+import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.TriState
 import tachiyomi.core.common.preference.toggle
 import tachiyomi.domain.category.model.Category
@@ -50,6 +52,7 @@ import tachiyomi.domain.library.model.LibrarySort
 import tachiyomi.domain.library.model.sort
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.i18n.MR
+import tachiyomi.i18n.ank.AMR
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.i18n.sy.SYMR
 import tachiyomi.presentation.core.components.BaseSortItem
@@ -75,8 +78,38 @@ fun LibrarySettingsDialog(
     // SY <--
     // KMK -->
     categories: List<Category>,
+    showingAnime: Boolean = false,
+    animeCategories: List<Category> = emptyList(),
     // KMK <--
 ) {
+    // KMK -->
+    // The anime library has its own filter, sort and group options (the ones Anikku has)
+    if (showingAnime) {
+        TabbedDialog(
+            onDismissRequest = onDismissRequest,
+            tabTitles = persistentListOf(
+                stringResource(MR.strings.action_filter),
+                stringResource(MR.strings.action_sort),
+                stringResource(MR.strings.action_display),
+                stringResource(SYMR.strings.group),
+            ),
+        ) { page ->
+            Column(
+                modifier = Modifier
+                    .padding(vertical = TabbedDialogPaddings.Vertical)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                when (page) {
+                    0 -> AnimeFilterPage(screenModel = screenModel, categories = animeCategories)
+                    1 -> AnimeSortPage(screenModel = screenModel)
+                    2 -> DisplayPage(screenModel = screenModel, showingAnime = true)
+                    3 -> AnimeGroupPage(screenModel = screenModel, hasCategories = animeCategories.isNotEmpty())
+                }
+            }
+        }
+        return
+    }
+    // KMK <--
     TabbedDialog(
         onDismissRequest = onDismissRequest,
         tabTitles = persistentListOf(
@@ -182,7 +215,9 @@ private fun ColumnScope.FilterPage(
 
     // KMK -->
     CategoriesFilter(
-        libraryPreferences = screenModel.libraryPreferences,
+        filterCategories = screenModel.libraryPreferences.filterCategories(),
+        filterCategoriesInclude = screenModel.libraryPreferences.filterCategoriesInclude(),
+        filterCategoriesExclude = screenModel.libraryPreferences.filterCategoriesExclude(),
         categories = categories,
     )
     // KMK <--
@@ -214,6 +249,154 @@ private fun ColumnScope.FilterPage(
         }
     }
 }
+
+// KMK -->
+/** The filters Anikku's library has, for the anime half of the library */
+@Suppress("UnusedReceiverParameter")
+@Composable
+private fun ColumnScope.AnimeFilterPage(
+    screenModel: LibrarySettingsScreenModel,
+    categories: List<Category>,
+) {
+    val filterDownloaded by screenModel.libraryPreferences.animeFilterDownloaded().collectAsState()
+    val downloadedOnly by screenModel.preferences.downloadedOnly().collectAsState()
+    TriStateItem(
+        label = stringResource(MR.strings.label_downloaded),
+        state = if (downloadedOnly) {
+            TriState.ENABLED_IS
+        } else {
+            filterDownloaded
+        },
+        enabled = !downloadedOnly,
+        onClick = { screenModel.toggleFilter(LibraryPreferences::animeFilterDownloaded) },
+    )
+    val filterUnseen by screenModel.libraryPreferences.animeFilterUnseen().collectAsState()
+    TriStateItem(
+        label = stringResource(KMR.strings.anime_filter_unseen),
+        state = filterUnseen,
+        onClick = { screenModel.toggleFilter(LibraryPreferences::animeFilterUnseen) },
+    )
+    val filterStarted by screenModel.libraryPreferences.animeFilterStarted().collectAsState()
+    TriStateItem(
+        label = stringResource(MR.strings.label_started),
+        state = filterStarted,
+        onClick = { screenModel.toggleFilter(LibraryPreferences::animeFilterStarted) },
+    )
+    val filterBookmarked by screenModel.libraryPreferences.animeFilterBookmarked().collectAsState()
+    TriStateItem(
+        label = stringResource(MR.strings.action_filter_bookmarked),
+        state = filterBookmarked,
+        onClick = { screenModel.toggleFilter(LibraryPreferences::animeFilterBookmarked) },
+    )
+    val filterCompleted by screenModel.libraryPreferences.animeFilterCompleted().collectAsState()
+    TriStateItem(
+        label = stringResource(MR.strings.completed),
+        state = filterCompleted,
+        onClick = { screenModel.toggleFilter(LibraryPreferences::animeFilterCompleted) },
+    )
+    val filterLewd by screenModel.libraryPreferences.animeFilterLewd().collectAsState()
+    TriStateItem(
+        label = stringResource(SYMR.strings.lewd),
+        state = filterLewd,
+        onClick = { screenModel.toggleFilter(LibraryPreferences::animeFilterLewd) },
+    )
+
+    CategoriesFilter(
+        filterCategories = screenModel.libraryPreferences.animeFilterCategories(),
+        filterCategoriesInclude = screenModel.libraryPreferences.animeFilterCategoriesInclude(),
+        filterCategoriesExclude = screenModel.libraryPreferences.animeFilterCategoriesExclude(),
+        categories = categories,
+    )
+}
+
+/** Anikku's sort options (tracker score is left for when anime tracking exists) */
+@Suppress("UnusedReceiverParameter")
+@Composable
+private fun ColumnScope.AnimeSortPage(
+    screenModel: LibrarySettingsScreenModel,
+) {
+    val sort by screenModel.libraryPreferences.animeSortingMode().collectAsState()
+    val sortingMode = sort.type
+    val sortDescending = !sort.isAscending
+    val hasSortTags by remember {
+        screenModel.libraryPreferences.sortTagsForLibrary().changes()
+            .map { it.isNotEmpty() }
+    }.collectAsState(initial = screenModel.libraryPreferences.sortTagsForLibrary().get().isNotEmpty())
+
+    val options = remember(hasSortTags) {
+        listOfNotNull(
+            MR.strings.action_sort_alpha to LibrarySort.Type.Alphabetical,
+            KMR.strings.anime_sort_total_episodes to LibrarySort.Type.TotalChapters,
+            KMR.strings.anime_sort_last_seen to LibrarySort.Type.LastRead,
+            AMR.strings.action_sort_last_update_check to LibrarySort.Type.LastUpdate,
+            KMR.strings.anime_sort_unseen_count to LibrarySort.Type.UnreadCount,
+            KMR.strings.anime_sort_latest_episode to LibrarySort.Type.LatestChapter,
+            KMR.strings.anime_sort_episode_fetch_date to LibrarySort.Type.ChapterFetchDate,
+            MR.strings.action_sort_date_added to LibrarySort.Type.DateAdded,
+            KMR.strings.anime_sort_airing_time to LibrarySort.Type.AiringTime,
+            (SYMR.strings.tag_sorting to LibrarySort.Type.TagList).takeIf { hasSortTags },
+            MR.strings.action_sort_random to LibrarySort.Type.Random,
+        )
+    }
+
+    options.map { (titleRes, mode) ->
+        if (mode == LibrarySort.Type.Random) {
+            BaseSortItem(
+                label = stringResource(titleRes),
+                icon = Icons.Default.Refresh
+                    .takeIf { sortingMode == LibrarySort.Type.Random },
+                onClick = {
+                    screenModel.setAnimeSort(mode, LibrarySort.Direction.Ascending)
+                },
+            )
+            return@map
+        }
+        SortItem(
+            label = stringResource(titleRes),
+            sortDescending = sortDescending.takeIf { sortingMode == mode },
+            onClick = {
+                // Tapping the current mode flips its direction; a new mode keeps the direction
+                val descending = if (sortingMode == mode) !sortDescending else sortDescending
+                screenModel.setAnimeSort(
+                    mode,
+                    if (descending) LibrarySort.Direction.Descending else LibrarySort.Direction.Ascending,
+                )
+            },
+        )
+    }
+}
+
+/** Anikku's group options */
+@Suppress("UnusedReceiverParameter")
+@Composable
+private fun ColumnScope.AnimeGroupPage(
+    screenModel: LibrarySettingsScreenModel,
+    hasCategories: Boolean,
+) {
+    val groups = remember(hasCategories) {
+        listOfNotNull(
+            GroupMode(LibraryGroup.BY_DEFAULT, MR.strings.categories, R.drawable.ic_label_24dp),
+            GroupMode(LibraryGroup.BY_SOURCE, MR.strings.label_sources, R.drawable.ic_browse_filled_24dp),
+            GroupMode(AnimeLibraryScreenModel.GROUP_BY_TAG, AMR.strings.tag, R.drawable.ic_tag_24dp),
+            GroupMode(LibraryGroup.BY_STATUS, MR.strings.status, R.drawable.ic_progress_clock_24dp),
+            // Like the manga library: only offered once there are categories to ungroup
+            GroupMode(LibraryGroup.UNGROUPED, SYMR.strings.ungrouped, R.drawable.ic_ungroup_24dp)
+                .takeIf { hasCategories || screenModel.animeGrouping == LibraryGroup.UNGROUPED },
+        ).toImmutableList()
+    }
+
+    groups.fastForEach {
+        IconItem(
+            label = stringResource(it.nameRes),
+            icon = painterResource(it.drawableRes),
+            selected = it.int == screenModel.animeGrouping,
+            onClick = {
+                screenModel.setAnimeGrouping(it.int)
+            },
+        )
+    }
+}
+// KMK <--
 
 @Suppress("UnusedReceiverParameter")
 @Composable
@@ -319,13 +502,29 @@ private val displayModes = listOf(
 @Composable
 private fun ColumnScope.DisplayPage(
     screenModel: LibrarySettingsScreenModel,
+    // KMK -->
+    showingAnime: Boolean = false,
+    // KMK <--
 ) {
-    val displayMode by screenModel.libraryPreferences.displayMode().collectAsState()
+    // KMK -->
+    // The anime library keeps its own display settings
+    val prefs = screenModel.libraryPreferences
+    val displayModePref = if (showingAnime) prefs.animeDisplayMode() else prefs.displayMode()
+    // KMK <--
+    val displayMode by displayModePref.collectAsState()
     SettingsChipRow(MR.strings.action_display_mode) {
         displayModes.map { (titleRes, mode) ->
             FilterChip(
                 selected = displayMode == mode,
-                onClick = { screenModel.setDisplayMode(mode) },
+                onClick = {
+                    // KMK -->
+                    if (showingAnime) {
+                        displayModePref.set(mode)
+                    } else {
+                        // KMK <--
+                        screenModel.setDisplayMode(mode)
+                    }
+                },
                 label = { Text(stringResource(titleRes)) },
             )
         }
@@ -334,10 +533,15 @@ private fun ColumnScope.DisplayPage(
     if (displayMode != LibraryDisplayMode.List) {
         val configuration = LocalConfiguration.current
         val columnPreference = remember {
-            if (configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
-                screenModel.libraryPreferences.landscapeColumns()
+            val landscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+            // KMK -->
+            if (showingAnime) {
+                if (landscape) prefs.animeLandscapeColumns() else prefs.animePortraitColumns()
+            } else if (landscape) {
+                // KMK <--
+                prefs.landscapeColumns()
             } else {
-                screenModel.libraryPreferences.portraitColumns()
+                prefs.portraitColumns()
             }
         }
 
@@ -359,53 +563,64 @@ private fun ColumnScope.DisplayPage(
 
     HeadingItem(MR.strings.overlay_header)
     CheckboxItem(
-        label = stringResource(MR.strings.action_display_download_badge),
-        pref = screenModel.libraryPreferences.downloadBadge(),
+        label = stringResource(
+            if (showingAnime) KMR.strings.anime_display_download_badge else MR.strings.action_display_download_badge,
+        ),
+        pref = if (showingAnime) prefs.animeDownloadBadge() else prefs.downloadBadge(),
     )
     CheckboxItem(
-        label = stringResource(MR.strings.action_display_unread_badge),
-        pref = screenModel.libraryPreferences.unreadBadge(),
+        label = stringResource(
+            if (showingAnime) AMR.strings.action_display_unseen_badge else MR.strings.action_display_unread_badge,
+        ),
+        pref = if (showingAnime) prefs.animeUnseenBadge() else prefs.unreadBadge(),
     )
     CheckboxItem(
         label = stringResource(MR.strings.action_display_local_badge),
-        pref = screenModel.libraryPreferences.localBadge(),
+        pref = if (showingAnime) prefs.animeLocalBadge() else prefs.localBadge(),
     )
+    val languageBadgePref = if (showingAnime) prefs.animeLanguageBadge() else prefs.languageBadge()
     CheckboxItem(
         label = stringResource(MR.strings.action_display_language_badge),
-        pref = screenModel.libraryPreferences.languageBadge(),
+        pref = languageBadgePref,
     )
     // KMK -->
-    val showLang by screenModel.libraryPreferences.languageBadge().collectAsState()
+    val showLang by languageBadgePref.collectAsState()
     if (showLang) {
         CheckboxItem(
             label = stringResource(KMR.strings.action_display_language_icon),
-            pref = screenModel.libraryPreferences.useLangIcon(),
+            pref = if (showingAnime) prefs.animeUseLangIcon() else prefs.useLangIcon(),
         )
     }
     CheckboxItem(
         label = stringResource(KMR.strings.action_display_source_badge),
-        pref = screenModel.libraryPreferences.sourceBadge(),
+        pref = if (showingAnime) prefs.animeSourceBadge() else prefs.sourceBadge(),
     )
     // KMK <--
     CheckboxItem(
-        label = stringResource(MR.strings.action_display_show_continue_reading_button),
-        pref = screenModel.libraryPreferences.showContinueReadingButton(),
+        label = stringResource(
+            if (showingAnime) {
+                AMR.strings.action_display_show_continue_watching_button
+            } else {
+                MR.strings.action_display_show_continue_reading_button
+            },
+        ),
+        pref = if (showingAnime) prefs.animeShowContinueWatchingButton() else prefs.showContinueReadingButton(),
     )
 
     HeadingItem(MR.strings.tabs_header)
     CheckboxItem(
         label = stringResource(MR.strings.action_display_show_tabs),
-        pref = screenModel.libraryPreferences.categoryTabs(),
+        pref = if (showingAnime) prefs.animeCategoryTabs() else prefs.categoryTabs(),
     )
     // KMK -->
     CheckboxItem(
         label = stringResource(KMR.strings.action_show_hidden_categories),
-        pref = screenModel.libraryPreferences.showHiddenCategories(),
+        pref = if (showingAnime) prefs.animeShowHiddenCategories() else prefs.showHiddenCategories(),
     )
     // KMK <--
     CheckboxItem(
         label = stringResource(MR.strings.action_display_show_number_of_items),
-        pref = screenModel.libraryPreferences.categoryNumberOfItems(),
+        pref = if (showingAnime) prefs.animeCategoryNumberOfItems() else prefs.categoryNumberOfItems(),
     )
 }
 
@@ -469,13 +684,13 @@ private fun ColumnScope.GroupPage(
 // KMK -->
 @Composable
 private fun CategoriesFilter(
-    libraryPreferences: LibraryPreferences,
+    filterCategories: Preference<Boolean>,
+    filterCategoriesInclude: Preference<Set<String>>,
+    filterCategoriesExclude: Preference<Set<String>>,
     categories: List<Category>,
 ) {
-    val filterCategories by libraryPreferences.filterCategories().collectAsState()
+    val isFiltering by filterCategories.collectAsState()
 
-    val filterCategoriesInclude = libraryPreferences.filterCategoriesInclude()
-    val filterCategoriesExclude = libraryPreferences.filterCategoriesExclude()
     val included by filterCategoriesInclude.collectAsState()
     val excluded by filterCategoriesExclude.collectAsState()
 
@@ -499,14 +714,14 @@ private fun CategoriesFilter(
 
     Row(
         modifier = Modifier
-            .clickable(onClick = { libraryPreferences.filterCategories().toggle() })
+            .clickable(onClick = { filterCategories.toggle() })
             .fillMaxWidth()
             .padding(horizontal = SettingsItemsPaddings.Horizontal),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(24.dp),
     ) {
         Checkbox(
-            checked = filterCategories,
+            checked = isFiltering,
             onCheckedChange = null,
         )
         Text(

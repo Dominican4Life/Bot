@@ -1,5 +1,7 @@
 package eu.kanade.tachiyomi.data.backup.create.creators
 
+import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
+import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.data.backup.models.BackupPreference
 import eu.kanade.tachiyomi.data.backup.models.BackupSourcePreferences
 import eu.kanade.tachiyomi.data.backup.models.BooleanPreferenceValue
@@ -16,6 +18,7 @@ import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.domain.source.service.SourceManager
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import eu.kanade.tachiyomi.animesource.preferenceKey as animePreferenceKey
 
 class PreferenceBackupCreator(
     private val sourceManager: SourceManager = Injekt.get(),
@@ -39,6 +42,22 @@ class PreferenceBackupCreator(
             }
             .filter { it.prefs.isNotEmpty() }
     }
+
+    // KMK -->
+    /** The settings of the installed anime sources, for the anime backup */
+    fun createAnimeSource(includePrivatePreferences: Boolean): List<BackupSourcePreferences> {
+        return Injekt.get<AnimeSourceManager>().getCatalogueSources()
+            .filterIsInstance<ConfigurableAnimeSource>()
+            .map {
+                BackupSourcePreferences(
+                    it.animePreferenceKey(),
+                    it.getSourcePreferences().all.toBackupPreferences()
+                        .withPrivatePreferences(includePrivatePreferences),
+                )
+            }
+            .filter { it.prefs.isNotEmpty() }
+    }
+    // KMK <--
 
     @Suppress("UNCHECKED_CAST")
     private fun Map<String, *>.toBackupPreferences(): List<BackupPreference> {

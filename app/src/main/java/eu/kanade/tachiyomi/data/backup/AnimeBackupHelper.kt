@@ -74,7 +74,7 @@ class AnimeBackupHelper(
     suspend fun createStores(): List<BackupExtensionStore> =
         storeRepository.getAll().map(backupExtensionStoreMapper)
 
-    suspend fun restoreAnime(backup: BackupAnime) {
+    suspend fun restoreAnime(backup: BackupAnime): Anime {
         val anime = repository.restoreAnime(
             Anime(
                 id = -1L,
@@ -120,6 +120,7 @@ class AnimeBackupHelper(
             },
             history = backup.history.associate { it.episodeUrl to it.lastSeen },
         )
+        return anime
     }
 
     fun restoreStore(backupStore: BackupExtensionStore) {

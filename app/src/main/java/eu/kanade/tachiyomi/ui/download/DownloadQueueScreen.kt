@@ -2,7 +2,10 @@ package eu.kanade.tachiyomi.ui.download
 
 import android.view.LayoutInflater
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -11,6 +14,7 @@ import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SmallExtendedFloatingActionButton
@@ -25,6 +29,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -45,20 +50,28 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
+import dev.icerock.moko.resources.StringResource
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarActions
 import eu.kanade.presentation.components.DropdownMenu
 import eu.kanade.presentation.components.NestedMenuItem
 import eu.kanade.presentation.theme.colorscheme.AndroidViewColorScheme
 import eu.kanade.presentation.util.Screen
+import eu.kanade.tachiyomi.data.anime.download.AnimeDownloadManager
 import eu.kanade.tachiyomi.databinding.DownloadListBinding
-import kotlinx.collections.immutable.persistentListOf
+import eu.kanade.tachiyomi.ui.anime.AnimeDownloadQueueList
+import eu.kanade.tachiyomi.ui.anime.AnimeScreen
+import kotlinx.collections.immutable.toPersistentList
 import tachiyomi.core.common.util.lang.launchUI
 import tachiyomi.i18n.MR
+import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.components.Pill
 import tachiyomi.presentation.core.components.material.Scaffold
+import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.EmptyScreen
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import kotlin.math.roundToInt
 
 object DownloadQueueScreen : Screen() {
@@ -80,6 +93,18 @@ object DownloadQueueScreen : Screen() {
         val downloadCount by remember {
             derivedStateOf { downloadList.sumOf { it.subItems.size } }
         }
+        // KMK -->
+        // Manga and anime downloads share this screen; the buttons at the top pick which queue is listed
+        val animeManager = remember { Injekt.get<AnimeDownloadManager>() }
+        val animeQueue by animeManager.queue.collectAsState()
+        var filter by rememberSaveable { mutableStateOf(QueueFilter.All) }
+        val showManga = filter != QueueFilter.Anime && downloadList.isNotEmpty()
+        val showAnime = filter != QueueFilter.Manga && animeQueue.isNotEmpty()
+        val shownCount = (if (filter != QueueFilter.Anime) downloadCount else 0) +
+            (if (filter != QueueFilter.Manga) animeQueue.size else 0)
+        // The manga list can be built again when the buttons bring it back; its listeners start once
+        var mangaListenersStarted by remember { mutableStateOf(false) }
+        // KMK <--
 
         val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior(rememberTopAppBarState())
         var fabExpanded by remember { mutableStateOf(true) }
@@ -116,10 +141,10 @@ object DownloadQueueScreen : Screen() {
                                 modifier = Modifier.weight(1f, false),
                                 overflow = TextOverflow.Ellipsis,
                             )
-                            if (downloadCount > 0) {
+                            if (/* KMK --> */ shownCount /* KMK <-- */ > 0) {
                                 val pillAlpha = if (isSystemInDarkTheme()) 0.12f else 0.08f
                                 Pill(
-                                    text = "$downloadCount",
+                                    text = "$shownCount",
                                     modifier = Modifier.padding(start = 4.dp),
                                     color = MaterialTheme.colorScheme.onBackground
                                         .copy(alpha = pillAlpha),
@@ -130,7 +155,7 @@ object DownloadQueueScreen : Screen() {
                     },
                     navigateUp = navigator::pop,
                     actions = {
-                        if (downloadList.isNotEmpty()) {
+                        if (/* KMK --> */ showManga || showAnime /* KMK <-- */) {
                             var sortExpanded by remember { mutableStateOf(false) }
                             val onDismissRequest = { sortExpanded = false }
                             DropdownMenu(
@@ -190,17 +215,24 @@ object DownloadQueueScreen : Screen() {
                             }
 
                             AppBarActions(
-                                persistentListOf(
+                                // KMK -->
+                                listOfNotNull(
+                                    // Sorting is the manga queue's
                                     AppBar.Action(
                                         title = stringResource(MR.strings.action_sort),
                                         icon = Icons.AutoMirrored.Outlined.Sort,
                                         onClick = { sortExpanded = true },
-                                    ),
+                                    ).takeIf { showManga },
+                                    // Cancels the queues that are listed
                                     AppBar.OverflowAction(
                                         title = stringResource(MR.strings.action_cancel_all),
-                                        onClick = { screenModel.clearQueue() },
+                                        onClick = {
+                                            if (filter != QueueFilter.Anime) screenModel.clearQueue()
+                                            if (filter != QueueFilter.Manga) animeManager.cancelAll()
+                                        },
                                     ),
-                                ),
+                                ).toPersistentList(),
+                                // KMK <--
                             )
                         }
                     },
@@ -235,72 +267,133 @@ object DownloadQueueScreen : Screen() {
                     },
                     expanded = fabExpanded,
                     modifier = Modifier.animateFloatingActionButton(
-                        visible = downloadList.isNotEmpty(),
+                        // KMK: pausing and resuming is the manga downloader's
+                        visible = showManga,
                         alignment = Alignment.BottomEnd,
                     ),
                 )
             },
         ) { contentPadding ->
-            if (downloadList.isEmpty()) {
-                EmptyScreen(
-                    stringRes = MR.strings.information_no_downloads,
-                    modifier = Modifier.padding(contentPadding),
-                )
-                return@Scaffold
-            }
-
             val density = LocalDensity.current
             val layoutDirection = LocalLayoutDirection.current
             val left = with(density) { contentPadding.calculateLeftPadding(layoutDirection).toPx().roundToInt() }
-            val top = with(density) { contentPadding.calculateTopPadding().toPx().roundToInt() }
             val right = with(density) { contentPadding.calculateRightPadding(layoutDirection).toPx().roundToInt() }
             val bottom = with(density) { contentPadding.calculateBottomPadding().toPx().roundToInt() }
 
             // KMK -->
             val colorScheme = AndroidViewColorScheme(MaterialTheme.colorScheme)
-            // KMK <--
 
-            Box(modifier = Modifier.nestedScroll(nestedScrollConnection)) {
-                AndroidView(
-                    modifier = Modifier.fillMaxWidth(),
-                    factory = { context ->
-                        screenModel.controllerBinding = DownloadListBinding.inflate(LayoutInflater.from(context))
-                        screenModel.adapter = DownloadAdapter(
-                            screenModel.listener,
-                            // KMK -->
-                            colorScheme,
-                            // KMK <--
+            Column(modifier = Modifier.padding(top = contentPadding.calculateTopPadding())) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = MaterialTheme.padding.medium),
+                    horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
+                ) {
+                    QueueFilter.entries.forEach { entry ->
+                        FilterChip(
+                            selected = filter == entry,
+                            onClick = { filter = entry },
+                            label = { Text(stringResource(entry.label)) },
                         )
-                        screenModel.controllerBinding.root.adapter = screenModel.adapter
-                        screenModel.adapter?.isHandleDragEnabled = true
-                        screenModel.controllerBinding.root.layoutManager = LinearLayoutManager(context)
+                    }
+                }
 
-                        ViewCompat.setNestedScrollingEnabled(screenModel.controllerBinding.root, true)
+                if (!showManga && !showAnime) {
+                    EmptyScreen(
+                        stringRes = MR.strings.information_no_downloads,
+                        modifier = Modifier.padding(bottom = contentPadding.calculateBottomPadding()),
+                    )
+                    return@Scaffold
+                }
 
-                        scope.launchUI {
-                            screenModel.getDownloadStatusFlow()
-                                .collect(screenModel::onStatusChange)
-                        }
-                        scope.launchUI {
-                            screenModel.getDownloadProgressFlow()
-                                .collect(screenModel::onUpdateDownloadedPages)
-                        }
+                // With both queues listed, each gets half the screen under its own heading
+                val both = showManga && showAnime
+                if (showAnime) {
+                    if (both) QueueHeading(stringResource(KMR.strings.browse_anime))
+                    AnimeDownloadQueueList(
+                        queue = animeQueue,
+                        manager = animeManager,
+                        onClickAnime = { navigator.push(AnimeScreen(it)) },
+                        contentPadding = PaddingValues(
+                            bottom = if (both) 0.dp else contentPadding.calculateBottomPadding(),
+                        ),
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                if (showManga) {
+                    if (both) QueueHeading(stringResource(KMR.strings.browse_manga))
+                    // KMK <--
+                    Box(modifier = Modifier.weight(1f).nestedScroll(nestedScrollConnection)) {
+                        AndroidView(
+                            modifier = Modifier.fillMaxWidth(),
+                            factory = { context ->
+                                screenModel.controllerBinding = DownloadListBinding.inflate(LayoutInflater.from(context))
+                                screenModel.adapter = DownloadAdapter(
+                                    screenModel.listener,
+                                    // KMK -->
+                                    colorScheme,
+                                    // KMK <--
+                                )
+                                screenModel.controllerBinding.root.adapter = screenModel.adapter
+                                screenModel.adapter?.isHandleDragEnabled = true
+                                screenModel.controllerBinding.root.layoutManager = LinearLayoutManager(context)
 
-                        screenModel.controllerBinding.root
-                    },
-                    update = {
-                        screenModel.controllerBinding.root
-                            .updatePadding(
-                                left = left,
-                                top = top,
-                                right = right,
-                                bottom = bottom,
-                            )
+                                ViewCompat.setNestedScrollingEnabled(screenModel.controllerBinding.root, true)
 
-                        screenModel.adapter?.updateDataSet(downloadList)
-                    },
-                )
+                                // KMK -->
+                                if (!mangaListenersStarted) {
+                                    mangaListenersStarted = true
+                                    // KMK <--
+                                    scope.launchUI {
+                                        screenModel.getDownloadStatusFlow()
+                                            .collect(screenModel::onStatusChange)
+                                    }
+                                    scope.launchUI {
+                                        screenModel.getDownloadProgressFlow()
+                                            .collect(screenModel::onUpdateDownloadedPages)
+                                    }
+                                }
+
+                                screenModel.controllerBinding.root
+                            },
+                            update = {
+                                screenModel.controllerBinding.root
+                                    .updatePadding(
+                                        left = left,
+                                        // KMK: the buttons above take the top inset
+                                        top = 0,
+                                        right = right,
+                                        bottom = bottom,
+                                    )
+
+                                screenModel.adapter?.updateDataSet(downloadList)
+                            },
+                        )
+                    }
+                    // KMK -->
+                }
             }
+            // KMK <--
         }
     }
 }
+
+// KMK -->
+/** Which downloads the queue screen lists */
+private enum class QueueFilter(val label: StringResource) {
+    All(MR.strings.all),
+    Manga(KMR.strings.browse_manga),
+    Anime(KMR.strings.browse_anime),
+}
+
+@Composable
+private fun QueueHeading(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium, vertical = MaterialTheme.padding.small),
+    )
+}
+// KMK <--

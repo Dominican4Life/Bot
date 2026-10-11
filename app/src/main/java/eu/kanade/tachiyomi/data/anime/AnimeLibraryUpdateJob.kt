@@ -91,6 +91,9 @@ class AnimeLibraryUpdateJob(
         if (newEpisodes.get() > 0) {
             showNewEpisodes(newEpisodes.get(), updatedTitles)
         }
+
+        // For the library's "Airing time" sorting; done last since it takes a while and nothing waits for it
+        AnimeAiringTimeFetcher(repository).refresh(repository.getFavorites())
         return Result.success()
     }
 

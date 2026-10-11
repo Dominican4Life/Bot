@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -28,11 +29,13 @@ import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.WarningBanner
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.data.backup.BackupFileValidator
+import eu.kanade.tachiyomi.data.backup.anime.AnimeBackupFile
 import eu.kanade.tachiyomi.data.backup.restore.BackupRestoreJob
 import eu.kanade.tachiyomi.data.backup.restore.RestoreOptions
 import eu.kanade.tachiyomi.util.system.DeviceUtil
 import kotlinx.coroutines.flow.update
 import tachiyomi.i18n.MR
+import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.components.LabeledCheckbox
 import tachiyomi.presentation.core.components.LazyColumnWithAction
 import tachiyomi.presentation.core.components.SectionCard
@@ -90,6 +93,25 @@ class RestoreBackupScreen(
                         }
                     }
                 }
+
+                // KMK -->
+                // An anime backup holds no manga; all this restore would take from it is its settings
+                if (state.animeBackup) {
+                    item {
+                        SectionCard {
+                            Column(
+                                modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
+                                verticalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
+                            ) {
+                                Text(text = stringResource(KMR.strings.anime_backup_wrong_restore))
+                                Button(onClick = { navigator.replace(RestoreAnimeBackupScreen(uri)) }) {
+                                    Text(text = stringResource(KMR.strings.anime_backup_restore))
+                                }
+                            }
+                        }
+                    }
+                }
+                // KMK <--
 
                 if (state.error != null) {
                     errorMessageItem(state.error)
@@ -190,6 +212,12 @@ private class RestoreBackupScreenModel(
     }
 
     private fun validate(uri: Uri) {
+        // KMK -->
+        if (AnimeBackupFile().isAnimeBackup(context, uri)) {
+            mutableState.update { it.copy(animeBackup = true, canRestore = false) }
+            return
+        }
+        // KMK <--
         val results = try {
             BackupFileValidator(context).validate(uri)
         } catch (e: Exception) {
@@ -225,6 +253,10 @@ private class RestoreBackupScreenModel(
         val error: Any? = null,
         val canRestore: Boolean = false,
         val options: RestoreOptions = RestoreOptions(),
+        // KMK -->
+        /** The picked file is an anime backup (Anikku's, or this app's anime backup), which the anime restore reads */
+        val animeBackup: Boolean = false,
+        // KMK <--
     )
 }
 

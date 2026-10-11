@@ -191,7 +191,6 @@
     <string name="job_failed_schedule_update_check">Failed to schedule automatic library update: %s</string>
     <string name="job_failed_schedule_backup_check">Failed to schedule automatic backup: %s</string>
     <string name="label_to_be_updated">To be updated</string>
-    <string name="sponsor_me">Sponsor Me</string>
     <string name="batch_add_description">Support: MangaDex, E-H, ExH, nH, 8Muses</string>
     <!-- Connections section -->
     <string name="special_services">Special Services</string>
@@ -272,6 +271,20 @@
     <string name="anime_no_videos">No videos found for this episode</string>
     <string name="anime_no_player">No video player app found. Install one (like mpv or VLC) to play episodes.</string>
     <string name="anime_source_not_loaded">This anime\'s source isn\'t installed</string>
+    <string name="anime_backup_title">Anime backup</string>
+    <string name="anime_backup_create">Create anime backup</string>
+    <string name="anime_backup_restore">Restore anime backup</string>
+    <string name="anime_backup_info">The anime library has its own backup, apart from the one above. It reads and writes Anikku backups.</string>
+    <string name="anime_backup_watched_entries">All watched entries</string>
+    <string name="anime_backup_extension_repos">Extension repos</string>
+    <string name="anime_backup_only_categories">Only anime in these categories</string>
+    <string name="anime_backup_contents">In this backup: %1$d anime, %2$d categories, %3$d extension repos</string>
+    <string name="anime_backup_created">Anime backup created (%1$d anime)</string>
+    <string name="anime_backup_failed">Anime backup failed: %1$s</string>
+    <string name="anime_backup_restored">Anime restored: %1$d</string>
+    <string name="anime_backup_restored_errors">Anime restored: %1$d, failed: %2$d</string>
+    <string name="anime_backup_restore_failed">Couldn\'t restore the anime backup: %1$s</string>
+    <string name="anime_backup_wrong_restore">This is an anime backup, made in Anikku or with Create anime backup. It has no manga in it, and restoring it here would only replace this app\'s settings with the ones in the file. Restore it as an anime backup instead.</string>
     <string name="anime_library_empty">Your anime library is empty. Add anime from Browse.</string>
     <string name="library_switch_type">Switch between manga and anime</string>
     <string name="pref_player_summary">Anime player, gestures, subtitles, audio</string>
@@ -289,6 +302,13 @@
     <string name="anime_sort_newest_first">Newest episodes first</string>
     <string name="anime_sort_oldest_first">Oldest episodes first</string>
     <string name="anime_filter_unseen">Unseen</string>
+    <string name="anime_sort_total_episodes">Total episodes</string>
+    <string name="anime_sort_last_seen">Last seen</string>
+    <string name="anime_sort_unseen_count">Unseen count</string>
+    <string name="anime_sort_latest_episode">Latest episode</string>
+    <string name="anime_sort_episode_fetch_date">Episode fetch date</string>
+    <string name="anime_sort_airing_time">Airing time</string>
+    <string name="anime_display_download_badge">Downloaded episodes</string>
     <string name="anime_sort_by_episode_number">By episode number</string>
     <string name="anime_show_episode_number">Episode number</string>
     <string name="anime_episode_number">Episode %1$s</string>

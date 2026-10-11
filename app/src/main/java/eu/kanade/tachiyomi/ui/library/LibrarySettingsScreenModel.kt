@@ -20,6 +20,7 @@ import tachiyomi.domain.library.model.LibrarySort
 import tachiyomi.domain.library.service.LibraryPreferences
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import kotlin.random.Random
 import kotlin.time.Duration.Companion.seconds
 
 class LibrarySettingsScreenModel(
@@ -68,4 +69,20 @@ class LibrarySettingsScreenModel(
         }
     }
     // SY <--
+
+    // KMK -->
+    // The anime library keeps its own sorting and grouping
+    val animeGrouping by libraryPreferences.animeGroupLibraryBy().asState(screenModelScope)
+
+    fun setAnimeSort(mode: LibrarySort.Type, direction: LibrarySort.Direction) {
+        if (mode == LibrarySort.Type.Random) {
+            libraryPreferences.randomSortSeed().set(Random.nextInt())
+        }
+        libraryPreferences.animeSortingMode().set(LibrarySort(mode, direction))
+    }
+
+    fun setAnimeGrouping(grouping: Int) {
+        libraryPreferences.animeGroupLibraryBy().set(grouping)
+    }
+    // KMK <--
 }

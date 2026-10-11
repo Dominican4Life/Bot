@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.map
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.data.DatabaseHandler
+import tachiyomi.domain.category.model.Category
 import java.time.Instant
 
 /**
@@ -25,6 +26,11 @@ class AnimeRepository(
     fun subscribeAnime(id: Long): Flow<Anime?> = handler.subscribeToOneOrNull { animesQueries.getById(id, ::mapAnime) }
 
     fun subscribeFavorites(): Flow<List<Anime>> = handler.subscribeToList { animesQueries.getFavorites(::mapAnime) }
+
+    /** Episode counts and dates of every anime in the library, by anime id (anime without episodes are left out) */
+    fun subscribeLibraryStats(): Flow<Map<Long, AnimeLibraryStats>> =
+        handler.subscribeToList { episodesQueries.getLibraryStats(::AnimeLibraryStats) }
+            .map { list -> list.associateBy { it.animeId } }
 
     /**
      * Returns the local copy of an anime from a source, inserting it the first time it's seen.
@@ -96,6 +102,66 @@ class AnimeRepository(
     suspend fun setEpisodeFlags(anime: Anime, flags: Long) {
         handler.await { animesQueries.setEpisodeFlags(flags, anime.id) }
     }
+
+    suspend fun setNextEpisodeAiringAt(animeId: Long, airingAt: Long) {
+        handler.await { animesQueries.setNextEpisodeAiringAt(airingAt, animeId) }
+    }
+
+    // Categories (KMK): the anime library's own, apart from the manga ones. Anime in none of them are "Default".
+
+    fun subscribeCategories(): Flow<List<Category>> =
+        handler.subscribeToList { anime_categoriesQueries.getAll(::mapCategory) }
+
+    suspend fun getCategories(): List<Category> =
+        handler.awaitList { anime_categoriesQueries.getAll(::mapCategory) }
+
+    suspend fun createCategory(name: String) {
+        handler.await(inTransaction = true) {
+            val last = anime_categoriesQueries.getAll().executeAsList().maxOfOrNull { it.sort } ?: -1L
+            anime_categoriesQueries.insert(name, last + 1)
+        }
+    }
+
+    suspend fun renameCategory(id: Long, name: String) {
+        handler.await { anime_categoriesQueries.rename(name, id) }
+    }
+
+    suspend fun setCategoryHidden(id: Long, hidden: Boolean) {
+        handler.await { anime_categoriesQueries.setHidden(hidden, id) }
+    }
+
+    suspend fun deleteCategory(id: Long) {
+        handler.await { anime_categoriesQueries.delete(id) }
+    }
+
+    /** Saves the order the categories are listed in */
+    suspend fun reorderCategories(ids: List<Long>) {
+        handler.await(inTransaction = true) {
+            ids.forEachIndexed { index, id -> anime_categoriesQueries.setSort(index.toLong(), id) }
+        }
+    }
+
+    /** Category ids of every anime in the library, by anime id (anime in no category are left out) */
+    fun subscribeLibraryCategoryIds(): Flow<Map<Long, List<Long>>> =
+        handler.subscribeToList { anime_categoriesQueries.getLibraryLinks { animeId, categoryId -> animeId to categoryId } }
+            .map { links -> links.groupBy({ it.first }, { it.second }) }
+
+    suspend fun getCategoryIds(animeId: Long): List<Long> =
+        handler.awaitList { anime_categoriesQueries.getCategoryIdsOfAnime(animeId) }
+
+    suspend fun getLibraryCategoryIds(): Map<Long, List<Long>> =
+        handler.awaitList { anime_categoriesQueries.getLibraryLinks { animeId, categoryId -> animeId to categoryId } }
+            .groupBy({ it.first }, { it.second })
+
+    suspend fun setCategories(animeId: Long, categoryIds: List<Long>) {
+        handler.await(inTransaction = true) {
+            anime_categoriesQueries.removeAnimeFromCategories(animeId)
+            categoryIds.forEach { anime_categoriesQueries.addAnimeToCategory(animeId, it) }
+        }
+    }
+
+    private fun mapCategory(id: Long, name: String, sort: Long, hidden: Boolean) =
+        Category(id = id, name = name, order = sort, flags = 0L, hidden = hidden)
 
     // Merging (KMK)
 
@@ -270,6 +336,10 @@ class AnimeRepository(
 
     suspend fun getFavorites(): List<Anime> = handler.awaitList { animesQueries.getFavorites(::mapAnime) }
 
+    /** Anime that were watched but aren't in the library */
+    suspend fun getWatchedNotInLibrary(): List<Anime> =
+        handler.awaitList { animesQueries.getWatchedNotInLibrary(::mapAnime) }
+
     suspend fun getAnimeByUrl(url: String, sourceId: Long): Anime? =
         handler.awaitOneOrNull { animesQueries.getByUrlAndSource(url, sourceId, ::mapAnime) }
 
@@ -278,8 +348,17 @@ class AnimeRepository(
     fun subscribeHistory(): Flow<List<AnimeHistoryItem>> =
         handler.subscribeToList {
             anime_historyQueries.getHistory {
-                    animeId, source, title, thumbnailUrl, favorite, episodeId, episodeName, episodeNumber,
-                    lastSecondSeen, totalSeconds, lastSeen,
+                    animeId,
+                    source,
+                    title,
+                    thumbnailUrl,
+                    favorite,
+                    episodeId,
+                    episodeName,
+                    episodeNumber,
+                    lastSecondSeen,
+                    totalSeconds,
+                    lastSeen,
                 ->
                 AnimeHistoryItem(
                     animeId = animeId,
@@ -318,8 +397,18 @@ class AnimeRepository(
     fun subscribeUpdates(after: Long, limit: Long = 500): Flow<List<AnimeUpdateItem>> =
         handler.subscribeToList {
             episodesQueries.getUpdates(after, limit) {
-                    animeId, source, title, thumbnailUrl, episodeId, episodeName, episodeNumber, seen, bookmark,
-                    lastSecondSeen, totalSeconds, dateFetch,
+                    animeId,
+                    source,
+                    title,
+                    thumbnailUrl,
+                    episodeId,
+                    episodeName,
+                    episodeNumber,
+                    seen,
+                    bookmark,
+                    lastSecondSeen,
+                    totalSeconds,
+                    dateFetch,
                 ->
                 AnimeUpdateItem(
                     animeId = animeId,
@@ -426,6 +515,7 @@ class AnimeRepository(
         lastUpdate: Long,
         fetchType: Long,
         episodeFlags: Long,
+        nextEpisodeAiringAt: Long,
     ) = Anime(
         id = id,
         source = source,
@@ -444,6 +534,7 @@ class AnimeRepository(
         lastUpdate = lastUpdate,
         fetchType = FetchType.entries.getOrElse(fetchType.toInt()) { FetchType.Episodes },
         episodeFlags = episodeFlags,
+        nextEpisodeAiringAt = nextEpisodeAiringAt,
     )
 
     private fun mapEpisode(

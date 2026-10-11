@@ -204,6 +204,10 @@ class AnimeDownloadManager(
 
     fun downloadedCount(anime: Anime): Int = fileCache[anime.id]?.count { !it.endsWith(TMP) } ?: 0
 
+    /** Episodes of [anime] on disk; unlike [downloadedCount] it reads the folder the first time, so call it off the main thread */
+    fun countDownloads(anime: Anime): Int =
+        fileCache.getOrPut(anime.id) { listFiles(anime) }.count { !it.endsWith(TMP) }
+
     // Deleting
 
     fun delete(anime: Anime, episodes: List<Episode>) {

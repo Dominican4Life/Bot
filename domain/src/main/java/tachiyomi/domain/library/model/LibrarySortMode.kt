@@ -37,6 +37,11 @@ data class LibrarySort(
         data object TagList : Type(0b00100100)
         // SY <--
 
+        // KMK -->
+        /** Anime library only: by when the next episode airs */
+        data object AiringTime : Type(0b00110000)
+        // KMK <--
+
         companion object {
             fun valueOf(flag: Long): Type {
                 return types.find { type -> type.flag == flag and type.mask } ?: default.type
@@ -83,6 +88,9 @@ data class LibrarySort(
                 Type.DateAdded,
                 Type.TrackerMean,
                 /* SY -->*/ Type.TagList, /* SY <--*/
+                // KMK -->
+                Type.AiringTime,
+                // KMK <--
                 Type.Random,
             )
         }
@@ -114,6 +122,9 @@ data class LibrarySort(
                     // SY -->
                     "TAG_LIST" -> Type.TagList
                     // SY <--
+                    // KMK -->
+                    "AIRING_TIME" -> Type.AiringTime
+                    // KMK <--
                     "RANDOM" -> Type.Random
                     else -> Type.Alphabetical
                 }
@@ -139,6 +150,9 @@ data class LibrarySort(
             // SY -->
             Type.TagList -> "TAG_LIST"
             // SY <--
+            // KMK -->
+            Type.AiringTime -> "AIRING_TIME"
+            // KMK <--
             Type.Random -> "RANDOM"
         }
         val direction = if (direction == Direction.Ascending) "ASCENDING" else "DESCENDING"

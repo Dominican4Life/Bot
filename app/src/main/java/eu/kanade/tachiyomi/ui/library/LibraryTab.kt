@@ -36,6 +36,7 @@ import eu.kanade.presentation.library.DeleteLibraryMangaDialog
 import eu.kanade.presentation.library.LibrarySettingsDialog
 import eu.kanade.presentation.library.components.LibraryContent
 import eu.kanade.presentation.library.components.LibraryToolbar
+import eu.kanade.presentation.library.components.LibraryToolbarTitle
 import eu.kanade.presentation.library.components.SyncFavoritesConfirmDialog
 import eu.kanade.presentation.library.components.SyncFavoritesProgressDialog
 import eu.kanade.presentation.library.components.SyncFavoritesWarningDialog
@@ -43,18 +44,22 @@ import eu.kanade.presentation.manga.components.LibraryBottomActionMenu
 import eu.kanade.presentation.more.onboarding.GETTING_STARTED_URL
 import eu.kanade.presentation.util.Tab
 import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.data.anime.AnimeLibraryUpdateJob
 import eu.kanade.tachiyomi.data.connections.discord.DiscordRPCService
 import eu.kanade.tachiyomi.data.connections.discord.DiscordScreen
 import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
 import eu.kanade.tachiyomi.data.sync.SyncDataJob
+import eu.kanade.tachiyomi.ui.anime.AnimeGlobalSearchScreen
 import eu.kanade.tachiyomi.ui.anime.AnimeScreen
 import eu.kanade.tachiyomi.ui.browse.source.SourcesScreen
 import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchScreen
+import eu.kanade.tachiyomi.ui.category.AnimeCategoryScreen
 import eu.kanade.tachiyomi.ui.category.CategoryScreen
 import eu.kanade.tachiyomi.ui.home.HomeScreen
 import eu.kanade.tachiyomi.ui.main.MainActivity
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
+import eu.kanade.tachiyomi.ui.player.PlayerActivity
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.util.system.toast
 import exh.favorites.FavoritesSyncStatus
@@ -77,6 +82,7 @@ import tachiyomi.domain.library.model.LibraryGroup
 import tachiyomi.domain.library.model.LibraryManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.i18n.MR
+import tachiyomi.i18n.ank.AMR
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.i18n.sy.SYMR
 import tachiyomi.presentation.core.components.material.Scaffold
@@ -84,8 +90,8 @@ import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.EmptyScreen
 import tachiyomi.presentation.core.screens.EmptyScreenAction
 import tachiyomi.presentation.core.screens.LoadingScreen
-import tachiyomi.source.local.isLocal
 import tachiyomi.presentation.core.util.collectAsState
+import tachiyomi.source.local.isLocal
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
@@ -150,17 +156,29 @@ data object LibraryTab : Tab {
         // KMK -->
         val showAnimePref = remember { Injekt.get<SourcePreferences>().libraryShowAnime() }
         val showAnime by showAnimePref.collectAsState()
+        val animeScreenModel = rememberScreenModel { AnimeLibraryScreenModel() }
+        val animeState by animeScreenModel.state.collectAsState()
+        LaunchedEffect(state.searchQuery) { animeScreenModel.search(state.searchQuery) }
         // KMK <--
 
         Scaffold(
             topBar = { scrollBehavior ->
-                val title = state.getToolbarTitle(
-                    defaultTitle = stringResource(MR.strings.label_library),
-                    defaultCategoryTitle = stringResource(MR.strings.label_default),
-                    page = state.coercedActiveCategoryIndex,
-                )
+                val title = if (showAnime) {
+                    // KMK: the anime library has no categories to name; the count follows the same setting
+                    LibraryToolbarTitle(
+                        text = stringResource(MR.strings.label_library),
+                        numberOfManga = animeState.itemCount.takeIf { animeState.showItemCount },
+                    )
+                } else {
+                    state.getToolbarTitle(
+                        defaultTitle = stringResource(MR.strings.label_library),
+                        defaultCategoryTitle = stringResource(MR.strings.label_default),
+                        page = state.coercedActiveCategoryIndex,
+                    )
+                }
                 LibraryToolbar(
-                    hasActiveFilters = state.hasActiveFilters,
+                    // KMK: the anime library has its own filters
+                    hasActiveFilters = if (showAnime) animeState.hasActiveFilters else state.hasActiveFilters,
                     selectedCount = state.selection.size,
                     title = title,
                     onClickUnselectAll = screenModel::clearSelection,
@@ -203,6 +221,7 @@ data object LibraryTab : Tab {
                     // KMK -->
                     showingAnime = showAnime,
                     onClickSwitchType = { showAnimePref.set(!showAnime) },
+                    onClickEditAnimeCategories = { navigator.push(AnimeCategoryScreen()) },
                     // KMK <--
                 )
             },
@@ -298,9 +317,34 @@ data object LibraryTab : Tab {
             // KMK -->
             if (showAnime) {
                 AnimeLibraryContent(
+                    state = animeState,
                     contentPadding = contentPadding,
                     searchQuery = state.searchQuery,
-                    onClickAnime = { navigator.push(AnimeScreen(it.id)) },
+                    onChangeCurrentPage = animeScreenModel::setActivePage,
+                    onClickAnime = { navigator.push(AnimeScreen(it)) },
+                    onLongClickAnime = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        animeScreenModel.openChangeCategoryDialog(it)
+                    },
+                    onClickContinueWatching = { animeId ->
+                        scope.launchIO {
+                            val episode = animeScreenModel.getNextUnseenEpisode(animeId)
+                            if (episode != null) {
+                                context.startActivity(PlayerActivity.newIntent(context, animeId, episode.id))
+                            } else {
+                                snackbarHostState.showSnackbar(context.stringResource(AMR.strings.no_next_episode))
+                            }
+                        }
+                    },
+                    onRefresh = {
+                        AnimeLibraryUpdateJob.startNow(context)
+                        true
+                    },
+                    onGlobalSearchClicked = {
+                        navigator.push(AnimeGlobalSearchScreen(state.searchQuery.orEmpty()))
+                    },
+                    getDisplayMode = { animeScreenModel.getDisplayMode() },
+                    getColumnsForOrientation = { animeScreenModel.getColumnsForOrientation(it) },
                 )
                 return@Scaffold
             }
@@ -380,6 +424,8 @@ data object LibraryTab : Tab {
                     // SY <--
                     // KMK -->
                     categories = state.libraryData.categories.filterNot(Category::isSystemCategory),
+                    showingAnime = showAnime,
+                    animeCategories = animeState.userCategories,
                     // KMK <--
                 )
             }
@@ -441,6 +487,20 @@ data object LibraryTab : Tab {
             // SY <--
             null -> {}
         }
+
+        // KMK -->
+        when (val dialog = animeState.dialog) {
+            is AnimeLibraryScreenModel.Dialog.ChangeCategory -> {
+                ChangeCategoryDialog(
+                    initialSelection = dialog.initialSelection,
+                    onDismissRequest = animeScreenModel::closeDialog,
+                    onEditCategories = { navigator.push(AnimeCategoryScreen()) },
+                    onConfirm = { include, _ -> animeScreenModel.setCategories(dialog.animeId, include) },
+                )
+            }
+            null -> {}
+        }
+        // KMK <--
 
         // SY -->
         SyncFavoritesProgressDialog(

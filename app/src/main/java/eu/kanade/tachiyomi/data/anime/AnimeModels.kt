@@ -26,6 +26,8 @@ data class Anime(
     val lastUpdate: Long,
     val fetchType: FetchType,
     val episodeFlags: Long,
+    /** When the next episode airs (seconds since epoch, from AniList), or 0 when unknown */
+    val nextEpisodeAiringAt: Long = 0L,
 ) {
     fun toSAnime(): SAnime = SAnime.create().also {
         it.url = url
@@ -136,6 +138,21 @@ data class Episode(
         it.episode_number = episodeNumber.toFloat()
         it.date_upload = dateUpload
     }
+}
+
+/** KMK: Episode counts and dates of one anime in the library, for the library filters, sorting and badges. */
+@Immutable
+data class AnimeLibraryStats(
+    val animeId: Long,
+    val total: Long,
+    val seenCount: Long,
+    val bookmarkCount: Long,
+    val latestUpload: Long,
+    val fetchedAt: Long,
+    val lastSeen: Long,
+) {
+    val unseenCount: Long
+        get() = total - seenCount
 }
 
 internal fun String?.toGenreList(): List<String>? =

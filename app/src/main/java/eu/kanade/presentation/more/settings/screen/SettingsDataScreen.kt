@@ -21,6 +21,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MultiChoiceSegmentedButtonRow
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -49,7 +50,9 @@ import com.journeyapps.barcodescanner.ScanOptions
 import eu.kanade.domain.sync.SyncPreferences
 import eu.kanade.presentation.more.settings.Preference
 import eu.kanade.presentation.more.settings.screen.SettingsSecurityScreen.PasswordDialog
+import eu.kanade.presentation.more.settings.screen.data.CreateAnimeBackupScreen
 import eu.kanade.presentation.more.settings.screen.data.CreateBackupScreen
+import eu.kanade.presentation.more.settings.screen.data.RestoreAnimeBackupScreen
 import eu.kanade.presentation.more.settings.screen.data.RestoreBackupScreen
 import eu.kanade.presentation.more.settings.screen.data.StorageInfo
 import eu.kanade.presentation.more.settings.screen.data.SyncSettingsSelector
@@ -254,6 +257,24 @@ object SettingsDataScreen : SearchableSettings {
             navigator.push(RestoreBackupScreen(it.toString()))
         }
 
+        // KMK -->
+        val chooseAnimeBackup = rememberLauncherForActivityResult(
+            object : ActivityResultContracts.GetContent() {
+                override fun createIntent(context: Context, input: String): Intent {
+                    val intent = super.createIntent(context, input)
+                    return Intent.createChooser(intent, context.stringResource(MR.strings.file_select_backup))
+                }
+            },
+        ) {
+            if (it == null) {
+                context.toast(MR.strings.file_null_uri_error)
+                return@rememberLauncherForActivityResult
+            }
+
+            navigator.push(RestoreAnimeBackupScreen(it.toString()))
+        }
+        // KMK <--
+
         return Preference.PreferenceGroup(
             title = stringResource(MR.strings.label_backup),
             preferenceItems = persistentListOf(
@@ -300,6 +321,48 @@ object SettingsDataScreen : SearchableSettings {
                         },
                     )
                 },
+
+                // KMK -->
+                // The anime library's own backup (an Anikku backup file)
+                Preference.PreferenceItem.CustomPreference(
+                    title = stringResource(KMR.strings.anime_backup_title),
+                ) {
+                    BasePreferenceWidget(
+                        title = stringResource(KMR.strings.anime_backup_title),
+                        subcomponent = {
+                            Text(
+                                text = stringResource(KMR.strings.anime_backup_info),
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(horizontal = PrefsHorizontalPadding),
+                            )
+                            MultiChoiceSegmentedButtonRow(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(intrinsicSize = IntrinsicSize.Min)
+                                    .padding(horizontal = PrefsHorizontalPadding),
+                            ) {
+                                SegmentedButton(
+                                    modifier = Modifier.fillMaxHeight(),
+                                    checked = false,
+                                    onCheckedChange = { navigator.push(CreateAnimeBackupScreen()) },
+                                    shape = SegmentedButtonDefaults.itemShape(0, 2),
+                                ) {
+                                    Text(stringResource(KMR.strings.anime_backup_create))
+                                }
+                                SegmentedButton(
+                                    modifier = Modifier.fillMaxHeight(),
+                                    checked = false,
+                                    // no need to catch because it's wrapped with a chooser
+                                    onCheckedChange = { chooseAnimeBackup.launch("*/*") },
+                                    shape = SegmentedButtonDefaults.itemShape(1, 2),
+                                ) {
+                                    Text(stringResource(KMR.strings.anime_backup_restore))
+                                }
+                            }
+                        },
+                    )
+                },
+                // KMK <--
 
                 // Automatic backups
                 Preference.PreferenceItem.ListPreference(

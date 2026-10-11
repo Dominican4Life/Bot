@@ -877,6 +877,9 @@
           var shared = {};
           if (video.headers) shared.headers = video.headers;
           if (video.subtitles && video.subtitles.length) shared.subtitles = video.subtitles;
+          // KMK: each quality stays under its server's group in the player
+          if (video.server) shared.server = video.server;
+          if (video.hoster) shared.hoster = video.hoster;
           var auto = {};
           Object.keys(video).forEach(function (k) {
             auto[k] = video[k];

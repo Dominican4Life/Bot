@@ -130,6 +130,69 @@ class LibraryPreferences(
     fun filterCategoriesInclude() = preferenceStore.getStringSet(FILTER_LIBRARY_CATEGORIES_INCLUDE_PREF_KEY, emptySet())
 
     fun filterCategoriesExclude() = preferenceStore.getStringSet(FILTER_LIBRARY_CATEGORIES_EXCLUDE_PREF_KEY, emptySet())
+
+    // Anime library filters (the set Anikku's library has), kept apart from the manga ones
+    fun animeFilterDownloaded() = preferenceStore.getEnum("pref_filter_anime_library_downloaded", TriState.DISABLED)
+
+    fun animeFilterUnseen() = preferenceStore.getEnum("pref_filter_anime_library_unseen", TriState.DISABLED)
+
+    fun animeFilterStarted() = preferenceStore.getEnum("pref_filter_anime_library_started", TriState.DISABLED)
+
+    fun animeFilterBookmarked() = preferenceStore.getEnum("pref_filter_anime_library_bookmarked", TriState.DISABLED)
+
+    fun animeFilterCompleted() = preferenceStore.getEnum("pref_filter_anime_library_completed", TriState.DISABLED)
+
+    fun animeFilterLewd() = preferenceStore.getEnum("pref_filter_anime_library_lewd", TriState.DISABLED)
+
+    // Anime library sorting and grouping (there are no anime categories, so one sort covers the whole library)
+    fun animeSortingMode() = preferenceStore.getObjectFromString(
+        "anime_library_sorting_mode",
+        LibrarySort.default,
+        LibrarySort.Serializer::serialize,
+        LibrarySort.Serializer::deserialize,
+    )
+
+    fun animeGroupLibraryBy() = preferenceStore.getInt("anime_group_library_by", LibraryGroup.BY_DEFAULT)
+
+    fun animeFilterCategories() = preferenceStore.getBoolean("pref_filter_anime_library_categories", false)
+
+    fun animeFilterCategoriesInclude() =
+        preferenceStore.getStringSet("pref_filter_anime_library_categories_include", emptySet())
+
+    fun animeFilterCategoriesExclude() =
+        preferenceStore.getStringSet("pref_filter_anime_library_categories_exclude", emptySet())
+
+    // Anime library display settings, so changing them leaves the manga library as it is
+    fun animeDisplayMode() = preferenceStore.getObjectFromString(
+        "pref_display_mode_anime_library",
+        LibraryDisplayMode.default,
+        LibraryDisplayMode.Serializer::serialize,
+        LibraryDisplayMode.Serializer::deserialize,
+    )
+
+    fun animePortraitColumns() = preferenceStore.getInt("pref_anime_library_columns_portrait_key", 0)
+
+    fun animeLandscapeColumns() = preferenceStore.getInt("pref_anime_library_columns_landscape_key", 0)
+
+    fun animeDownloadBadge() = preferenceStore.getBoolean("display_anime_download_badge", false)
+
+    fun animeUnseenBadge() = preferenceStore.getBoolean("display_anime_unseen_badge", true)
+
+    fun animeLocalBadge() = preferenceStore.getBoolean("display_anime_local_badge", true)
+
+    fun animeLanguageBadge() = preferenceStore.getBoolean("display_anime_language_badge", true)
+
+    fun animeUseLangIcon() = preferenceStore.getBoolean("display_anime_language_text", true)
+
+    fun animeSourceBadge() = preferenceStore.getBoolean("display_anime_source_badge", true)
+
+    fun animeShowContinueWatchingButton() = preferenceStore.getBoolean("display_anime_continue_watching_button", false)
+
+    fun animeCategoryTabs() = preferenceStore.getBoolean("display_anime_category_tabs", true)
+
+    fun animeCategoryNumberOfItems() = preferenceStore.getBoolean("display_anime_number_of_items", false)
+
+    fun animeShowHiddenCategories() = preferenceStore.getBoolean("display_anime_hidden_categories", false)
     // KMK <--
 
     fun filterTracking(id: Int) = preferenceStore.getEnum(

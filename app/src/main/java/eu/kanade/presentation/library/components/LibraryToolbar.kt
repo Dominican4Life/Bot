@@ -55,6 +55,7 @@ fun LibraryToolbar(
     // KMK -->
     showingAnime: Boolean = false,
     onClickSwitchType: (() -> Unit)? = null,
+    onClickEditAnimeCategories: (() -> Unit)? = null,
     // KMK <--
 ) = when {
     selectedCount > 0 -> LibrarySelectionToolbar(
@@ -82,6 +83,7 @@ fun LibraryToolbar(
         // KMK -->
         showingAnime = showingAnime,
         onClickSwitchType = onClickSwitchType,
+        onClickEditAnimeCategories = onClickEditAnimeCategories,
         // KMK <--
     )
 }
@@ -106,6 +108,7 @@ private fun LibraryRegularToolbar(
     // KMK -->
     showingAnime: Boolean,
     onClickSwitchType: (() -> Unit)?,
+    onClickEditAnimeCategories: (() -> Unit)?,
     // KMK <--
 ) {
     val context = LocalContext.current
@@ -174,6 +177,17 @@ private fun LibraryRegularToolbar(
                         },
                     ),
                 ).builder().apply {
+                    // KMK -->
+                    // The anime library has its own categories
+                    if (showingAnime && onClickEditAnimeCategories != null) {
+                        add(
+                            AppBar.OverflowAction(
+                                title = stringResource(MR.strings.action_edit_categories),
+                                onClick = onClickEditAnimeCategories,
+                            ),
+                        )
+                    }
+                    // KMK <--
                     // SY -->
                     if (onClickSyncExh != null) {
                         add(

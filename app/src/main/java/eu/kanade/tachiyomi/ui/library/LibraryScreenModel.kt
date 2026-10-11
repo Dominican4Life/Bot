@@ -704,6 +704,10 @@ class LibraryScreenModel(
                     manga1IndexOfTag.compareTo(manga2IndexOfTag)
                 }
                 // SY <--
+                // KMK -->
+                // Only the anime library sorts by airing time
+                LibrarySort.Type.AiringTime -> 0
+                // KMK <--
             }
         }
 
