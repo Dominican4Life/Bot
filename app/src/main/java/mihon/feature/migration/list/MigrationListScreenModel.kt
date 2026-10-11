@@ -1,5 +1,6 @@
 package mihon.feature.migration.list
 
+import android.app.Application
 import androidx.annotation.FloatRange
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
@@ -13,12 +14,16 @@ import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.collections.immutable.toPersistentList
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
@@ -63,6 +68,9 @@ class MigrationListScreenModel(
     private val throttleManager = ThrottleManager()
     // SY <--
 
+    // KMK
+    private val context: Application = Injekt.get()
+
     val items
         inline get() = state.value.items
 
@@ -73,7 +81,8 @@ class MigrationListScreenModel(
     private var deepSearchMode = preferences.migrationDeepSearchMode().get()
     // KMK <--
 
-    private val navigateBackChannel = Channel<Unit>()
+    // KMK: conflated, so a migration that finishes after the screen is gone doesn't wait for it forever
+    private val navigateBackChannel = Channel<Unit>(Channel.CONFLATED)
     val navigateBackEvent = navigateBackChannel.receiveAsFlow()
 
     private var migrateJob: Job? = null
@@ -138,6 +147,11 @@ class MigrationListScreenModel(
         // SY -->
         throttleManager.resetThrottle()
         // SY <--
+        // KMK --> progress notification, which also keeps the app running in the background
+        MigrationProgress.update(MigrationProgress.Status(moving = false, done = 0, total = mangas.size))
+        MigrationProgressJob.start(context)
+        var searched = 0
+        // KMK <--
         // KMK -->
         // val prioritizeByChapters = preferences.migrationPrioritizeByChapters().get()
         // val deepSearchMode = preferences.migrationDeepSearchMode().get()
@@ -151,6 +165,9 @@ class MigrationListScreenModel(
             if (manga.manga.id !in state.value.mangaIds) continue
             if (manga.searchResult.value != SearchResult.Searching) continue
             if (!manga.migrationScope.isActive) continue
+
+            // KMK: a random pause between titles, so the sources don't see a bot-like stream of searches
+            if (searched++ > 0) migrationPause(preferences.migrationDelay().get())
 
             val result = try {
                 // KMK -->
@@ -207,6 +224,8 @@ class MigrationListScreenModel(
 
             updateMigrationProgress()
         }
+        // KMK: searching is done; moving shows its own progress
+        if (migrateJob == null) MigrationProgress.clear()
     }
 
     private suspend fun searchSource(
@@ -214,36 +233,65 @@ class MigrationListScreenModel(
         source: Source,
         deepSearchMode: Boolean,
     ): Pair<Manga, ChapterInfo>? {
-        return try {
-            val searchResult = if (deepSearchMode) {
-                smartSearchEngine.deepSearch(source, manga.title)
-            } else {
-                smartSearchEngine.regularSearch(source, manga.title)
-            }
-
-            if (searchResult == null || (searchResult.url == manga.url && source.id == manga.source)) return null
-
-            val localManga = networkToLocalManga(searchResult)
+        // KMK: when the site asks to slow down (429, bot check), wait longer and try again, up to 3 times
+        var attempt = 0
+        while (true) {
             try {
-                updateMangaFromRemote(
-                    manga = localManga,
-                    fetchChapters = true,
-                    // SY -->
-                    throttleFunc = throttleManager::throttle,
-                    // SY <--
-                ).getOrThrow()
+                return searchSourceOnce(manga, source, deepSearchMode)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                logcat(LogPriority.ERROR, e)
+                if (!isSlowDownError(e) || attempt >= 3) return null
+                val wait = 30 shl attempt // 30 s, 60 s, 120 s
+                attempt++
+                logcat(LogPriority.WARN) { "Migration: ${source.name} asked to slow down, waiting ${wait}s" }
+                MigrationProgress.state.value?.let { MigrationProgress.update(it.copy(pausedSeconds = wait)) }
+                delay(wait * 1000L)
+                MigrationProgress.state.value?.let { MigrationProgress.update(it.copy(pausedSeconds = null)) }
             }
-            localManga to getChapterInfo(localManga.id)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            null
         }
     }
 
+    /** One search; throws on a network error so [searchSource] can tell a slow-down from a miss */
+    private suspend fun searchSourceOnce(
+        manga: Manga,
+        source: Source,
+        deepSearchMode: Boolean,
+    ): Pair<Manga, ChapterInfo>? {
+        val searchResult = if (deepSearchMode) {
+            smartSearchEngine.deepSearch(source, manga.title)
+        } else {
+            smartSearchEngine.regularSearch(source, manga.title)
+        }
+
+        if (searchResult == null || (searchResult.url == manga.url && source.id == manga.source)) return null
+
+        val localManga = networkToLocalManga(searchResult)
+        try {
+            updateMangaFromRemote(
+                manga = localManga,
+                fetchChapters = true,
+                // SY -->
+                throttleFunc = throttleManager::throttle,
+                // SY <--
+            ).getOrThrow()
+        } catch (e: Exception) {
+            logcat(LogPriority.ERROR, e)
+        }
+        return localManga to getChapterInfo(localManga.id)
+    }
+
     private suspend fun updateMigrationProgress() {
+        // KMK: the notification follows the search
+        val current = MigrationProgress.state.value
+        if (current != null && !current.moving) {
+            MigrationProgress.update(
+                current.copy(
+                    done = items.count { it.searchResult.value != SearchResult.Searching },
+                    total = items.size,
+                ),
+            )
+        }
         mutableState.update { state ->
             state.copy(
                 // KMK -->
@@ -306,9 +354,13 @@ class MigrationListScreenModel(
     }
 
     private fun migrateMangas(replace: Boolean) {
-        migrateJob = screenModelScope.launchIO {
+        // KMK: runs in the app's scope, so it carries on when you leave this screen or the app
+        migrateJob = MigrationScope.launchIO {
             mutableState.update { it.copy(dialog = Dialog.Progress(0f)) }
             val items = items
+            MigrationProgress.update(MigrationProgress.Status(moving = true, done = 0, total = items.size))
+            MigrationProgressJob.start(context)
+            var moved = 0
             try {
                 items.forEachIndexed { index, manga ->
                     try {
@@ -321,6 +373,8 @@ class MigrationListScreenModel(
                             }
                         }
                         if (target != null) {
+                            // KMK: the same random pause between titles as the search
+                            if (moved++ > 0) migrationPause(preferences.migrationDelay().get())
                             migrateManga(
                                 current = manga.manga,
                                 target = target,
@@ -337,12 +391,14 @@ class MigrationListScreenModel(
                     mutableState.update {
                         it.copy(dialog = Dialog.Progress((index.toFloat() / items.size).coerceAtMost(1f)))
                     }
+                    MigrationProgress.update(MigrationProgress.Status(moving = true, done = index + 1, total = items.size))
                 }
 
                 navigateBack()
             } finally {
                 mutableState.update { it.copy(dialog = null) }
                 migrateJob = null
+                MigrationProgress.clear()
             }
         }
     }
@@ -352,8 +408,8 @@ class MigrationListScreenModel(
         migrateJob = null
     }
 
-    private suspend fun navigateBack() {
-        navigateBackChannel.send(Unit)
+    private fun navigateBack() {
+        navigateBackChannel.trySend(Unit)
     }
 
     fun migrateNow(mangaId: Long, replace: Boolean) {
@@ -397,6 +453,8 @@ class MigrationListScreenModel(
         items.forEach {
             it.migrationScope.cancel()
         }
+        // KMK: moving carries on without the screen; searching stops with it
+        if (migrateJob == null) MigrationProgress.clear()
     }
 
     fun showMigrateDialog(copy: Boolean) {
@@ -462,3 +520,6 @@ class MigrationListScreenModel(
         val mangaIds: List<Long> = items.map { it.manga.id }
     }
 }
+
+/** KMK: Where moving titles runs, so it isn't cancelled when the migration screen closes */
+private object MigrationScope : CoroutineScope by CoroutineScope(SupervisorJob() + Dispatchers.IO)

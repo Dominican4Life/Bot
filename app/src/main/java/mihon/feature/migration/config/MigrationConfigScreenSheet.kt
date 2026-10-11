@@ -159,6 +159,9 @@ fun MigrationConfigScreenSheet(
                     preference = preferences.migrationHideWithoutUpdates(),
                 )
                 // KMK -->
+                MigrationSheetDelayItem(preferences.migrationDelay())
+                // KMK <--
+                // KMK -->
                 if (fullSettings) {
                     // KMK <--
                     MigrationSheetDividerItem()
@@ -251,6 +254,44 @@ private fun MigrationSheetSwitchItem(
         modifier = Modifier.clickable(onClick = onClick),
     )
 }
+
+// KMK -->
+/** A random pause between titles, so a big migration doesn't get bot-checked */
+@Composable
+private fun MigrationSheetDelayItem(preference: Preference<String>) {
+    val current by preference.collectAsState()
+    Column(
+        modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium, vertical = MaterialTheme.padding.small),
+    ) {
+        Text(text = stringResource(KMR.strings.migration_delay_title), style = MaterialTheme.typography.bodyLarge)
+        Text(
+            text = stringResource(KMR.strings.migration_delay_summary),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
+            modifier = Modifier.padding(top = MaterialTheme.padding.extraSmall),
+        ) {
+            listOf("0-0", "1-3", "3-8", "8-15", "15-30").forEach { value ->
+                FilterChip(
+                    selected = current == value,
+                    onClick = { preference.set(value) },
+                    label = {
+                        Text(
+                            if (value == "0-0") {
+                                stringResource(KMR.strings.migration_delay_none)
+                            } else {
+                                value.replace("-", "–") + " s"
+                            },
+                        )
+                    },
+                )
+            }
+        }
+    }
+}
+// KMK <--
 
 @Composable
 private fun MigrationSheetDividerItem() {

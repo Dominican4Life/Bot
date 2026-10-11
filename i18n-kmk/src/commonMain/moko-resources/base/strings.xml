@@ -440,4 +440,8 @@
     <string name="pref_library_panorama_style">Panorama style in the library, History and Updates</string>
     <string name="pref_browse_panorama_style">Panorama style in sources</string>
     <string name="browse_panorama">Panorama</string>
+    <!-- Migration pacing -->
+    <string name="migration_delay_title">Pause between titles</string>
+    <string name="migration_delay_summary">A random wait between titles, so sources are less likely to bot-check a big migration. When a site still asks to slow down, the migration waits longer on its own and tries again.</string>
+    <string name="migration_delay_none">None</string>
 </resources>
