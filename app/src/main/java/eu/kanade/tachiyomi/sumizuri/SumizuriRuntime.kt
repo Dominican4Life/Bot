@@ -6,8 +6,11 @@ import com.dokar.quickjs.QuickJs
 import com.dokar.quickjs.binding.AsyncFunctionBinding
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.util.system.AppLog
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -77,6 +80,10 @@ class SumizuriRuntime private constructor(
         val text = try {
             withContext(Dispatchers.Default) { qjs.evaluate<String?>(code, "<$method>") }
         } catch (e: Throwable) {
+            // The caller stopped waiting (e.g. the user left Browse): let the cancellation through instead of
+            // turning it into a source error, which was logged as "getLatest failed: Job was cancelled"
+            if (e is CancellationException) throw e
+            currentCoroutineContext().ensureActive()
             val message = e.message.orEmpty()
             if ("__NOT_IMPLEMENTED__" in message) throw NotImplementedError("This source has no $method")
             host.log("error", "$method failed: $message")
