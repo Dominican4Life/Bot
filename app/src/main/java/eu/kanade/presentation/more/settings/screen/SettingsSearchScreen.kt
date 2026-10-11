@@ -295,7 +295,6 @@ private val settingScreens = listOf(
     // <-- AM (CONNECTIONS)
     SettingsBrowseScreen,
     // KMK
-    SettingsSuggestionsScreen,
     SettingsDataScreen,
     SettingsSecurityScreen,
     // SY -->

@@ -519,8 +519,11 @@ class MainActivity : BaseActivity() {
                     if (!LibraryUpdateJob.isPeriodicUpdateScheduled(context)) {
                         LibraryUpdateJob.setupTask(context)
                     }
-                    // KMK: suggestions refresh every few hours
-                    eu.kanade.tachiyomi.data.suggestions.SuggestionsJob.setupTask(context)
+                    // KMK: the Suggestions feature was removed; stop its old background refresh
+                    androidx.work.WorkManager.getInstance(context).apply {
+                        cancelUniqueWork("Suggestions")
+                        cancelUniqueWork("SuggestionsNow")
+                    }
                 } catch (e: Exception) {
                     logcat(LogPriority.ERROR, e)
                     withContext(Dispatchers.Main) {

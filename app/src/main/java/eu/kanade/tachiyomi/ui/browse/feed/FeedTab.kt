@@ -6,7 +6,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.SwapVert
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -25,6 +28,7 @@ import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.browse.FeedAddDialog
 import eu.kanade.presentation.browse.FeedAddSearchDialog
+import eu.kanade.presentation.browse.FeedAnimeSource
 import eu.kanade.presentation.browse.FeedOrderScreen
 import eu.kanade.presentation.browse.FeedScreen
 import eu.kanade.presentation.browse.components.BulkFavoriteDialogs
@@ -69,6 +73,10 @@ fun Screen.feedTab(
     val animeState by animeFeed.state.collectAsState()
     var addAnime by remember { mutableStateOf<AnimeFeedScreenModel.Option?>(null) }
     var removeAnime by remember { mutableStateOf<AnimeFeedScreenModel.Entry?>(null) }
+    // Tag mix rows: titles from several sources for some genres or tags
+    val tagMixFeed = rememberScreenModel { TagMixFeedScreenModel() }
+    val tagMixState by tagMixFeed.state.collectAsState()
+    var removeTagMix by remember { mutableStateOf<TagMix?>(null) }
 
     LaunchedEffect(bulkFavoriteState.selectionMode) {
         HomeScreen.showBottomNav(!bulkFavoriteState.selectionMode)
@@ -199,11 +207,28 @@ fun Screen.feedTab(
                             screenModel.init()
                             // KMK
                             animeFeed.refresh()
+                            tagMixFeed.refresh()
                         },
                         getMangaState = { manga -> screenModel.getManga(initialManga = manga) },
                         // KMK -->
-                        hasAnimeRows = animeState.rows.isNotEmpty(),
+                        hasAnimeRows = animeState.rows.isNotEmpty() || tagMixState.rows.isNotEmpty(),
                         animeRows = {
+                            tagMixState.rows.forEach { row ->
+                                item(key = "tag_mix_${row.mix.id}") {
+                                    TagMixFeedRow(
+                                        row = row,
+                                        onClickHeader = { navigator.push(TagMixEditScreen(row.mix.id)) },
+                                        onLongClickHeader = { removeTagMix = row.mix },
+                                        onClickManga = { navigator.push(MangaScreen(it.id, true)) },
+                                        onLongClickManga = { bulkFavoriteScreenModel.addRemoveManga(it, haptic) },
+                                        onClickAnime = { navigator.push(AnimeScreen(it.id)) },
+                                        onLongClickAnime = {
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            tagMixFeed.toggleAnimeFavorite(it)
+                                        },
+                                    )
+                                }
+                            }
                             animeState.rows.forEach { row ->
                                 item(key = row.entry.key) {
                                     AnimeFeedRow(
@@ -244,10 +269,14 @@ fun Screen.feedTab(
                                 onDismissRequest()
                             },
                             // KMK -->
-                            animeSources = animeOptions.map { it.id to "${it.name} (${it.lang.uppercase()})" },
+                            animeSources = animeOptions.map { FeedAnimeSource(it.id, it.name, it.lang) },
                             onClickAddAnime = { id ->
                                 addAnime = animeOptions.firstOrNull { it.id == id }
                                 onDismissRequest()
+                            },
+                            onClickTagMix = {
+                                onDismissRequest()
+                                navigator.push(TagMixEditScreen())
                             },
                             // KMK <--
                         )
@@ -302,6 +331,24 @@ fun Screen.feedTab(
                     deleteFeed = {
                         animeFeed.remove(entry)
                         removeAnime = null
+                    },
+                )
+            }
+
+            removeTagMix?.let { mix ->
+                AlertDialog(
+                    onDismissRequest = { removeTagMix = null },
+                    text = { Text(stringResource(KMR.strings.tag_mix_delete, mix.title)) },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                tagMixFeed.delete(mix)
+                                removeTagMix = null
+                            },
+                        ) { Text(stringResource(MR.strings.action_delete)) }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { removeTagMix = null }) { Text(stringResource(MR.strings.action_cancel)) }
                     },
                 )
             }

@@ -122,7 +122,7 @@ class SourceCategorySourcesScreen(private val category: String) : Screen() {
                     SourcesSearchBox(
                         searchQuery = query,
                         onChangeSearchQuery = { query = it.orEmpty() },
-                        placeholderText = stringResource(KMR.strings.suggestions_sources_search),
+                        placeholderText = stringResource(KMR.strings.sources_search_hint),
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = SettingsItemsPaddings.Horizontal, vertical = 4.dp),

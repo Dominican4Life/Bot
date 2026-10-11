@@ -36,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import eu.kanade.presentation.browse.components.AnimeSourceIcon
 import eu.kanade.presentation.browse.components.GlobalSearchCardRow
 import eu.kanade.presentation.browse.components.GlobalSearchErrorResultItem
 import eu.kanade.presentation.browse.components.GlobalSearchLoadingResultItem
@@ -62,6 +63,7 @@ import tachiyomi.presentation.core.components.material.PullRefresh
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.components.material.topSmallPaddingValues
 import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.icons.FlagEmoji
 import tachiyomi.presentation.core.screens.EmptyScreen
 import tachiyomi.presentation.core.screens.LoadingScreen
 import tachiyomi.presentation.core.util.plus
@@ -198,14 +200,19 @@ fun FeedItem(
     }
 }
 
+/** KMK: An anime source in the Feed's add dialog */
+data class FeedAnimeSource(val id: Long, val name: String, val lang: String)
+
 @Composable
 fun FeedAddDialog(
     sources: ImmutableList<Source>,
     onDismiss: () -> Unit,
     onClickAdd: (Source?) -> Unit,
-    // KMK --> Anime tab: (source id, name) pairs; empty hides the tabs
-    animeSources: List<Pair<Long, String>> = emptyList(),
+    // KMK --> Anime tab; empty hides the tabs
+    animeSources: List<FeedAnimeSource> = emptyList(),
     onClickAddAnime: (Long) -> Unit = {},
+    /** Opens the tag mix editor: one row from several sources and some genres/tags */
+    onClickTagMix: (() -> Unit)? = null,
     // KMK <--
 ) {
     // KMK -->
@@ -234,8 +241,15 @@ fun FeedAddDialog(
                 Text(text = it.getNameForMangaInfo())
             }
         }
-    val animeList = animeSources.filter { (id, name) -> matches(name, id) }
-    val animeOptions: List<@Composable () -> Unit> = animeList.map { (_, name) -> { Text(text = name) } }
+    val animeList = animeSources.filter { matches(it.name, it.id) }
+    // Icon and language flag, like the manga sources
+    val animeOptions: List<@Composable () -> Unit> = animeList.map {
+        {
+            AnimeSourceIcon(sourceId = it.id)
+            Spacer(modifier = Modifier.width(MaterialTheme.padding.extraSmall))
+            Text(text = "${it.name} (${FlagEmoji.getEmojiLangFlag(it.lang)})")
+        }
+    }
     // KMK <--
     var selected by remember { mutableStateOf<Int?>(null) }
     AlertDialog(
@@ -280,7 +294,7 @@ fun FeedAddDialog(
                 onClick = {
                     // KMK -->
                     if (tab == 1) {
-                        selected?.let { animeList.getOrNull(it) }?.let { onClickAddAnime(it.first) } ?: onDismiss()
+                        selected?.let { animeList.getOrNull(it) }?.let { onClickAddAnime(it.id) } ?: onDismiss()
                     } else {
                         // KMK <--
                         onClickAdd(selected?.let { sourceList.getOrNull(it) })
@@ -290,6 +304,15 @@ fun FeedAddDialog(
                 Text(text = stringResource(MR.strings.action_ok))
             }
         },
+        // KMK -->
+        dismissButton = onClickTagMix?.let { open ->
+            {
+                TextButton(onClick = open) {
+                    Text(text = stringResource(KMR.strings.tag_mix_new))
+                }
+            }
+        },
+        // KMK <--
     )
 }
 

@@ -58,7 +58,6 @@ object Notifications {
     const val ID_ANIME_LIBRARY_PROGRESS = -1802
     const val ID_ANIME_DOWNLOAD_PROGRESS = -1803
     const val ID_ANIME_DOWNLOAD_ERROR = -1804
-    const val ID_SUGGESTION = -1805
     // KMK <--
     const val GROUP_NEW_CHAPTERS = "eu.kanade.tachiyomi.NEW_CHAPTERS"
 

@@ -13,6 +13,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -29,11 +30,14 @@ import coil3.compose.AsyncImage
 import eu.kanade.domain.source.model.icon
 import eu.kanade.presentation.util.rememberResourceBitmapPainter
 import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.animeextension.AnimeExtensionManager
 import eu.kanade.tachiyomi.extension.model.Extension
 import eu.kanade.tachiyomi.extension.util.ExtensionLoader
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.domain.source.model.Source
 import tachiyomi.source.local.isLocal
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 private val defaultModifier = Modifier
     .height(40.dp)
@@ -78,6 +82,28 @@ fun SourceIcon(
         }
     }
 }
+
+// KMK -->
+/** An anime source's icon (its extension's app icon), or the default source icon */
+@Composable
+fun AnimeSourceIcon(
+    sourceId: Long,
+    modifier: Modifier = Modifier,
+) {
+    val icon = remember(sourceId) {
+        Injekt.get<AnimeExtensionManager>().getAppIconForSource(sourceId)?.toBitmap()?.asImageBitmap()
+    }
+    if (icon != null) {
+        Image(bitmap = icon, contentDescription = null, modifier = modifier.then(defaultModifier))
+    } else {
+        Image(
+            painter = painterResource(R.mipmap.ic_default_source),
+            contentDescription = null,
+            modifier = modifier.then(defaultModifier),
+        )
+    }
+}
+// KMK <--
 
 @Composable
 fun ExtensionIcon(
