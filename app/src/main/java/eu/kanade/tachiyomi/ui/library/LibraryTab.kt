@@ -207,11 +207,11 @@ data object LibraryTab : Tab {
                     // Only the titles of the tab being looked at
                     onClickRefreshMissingCovers = {
                         val mangas = screenModel.mangaForCurrentTab()
-                        if (!RefreshMissingCovers.start(context, mangas)) {
-                            context.toast(KMR.strings.refresh_missing_covers_running)
-                        } else {
-                            context.toast(KMR.strings.refresh_missing_covers_title)
-                        }
+                        val started = RefreshMissingCovers.start(context, mangas)
+                        context.toast(
+                            if (started) KMR.strings.refresh_missing_covers_title else KMR.strings.refresh_missing_covers_running,
+                        )
+                        Unit
                     }.takeIf { !showAnime },
                     // KMK <--
                 )
