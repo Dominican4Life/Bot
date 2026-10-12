@@ -27,7 +27,7 @@ class WideCovers {
 
     companion object {
         /** Same limit as the covers' own switch to panorama */
-        const val WIDE_RATIO = 0.75f
+        const val WIDE_RATIO = 1.0f
     }
 }
 

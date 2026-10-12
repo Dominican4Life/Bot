@@ -222,7 +222,8 @@ enum class MangaCoverHide(private val ratio: Float) {
     }
 }
 
-internal const val RatioSwitchToPanorama = 0.75f
+// KMK: any cover wider than tall shows as panorama; a near-square one (such as 5:4) was cropped into a book shape
+internal const val RatioSwitchToPanorama = 1.0f
 
 internal val CoverPlaceholderColor = Color(0x1F888888)
 internal val CoverPlaceholderOnBgColor = Color(0x8F888888)

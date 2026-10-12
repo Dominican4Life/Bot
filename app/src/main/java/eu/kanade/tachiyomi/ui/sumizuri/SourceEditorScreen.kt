@@ -364,6 +364,7 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
             SourceSettingsDialog(
                 definitions = definitions,
                 sourceId = SumizuriSourceInfo.idFor(state.key),
+                onButton = model::pressButton,
                 onDismiss = model::closeSettings,
             )
         }
@@ -717,6 +718,7 @@ private fun SavedSourcesDialog(
 private fun SourceSettingsDialog(
     definitions: List<SumizuriPreferences.Definition>,
     sourceId: Long,
+    onButton: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -776,6 +778,9 @@ private fun SourceSettingsDialog(
                                         Text(option.label)
                                     }
                                 }
+                            }
+                            SumizuriPreferences.Type.Button -> OutlinedButton(onClick = { onButton(def.key) }) {
+                                Text("Run")
                             }
                             SumizuriPreferences.Type.Text -> {
                                 var text by remember(def.key) { mutableStateOf((current as? JsonPrimitive)?.contentOrNull.orEmpty()) }
