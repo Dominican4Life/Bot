@@ -1001,7 +1001,15 @@ class ReaderActivity : BaseActivity() {
             readingModeToast = toast(SYMR.strings.eh_auto_webtoon_snack)
         } else if (readerPreferences.showReadingMode().get()) {
             // SY <--
-            showReadingModeToast(viewModel.getMangaReadingMode())
+            // KMK: a Sumizuri chapter may turn out to be a lone video that opens in the player; show the mode
+            // only once its pages are known not to be that
+            if (manga != null && sourceManager.get(manga.source) is eu.kanade.tachiyomi.sumizuri.SumizuriMangaSource &&
+                !videoChecked
+            ) {
+                deferredModeToast = true
+            } else {
+                showReadingModeToast(viewModel.getMangaReadingMode())
+            }
         }
 
         loadingIndicator = ReaderProgressIndicator(
@@ -1059,29 +1067,53 @@ class ReaderActivity : BaseActivity() {
     }
 
     // KMK -->
-    /** True once this reader handed a video-only chapter to the player, so it happens once */
-    private var videoHandedOff = false
+    /** True once this reader has looked at its first chapter's pages, to decide whether it's a lone video */
+    private var videoChecked = false
+
+    /** The reading mode popup waiting for that decision */
+    private var deferredModeToast = false
 
     /**
      * A chapter whose only page is a video (a Sumizuri page with a videoUrl or videoListUrl) plays straight in the
-     * player, like an anime episode, and the reader closes so back returns to the title. If the video can't start,
-     * the reader stays open on the page with its play button.
+     * player, like an anime episode: the reader draws nothing, stays black, and closes without an animation, so
+     * back returns to the title. If the video can't start, the reader shows the page with its play button.
+     * True when it took the chapter over.
      */
-    private fun playIfOnlyVideo(viewerChapters: ViewerChapters) {
-        if (videoHandedOff) return
-        val onlyPage = viewerChapters.currChapter.pages?.singleOrNull() ?: return
-        if (!eu.kanade.tachiyomi.sumizuri.ReaderVideos.isVideo(onlyPage.url)) return
-        videoHandedOff = true
+    private fun handOffLoneVideo(viewerChapters: ViewerChapters): Boolean {
+        if (videoChecked) return false
+        videoChecked = true
+        val onlyPage = viewerChapters.currChapter.pages?.singleOrNull()
+        if (onlyPage == null || !eu.kanade.tachiyomi.sumizuri.ReaderVideos.isVideo(onlyPage.url)) {
+            showDeferredModeToast()
+            return false
+        }
+        readingModeToast?.cancel()
         lifecycleScope.launch {
-            try {
-                if (eu.kanade.tachiyomi.sumizuri.ReaderVideos.play(this@ReaderActivity, onlyPage)) finish()
+            val started = try {
+                eu.kanade.tachiyomi.sumizuri.ReaderVideos.play(this@ReaderActivity, onlyPage)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Throwable) {
                 eu.kanade.tachiyomi.util.system.AppLog.add('E', "reader", "Couldn't start the video: $e")
                 toast("Couldn't play this video: ${e.message}")
+                false
+            }
+            if (started) {
+                finish()
+                @Suppress("DEPRECATION")
+                overridePendingTransition(0, 0)
+            } else {
+                showDeferredModeToast()
+                showChapters(viewerChapters)
             }
         }
+        return true
+    }
+
+    private fun showDeferredModeToast() {
+        if (!deferredModeToast) return
+        deferredModeToast = false
+        showReadingModeToast(viewModel.getMangaReadingMode())
     }
     // KMK <--
 
@@ -1092,10 +1124,15 @@ class ReaderActivity : BaseActivity() {
      */
     @SuppressLint("RestrictedApi")
     private fun setChapters(viewerChapters: ViewerChapters) {
-        binding.readerContainer.removeView(loadingIndicator)
         // KMK -->
-        playIfOnlyVideo(viewerChapters)
+        if (handOffLoneVideo(viewerChapters)) return
+        showChapters(viewerChapters)
+    }
+
+    @SuppressLint("RestrictedApi")
+    private fun showChapters(viewerChapters: ViewerChapters) {
         // KMK <--
+        binding.readerContainer.removeView(loadingIndicator)
         // SY -->
         val state = viewModel.state.value
         if (state.indexChapterToShift != null && state.indexPageToShift != null) {
