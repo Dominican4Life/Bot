@@ -896,6 +896,8 @@ class ReaderActivity : BaseActivity() {
     }
 
     fun reloadChapters(doublePages: Boolean, force: Boolean = false) {
+        // KMK: nothing is drawn while a lone video is being handed to the player
+        if (handingOffVideo) return
         val viewer = viewModel.state.value.viewer as? PagerViewer ?: return
         viewer.updateShifting()
         if (!force && viewer.config.autoDoublePages) {
@@ -909,7 +911,10 @@ class ReaderActivity : BaseActivity() {
             // If we're moving from singe to double, we want the current page to be the first page
             val currentPage = viewModel.state.value.currentPage
             viewer.config.shiftDoublePage = (
-                currentPage + (currentChapter?.pages?.take(currentPage)?.count { it.fullPage || it.isolatedPage } ?: 0)
+                currentPage + (
+                    currentChapter?.pages?.take(currentPage.coerceAtLeast(0))
+                        ?.count { it.fullPage || it.isolatedPage } ?: 0
+                    )
                 ) % 2 != 0
         }
         viewModel.state.value.viewerChapters?.let {
@@ -1073,6 +1078,9 @@ class ReaderActivity : BaseActivity() {
     /** The reading mode popup waiting for that decision */
     private var deferredModeToast = false
 
+    /** True while a lone video is being handed to the player: the reader draws nothing meanwhile */
+    private var handingOffVideo = false
+
     /**
      * A chapter whose only page is a video (a Sumizuri page with a videoUrl or videoListUrl) plays straight in the
      * player, like an anime episode: the reader draws nothing, stays black, and closes without an animation, so
@@ -1088,6 +1096,7 @@ class ReaderActivity : BaseActivity() {
             return false
         }
         readingModeToast?.cancel()
+        handingOffVideo = true
         lifecycleScope.launch {
             val started = try {
                 eu.kanade.tachiyomi.sumizuri.ReaderVideos.play(this@ReaderActivity, onlyPage)
@@ -1103,6 +1112,7 @@ class ReaderActivity : BaseActivity() {
                 @Suppress("DEPRECATION")
                 overridePendingTransition(0, 0)
             } else {
+                handingOffVideo = false
                 showDeferredModeToast()
                 showChapters(viewerChapters)
             }
