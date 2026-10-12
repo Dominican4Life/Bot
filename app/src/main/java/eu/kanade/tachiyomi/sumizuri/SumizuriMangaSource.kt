@@ -109,7 +109,7 @@ class SumizuriMangaSource(
             .sortedBy { it.int("index") ?: 0 }
             .mapIndexedNotNull { index, page ->
                 // KMK: a page with a videoUrl is a video, played from the reader in the app's player
-                ReaderVideos.pageOf(index, page, videoHeaders())?.let { return@mapIndexedNotNull it }
+                ReaderVideos.pageOf(index, page, videoHeaders(), id)?.let { return@mapIndexedNotNull it }
                 val image = page.str("imageUrl") ?: return@mapIndexedNotNull null
                 Page(index, imageUrl = image)
             }
@@ -119,6 +119,14 @@ class SumizuriMangaSource(
         if (baseUrl.isNotBlank()) put("Referer", "$baseUrl/")
         putAll(info.headers)
     }
+
+    /**
+     * KMK: The videos the source's `getVideoList` gives for a video page's `videoListUrl`, played from the reader.
+     * [pageHeaders] are the page's own; a video's `headers` win over them.
+     */
+    suspend fun videoList(url: String, pageHeaders: Map<String, String>): List<eu.kanade.tachiyomi.animesource.model.Video> =
+        SumizuriVideos.map(SumizuriMapping.list(runtime().call("getVideoList", url)), baseUrl, info.headers + pageHeaders)
+            .map { it.second }
 
     override suspend fun getImageUrl(page: Page): String = page.imageUrl.orEmpty()
 

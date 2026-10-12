@@ -10,7 +10,6 @@ import android.util.Base64
 import eu.kanade.tachiyomi.animesource.AnimeSource
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
-import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.model.VideoType
 import eu.kanade.tachiyomi.data.anime.AnimeRepository
@@ -64,14 +63,22 @@ object ReaderVideos {
     }.getOrNull()
 
     /**
-     * Turns one page of a Sumizuri source's `getPageList` into a video page, or null when it has no `videoUrl`.
-     * [defaults] are the source's own headers (its Referer first); the page's `headers` win over them.
+     * Turns one page of a Sumizuri source's `getPageList` into a video page, or null when it has neither a
+     * `videoUrl` (the stream itself) nor a `videoListUrl` (handed to the source's own `getVideoList` when played,
+     * for embeds that are slow to resolve). [defaults] are the source's own headers (its Referer first); the page's
+     * `headers` win over them.
      */
-    fun pageOf(index: Int, page: JsonObject, defaults: Map<String, String>): Page? {
-        val video = absolute(page.str("videoUrl")) ?: return null
+    fun pageOf(index: Int, page: JsonObject, defaults: Map<String, String>, sourceId: Long): Page? {
+        val video = absolute(page.str("videoUrl"))
+        val listUrl = page.str("videoListUrl")?.trim()?.takeIf { it.isNotEmpty() }
+        if (video == null && listUrl == null) return null
         val thumbnail = absolute(page.str("imageUrl") ?: page.str("thumbnailUrl"))
         val data = buildJsonObject {
-            put("url", video)
+            video?.let { put("url", it) }
+            listUrl?.let {
+                put("listUrl", it)
+                put("sourceId", sourceId.toString())
+            }
             thumbnail?.let { put("thumbnailUrl", it) }
             page.str("quality")?.let { put("quality", it) }
             page.str("title")?.let { put("title", it) }
@@ -144,9 +151,25 @@ object ReaderVideos {
             }
             .reversed()
 
-    /** The player's video for a video page */
-    fun videoOf(pageUrl: String): Video? {
-        val data = decode(pageUrl) ?: return null
+    /**
+     * The player's videos for a video page: its own stream, or what the source's `getVideoList` gives for its
+     * `videoListUrl`, with the page's headers under the video's own
+     */
+    suspend fun videosOf(pageUrl: String): List<Video> {
+        val data = decode(pageUrl) ?: return emptyList()
+        val listUrl = data.str("listUrl")
+        if (listUrl != null) {
+            val source = data.str("sourceId")?.toLongOrNull()
+                ?.let { Injekt.get<SourceManager>().get(it) } as? SumizuriMangaSource
+                ?: error("The source of this video isn't installed any more")
+            val pageHeaders = data.obj("headers")?.mapNotNull { (k, v) -> (v as? JsonPrimitive)?.content?.let { k to it } }
+                ?.toMap().orEmpty()
+            return source.videoList(listUrl, pageHeaders).ifEmpty { error("The source found no video to play here") }
+        }
+        return listOfNotNull(videoOf(data))
+    }
+
+    private fun videoOf(data: JsonObject): Video? {
         val url = data.str("url") ?: return null
         val headers = Headers.Builder().apply {
             data.obj("headers")?.forEach { (k, v) -> (v as? JsonPrimitive)?.content?.let { runCatching { set(k, it) } } }
@@ -158,8 +181,8 @@ object ReaderVideos {
             videoUrl = if (isHls) HlsRelay.wrap(url, headers) else url,
             videoTitle = quality.ifBlank { "Video" },
             headers = headers,
-            subtitleTracks = tracks(data, "subtitles"),
-            audioTracks = tracks(data, "audioTracks"),
+            subtitleTracks = SumizuriVideos.tracks(data.arr("subtitles")),
+            audioTracks = SumizuriVideos.tracks(data.arr("audioTracks")),
             initialized = true,
         ).apply {
             type = when {
@@ -168,12 +191,6 @@ object ReaderVideos {
                 else -> VideoType.VIDEO
             }
         }
-    }
-
-    private fun tracks(data: JsonObject, key: String): List<Track> = data.arr(key).orEmpty().mapNotNull { element ->
-        val obj = element as? JsonObject ?: return@mapNotNull null
-        val url = absolute(obj.str("url")) ?: return@mapNotNull null
-        Track(url, obj.str("label") ?: obj.str("language") ?: "Track")
     }
 
     /** Plays the video of [page] in the app's player, with the chapter's other videos as next / previous */
@@ -216,7 +233,7 @@ class ReaderVideosSource : AnimeSource {
 
     override suspend fun getSeasonList(anime: SAnime): List<SAnime> = emptyList()
 
-    override suspend fun getVideoList(episode: SEpisode): List<Video> = listOfNotNull(ReaderVideos.videoOf(episode.url))
+    override suspend fun getVideoList(episode: SEpisode): List<Video> = ReaderVideos.videosOf(episode.url)
 
     override fun toString(): String = name
 }

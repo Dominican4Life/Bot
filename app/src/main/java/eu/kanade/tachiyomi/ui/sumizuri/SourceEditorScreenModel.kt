@@ -384,6 +384,10 @@ class SourceEditorScreenModel(
         when {
             item.kind == Kind.Entry -> run("Chapters of ${item.title}") { chapters(it, item.url) }
             item.kind == Kind.Chapter -> run(if (state.value.anime) "Videos of ${item.title}" else "Pages of ${item.title}") { content(it, item.url) }
+            item.url.startsWith("videolist:") -> {
+                val url = item.url.removePrefix("videolist:")
+                run("Videos of ${item.title.substringBefore(" · ")}") { videos(it, url) }
+            }
             item.url.startsWith("catalog:") -> {
                 val id = item.url.removePrefix("catalog:")
                 run("Catalog ${item.title}") { entries(it.call("getCatalog", id, 1)) }
@@ -423,28 +427,34 @@ class SourceEditorScreenModel(
     }
 
     private suspend fun content(rt: SumizuriRuntime, chapterUrl: String): Result {
-        if (state.value.anime) {
-            val videos = (rt.call("getVideoList", chapterUrl) as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
-            return Result(
-                "",
-                true,
-                0,
-                items = videos.map { v ->
-                    val extras = listOfNotNull(
-                        (v["headers"] as? JsonObject)?.size?.takeIf { it > 0 }?.let { "$it headers" },
-                        (v["subtitles"] as? JsonArray)?.size?.takeIf { it > 0 }?.let { "$it subtitles" },
-                        (v["audioTracks"] as? JsonArray)?.size?.takeIf { it > 0 }?.let { "$it audio tracks" },
-                    )
-                    Item(
-                        title = v.s("quality") ?: "Video",
-                        subtitle = (listOf(v.s("url").orEmpty()) + extras).joinToString(" · "),
-                        kind = Kind.Video,
-                        url = v.s("url").orEmpty(),
-                    )
-                },
-                text = "${videos.size} videos",
-            )
-        }
+        if (state.value.anime) return videos(rt, chapterUrl)
+        return pages(rt, chapterUrl)
+    }
+
+    private suspend fun videos(rt: SumizuriRuntime, url: String): Result {
+        val videos = (rt.call("getVideoList", url) as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+        return Result(
+            "",
+            true,
+            0,
+            items = videos.map { v ->
+                val extras = listOfNotNull(
+                    (v["headers"] as? JsonObject)?.size?.takeIf { it > 0 }?.let { "$it headers" },
+                    (v["subtitles"] as? JsonArray)?.size?.takeIf { it > 0 }?.let { "$it subtitles" },
+                    (v["audioTracks"] as? JsonArray)?.size?.takeIf { it > 0 }?.let { "$it audio tracks" },
+                )
+                Item(
+                    title = v.s("quality") ?: "Video",
+                    subtitle = (listOf(v.s("url").orEmpty()) + extras).joinToString(" · "),
+                    kind = Kind.Video,
+                    url = v.s("url").orEmpty(),
+                )
+            },
+            text = "${videos.size} videos",
+        )
+    }
+
+    private suspend fun pages(rt: SumizuriRuntime, chapterUrl: String): Result {
         val pages = (rt.call("getPageList", chapterUrl) as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
         return Result(
             "",
@@ -453,16 +463,22 @@ class SourceEditorScreenModel(
             items = pages.map { p ->
                 val number = (p.s("index")?.toIntOrNull() ?: 0) + 1
                 val video = p.s("videoUrl")
+                val listUrl = p.s("videoListUrl")
                 Item(
-                    // KMK: a page with a videoUrl plays from the reader
-                    title = if (video != null) "Page $number · video" else "Page $number",
-                    subtitle = video ?: p.s("imageUrl") ?: p.s("text")?.take(120),
+                    // KMK: a page with a videoUrl or videoListUrl plays from the reader; tapping a videoListUrl page
+                    // here runs getVideoList on it
+                    title = when {
+                        listUrl != null -> "Page $number · video (tap to test)"
+                        video != null -> "Page $number · video"
+                        else -> "Page $number"
+                    },
+                    subtitle = video ?: listUrl ?: p.s("imageUrl") ?: p.s("text")?.take(120),
                     imageUrl = p.s("imageUrl") ?: p.s("thumbnailUrl"),
-                    kind = Kind.Page,
-                    url = video ?: p.s("imageUrl").orEmpty(),
+                    kind = if (listUrl != null) Kind.Other else Kind.Page,
+                    url = if (listUrl != null) "videolist:$listUrl" else video ?: p.s("imageUrl").orEmpty(),
                 )
             },
-            text = pages.count { it.s("videoUrl") != null }.let { videos ->
+            text = pages.count { it.s("videoUrl") != null || it.s("videoListUrl") != null }.let { videos ->
                 if (videos == 0) "${pages.size} pages" else "${pages.size} pages, $videos of them videos"
             },
         )
