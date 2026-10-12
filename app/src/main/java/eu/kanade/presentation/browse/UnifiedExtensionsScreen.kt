@@ -284,14 +284,22 @@ private fun Chip(
     )
 }
 
+// KMK: fixed colors that don't follow the app theme: Mihon blue, Aniyomi green, JS yellow. Each has a darker shade
+// for light themes so the text stays readable.
 @Composable
-private fun kindColor(kind: ExtensionKind) = when (kind) {
-    ExtensionKind.MIHON -> MaterialTheme.colorScheme.primary
-    ExtensionKind.ANIYOMI -> MaterialTheme.colorScheme.tertiary
-    // KMK: yellow, darker on light themes so the text stays readable
-    ExtensionKind.JS -> if (MaterialTheme.colorScheme.surface.luminance() < 0.5f) JsYellowDark else JsYellowLight
+private fun kindColor(kind: ExtensionKind): androidx.compose.ui.graphics.Color {
+    val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    return when (kind) {
+        ExtensionKind.MIHON -> if (dark) MihonBlueDark else MihonBlueLight
+        ExtensionKind.ANIYOMI -> if (dark) AniyomiGreenDark else AniyomiGreenLight
+        ExtensionKind.JS -> if (dark) JsYellowDark else JsYellowLight
+    }
 }
 
+private val MihonBlueDark = androidx.compose.ui.graphics.Color(0xFF8AB4F8)
+private val MihonBlueLight = androidx.compose.ui.graphics.Color(0xFF1A62C9)
+private val AniyomiGreenDark = androidx.compose.ui.graphics.Color(0xFF81C995)
+private val AniyomiGreenLight = androidx.compose.ui.graphics.Color(0xFF1E7B3C)
 private val JsYellowDark = androidx.compose.ui.graphics.Color(0xFFFFCA28)
 private val JsYellowLight = androidx.compose.ui.graphics.Color(0xFFA67C00)
 
@@ -327,7 +335,8 @@ private fun PackageIcon(drawable: Drawable?, url: String?, size: Int = 36) {
         modifier = Modifier
             .size(size.dp)
             .clip(RoundedCornerShape(10.dp))
-            .background(MaterialTheme.colorScheme.secondaryContainer),
+            // KMK: the same color as the navigation bar, so no colored edge shows around the icon
+            .background(androidx.compose.material3.NavigationRailDefaults.ContainerColor),
     ) {
         when {
             drawable != null -> {
@@ -338,7 +347,7 @@ private fun PackageIcon(drawable: Drawable?, url: String?, size: Int = 36) {
             else -> Icon(
                 imageVector = Icons.Outlined.Extension,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size((size / 2).dp),
             )
         }
