@@ -38,6 +38,8 @@ data class SumizuriSourceInfo(
      * the library, history and progress made with the APK open through this source with no migrating
      */
     val customId: Long? = null,
+    /** KMK: switched off in Extensions: the app ignores it, and an APK with the same id is used again */
+    val enabled: Boolean = true,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
 ) {

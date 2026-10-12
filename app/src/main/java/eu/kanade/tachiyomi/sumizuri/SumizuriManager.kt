@@ -41,13 +41,45 @@ class SumizuriManager(private val context: Application) {
     private val runtimes = HashMap<String, SumizuriRuntime>()
     private val runtimeLock = Mutex()
 
+    // Only the sources switched on: one switched off is left out, so an APK with the same id is used instead
     val mangaSourcesFlow: StateFlow<List<SumizuriMangaSource>> = _saved
-        .map { list -> list.filterNot { it.anime }.map { SumizuriMangaSource(it, this) } }
+        .map { list -> list.filter { !it.anime && it.enabled }.map { SumizuriMangaSource(it, this) } }
         .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     val animeSourcesFlow: StateFlow<List<SumizuriAnimeSource>> = _saved
-        .map { list -> list.filter { it.anime }.map { SumizuriAnimeSource(it, this) } }
+        .map { list -> list.filter { it.anime && it.enabled }.map { SumizuriAnimeSource(it, this) } }
         .stateIn(scope, SharingStarted.Eagerly, emptyList())
+
+    // KMK --> APK sources switched off while a JS source has their id. Kept apart from the app's disabled sources,
+    // which go by id too and would hide the JS source along with the APK.
+    private val apkOffFile = File(root, "apk_off.txt")
+    private val _apkOff = MutableStateFlow(
+        runCatching { apkOffFile.readLines().mapNotNull { it.trim().toLongOrNull() }.toSet() }.getOrDefault(emptySet()),
+    )
+
+    /** Ids of APK sources switched off that a JS source has taken over */
+    val apkOffFlow: StateFlow<Set<Long>> = _apkOff.asStateFlow()
+
+    /** True when a saved JS source took [id] with its `id` line, so switching the APK goes through [setApkEnabled] */
+    fun sharesId(id: Long, anime: Boolean): Boolean = _saved.value.any { it.anime == anime && it.customId == id }
+
+    fun setApkEnabled(id: Long, enabled: Boolean) {
+        val now = if (enabled) _apkOff.value - id else _apkOff.value + id
+        _apkOff.value = now
+        runCatching { apkOffFile.writeText(now.joinToString("\n")) }
+    }
+
+    /** Switches a JS source on or off. Off: the app ignores it, nothing is deleted */
+    fun setEnabled(key: String, enabled: Boolean) {
+        val info = get(key)?.takeIf { it.enabled != enabled }?.copy(enabled = enabled) ?: return
+        runCatching {
+            File(dir(key), META).writeText(sumizuriJson.encodeToString(SumizuriSourceInfo.serializer(), info))
+        }
+        if (!enabled) invalidate(key)
+        _saved.value = _saved.value.map { if (it.key == key) info else it }
+        AppLog.add('I', "sumizuri", "${info.name} switched ${if (enabled) "on" else "off"}")
+    }
+    // KMK <--
 
     private fun dir(key: String) = File(root, key)
 
@@ -88,6 +120,8 @@ class SumizuriManager(private val context: Application) {
         File(folder, codeFile(json)).writeText(code)
         File(folder, META).writeText(sumizuriJson.encodeToString(SumizuriSourceInfo.serializer(), info))
         invalidate(key)
+        // the `id` line was removed or changed: an APK switched off for the old id is used again
+        existing?.customId?.takeIf { it != info.customId }?.let { setApkEnabled(it, true) }
         showLanguage(info)
         SumizuriIcons.prepare(context, listOf(info))
         _saved.value = (listOf(info) + _saved.value.filterNot { it.key == key }).sortedByDescending { it.updatedAt }
@@ -129,6 +163,7 @@ class SumizuriManager(private val context: Application) {
             preferences = optional("getSourcePreferences", "hasPreferences"),
             hasTags = meta.bool("hasTags") == true,
             customId = customId(meta.str("id"), key, meta.str("name")),
+            enabled = existing?.enabled ?: true,
             createdAt = existing?.createdAt ?: System.currentTimeMillis(),
             updatedAt = System.currentTimeMillis(),
         )
@@ -225,6 +260,8 @@ class SumizuriManager(private val context: Application) {
     // KMK <--
 
     fun delete(key: String) {
+        // an APK switched off for this source is used again
+        get(key)?.customId?.let { setApkEnabled(it, true) }
         runCatching { tabPrefs.edit().remove(key).apply() }
         invalidate(key)
         dir(key).deleteRecursively()

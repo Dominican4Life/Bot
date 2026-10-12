@@ -55,6 +55,7 @@ fun LibraryToolbar(
     // KMK -->
     showingAnime: Boolean = false,
     onClickSwitchType: (() -> Unit)? = null,
+    onClickRefreshMissingCovers: (() -> Unit)? = null,
     // KMK <--
 ) = when {
     selectedCount > 0 -> LibrarySelectionToolbar(
@@ -82,6 +83,7 @@ fun LibraryToolbar(
         // KMK -->
         showingAnime = showingAnime,
         onClickSwitchType = onClickSwitchType,
+        onClickRefreshMissingCovers = onClickRefreshMissingCovers,
         // KMK <--
     )
 }
@@ -106,6 +108,7 @@ private fun LibraryRegularToolbar(
     // KMK -->
     showingAnime: Boolean,
     onClickSwitchType: (() -> Unit)?,
+    onClickRefreshMissingCovers: (() -> Unit)?,
     // KMK <--
 ) {
     val context = LocalContext.current
@@ -174,6 +177,17 @@ private fun LibraryRegularToolbar(
                         },
                     ),
                 ).builder().apply {
+                    // KMK -->
+                    if (onClickRefreshMissingCovers != null) {
+                        add(
+                            3,
+                            AppBar.OverflowAction(
+                                title = stringResource(KMR.strings.action_refresh_missing_covers),
+                                onClick = onClickRefreshMissingCovers,
+                            ),
+                        )
+                    }
+                    // KMK <--
                     // SY -->
                     if (onClickSyncExh != null) {
                         add(

@@ -47,6 +47,7 @@ import eu.kanade.tachiyomi.data.connections.discord.DiscordRPCService
 import eu.kanade.tachiyomi.data.connections.discord.DiscordScreen
 import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
+import eu.kanade.tachiyomi.data.library.RefreshMissingCovers
 import eu.kanade.tachiyomi.data.sync.SyncDataJob
 import eu.kanade.tachiyomi.ui.anime.AnimeScreen
 import eu.kanade.tachiyomi.ui.browse.source.SourcesScreen
@@ -203,6 +204,15 @@ data object LibraryTab : Tab {
                     // KMK -->
                     showingAnime = showAnime,
                     onClickSwitchType = { showAnimePref.set(!showAnime) },
+                    // Only the titles of the tab being looked at
+                    onClickRefreshMissingCovers = {
+                        val mangas = screenModel.mangaForCurrentTab()
+                        if (!RefreshMissingCovers.start(context, mangas)) {
+                            context.toast(KMR.strings.refresh_missing_covers_running)
+                        } else {
+                            context.toast(KMR.strings.refresh_missing_covers_title)
+                        }
+                    }.takeIf { !showAnime },
                     // KMK <--
                 )
             },

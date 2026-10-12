@@ -1177,6 +1177,14 @@ class LibraryScreenModel(
             .asState(screenModelScope)
     }
 
+    // KMK -->
+    /** The titles of the tab being looked at, for "Refresh missing covers" */
+    fun mangaForCurrentTab(): List<tachiyomi.domain.manga.model.Manga> {
+        val state = state.value
+        return state.getItemsForCategoryId(state.activeCategory?.id).map { it.libraryManga.manga }
+    }
+    // KMK <--
+
     fun getRandomLibraryItemForCurrentCategory(): LibraryItem? {
         val state = state.value
         return state.getItemsForCategoryId(state.activeCategory?.id).randomOrNull()

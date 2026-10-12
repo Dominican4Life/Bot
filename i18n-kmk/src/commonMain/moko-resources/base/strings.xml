@@ -274,6 +274,11 @@
     <string name="anime_source_not_loaded">This anime\'s source isn\'t installed</string>
     <string name="anime_library_empty">Your anime library is empty. Add anime from Browse.</string>
     <string name="library_switch_type">Switch between manga and anime</string>
+    <string name="action_refresh_missing_covers">Refresh missing covers</string>
+    <string name="refresh_missing_covers_title">Refreshing missing covers</string>
+    <string name="refresh_missing_covers_running">Already refreshing missing covers</string>
+    <string name="refresh_missing_covers_none">No missing covers here</string>
+    <string name="refresh_missing_covers_done">Fixed %1$d of %2$d missing covers</string>
     <string name="pref_player_summary">Anime player, gestures, subtitles, audio</string>
     <string name="anime_updating_library">Updating anime library</string>
     <string name="anime_no_history">No anime watched yet</string>

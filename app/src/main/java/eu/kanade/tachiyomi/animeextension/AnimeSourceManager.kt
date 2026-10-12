@@ -30,8 +30,11 @@ class AnimeSourceManager(
     private val readerVideos = eu.kanade.tachiyomi.sumizuri.ReaderVideosSource()
 
     private val sourcesMapFlow: StateFlow<Map<Long, AnimeSource>> = extensionManager.installedExtensionsFlow
-        .combine(sumizuriManager.animeSourcesFlow) { extensions, jsSources ->
-            (extensions.flatMap { it.sources } + jsSources + deviceFiles + readerVideos).associateBy { it.id }
+        .combine(sumizuriManager.animeSourcesFlow) { extensions, jsSources -> extensions to jsSources }
+        // KMK: APK sources switched off in favour of a JS source with their id are left out
+        .combine(sumizuriManager.apkOffFlow) { (extensions, jsSources), apkOff ->
+            (extensions.flatMap { it.sources }.filter { it.id !in apkOff } + jsSources + deviceFiles + readerVideos)
+                .associateBy { it.id }
         }
         .stateIn(scope, SharingStarted.Eagerly, emptyMap())
 

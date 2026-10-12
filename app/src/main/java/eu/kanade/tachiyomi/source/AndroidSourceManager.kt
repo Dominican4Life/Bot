@@ -88,9 +88,11 @@ class AndroidSourceManager(
                 ) { (a, b), c -> Triple(a, b, c) }
                 // Sources made in the Code editor join the manga sources
                 .combine(sumizuriManager.mangaSourcesFlow) { triple, jsSources -> triple to jsSources }
+                // APK sources switched off in favour of a JS source with their id
+                .combine(sumizuriManager.apkOffFlow) { pair, apkOff -> Triple(pair.first, pair.second, apkOff) }
                 // KMK <--
                 // SY <--
-                .collectLatest { (triple, jsSources) ->
+                .collectLatest { (triple, jsSources, apkOff) ->
                     val (extensions, enableExhentai/* KMK --> */, isHentaiEnabled/* KMK <-- */) = triple
                     val mutableMap = ConcurrentHashMap<Long, Source>(
                         mapOf(
@@ -128,6 +130,11 @@ class AndroidSourceManager(
                     }
                     extensions.forEach { extension ->
                         extension.sources.mapNotNull { it.toInternalSource(/* KMK --> */isHentaiEnabled/* KMK <-- */) }.forEach {
+                            // KMK: switched off for a JS source with the same id: only its stub, for the library
+                            if (it.id in apkOff) {
+                                registerStubSource(StubSource.from(it))
+                                return@forEach
+                            }
                             mutableMap[it.id] = it
                             registerStubSource(StubSource.from(it))
                         }

@@ -85,8 +85,11 @@ class UnifiedExtensionsScreenModel(
             preferences.animePinnedSources().changes(),
             preferences.enabledLanguages().changes(),
             preferences.disabledRepos().changes(),
-        ) { (disabled, pinned, animeDisabled), animePinned, languages, disabledRepos ->
-            Prefs(disabled, pinned, animeDisabled, animePinned, languages, disabledRepos)
+            // KMK: APK sources switched off for a JS source with their id show as off too
+            sumizuri.apkOffFlow,
+        ) { (disabled, pinned, animeDisabled), animePinned, languages, disabledRepos, apkOff ->
+            val off = apkOff.map { it.toString() }.toSet()
+            Prefs(disabled + off, pinned, animeDisabled + off, animePinned, languages, disabledRepos)
         }
 
         screenModelScope.launchIO {
@@ -115,7 +118,7 @@ class UnifiedExtensionsScreenModel(
                 saved
                     .map { info ->
                         val id = info.id.toString()
-                        val enabled = id !in (if (info.anime) animeDisabled else disabled)
+                        val enabled = info.enabled && id !in (if (info.anime) animeDisabled else disabled)
                         UnifiedSource(
                             id = info.id,
                             kind = ExtensionKind.JS,
@@ -446,15 +449,25 @@ class UnifiedExtensionsScreenModel(
     fun setSourceEnabled(source: UnifiedSource, enabled: Boolean) {
         val pref = if (source.isAnime) preferences.animeDisabledSources() else preferences.disabledSources()
         val id = source.id.toString()
+        // KMK --> a JS source and an APK can share an id: each keeps its own switch, so turning one off hands the
+        // id to the other instead of hiding both
+        val jsKey = source.js?.key
+        if (jsKey != null) {
+            sumizuri.setEnabled(jsKey, enabled)
+            if (enabled) pref.set(pref.get() - id)
+            return
+        }
+        if (sumizuri.sharesId(source.id, source.isAnime)) {
+            sumizuri.setApkEnabled(source.id, enabled)
+            if (enabled) pref.set(pref.get() - id)
+            return
+        }
+        // KMK <--
         pref.set(if (enabled) pref.get() - id else pref.get() + id)
     }
 
     fun setAllSourcesEnabled(sources: List<UnifiedSource>, enabled: Boolean) {
-        sources.groupBy { it.isAnime }.forEach { (isAnime, list) ->
-            val pref = if (isAnime) preferences.animeDisabledSources() else preferences.disabledSources()
-            val ids = list.map { it.id.toString() }.toSet()
-            pref.set(if (enabled) pref.get() - ids else pref.get() + ids)
-        }
+        sources.forEach { setSourceEnabled(it, enabled) }
     }
 
     // KMK -->
