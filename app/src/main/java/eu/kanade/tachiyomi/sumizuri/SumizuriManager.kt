@@ -16,7 +16,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.contentOrNull
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.File
@@ -213,24 +212,6 @@ class SumizuriManager(private val context: Application) {
                 it.metadata()
                 runtimes[info.key] = it
             }
-        }
-    }
-
-    /**
-     * KMK: Runs a settings button: the source's `onSettingButton(key)`. [done] gets, on the main thread, the text
-     * it returned (or why it failed), to show to the person.
-     */
-    fun pressButton(info: SumizuriSourceInfo, key: String, done: (String) -> Unit) {
-        scope.launch {
-            val message = try {
-                val result = runtime(info).call("onSettingButton", key)
-                (result as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() } ?: "Done"
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                "Failed: ${e.message ?: e}"
-            }
-            kotlinx.coroutines.withContext(Dispatchers.Main) { done(message) }
         }
     }
 

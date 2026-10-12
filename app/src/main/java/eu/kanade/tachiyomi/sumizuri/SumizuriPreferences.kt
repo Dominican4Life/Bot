@@ -2,15 +2,12 @@ package eu.kanade.tachiyomi.sumizuri
 
 import android.content.Context
 import android.content.SharedPreferences
-import android.widget.Toast
 import androidx.core.content.edit
 import androidx.preference.EditTextPreference
 import androidx.preference.ListPreference
 import androidx.preference.MultiSelectListPreference
-import androidx.preference.Preference
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
-import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -25,8 +22,7 @@ import kotlinx.serialization.json.contentOrNull
  */
 object SumizuriPreferences {
 
-    /** [Button]: KMK, a row that runs the source's onSettingButton(key) when tapped and shows what it returned */
-    enum class Type { Text, Switch, List, MultiList, Button }
+    enum class Type { Text, Switch, List, MultiList }
 
     data class Option(val label: String, val value: String)
 
@@ -59,7 +55,6 @@ object SumizuriPreferences {
                 "switch", "checkbox", "switchpreferencecompat", "checkboxpreference" -> Type.Switch
                 "list", "select", "listpreference" -> Type.List
                 "multiselectlist", "multiselect", "multiselectlistpreference" -> Type.MultiList
-                "button", "action" -> Type.Button
                 else -> Type.Text
             }
             val options = obj.arr("options")?.mapNotNull { option ->
@@ -116,33 +111,11 @@ object SumizuriPreferences {
     fun current(preferences: SharedPreferences, def: Definition): JsonElement? =
         if (preferences.contains(def.key)) preferences.all[def.key].toJsonElement() else def.defaultValue
 
-    /**
-     * Builds the source settings screen from the definitions. [onButton] runs a button's action (its key) and calls
-     * back with the text to show when it's done.
-     */
-    fun setup(
-        screen: PreferenceScreen,
-        definitions: List<Definition>,
-        onButton: ((key: String, done: (String) -> Unit) -> Unit)? = null,
-    ) {
+    /** Builds the source settings screen from the definitions */
+    fun setup(screen: PreferenceScreen, definitions: List<Definition>) {
         val context = screen.context
         definitions.forEach { def ->
             val preference = when (def.type) {
-                Type.Button -> Preference(context).apply {
-                    isPersistent = false
-                    summary = def.summary
-                    setOnPreferenceClickListener { pref ->
-                        val run = onButton ?: return@setOnPreferenceClickListener true
-                        pref.isEnabled = false
-                        pref.summary = "Running…"
-                        run(def.key) { message ->
-                            pref.isEnabled = true
-                            pref.summary = def.summary
-                            context.toast(message, Toast.LENGTH_LONG)
-                        }
-                        true
-                    }
-                }
                 Type.Switch -> SwitchPreferenceCompat(context).apply {
                     setDefaultValue((def.defaultValue as? JsonPrimitive)?.booleanOrNull ?: false)
                     summary = def.summary

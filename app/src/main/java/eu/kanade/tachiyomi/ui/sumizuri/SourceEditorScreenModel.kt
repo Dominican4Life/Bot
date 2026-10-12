@@ -538,15 +538,6 @@ class SourceEditorScreenModel(
 
     fun closeSettings() = mutableState.update { it.copy(settings = null) }
 
-    /** KMK: Runs a settings button (the source's onSettingButton) and shows what it returned in the results */
-    fun pressButton(key: String) {
-        mutableState.update { it.copy(settings = null) }
-        run("Button $key") { rt ->
-            val result = rt.call("onSettingButton", key)
-            Result("Button $key", true, 0, text = (result as? JsonPrimitive)?.contentOrNull ?: pretty(result))
-        }
-    }
-
     fun clearResults() {
         runtime?.clearConsole()
         mutableState.update { it.copy(results = emptyList(), console = emptyList()) }

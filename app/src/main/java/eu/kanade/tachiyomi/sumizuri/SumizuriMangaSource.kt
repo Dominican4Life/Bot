@@ -242,9 +242,7 @@ class SumizuriMangaSource(
     // Settings
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        info.preferences?.let { prefs ->
-            SumizuriPreferences.setup(screen, SumizuriPreferences.parse(prefs)) { key, done -> manager.pressButton(info, key, done) }
-        }
+        info.preferences?.let { SumizuriPreferences.setup(screen, SumizuriPreferences.parse(it)) }
         if (info.hasTags) manager.tags.addRefreshButton(screen, info)
     }
 
