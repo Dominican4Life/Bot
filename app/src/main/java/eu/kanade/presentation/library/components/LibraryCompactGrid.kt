@@ -5,13 +5,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import eu.kanade.domain.ui.BadgeCorner
 import eu.kanade.presentation.components.readingProgress
 import eu.kanade.presentation.components.rememberCoverBadgeCorners
 import eu.kanade.presentation.components.rememberCoverProgressBarEnabled
 import eu.kanade.tachiyomi.ui.library.LibraryItem
 import tachiyomi.domain.library.model.LibraryManga
-import tachiyomi.domain.manga.model.MangaCover
 
 @Composable
 internal fun LibraryCompactGrid(
@@ -29,6 +27,7 @@ internal fun LibraryCompactGrid(
     // KMK -->
     val badgeCorners = rememberCoverBadgeCorners()
     val progressBar = rememberCoverProgressBarEnabled()
+    val uniqueItems = rememberUniqueLibraryItems(items)
     // KMK <--
     LazyLibraryGrid(
         modifier = Modifier.fillMaxSize(),
@@ -38,10 +37,14 @@ internal fun LibraryCompactGrid(
         globalSearchItem(searchQuery, onGlobalSearchClicked)
 
         items(
-            items = items,
+            // KMK: each title once, with its own key, so only covers that changed are redrawn
+            items = uniqueItems,
+            key = ::libraryItemKey,
             contentType = { "library_compact_grid_item" },
         ) { libraryItem ->
             val manga = libraryItem.libraryManga.manga
+            // KMK: badges worked out once per title
+            val badges = rememberLibraryBadgeSlots(libraryItem, badgeCorners)
             MangaCompactGridItem(
                 // KMK -->
                 progress = if (progressBar) {
@@ -52,18 +55,12 @@ internal fun LibraryCompactGrid(
                 // KMK <--
                 isSelected = manga.id in selection,
                 title = manga.title.takeIf { showTitle },
-                coverData = MangaCover(
-                    mangaId = manga.id,
-                    sourceId = manga.source,
-                    isMangaFavorite = manga.favorite,
-                    ogUrl = manga.thumbnailUrl,
-                    lastModified = manga.coverLastModified,
-                ),
+                coverData = rememberLibraryCover(manga),
                 // KMK --> badges go in the corners chosen in Settings › Library › Badges
-                coverBadgeStart = badgeCorners.slot(BadgeCorner.TopLeft, libraryBadges(libraryItem)),
-                coverBadgeEnd = badgeCorners.slot(BadgeCorner.TopRight, libraryBadges(libraryItem)),
-                coverBadgeBottomStart = badgeCorners.slot(BadgeCorner.BottomLeft, libraryBadges(libraryItem)),
-                coverBadgeBottomEnd = badgeCorners.slot(BadgeCorner.BottomRight, libraryBadges(libraryItem)),
+                coverBadgeStart = badges.topStart,
+                coverBadgeEnd = badges.topEnd,
+                coverBadgeBottomStart = badges.bottomStart,
+                coverBadgeBottomEnd = badges.bottomEnd,
                 // KMK <--
                 onLongClick = { onLongClick(libraryItem.libraryManga) },
                 onClick = { onClick(libraryItem.libraryManga) },

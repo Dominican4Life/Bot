@@ -7,9 +7,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import eu.kanade.domain.ui.BadgeCorner
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.domain.ui.model.PanoramaStyle
+import eu.kanade.presentation.components.WideCovers
 import eu.kanade.presentation.components.readingProgress
 import eu.kanade.presentation.components.rememberCoverBadgeCorners
 import eu.kanade.presentation.components.rememberCoverProgressBarEnabled
@@ -44,7 +44,20 @@ internal fun LibraryComfortableGrid(
     val doubleWide = usePanoramaCover && panoramaStyle == PanoramaStyle.WIDE
     // Wide covers take two places in the "Wide" style; read here, not inside the span lambda
     val wideCovers = rememberWideCovers()
-    val wide = wideCovers.ids
+    val uniqueItems = rememberUniqueLibraryItems(items)
+    // Covers already known to be wide (their shape is saved): placed right away, without redrawing the grid later
+    val knownWide = remember(uniqueItems, doubleWide) {
+        if (!doubleWide) {
+            emptySet<Long>()
+        } else {
+            uniqueItems.mapNotNullTo(HashSet()) { item ->
+                val id = item.libraryManga.manga.id
+                id.takeIf { (MangaCover.coverRatioMap[id] ?: Float.MAX_VALUE) <= WideCovers.WIDE_RATIO }
+            }
+        }
+    }
+    val found = wideCovers.ids
+    val wide = remember(knownWide, found) { if (found.isEmpty()) knownWide else knownWide + found }
     // KMK <--
     LazyLibraryGrid(
         modifier = Modifier.fillMaxSize(),
@@ -54,13 +67,17 @@ internal fun LibraryComfortableGrid(
         globalSearchItem(searchQuery, onGlobalSearchClicked)
 
         items(
-            items = items,
+            // KMK: each title once, with its own key, so only covers that changed are redrawn
+            items = uniqueItems,
+            key = ::libraryItemKey,
             contentType = { "library_comfortable_grid_item" },
             // KMK -->
             span = { libraryItem -> wideSpan(doubleWide, wide, libraryItem.libraryManga.manga.id) },
             // KMK <--
         ) { libraryItem ->
             val manga = libraryItem.libraryManga.manga
+            // KMK: badges worked out once per title
+            val badges = rememberLibraryBadgeSlots(libraryItem, badgeCorners)
             MangaComfortableGridItem(
                 // KMK -->
                 progress = if (progressBar) {
@@ -71,18 +88,12 @@ internal fun LibraryComfortableGrid(
                 // KMK <--
                 isSelected = manga.id in selection,
                 title = manga.title,
-                coverData = MangaCover(
-                    mangaId = manga.id,
-                    sourceId = manga.source,
-                    isMangaFavorite = manga.favorite,
-                    ogUrl = manga.thumbnailUrl,
-                    lastModified = manga.coverLastModified,
-                ),
+                coverData = rememberLibraryCover(manga),
                 // KMK --> badges go in the corners chosen in Settings › Library › Badges
-                coverBadgeStart = badgeCorners.slot(BadgeCorner.TopLeft, libraryBadges(libraryItem)),
-                coverBadgeEnd = badgeCorners.slot(BadgeCorner.TopRight, libraryBadges(libraryItem)),
-                coverBadgeBottomStart = badgeCorners.slot(BadgeCorner.BottomLeft, libraryBadges(libraryItem)),
-                coverBadgeBottomEnd = badgeCorners.slot(BadgeCorner.BottomRight, libraryBadges(libraryItem)),
+                coverBadgeStart = badges.topStart,
+                coverBadgeEnd = badges.topEnd,
+                coverBadgeBottomStart = badges.bottomStart,
+                coverBadgeBottomEnd = badges.bottomEnd,
                 // KMK <--
                 onLongClick = { onLongClick(libraryItem.libraryManga) },
                 onClick = { onClick(libraryItem.libraryManga) },
@@ -94,7 +105,7 @@ internal fun LibraryComfortableGrid(
                 // KMK -->
                 usePanoramaCover = usePanoramaCover,
                 panoramaStyle = panoramaStyle,
-                onCoverRatio = { if (doubleWide) wideCovers.report(manga.id, it) },
+                onCoverRatio = { if (doubleWide && manga.id !in knownWide) wideCovers.report(manga.id, it) },
                 // KMK <--
             )
         }

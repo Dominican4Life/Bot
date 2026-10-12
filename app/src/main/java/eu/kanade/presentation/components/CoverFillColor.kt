@@ -33,12 +33,18 @@ import uy.kohesive.injekt.api.get
  */
 @Composable
 fun rememberCoverFillColor(cover: MangaCover, enabled: Boolean): Color? {
+    // Covers that don't use the fill (most of them) do no work at all
+    if (!enabled) return null
     val context = LocalContext.current
     val isDark = isSystemInDarkTheme()
     val uiPreferences = remember { Injekt.get<UiPreferences>() }
     val style by uiPreferences.themeCoverBasedStyle().collectAsState()
     val amoled by uiPreferences.themeDarkAmoled().collectAsState()
-    var seed by remember(cover.mangaId) { mutableStateOf(cover.vibrantCoverColor) }
+    // The color the app already keeps for the cover first (saved for library titles), so the picture isn't
+    // loaded a second time; only a cover with no known color is read
+    var seed by remember(cover.mangaId) {
+        mutableStateOf(cover.vibrantCoverColor ?: cover.dominantCoverColors?.first)
+    }
 
     LaunchedEffect(cover.mangaId, enabled) {
         if (!enabled || seed != null) return@LaunchedEffect
