@@ -178,16 +178,21 @@ class SumizuriMangaSource(
     /** The tab button picked, while every filter is still at its default: changing one in the sheet searches */
     private fun tabOf(filters: Iterable<*>): String? {
         val id = filters.filterIsInstance<TabHolder>().firstOrNull()?.id ?: return null
-        val touched = filters.any { filter ->
-            when (filter) {
-                is SelectFilter -> filter.state != filter.group.defaultIndex.coerceIn(0, (filter.group.options.size - 1).coerceAtLeast(0))
-                is MultiFilter -> filter.state.any { it.state }
-                is CheckFilter -> filter.state != filter.group.defaultChecked
-                is TagFilter -> filter.state.isNotEmpty()
-                else -> false
-            }
+        return if (touched(filters)) null else id
+    }
+
+    private fun touched(filters: Iterable<*>): Boolean = filters.any { filter ->
+        when (filter) {
+            is SelectFilter -> filter.state != filter.group.startIndex
+            is MultiFilter -> filter.state.any { it.state }
+            is CheckFilter -> filter.state != filter.group.defaultChecked
+            is TagFilter -> filter.state.isNotEmpty()
+            is TextFilter -> filter.state != filter.group.defaultText
+            is TriFilter -> filter.state != filter.group.defaultState
+            is SortFilter -> filter.state != filter.start
+            is GroupFilter -> touched(filter.state)
+            else -> false
         }
-        return if (touched) null else id
     }
 
     override fun lastTab(): String? = manager.lastTab(info.key)
@@ -196,7 +201,7 @@ class SumizuriMangaSource(
 
     override fun getFilterList(): FilterList {
         // KMK: the tag boxes' suggestions are read from the site in the background, when missing or old
-        if (groups.any { it.type == SumizuriFilters.Type.AutoComplete }) manager.tags.ensure(info)
+        if (SumizuriFilters.flat(groups).any { it.type == SumizuriFilters.Type.AutoComplete }) manager.tags.ensure(info)
         val filters = mutableListOf<Filter<*>>()
         if (catalogs.isNotEmpty() && catalogs.all { it.tab }) {
             // KMK: every catalog is a tab button: no Catalog box in the sheet, just an invisible holder for the tab
@@ -206,22 +211,27 @@ class SumizuriMangaSource(
             filters += Filter.Header("A catalog is listed when the search is empty")
             filters += Filter.Separator()
         }
-        groups.forEach { group ->
-            filters += when (group.type) {
-                SumizuriFilters.Type.Select -> SelectFilter(group)
-                SumizuriFilters.Type.MultiSelect -> MultiFilter(group)
-                SumizuriFilters.Type.Checkbox -> CheckFilter(group)
-                SumizuriFilters.Type.Header -> Filter.Header(group.name)
-                SumizuriFilters.Type.AutoComplete -> TagFilter(
-                    group,
-                    manager.tags.suggestions(info.key, group.tagLists, group.options.map { it.label }),
-                )
-            }
-        }
+        groups.forEach { filters += filterOf(it) }
         return FilterList(filters)
     }
 
-    private fun filterValues(filters: FilterList): Map<String, JsonElement> = buildMap {
+    private fun filterOf(group: SumizuriFilters.Group): Filter<*> = when (group.type) {
+        SumizuriFilters.Type.Select -> SelectFilter(group)
+        SumizuriFilters.Type.MultiSelect -> MultiFilter(group)
+        SumizuriFilters.Type.Checkbox -> CheckFilter(group)
+        SumizuriFilters.Type.Header -> Filter.Header(group.name)
+        SumizuriFilters.Type.Separator -> Filter.Separator(group.name)
+        SumizuriFilters.Type.Text -> TextFilter(group)
+        SumizuriFilters.Type.TriState -> TriFilter(group)
+        SumizuriFilters.Type.Sort -> SortFilter(group)
+        SumizuriFilters.Type.Group -> GroupFilter(group, group.children.map { filterOf(it) })
+        SumizuriFilters.Type.AutoComplete -> TagFilter(
+            group,
+            manager.tags.suggestions(info.key, group.tagLists, group.options.map { it.label }),
+        )
+    }
+
+    private fun filterValues(filters: Iterable<*>): Map<String, JsonElement> = buildMap {
         filters.forEach { filter ->
             when (filter) {
                 is SelectFilter -> filter.group.options.getOrNull(filter.state)?.let { put(filter.group.key, it.value) }
@@ -231,6 +241,20 @@ class SumizuriMangaSource(
                 )
                 is CheckFilter -> put(filter.group.key, JsonPrimitive(filter.state))
                 is TagFilter -> put(filter.group.key, kotlinx.serialization.json.JsonArray(filter.state.map { JsonPrimitive(it) }))
+                is TextFilter -> put(filter.group.key, JsonPrimitive(filter.state))
+                is TriFilter -> put(filter.group.key, JsonPrimitive(filter.state))
+                is SortFilter -> filter.state?.let { sel ->
+                    put(
+                        filter.group.key,
+                        kotlinx.serialization.json.buildJsonObject {
+                            put("index", JsonPrimitive(sel.index))
+                            put("value", filter.group.options.getOrNull(sel.index)?.value ?: JsonPrimitive(""))
+                            put("ascending", JsonPrimitive(sel.ascending))
+                        },
+                    )
+                }
+                // what a group holds goes out under each one's own key
+                is GroupFilter -> putAll(filterValues(filter.state))
                 else -> Unit
             }
         }
@@ -259,6 +283,22 @@ class SumizuriMangaSource(
         Filter.Group<OptionBox>(group.name, group.options.map { OptionBox(it) })
 
     private class CheckFilter(val group: SumizuriFilters.Group) : Filter.CheckBox(group.name, group.defaultChecked)
+
+    private class TextFilter(val group: SumizuriFilters.Group) : Filter.Text(group.name, group.defaultText)
+
+    private class TriFilter(val group: SumizuriFilters.Group) : Filter.TriState(group.name, group.defaultState)
+
+    private class SortFilter(val group: SumizuriFilters.Group) :
+        Filter.Sort(
+            group.name,
+            group.options.map { it.label }.toTypedArray(),
+            Filter.Sort.Selection(group.startIndex, group.defaultAscending),
+        ) {
+        val start = Filter.Sort.Selection(group.startIndex, group.defaultAscending)
+    }
+
+    private class GroupFilter(val group: SumizuriFilters.Group, children: List<Filter<*>>) :
+        Filter.Group<Filter<*>>(group.name, children)
 
     private class TagFilter(val group: SumizuriFilters.Group, suggestions: List<String>) :
         Filter.AutoComplete(

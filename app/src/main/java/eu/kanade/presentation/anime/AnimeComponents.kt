@@ -27,7 +27,9 @@ import androidx.compose.material3.TriStateCheckbox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -266,10 +268,29 @@ private fun FilterItem(filter: AnimeFilter<*>, onChanged: () -> Unit) {
                 }
             }
         }
+        // KMK: a group opens and closes like in the manga filter sheet, closed at first
         is AnimeFilter.Group<*> -> Column(modifier = Modifier.padding(vertical = 4.dp)) {
-            Text(filter.name, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-            filter.state.filterIsInstance<AnimeFilter<*>>().forEach { child ->
-                FilterItem(filter = child, onChanged = onChanged)
+            var expanded by rememberSaveable(filter.name) {
+                mutableStateOf(false)
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(vertical = 8.dp),
+            ) {
+                Text(
+                    filter.name,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(if (expanded) "▲" else "▼", color = MaterialTheme.colorScheme.primary)
+            }
+            if (expanded) {
+                Column(modifier = Modifier.padding(start = 12.dp)) {
+                    filter.state.filterIsInstance<AnimeFilter<*>>().forEach { child ->
+                        FilterItem(filter = child, onChanged = onChanged)
+                    }
+                }
             }
         }
         else -> {}
