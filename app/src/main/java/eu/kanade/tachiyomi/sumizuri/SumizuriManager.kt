@@ -128,10 +128,45 @@ class SumizuriManager(private val context: Application) {
             catalogs = optional("getCatalogs", "hasCatalogs"),
             preferences = optional("getSourcePreferences", "hasPreferences"),
             hasTags = meta.bool("hasTags") == true,
+            customId = customId(meta.str("id"), key, meta.str("name")),
             createdAt = existing?.createdAt ?: System.currentTimeMillis(),
             updatedAt = System.currentTimeMillis(),
         )
     }
+
+    /**
+     * KMK: The id a source asked for with `id`, when it may have it. Not the ids of the app's own sources (E-Hentai,
+     * local, merged…), and not one another saved JS source already has. A JS source with the id of an installed APK
+     * takes its place: the APK stays installed but isn't used.
+     */
+    private fun customId(raw: String?, key: String, name: String?): Long? {
+        val text = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val id = text.toLongOrNull()
+        val reason = when {
+            id == null -> "isn't a whole number"
+            id in reservedIds() -> "belongs to one of the app's own sources"
+            _saved.value.any { it.key != key && it.id == id } -> "is already used by another saved source"
+            else -> null
+        }
+        if (reason == null) return id
+        AppLog.add('W', "sumizuri", "${name ?: key}: id $text $reason, so the source keeps its own id")
+        return null
+    }
+
+    private fun reservedIds(): Set<Long> = buildSet {
+        add(tachiyomi.source.local.LocalSource.ID)
+        add(exh.source.EH_SOURCE_ID)
+        add(exh.source.EXH_SOURCE_ID)
+        add(exh.source.MERGED_SOURCE_ID)
+        addAll(exh.source.EHENTAI_EXT_SOURCES.keys)
+        addAll(exh.source.EXHENTAI_EXT_SOURCES.keys)
+        add(eu.kanade.tachiyomi.devicefiles.DeviceFilesIds.MANGA)
+        add(eu.kanade.tachiyomi.devicefiles.DeviceFilesIds.ANIME)
+        add(ReaderVideos.SOURCE_ID)
+    }
+
+    /** The id a source's settings and videos go by: its own id once saved, or the one made from its key */
+    fun idOf(key: String): Long = get(key)?.id ?: SumizuriSourceInfo.idFor(key)
 
     /** A saved source is listed in Browse even when its language was turned off there */
     private fun showLanguage(info: SumizuriSourceInfo) {

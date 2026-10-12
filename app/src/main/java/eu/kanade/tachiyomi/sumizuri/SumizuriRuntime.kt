@@ -511,6 +511,8 @@ class SumizuriRuntime private constructor(
                 rateLimitMs: typeof extension.rateLimitMs === 'number' ? extension.rateLimitMs
                   : (typeof RATE_LIMIT_MS === 'number' ? RATE_LIMIT_MS : null),
                 headers: headers,
+                // a source id is 64 bits, more than a JS number holds exactly: written in quotes it stays exact
+                id: (extension.id === undefined || extension.id === null) ? null : String(extension.id),
               });
             })()
         """.trimIndent()

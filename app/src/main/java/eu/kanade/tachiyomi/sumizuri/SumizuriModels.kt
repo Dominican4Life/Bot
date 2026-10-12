@@ -33,10 +33,15 @@ data class SumizuriSourceInfo(
     val preferences: JsonElement? = null,
     /** The source has getTags(), which gives the suggestions of its autocomplete filters */
     val hasTags: Boolean = false,
+    /**
+     * KMK: the id the source asked for (`id` on the extension object), usually the id of the APK it replaces, so
+     * the library, history and progress made with the APK open through this source with no migrating
+     */
+    val customId: Long? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
 ) {
-    val id: Long get() = idFor(key)
+    val id: Long get() = customId ?: idFor(key)
 
     val displayLang: String get() = lang.ifBlank { "all" }.let { if (it == "multi" || it == "mul") "all" else it }
 

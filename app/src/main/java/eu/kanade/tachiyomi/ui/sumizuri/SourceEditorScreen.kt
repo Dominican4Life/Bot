@@ -96,7 +96,6 @@ import cafe.adriel.voyager.navigator.currentOrThrow
 import coil3.compose.AsyncImage
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.sumizuri.SumizuriPreferences
-import eu.kanade.tachiyomi.sumizuri.SumizuriSourceInfo
 import eu.kanade.tachiyomi.ui.anime.source.AnimeSourceScreen
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreen
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
@@ -363,7 +362,7 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
         state.settings?.let { definitions ->
             SourceSettingsDialog(
                 definitions = definitions,
-                sourceId = SumizuriSourceInfo.idFor(state.key),
+                sourceId = model.sourceId(state.key),
                 onDismiss = model::closeSettings,
             )
         }

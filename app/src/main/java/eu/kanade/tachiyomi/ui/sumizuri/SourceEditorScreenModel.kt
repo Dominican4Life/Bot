@@ -274,7 +274,7 @@ class SourceEditorScreenModel(
         SumizuriRuntime.create(
             context = context,
             key = s.key,
-            sourceId = SumizuriSourceInfo.idFor(s.key),
+            sourceId = manager.idOf(s.key),
             name = s.name.ifBlank { "editor" },
             code = s.code,
             json = s.json,
@@ -553,4 +553,7 @@ class SourceEditorScreenModel(
     private fun pretty(element: JsonElement): String = prettyJson.encodeToString(JsonElement.serializer(), element)
 
     private val prettyJson = kotlinx.serialization.json.Json(from = sumizuriJson) { prettyPrint = true }
+
+    /** KMK: the id this source's settings are kept under (its own `id`, once saved with one) */
+    fun sourceId(key: String): Long = manager.idOf(key)
 }
