@@ -1058,6 +1058,33 @@ class ReaderActivity : BaseActivity() {
         }
     }
 
+    // KMK -->
+    /** True once this reader handed a video-only chapter to the player, so it happens once */
+    private var videoHandedOff = false
+
+    /**
+     * A chapter whose only page is a video (a Sumizuri page with a videoUrl or videoListUrl) plays straight in the
+     * player, like an anime episode, and the reader closes so back returns to the title. If the video can't start,
+     * the reader stays open on the page with its play button.
+     */
+    private fun playIfOnlyVideo(viewerChapters: ViewerChapters) {
+        if (videoHandedOff) return
+        val onlyPage = viewerChapters.currChapter.pages?.singleOrNull() ?: return
+        if (!eu.kanade.tachiyomi.sumizuri.ReaderVideos.isVideo(onlyPage.url)) return
+        videoHandedOff = true
+        lifecycleScope.launch {
+            try {
+                if (eu.kanade.tachiyomi.sumizuri.ReaderVideos.play(this@ReaderActivity, onlyPage)) finish()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                eu.kanade.tachiyomi.util.system.AppLog.add('E', "reader", "Couldn't start the video: $e")
+                toast("Couldn't play this video: ${e.message}")
+            }
+        }
+    }
+    // KMK <--
+
     /**
      * Called from the presenter whenever a new [viewerChapters] have been set. It delegates the
      * method to the current viewer, but also set the subtitle on the toolbar, and
@@ -1066,6 +1093,9 @@ class ReaderActivity : BaseActivity() {
     @SuppressLint("RestrictedApi")
     private fun setChapters(viewerChapters: ViewerChapters) {
         binding.readerContainer.removeView(loadingIndicator)
+        // KMK -->
+        playIfOnlyVideo(viewerChapters)
+        // KMK <--
         // SY -->
         val state = viewModel.state.value
         if (state.indexChapterToShift != null && state.indexPageToShift != null) {

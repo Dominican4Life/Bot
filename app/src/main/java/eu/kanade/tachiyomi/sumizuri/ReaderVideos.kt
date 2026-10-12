@@ -193,8 +193,11 @@ object ReaderVideos {
         }
     }
 
-    /** Plays the video of [page] in the app's player, with the chapter's other videos as next / previous */
-    suspend fun play(context: Context, page: ReaderPage) {
+    /**
+     * Plays the video of [page] in the app's player, with the chapter's other videos as next / previous.
+     * False when the player couldn't be started.
+     */
+    suspend fun play(context: Context, page: ReaderPage): Boolean {
         val chapter = page.chapter.chapter
         val (animeId, episodeId) = withIOContext {
             val manga = chapter.manga_id?.let { Injekt.get<GetManga>().await(it) }
@@ -210,8 +213,9 @@ object ReaderVideos {
             repository.syncEpisodes(anime, episodesOf(pages.map { it.index to it.url }))
             anime.id to repository.getEpisodes(anime.id).firstOrNull { it.url == page.url }?.id
         }
-        if (episodeId == null) return
+        if (episodeId == null) return false
         withUIContext { context.startActivity(PlayerActivity.newIntent(context, animeId, episodeId)) }
+        return true
     }
 }
 
