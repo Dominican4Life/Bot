@@ -17,7 +17,8 @@ internal object SumizuriFilters {
      * AutoComplete is a box the user types tags into, with suggestions from the filter's options and from the
      * tag lists the source's getTags() gave (see [SumizuriTags]). The picked tags go to search() as an array.
      */
-    enum class Type { Select, MultiSelect, Checkbox, AutoComplete }
+    /** [Header]: KMK, a section title in the filter sheet ("type": "header"), with no value */
+    enum class Type { Select, MultiSelect, Checkbox, AutoComplete, Header }
 
     data class Option(val label: String, val value: JsonElement)
 
@@ -40,8 +41,10 @@ internal object SumizuriFilters {
     data class Catalog(val id: String, val name: String, val tab: Boolean = false)
 
     fun groups(element: JsonElement?): List<Group> = SumizuriMapping.list(element ?: return emptyList()).mapNotNull { obj ->
-        val key = obj.str("key") ?: return@mapNotNull null
+        val isHeader = obj.str("type")?.lowercase() in setOf("header", "heading", "section")
+        val key = obj.str("key") ?: if (isHeader) obj.str("name") ?: obj.str("title") ?: "header" else return@mapNotNull null
         val type = when (obj.str("type")?.lowercase()) {
+            "header", "heading", "section" -> Type.Header
             "multiselect", "multi", "tags" -> Type.MultiSelect
             "checkbox", "switch", "toggle" -> Type.Checkbox
             "autocomplete" -> Type.AutoComplete

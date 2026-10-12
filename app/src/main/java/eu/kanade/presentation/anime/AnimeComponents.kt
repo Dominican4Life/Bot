@@ -178,7 +178,8 @@ fun AnimeFilterDialog(
 @Composable
 private fun FilterItem(filter: AnimeFilter<*>, onChanged: () -> Unit) {
     when (filter) {
-        is AnimeFilter.Header -> Text(
+        // KMK: a blank header is a hidden holder (a Sumizuri source's selected tab), not a title
+        is AnimeFilter.Header -> if (filter.name.isNotBlank()) Text(
             text = filter.name,
             style = MaterialTheme.typography.titleSmall,
             color = MaterialTheme.colorScheme.primary,

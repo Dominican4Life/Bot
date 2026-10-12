@@ -89,6 +89,7 @@ class SumizuriAnimeSource(
 
     override suspend fun getSearchAnime(page: Int, query: String, filters: AnimeFilterList): AnimesPage {
         val catalog = filters.filterIsInstance<CatalogFilter>().firstOrNull()?.selected()
+            ?: tabOf(filters)?.let { id -> catalogs.firstOrNull { it.id == id } }
         if (catalog != null && query.isBlank()) return listing("getCatalog", catalog.id, page)
         return listing("search", query, page, filterValues(filters))
     }
@@ -140,6 +141,11 @@ class SumizuriAnimeSource(
     }
 
     override fun selectCatalog(filters: Iterable<*>, id: String): Boolean {
+        filters.filterIsInstance<TabHolder>().firstOrNull()?.let { holder ->
+            if (catalogs.none { it.id == id }) return false
+            holder.id = id
+            return true
+        }
         val filter = filters.filterIsInstance<CatalogFilter>().firstOrNull() ?: return false
         val index = filter.catalogs.indexOfFirst { it.id == id }
         if (index < 0) return false
@@ -148,7 +154,22 @@ class SumizuriAnimeSource(
     }
 
     override fun selectedCatalog(filters: Iterable<*>): String? =
-        filters.filterIsInstance<CatalogFilter>().firstOrNull()?.selected()?.id
+        tabOf(filters) ?: filters.filterIsInstance<CatalogFilter>().firstOrNull()?.selected()?.id
+
+    /** The tab button picked, while every filter is still at its default: changing one in the sheet searches */
+    private fun tabOf(filters: Iterable<*>): String? {
+        val id = filters.filterIsInstance<TabHolder>().firstOrNull()?.id ?: return null
+        val touched = filters.any { filter ->
+            when (filter) {
+                is SelectFilter -> filter.state != filter.group.defaultIndex.coerceIn(0, (filter.group.options.size - 1).coerceAtLeast(0))
+                is MultiFilter -> filter.state.any { it.state }
+                is CheckFilter -> filter.state != filter.group.defaultChecked
+                is TagFilter -> filter.state.isNotEmpty()
+                else -> false
+            }
+        }
+        return if (touched) null else id
+    }
 
     override fun lastTab(): String? = manager.lastTab(info.key)
 
@@ -158,7 +179,10 @@ class SumizuriAnimeSource(
         // KMK: the tag boxes' suggestions are read from the site in the background, when missing or old
         if (groups.any { it.type == SumizuriFilters.Type.AutoComplete }) manager.tags.ensure(info)
         val filters = mutableListOf<AnimeFilter<*>>()
-        if (catalogs.isNotEmpty()) {
+        if (catalogs.isNotEmpty() && catalogs.all { it.tab }) {
+            // KMK: every catalog is a tab button: no Catalog box in the sheet, just an invisible holder for the tab
+            filters += TabHolder()
+        } else if (catalogs.isNotEmpty()) {
             filters += CatalogFilter(catalogs)
             filters += AnimeFilter.Header("A catalog is listed when the search is empty")
             filters += AnimeFilter.Separator()
@@ -168,6 +192,7 @@ class SumizuriAnimeSource(
                 SumizuriFilters.Type.Select -> SelectFilter(group)
                 SumizuriFilters.Type.MultiSelect -> MultiFilter(group)
                 SumizuriFilters.Type.Checkbox -> CheckFilter(group)
+                SumizuriFilters.Type.Header -> AnimeFilter.Header(group.name)
                 SumizuriFilters.Type.AutoComplete -> TagFilter(
                     group,
                     manager.tags.suggestions(info.key, group.tagLists, group.options.map { it.label }),
@@ -187,6 +212,11 @@ class SumizuriAnimeSource(
                 else -> Unit
             }
         }
+    }
+
+    /** KMK: the selected tab button, kept in the filters without showing (a blank header the sheet skips) */
+    private class TabHolder : AnimeFilter.Header("") {
+        var id: String? = null
     }
 
     private class CatalogFilter(val catalogs: List<SumizuriFilters.Catalog>) :
