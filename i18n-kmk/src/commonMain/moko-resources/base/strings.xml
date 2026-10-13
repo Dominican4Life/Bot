@@ -277,6 +277,7 @@
     <string name="action_refresh_missing_covers">Refresh missing covers</string>
     <string name="refresh_missing_covers_title">Refreshing missing covers</string>
     <string name="refresh_missing_covers_running">Already refreshing missing covers</string>
+    <string name="refresh_missing_covers_started">Updating missing covers</string>
     <string name="refresh_missing_covers_none">No missing covers here</string>
     <string name="refresh_missing_covers_done">Fixed %1$d of %2$d missing covers</string>
     <string name="pref_player_summary">Anime player, gestures, subtitles, audio</string>

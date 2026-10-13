@@ -25,9 +25,7 @@ import cafe.adriel.voyager.navigator.tab.TabOptions
 import eu.kanade.core.preference.asState
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.domain.ui.UiPreferences
-import eu.kanade.presentation.browse.anime.AnimeMigratePane
 import eu.kanade.presentation.browse.anime.AnimeSourcesPane
-import eu.kanade.presentation.browse.anime.MangaAnimeSplit
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.TabContent
 import eu.kanade.presentation.components.TabbedScreen
@@ -43,7 +41,6 @@ import eu.kanade.tachiyomi.ui.browse.extension.unified.UnifiedExtensionsScreenMo
 import eu.kanade.tachiyomi.ui.browse.extension.unified.unifiedExtensionsTab
 import eu.kanade.tachiyomi.ui.browse.feed.FeedScreenModel
 import eu.kanade.tachiyomi.ui.browse.feed.feedTab
-import eu.kanade.tachiyomi.ui.browse.migration.sources.migrateSourceTab
 import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchScreen
 import eu.kanade.tachiyomi.ui.browse.source.sourcesTab
 import eu.kanade.tachiyomi.ui.main.MainActivity
@@ -121,19 +118,6 @@ data object BrowseTab : Tab {
         val animeScreenModel = rememberScreenModel { AnimeBrowseScreenModel() }
         val animeState by animeScreenModel.state.collectAsState()
 
-        fun TabContent.withAnime(anime: @Composable (PaddingValues) -> Unit): TabContent {
-            val mangaContent = content
-            return copy(
-                content = { contentPadding, snackbarHostState ->
-                    MangaAnimeSplit(
-                        contentPadding = contentPadding,
-                        manga = { padding -> mangaContent(padding, snackbarHostState) },
-                        anime = anime,
-                    )
-                },
-            )
-        }
-
         // Sources: one panel, manga or anime, switched from the toolbar like the library
         val browseAnimePref = remember { Injekt.get<SourcePreferences>().browseShowAnime() }
         val browseAnime by browseAnimePref.collectAsState()
@@ -187,16 +171,15 @@ data object BrowseTab : Tab {
         val mangaStoresModel = rememberScreenModel(tag = "manga_stores") { ExtensionStoresScreenModel() }
         val animeStoresModel = rememberScreenModel(tag = "anime_stores") { ExtensionStoresScreenModel(anime = true) }
         val extensions = unifiedExtensionsTab(unifiedExtensionsModel, mangaStoresModel, animeStoresModel)
-        val animeMigrate: @Composable (PaddingValues) -> Unit = { padding -> AnimeMigratePane(padding) }
         // KMK <--
 
         // SY -->
+        // KMK: Migrate moved to the Library menu, so Browse is Sources, Extensions and Feed
         val tabs = when {
             hideFeedTab ->
                 persistentListOf(
                     sourcesTab().withAnimeSwitch(animeSources),
                     extensions,
-                    migrateSourceTab().withAnime(animeMigrate),
                 )
 
             feedTabInFront ->
@@ -209,7 +192,6 @@ data object BrowseTab : Tab {
                     ),
                     sourcesTab().withAnimeSwitch(animeSources),
                     extensions,
-                    migrateSourceTab().withAnime(animeMigrate),
                 )
 
             // KMK: Extensions sits right after Sources, Feed after it
@@ -223,7 +205,6 @@ data object BrowseTab : Tab {
                         bulkFavoriteScreenModel,
                         // KMK <--
                     ),
-                    migrateSourceTab().withAnime(animeMigrate),
                 )
         }
         // SY <--

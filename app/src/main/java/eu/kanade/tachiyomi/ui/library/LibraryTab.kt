@@ -50,6 +50,7 @@ import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
 import eu.kanade.tachiyomi.data.library.RefreshMissingCovers
 import eu.kanade.tachiyomi.data.sync.SyncDataJob
 import eu.kanade.tachiyomi.ui.anime.AnimeScreen
+import eu.kanade.tachiyomi.ui.browse.migration.sources.MigrateSourcesScreen
 import eu.kanade.tachiyomi.ui.browse.source.SourcesScreen
 import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchScreen
 import eu.kanade.tachiyomi.ui.category.CategoryScreen
@@ -208,11 +209,16 @@ data object LibraryTab : Tab {
                     onClickRefreshMissingCovers = {
                         val mangas = screenModel.mangaForCurrentTab()
                         val started = RefreshMissingCovers.start(context, mangas)
-                        context.toast(
-                            if (started) KMR.strings.refresh_missing_covers_title else KMR.strings.refresh_missing_covers_running,
-                        )
+                        val message = if (started) {
+                            KMR.strings.refresh_missing_covers_started
+                        } else {
+                            KMR.strings.refresh_missing_covers_running
+                        }
+                        scope.launch { snackbarHostState.showSnackbar(context.stringResource(message)) }
                         Unit
                     }.takeIf { !showAnime },
+                    // Migrate by source (it used to be a tab in Browse), manga or anime like the library
+                    onClickMigrate = { navigator.push(MigrateSourcesScreen(anime = showAnime)) },
                     // KMK <--
                 )
             },

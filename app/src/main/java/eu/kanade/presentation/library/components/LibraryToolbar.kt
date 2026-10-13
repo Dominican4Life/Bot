@@ -56,6 +56,7 @@ fun LibraryToolbar(
     showingAnime: Boolean = false,
     onClickSwitchType: (() -> Unit)? = null,
     onClickRefreshMissingCovers: (() -> Unit)? = null,
+    onClickMigrate: (() -> Unit)? = null,
     // KMK <--
 ) = when {
     selectedCount > 0 -> LibrarySelectionToolbar(
@@ -84,6 +85,7 @@ fun LibraryToolbar(
         showingAnime = showingAnime,
         onClickSwitchType = onClickSwitchType,
         onClickRefreshMissingCovers = onClickRefreshMissingCovers,
+        onClickMigrate = onClickMigrate,
         // KMK <--
     )
 }
@@ -109,6 +111,7 @@ private fun LibraryRegularToolbar(
     showingAnime: Boolean,
     onClickSwitchType: (() -> Unit)?,
     onClickRefreshMissingCovers: (() -> Unit)?,
+    onClickMigrate: (() -> Unit)?,
     // KMK <--
 ) {
     val context = LocalContext.current
@@ -177,17 +180,6 @@ private fun LibraryRegularToolbar(
                         },
                     ),
                 ).builder().apply {
-                    // KMK -->
-                    if (onClickRefreshMissingCovers != null) {
-                        add(
-                            3,
-                            AppBar.OverflowAction(
-                                title = stringResource(KMR.strings.action_refresh_missing_covers),
-                                onClick = onClickRefreshMissingCovers,
-                            ),
-                        )
-                    }
-                    // KMK <--
                     // SY -->
                     if (onClickSyncExh != null) {
                         add(
@@ -206,6 +198,25 @@ private fun LibraryRegularToolbar(
                         )
                     }
                     // SY <--
+                    // KMK --> Migrate first, Refresh missing covers last
+                    if (onClickMigrate != null) {
+                        add(
+                            0,
+                            AppBar.OverflowAction(
+                                title = stringResource(MR.strings.label_migration),
+                                onClick = onClickMigrate,
+                            ),
+                        )
+                    }
+                    if (onClickRefreshMissingCovers != null) {
+                        add(
+                            AppBar.OverflowAction(
+                                title = stringResource(KMR.strings.action_refresh_missing_covers),
+                                onClick = onClickRefreshMissingCovers,
+                            ),
+                        )
+                    }
+                    // KMK <--
                 }.build(),
             )
         },

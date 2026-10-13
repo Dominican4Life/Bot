@@ -18,6 +18,7 @@ import androidx.paging.compose.LazyPagingItems
 import eu.kanade.domain.ui.BadgeCorner
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.domain.ui.model.PanoramaStyle
+import eu.kanade.presentation.components.ProvideCoverFillSettings
 import eu.kanade.presentation.components.favoriteBadgeSlot
 import eu.kanade.presentation.components.rememberFavoriteBadgeCorner
 import eu.kanade.presentation.components.rememberWideCovers
@@ -57,51 +58,54 @@ fun BrowseSourceComfortableGrid(
     val wideCovers = rememberWideCovers()
     val wide = wideCovers.ids
     // KMK <--
-    LazyVerticalGrid(
-        columns = columns,
-        contentPadding = contentPadding + PaddingValues(8.dp),
-        verticalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridVerticalSpacer),
-        horizontalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridHorizontalSpacer),
-    ) {
-        if (mangaList.loadState.prepend is LoadState.Loading) {
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                BrowseSourceLoadingItem()
+    // KMK: the color fill settings are read once for the whole grid
+    ProvideCoverFillSettings {
+        LazyVerticalGrid(
+            columns = columns,
+            contentPadding = contentPadding + PaddingValues(8.dp),
+            verticalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridVerticalSpacer),
+            horizontalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridHorizontalSpacer),
+        ) {
+            if (mangaList.loadState.prepend is LoadState.Loading) {
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    BrowseSourceLoadingItem()
+                }
             }
-        }
 
-        items(
-            count = mangaList.itemCount,
-            // KMK -->
-            span = { index ->
-                wideSpan(doubleWide, wide, if (doubleWide) mangaList.peek(index)?.value?.first?.id else null)
-            },
-            // KMK <--
-        ) { index ->
-            // SY -->
-            val pair by mangaList[index]?.collectAsState() ?: return@items
-            val manga = pair.first
-            val metadata = pair.second
-            // SY <--
-
-            BrowseSourceComfortableGridItem(
-                manga = manga,
-                // SY -->
-                metadata = metadata,
-                // SY <--
-                onClick = { onMangaClick(manga) },
-                onLongClick = { onMangaLongClick(manga) },
+            items(
+                count = mangaList.itemCount,
                 // KMK -->
-                isSelected = selection.fastAny { selected -> selected.id == manga.id },
-                usePanoramaCover = usePanoramaCover,
-                panoramaStyle = panoramaStyle,
-                onCoverRatio = { if (doubleWide) wideCovers.report(manga.id, it) },
+                span = { index ->
+                    wideSpan(doubleWide, wide, if (doubleWide) mangaList.peek(index)?.value?.first?.id else null)
+                },
                 // KMK <--
-            )
-        }
+            ) { index ->
+                // SY -->
+                val pair by mangaList[index]?.collectAsState() ?: return@items
+                val manga = pair.first
+                val metadata = pair.second
+                // SY <--
 
-        if (mangaList.loadState.refresh is LoadState.Loading || mangaList.loadState.append is LoadState.Loading) {
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                BrowseSourceLoadingItem()
+                BrowseSourceComfortableGridItem(
+                    manga = manga,
+                    // SY -->
+                    metadata = metadata,
+                    // SY <--
+                    onClick = { onMangaClick(manga) },
+                    onLongClick = { onMangaLongClick(manga) },
+                    // KMK -->
+                    isSelected = selection.fastAny { selected -> selected.id == manga.id },
+                    usePanoramaCover = usePanoramaCover,
+                    panoramaStyle = panoramaStyle,
+                    onCoverRatio = { if (doubleWide) wideCovers.report(manga.id, it) },
+                    // KMK <--
+                )
+            }
+
+            if (mangaList.loadState.refresh is LoadState.Loading || mangaList.loadState.append is LoadState.Loading) {
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    BrowseSourceLoadingItem()
+                }
             }
         }
     }
