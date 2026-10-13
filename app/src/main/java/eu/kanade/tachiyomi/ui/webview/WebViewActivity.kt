@@ -39,6 +39,9 @@ class WebViewActivity : BaseActivity() {
         registerSecureActivity(this)
     }
 
+    // KMK: the source this WebView was opened for, if any
+    private var botCheckSourceId: Long? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             overrideActivityTransition(
@@ -61,7 +64,8 @@ class WebViewActivity : BaseActivity() {
         val url = intent.extras?.getString(URL_KEY) ?: return
         assistUrl = url
         // KMK: the site's bot check is being passed now, so its notification goes away
-        eu.kanade.tachiyomi.data.notification.BotCheckNotifier.clear(url)
+        botCheckSourceId = intent.extras?.getLong(SOURCE_KEY)?.takeIf { it != 0L }
+        eu.kanade.tachiyomi.data.notification.BotCheckNotifier.clear(url, botCheckSourceId)
 
         var headers = emptyMap<String, String>()
         (sourceManager.get(intent.extras!!.getLong(SOURCE_KEY)) as? HttpSource)?.let { source ->
@@ -93,6 +97,8 @@ class WebViewActivity : BaseActivity() {
 
     // AM (DISCORD) -->
     override fun onDestroy() {
+        // KMK: a source waiting for its bot check is checked again once WebView closes
+        botCheckSourceId?.let { eu.kanade.tachiyomi.data.backup.restore.RestoreSourceCheck.recheck(it) }
         with(DiscordRPCService) {
             discordScope.launchIO { setScreen(this@WebViewActivity) }
         }

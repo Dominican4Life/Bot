@@ -105,7 +105,7 @@ object RefreshMissingCovers {
         )
     }
 
-    private fun isMissing(manga: Manga, coverCache: CoverCache): Boolean {
+    fun isMissing(manga: Manga, coverCache: CoverCache): Boolean {
         if (coverCache.getCustomCoverFile(manga.id).exists()) return false
         val url = manga.thumbnailUrl
         if (url.isNullOrBlank()) return true

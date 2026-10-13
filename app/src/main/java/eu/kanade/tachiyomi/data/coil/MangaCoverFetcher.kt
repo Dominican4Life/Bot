@@ -15,6 +15,9 @@ import com.hippo.unifile.UniFile
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.data.coil.MangaCoverFetcher.Companion.USE_CUSTOM_COVER_KEY
+import eu.kanade.tachiyomi.data.notification.SourceHold
+import eu.kanade.tachiyomi.network.BotCheckReporter
+import eu.kanade.tachiyomi.network.SiteBlockedException
 import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.source.online.HttpSource
 import kotlinx.coroutines.CoroutineScope
@@ -233,9 +236,25 @@ class MangaCoverFetcher(
 
     private suspend fun executeNetworkRequest(): Response {
         // KMK: anime covers use their anime source's client and headers
+        // KMK -->
+        // A source waiting for its bot check to be passed isn't asked for anything until then
+        val sourceId = mangaCover.sourceId
+        if (SourceHold.isHeld(sourceId)) {
+            throw SiteBlockedException(BotCheckReporter.Kind.BOT_CHECK, "Waiting for a bot check to be passed")
+        }
+        // KMK <--
         val client = sourceLazy.value?.client ?: animeSource()?.client ?: callFactoryLazy.value
         val response = client.newCall(newRequest()).await()
         if (!response.isSuccessful && response.code != HTTP_NOT_MODIFIED) {
+            // KMK -->
+            // A bot check or "too many requests" gets a notification for the cover's source
+            val blocked = BotCheckReporter.classify(response)
+            if (blocked != null) {
+                BotCheckReporter.report(response.request.url.toString(), blocked, sourceId)
+                response.close()
+                throw SiteBlockedException(blocked, response.message)
+            }
+            // KMK <--
             response.close()
             throw IOException(response.message)
         }

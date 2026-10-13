@@ -282,6 +282,11 @@
             android:name=".data.notification.NotificationReceiver"
             android:exported="false" />
 
+        <!-- KMK: the Skip button on the "Waiting for bot checks" notification -->
+        <receiver
+            android:name=".data.backup.restore.RestoreSourceCheck$SkipReceiver"
+            android:exported="false" />
+
         <receiver
             android:name=".data.updater.AppUpdateBroadcast"
             android:exported="false">

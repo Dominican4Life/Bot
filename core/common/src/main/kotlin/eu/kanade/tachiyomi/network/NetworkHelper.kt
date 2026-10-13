@@ -110,6 +110,8 @@ import kotlin.random.Random
 
     /* SY --> */ open /* SY <-- */ val client /* KMK --> */ by lazy /* KMK <-- */ {
         clientBuilder()
+            // KMK: added before the Cloudflare helper, so it only sees bot checks the helper couldn't pass
+            .addInterceptor(BotCheckInterceptor())
             .addInterceptor(
                 CloudflareInterceptor(context, cookieJar, ::defaultUserAgentProvider),
             )
@@ -149,6 +151,7 @@ import kotlin.random.Random
         readTimeout: Long = 30,
         callTimeout: Long = 120,
     ) = clientBuilder(connectTimeout, readTimeout, callTimeout)
+        .addInterceptor(BotCheckInterceptor())
         .addInterceptor(
             CloudflareInterceptor(context, cookieJar, ::defaultUserAgentProvider),
         )

@@ -12,10 +12,13 @@ import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.BotCheckReporter
+import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.util.system.notificationBuilder
+import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.OkHttpClient
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.kmk.KMR
@@ -23,13 +26,26 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
 /**
- * KMK: Like Kototoro, a notification for each source that hit a bot check the app couldn't pass by itself. Tapping
- * it opens the source in WebView to pass the check. When several sources are waiting, a summary at the top lists
- * them all. A source drops off once it's opened in WebView.
+ * KMK: Like Kototoro, a notification for each source that hit a bot check the app couldn't pass by itself (tap to
+ * open the source in WebView and pass it), or that answered "too many requests". When several sources are
+ * waiting, a summary at the top lists them all. A bot check drops off once the source is opened in WebView.
  */
 object BotCheckNotifier {
 
-    private data class Entry(val host: String, val name: String, val url: String, val sourceId: Long?, val at: Long)
+    /** A source's name and home page */
+    class SiteInfo(val id: Long, val name: String, val baseUrl: String)
+
+    /** How to ask a source's site for something: its connection and headers */
+    class Connection(val client: OkHttpClient, val headers: Headers)
+
+    private data class Entry(
+        val key: String,
+        val name: String,
+        val url: String,
+        val sourceId: Long?,
+        val kind: BotCheckReporter.Kind,
+        val at: Long,
+    )
 
     private val entries = LinkedHashMap<String, Entry>()
 
@@ -37,68 +53,85 @@ object BotCheckNotifier {
 
     fun install(context: Context) {
         appContext = context.applicationContext
-        BotCheckReporter.listener = ::onBotCheck
+        BotCheckReporter.listener = { url, kind, sourceId -> onReport(url, kind, sourceId, force = false) }
     }
 
-    private fun onBotCheck(url: String) {
-        val host = hostOf(url) ?: return
+    /** A source found to need a bot check (or to be asking for fewer requests); [force] shows it again right away */
+    fun onReport(url: String, kind: BotCheckReporter.Kind, sourceId: Long?, force: Boolean) {
+        if (!::appContext.isInitialized) return
+        val site = sourceId?.let(::siteInfo) ?: hostOf(url)?.let(::siteForHost)
+        // Image servers and other addresses that aren't a source of yours are left out
+        if (site == null) return
+        val key = site.id.toString()
         val now = System.currentTimeMillis()
         synchronized(entries) {
-            // Already showing for this site: don't post it again for every failed request
-            val shown = entries[host]
-            if (shown != null && now - shown.at < REPEAT_AFTER_MS) return
-            val source = findSource(host)
-            entries[host] = Entry(
-                host = host,
-                name = source?.second ?: host,
-                url = source?.third?.takeIf { it.isNotBlank() } ?: originOf(url) ?: url,
-                sourceId = source?.first,
+            val shown = entries[key]
+            // Already showing: don't post it again for every failed request
+            if (!force && shown != null && shown.kind == kind && now - shown.at < REPEAT_AFTER_MS) return
+            // A bot check matters more than "too many requests": keep it if both happen
+            val newKind = if (shown?.kind == BotCheckReporter.Kind.BOT_CHECK && !force) shown.kind else kind
+            entries[key] = Entry(
+                key = key,
+                name = site.name,
+                url = site.baseUrl.ifBlank { originOf(url) ?: url },
+                sourceId = site.id,
+                kind = newKind,
                 at = now,
             )
         }
         show()
     }
 
-    /** Called when a site is opened in WebView: its notification goes away */
-    fun clear(url: String) {
+    /** Called when a site is opened in WebView: its notification goes away while the check is being passed */
+    fun clear(url: String, sourceId: Long?) {
         if (!::appContext.isInitialized) return
-        val host = hostOf(url) ?: return
-        val removed = synchronized(entries) { entries.remove(host) } ?: return
-        NotificationManagerCompat.from(appContext).cancel(TAG, removed.host.hashCode())
+        val key = (sourceId?.takeIf { it != 0L } ?: hostOf(url)?.let(::siteForHost)?.id)?.toString() ?: return
+        val removed = synchronized(entries) { entries.remove(key) } ?: return
+        NotificationManagerCompat.from(appContext).cancel(TAG, removed.key.hashCode())
+        show()
+    }
+
+    /** Takes a source off the list, after it passed its check */
+    fun passed(sourceId: Long) {
+        if (!::appContext.isInitialized) return
+        val removed = synchronized(entries) { entries.remove(sourceId.toString()) } ?: return
+        NotificationManagerCompat.from(appContext).cancel(TAG, removed.key.hashCode())
         show()
     }
 
     @SuppressLint("MissingPermission") // checked at the top
     private fun show() {
         val context = appContext
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            PermissionChecker.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
-            PermissionChecker.PERMISSION_GRANTED
-        ) {
-            return
-        }
+        if (!canNotify(context)) return
         val manager = NotificationManagerCompat.from(context)
         val list = synchronized(entries) { entries.values.toList() }
 
         list.forEach { entry ->
-            val intent = WebViewActivity.newIntent(context, entry.url, entry.sourceId, entry.name)
-            val pending = PendingIntent.getActivity(
-                context,
-                entry.host.hashCode(),
-                intent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-            )
+            val botCheck = entry.kind == BotCheckReporter.Kind.BOT_CHECK
             val notification = context.notificationBuilder(Notifications.CHANNEL_BOT_CHECK) {
                 setSmallIcon(R.drawable.ic_warning_white_24dp)
-                setContentTitle(context.stringResource(KMR.strings.bot_check_title, entry.name))
-                setContentText(context.stringResource(KMR.strings.bot_check_text))
-                setContentIntent(pending)
+                if (botCheck) {
+                    setContentTitle(context.stringResource(KMR.strings.bot_check_title, entry.name))
+                    setContentText(context.stringResource(KMR.strings.bot_check_text))
+                    val intent = WebViewActivity.newIntent(context, entry.url, entry.sourceId, entry.name)
+                    setContentIntent(
+                        PendingIntent.getActivity(
+                            context,
+                            entry.key.hashCode(),
+                            intent,
+                            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                        ),
+                    )
+                } else {
+                    setContentTitle(context.stringResource(KMR.strings.too_many_requests_title, entry.name))
+                    setContentText(context.stringResource(KMR.strings.too_many_requests_text))
+                }
                 setAutoCancel(true)
                 setOnlyAlertOnce(true)
                 setGroup(Notifications.GROUP_BOT_CHECK)
                 priority = NotificationCompat.PRIORITY_DEFAULT
             }.build()
-            manager.notify(TAG, entry.host.hashCode(), notification)
+            manager.notify(TAG, entry.key.hashCode(), notification)
         }
 
         if (list.size < 2) {
@@ -123,27 +156,63 @@ object BotCheckNotifier {
         manager.notify(Notifications.ID_BOT_CHECK_SUMMARY, summary)
     }
 
-    /** The source a site belongs to: id, name and its home page */
-    private fun findSource(host: String): Triple<Long, String, String>? {
+    fun canNotify(context: Context): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            PermissionChecker.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+            PermissionChecker.PERMISSION_GRANTED
+
+    /** A manga or anime source with a web address, by id */
+    fun siteInfo(sourceId: Long): SiteInfo? {
+        val manga = runCatching { Injekt.get<SourceManager>().get(sourceId) }.getOrNull()
+        if (manga is HttpSource) return SiteInfo(manga.id, manga.name, manga.baseUrl)
+        return when (val anime = runCatching { Injekt.get<AnimeSourceManager>().get(sourceId) }.getOrNull()) {
+            is AnimeHttpSource -> SiteInfo(anime.id, anime.name, anime.baseUrl)
+            is SumizuriAnimeSource -> SiteInfo(anime.id, anime.name, anime.baseUrl)
+            else -> null
+        }
+    }
+
+    /** The connection a source uses for its site */
+    fun connection(sourceId: Long): Connection? = runCatching {
+        when (val manga = Injekt.get<SourceManager>().get(sourceId)) {
+            is HttpSource -> return@runCatching Connection(manga.client, manga.headers)
+            else -> Unit
+        }
+        when (val anime = Injekt.get<AnimeSourceManager>().get(sourceId)) {
+            is AnimeHttpSource -> Connection(anime.client, anime.headers)
+            is SumizuriAnimeSource -> Connection(anime.client, anime.headers)
+            else -> null
+        }
+    }.getOrNull()
+
+    /** Site → source id, so failed requests don't look through every source each time */
+    private val hostCache = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    /** The source a site belongs to */
+    private fun siteForHost(host: String): SiteInfo? {
+        hostCache[host]?.let { id -> siteInfo(id)?.let { return it } }
         val manga = runCatching {
-            Injekt.get<SourceManager>().getOnlineSources().map { Triple(it.id, it.name, it.baseUrl) }
+            Injekt.get<SourceManager>().getOnlineSources().map { SiteInfo(it.id, it.name, it.baseUrl) }
         }.getOrDefault(emptyList())
         val anime = runCatching {
             Injekt.get<AnimeSourceManager>().getCatalogueSources().mapNotNull {
                 when (it) {
-                    is AnimeHttpSource -> Triple(it.id, it.name, it.baseUrl)
-                    is SumizuriAnimeSource -> Triple(it.id, it.name, it.baseUrl)
+                    is AnimeHttpSource -> SiteInfo(it.id, it.name, it.baseUrl)
+                    is SumizuriAnimeSource -> SiteInfo(it.id, it.name, it.baseUrl)
                     else -> null
                 }
             }
         }.getOrDefault(emptyList())
         val all = manga + anime
-        return all.firstOrNull { hostOf(it.third) == host }
+        val found = all.firstOrNull { hostOf(it.baseUrl) == host }
             // A source on a sub-site (api.example.com) or the main site of one
-            ?: all.firstOrNull { source ->
-                val other = hostOf(source.third) ?: return@firstOrNull false
+            ?: all.firstOrNull { site ->
+                val other = hostOf(site.baseUrl) ?: return@firstOrNull false
                 host.endsWith(".$other") || other.endsWith(".$host")
             }
+        // Only matches are kept: extensions may still be loading when a miss happens
+        if (found != null) hostCache[host] = found.id
+        return found
     }
 
     private fun hostOf(url: String): String? = url.toHttpUrlOrNull()?.host?.removePrefix("www.")

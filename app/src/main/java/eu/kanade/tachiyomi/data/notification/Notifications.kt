@@ -65,6 +65,8 @@ object Notifications {
     const val CHANNEL_BOT_CHECK = "bot_check_channel"
     const val GROUP_BOT_CHECK = "eu.kanade.tachiyomi.BOT_CHECK"
     const val ID_BOT_CHECK_SUMMARY = -1807
+    const val ID_BOT_CHECK_WAITING = -1808
+    const val ID_RESTORE_COVERS = -1809
     // KMK <--
     const val GROUP_NEW_CHAPTERS = "eu.kanade.tachiyomi.NEW_CHAPTERS"
 

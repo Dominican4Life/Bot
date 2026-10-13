@@ -455,4 +455,9 @@
     <string name="bot_check_title">Bot check needed: %1$s</string>
     <string name="bot_check_text">Tap to open it in WebView and pass the check</string>
     <string name="bot_check_summary">%1$d sources need a bot check</string>
+    <string name="too_many_requests_title">Too many requests: %1$s</string>
+    <string name="too_many_requests_text">The site asked to slow down. It will be tried again in a while</string>
+    <string name="bot_check_waiting_title">Waiting for bot checks (%1$d left)</string>
+    <string name="bot_check_skip">Skip</string>
+    <string name="restore_covers_title">Loading covers after restore</string>
 </resources>
