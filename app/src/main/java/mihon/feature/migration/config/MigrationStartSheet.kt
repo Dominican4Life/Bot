@@ -34,7 +34,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState as collectFlowAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -63,7 +62,6 @@ import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.getAndSet
 import tachiyomi.core.common.preference.toggle
 import tachiyomi.core.common.util.lang.withIOContext
-import tachiyomi.domain.manga.interactor.GetFavorites
 import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.source.model.Source
 import tachiyomi.domain.source.service.SourceManager
@@ -131,17 +129,11 @@ fun MigrationStartSheet(
 ) {
     val pickFromSource = initialMangaIds.isEmpty()
 
-    // The sources whose titles are migrated, when nothing was selected
-    var fromSources by remember { mutableStateOf<List<Pair<Source, Long>>>(emptyList()) }
-    var fromSourceIds by remember { mutableStateOf<List<Long>>(emptyList()) }
-    LaunchedEffect(fromSources) {
-        if (!pickFromSource) return@LaunchedEffect
-        val ids = fromSources.map { it.first.id }.toSet()
-        fromSourceIds = withIOContext {
-            Injekt.get<GetFavorites>().await().filter { it.source in ids }.map { it.id }
-        }
-    }
-    val mangaIds = if (pickFromSource) fromSourceIds else initialMangaIds
+    // The titles picked in "Source to migrate" (whole sources with All, or some of their titles), when nothing was
+    // selected, and the sources they're from
+    var fromPicked by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var fromSources by remember { mutableStateOf<List<Source>>(emptyList()) }
+    val mangaIds = if (pickFromSource) fromPicked.toList() else initialMangaIds
 
     // The sources to search, in order; empty every time the window opens
     var searchSources by remember { mutableStateOf<List<Source>>(emptyList()) }
@@ -178,7 +170,7 @@ fun MigrationStartSheet(
                 if (pickFromSource) {
                     SectionHeader(stringResource(KMR.strings.migrate_source_to_migrate))
                     SourcesBox(
-                        sources = fromSources.map { it.first },
+                        sources = fromSources,
                         emptyText = stringResource(KMR.strings.migrate_pick_source_to_migrate),
                         countText = { names, total ->
                             stringResource(KMR.strings.migrate_sources_titles, names, mangaIds.size)
@@ -329,11 +321,12 @@ fun MigrationStartSheet(
 
     if (showFromPicker) {
         SourceToMigratePickerDialog(
-            initial = fromSources.map { it.first.id }.toSet(),
+            initial = fromPicked,
             onDismissRequest = { showFromPicker = false },
-            onConfirm = {
+            onConfirm = { picked, sources ->
                 showFromPicker = false
-                fromSources = it
+                fromPicked = picked
+                fromSources = sources
             },
         )
     }

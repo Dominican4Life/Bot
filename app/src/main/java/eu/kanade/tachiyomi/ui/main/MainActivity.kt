@@ -230,18 +230,19 @@ class MainActivity : BaseActivity() {
             val downloadOnly by preferences.downloadedOnly().collectAsState()
             val indexing by downloadCache.isInitializing.collectAsState()
             // KMK -->
-            val restoringState by backupRestoreStatus.isRunning.collectAsState()
             val syncingState by syncStatus.isRunning.collectAsState()
             val updatingState by libraryUpdateStatus.isRunning.collectAsState()
-            val restoringProgressBanner by backupPreferences.showRestoringProgressBanner().collectAsState()
             val syncingProgressBanner by syncPreferences.showSyncingProgressBanner().collectAsState()
             val updatingProgressBanner by libraryPreferences.showUpdatingProgressBanner().collectAsState()
-            val restoring = restoringState && restoringProgressBanner
+            // KMK: a restore shows its progress in its notification only, not in a bar at the top. Following its
+            // progress here redrew the whole app for every title restored, which slowed restores down a lot.
+            val restoring = false
+            val restoringProgress: Float? = null
             val syncing = syncingState && syncingProgressBanner
             val updating = updatingState && updatingProgressBanner
-            val restoringProgress by backupRestoreStatus.progress.collectAsState()
-            val syncingProgress by syncStatus.progress.collectAsState()
-            val updatingProgress by libraryUpdateStatus.progress.collectAsState()
+            // Progress is only followed while its bar shows, so the app isn't redrawn for nothing
+            val syncingProgress = if (syncing) syncStatus.progress.collectAsState().value else null
+            val updatingProgress = if (updating) libraryUpdateStatus.progress.collectAsState().value else null
             // KMK <--
 
             val isSystemInDarkTheme = isSystemInDarkTheme()

@@ -50,6 +50,19 @@ class BackupRestorer(
 
     private var restoreAmount = 0
     private var restoreProgress = 0
+
+    // KMK -->
+    @Volatile
+    private var lastProgressAt = 0L
+
+    /** True when the progress notification is due an update: at most every 300 ms */
+    private fun progressDue(): Boolean {
+        val now = System.currentTimeMillis()
+        if (now - lastProgressAt < PROGRESS_EVERY_MS) return false
+        lastProgressAt = now
+        return true
+    }
+    // KMK <--
     private val errors = mutableListOf<Pair<Date, String>>()
 
     /**
@@ -223,12 +236,14 @@ class BackupRestorer(
                 }
 
                 restoreProgress += 1
-                with(notifier) {
-                    showRestoreProgress(it.title, restoreProgress, restoreAmount, isSync)
-                        // KMK -->
-                        .show(Notifications.ID_RESTORE_PROGRESS)
-                    // KMK <--
+                // KMK: a few times a second at most; posting it for every title slowed big restores down
+                if (progressDue()) {
+                    with(notifier) {
+                        showRestoreProgress(it.title, restoreProgress, restoreAmount, isSync)
+                            .show(Notifications.ID_RESTORE_PROGRESS)
+                    }
                 }
+                // KMK <--
             }
     }
 
@@ -316,9 +331,11 @@ class BackupRestorer(
                     errors.add(Date() to "${it.title} [anime]: ${e.message}")
                 }
                 restoreProgress += 1
-                with(notifier) {
-                    showRestoreProgress(it.title, restoreProgress, restoreAmount, isSync)
-                        .show(Notifications.ID_RESTORE_PROGRESS)
+                if (progressDue()) {
+                    with(notifier) {
+                        showRestoreProgress(it.title, restoreProgress, restoreAmount, isSync)
+                            .show(Notifications.ID_RESTORE_PROGRESS)
+                    }
                 }
             }
         }
@@ -355,3 +372,6 @@ class BackupRestorer(
         return File("")
     }
 }
+
+// KMK
+private const val PROGRESS_EVERY_MS = 300L

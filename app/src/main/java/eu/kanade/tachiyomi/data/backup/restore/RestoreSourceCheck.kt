@@ -1,7 +1,6 @@
 package eu.kanade.tachiyomi.data.backup.restore
 
 import android.annotation.SuppressLint
-import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -257,45 +256,13 @@ object RestoreSourceCheck {
         }
     }
 
-    /** Keeps the "Waiting for bot checks" notification up to date while sources are waiting */
+    /** Clears the old "Waiting for Cloudflare" notification, which isn't shown anymore */
     private fun watchWaiting() {
         watchJob?.cancel()
         watchJob = scope.launch {
-            waiting.collect { ids ->
-                if (ids.isEmpty()) {
-                    app.cancelNotification(Notifications.ID_BOT_CHECK_WAITING)
-                } else {
-                    showWaiting(ids)
-                }
-            }
+            // The "Cloudflare required" notification of each source is enough; no separate waiting one
+            app.cancelNotification(Notifications.ID_BOT_CHECK_WAITING)
         }
-    }
-
-    @SuppressLint("MissingPermission") // checked by canNotify
-    private fun showWaiting(ids: Set<Long>) {
-        if (!BotCheckNotifier.canNotify(app)) return
-        val names = ids.mapNotNull { BotCheckNotifier.siteInfo(it)?.name }
-        val title = app.stringResource(KMR.strings.bot_check_waiting_title, ids.size)
-        val skipIntent = PendingIntent.getBroadcast(
-            app,
-            0,
-            Intent(app, SkipReceiver::class.java),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-        val notification = app.notificationBuilder(Notifications.CHANNEL_BOT_CHECK) {
-            setSmallIcon(R.drawable.ic_warning_white_24dp)
-            setContentTitle(title)
-            setContentText(names.joinToString())
-            setStyle(
-                NotificationCompat.InboxStyle()
-                    .setBigContentTitle(title)
-                    .also { style -> names.forEach { style.addLine(it) } },
-            )
-            addAction(R.drawable.ic_close_24dp, app.stringResource(KMR.strings.bot_check_skip), skipIntent)
-            setOngoing(true)
-            setOnlyAlertOnce(true)
-        }.build()
-        NotificationManagerCompat.from(app).notify(Notifications.ID_BOT_CHECK_WAITING, notification)
     }
 
     @SuppressLint("MissingPermission") // checked by canNotify

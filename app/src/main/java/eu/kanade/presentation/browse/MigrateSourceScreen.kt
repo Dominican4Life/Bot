@@ -120,7 +120,7 @@ private fun MigrateSourceList(
     state: MigrateSourceScreenModel.State,
     onChangeSearchQuery: (String?) -> Unit,
     onClickAll: (Source) -> Unit,
-    /** Set when picking sources in the Migrate window: picked ones are highlighted, and there's no "All" button */
+    /** Set when picking in the Migrate window: sources with picked titles are highlighted */
     selectedIds: Set<Long>? = null,
     // KMK <--
 ) {
@@ -220,7 +220,6 @@ private fun MigrateSourceList(
                                 },
                             )
                             .padding(end = MaterialTheme.padding.small),
-                        showAll = selectedIds == null,
                         // KMK <--
                         source = source,
                         count = count,
@@ -342,8 +341,8 @@ private fun MigrateSourceItem(
 }
 
 /**
- * KMK: The Browse › Migrate source list, for the Migrate window's "Source to migrate": tap sources to pick them
- * (they're highlighted).
+ * KMK: The Browse › Migrate source list, for the Migrate window's "Source to migrate": All picks every title of a
+ * source, tapping a source opens its titles; sources with picked titles are highlighted.
  */
 @Composable
 fun MigrateSourcePickerList(
@@ -356,6 +355,7 @@ fun MigrateSourcePickerList(
     onToggleSortingDirection: () -> Unit,
     selectedIds: Set<Long>,
     onClickItem: (Source) -> Unit,
+    onClickAll: (Source) -> Unit,
 ) {
     MigrateSourceList(
         list = items,
@@ -368,7 +368,7 @@ fun MigrateSourcePickerList(
         onToggleSortingDirection = onToggleSortingDirection,
         state = MigrateSourceScreenModel.State(isLoading = false, items = items, searchQuery = searchQuery),
         onChangeSearchQuery = onChangeSearchQuery,
-        onClickAll = {},
+        onClickAll = onClickAll,
         selectedIds = selectedIds,
     )
 }
