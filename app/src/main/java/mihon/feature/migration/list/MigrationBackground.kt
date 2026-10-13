@@ -17,13 +17,11 @@ import eu.kanade.tachiyomi.network.HttpException
 import eu.kanade.tachiyomi.util.system.notificationBuilder
 import eu.kanade.tachiyomi.util.system.setForegroundSafely
 import eu.kanade.tachiyomi.util.system.workManager
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.takeWhile
-import kotlin.random.Random
 
 /**
  * KMK: What a migration is doing right now, for its notification. Set by [MigrationListScreenModel] while it searches
@@ -50,21 +48,6 @@ object MigrationProgress {
     fun clear() {
         _state.value = null
     }
-}
-
-/** The random pause between titles chosen in the migration options, as seconds ("1-3"), or null for none */
-fun migrationDelayRange(value: String): LongRange? {
-    val parts = value.split('-')
-    if (parts.size != 2) return null
-    val from = parts[0].toLongOrNull() ?: return null
-    val to = parts[1].toLongOrNull() ?: return null
-    return if (to <= 0) null else from..to
-}
-
-/** Waits a random time in the chosen range, so a site doesn't see requests at a fixed, bot-like pace */
-suspend fun migrationPause(value: String) {
-    val range = migrationDelayRange(value) ?: return
-    delay(Random.nextLong(range.first * 1000, range.last * 1000 + 1))
 }
 
 /** True when an error means the site wants fewer requests: too many requests, a bot check or a block */

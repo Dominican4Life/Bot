@@ -114,6 +114,8 @@ class SourcePreferences(
     // KMK: random pause between titles while migrating ("1-3" seconds, "0-0" for none), so sites don't bot-check
     fun migrationDelay() = preferenceStore.getString("pref_migration_delay", "1-3")
 
+    fun migrationDelayEnabled() = preferenceStore.getBoolean("pref_migration_delay_enabled", true)
+
     fun migrationHideUnmatched() = preferenceStore.getBoolean("migration_hide_unmatched", false)
 
     fun migrationHideWithoutUpdates() = preferenceStore.getBoolean("migration_hide_without_updates", false)

@@ -115,6 +115,8 @@ internal object SumizuriBrowserFetch {
         ) == "yes"
         if (stillChallenged) {
             webView.destroy()
+            // KMK: a notification to open the site in WebView and pass the check
+            eu.kanade.tachiyomi.network.BotCheckReporter.report("$origin/")
             throw IllegalStateException(
                 "$origin wants you to pass its bot check: open the source in WebView, pass it, then try again",
             )

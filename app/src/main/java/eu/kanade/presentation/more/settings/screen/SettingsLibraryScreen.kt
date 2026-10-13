@@ -16,6 +16,7 @@ import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.Navigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.category.visualName
+import eu.kanade.presentation.components.PauseBetweenTitlesItem
 import eu.kanade.presentation.more.settings.Preference
 import eu.kanade.presentation.more.settings.widget.TriStateListDialog
 import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
@@ -262,6 +263,14 @@ object SettingsLibraryScreen : SearchableSettings {
                     preference = libraryPreferences.showUpdatingProgressBanner(),
                     title = stringResource(KMR.strings.pref_show_updating_progress_banner),
                 ),
+                Preference.PreferenceItem.CustomPreference(
+                    title = stringResource(KMR.strings.migration_delay_title),
+                ) {
+                    PauseBetweenTitlesItem(
+                        enabledPreference = libraryPreferences.updatePauseEnabled(),
+                        rangePreference = libraryPreferences.updatePause(),
+                    )
+                },
                 // KMK <--
             ),
         )

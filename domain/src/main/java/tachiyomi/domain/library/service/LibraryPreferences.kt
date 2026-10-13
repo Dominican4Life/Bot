@@ -178,6 +178,13 @@ class LibraryPreferences(
 
     fun updateCategories() = preferenceStore.getStringSet(LIBRARY_UPDATE_CATEGORIES_PREF_KEY, emptySet())
 
+    // KMK -->
+    // Random pause between titles of the same source during library updates ("1-3" seconds), to avoid bot checks
+    fun updatePauseEnabled() = preferenceStore.getBoolean("pref_library_update_pause_enabled", false)
+
+    fun updatePause() = preferenceStore.getString("pref_library_update_pause", "1-3")
+    // KMK <--
+
     fun updateCategoriesExclude() = preferenceStore.getStringSet(LIBRARY_UPDATE_CATEGORIES_EXCLUDE_PREF_KEY, emptySet())
 
     // endregion

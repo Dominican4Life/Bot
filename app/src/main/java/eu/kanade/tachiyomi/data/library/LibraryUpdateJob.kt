@@ -31,6 +31,7 @@ import eu.kanade.tachiyomi.data.track.TrackStatus
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
+import eu.kanade.tachiyomi.util.PauseBetweenTitles
 import eu.kanade.tachiyomi.util.system.isConnectedToWifi
 import eu.kanade.tachiyomi.util.system.isRunning
 import eu.kanade.tachiyomi.util.system.setForegroundSafely
@@ -400,6 +401,10 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
         // SY <--
 
         val fetchWindow = fetchInterval.getWindow(ZonedDateTime.now())
+        // KMK -->
+        val pauseEnabled = libraryPreferences.updatePauseEnabled().get()
+        val pauseRange = libraryPreferences.updatePause().get()
+        // KMK <--
 
         coroutineScope {
             mangaToUpdate.groupBy { it.manga.source }
@@ -432,6 +437,9 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
                                     }
                                 }
                             }
+                            // KMK --> "Pause between titles" counts between titles of the same source
+                            var updatedInSource = 0
+                            // KMK <--
                             mangaInSource.forEach { libraryManga ->
                                 val manga = libraryManga.manga
                                 ensureActive()
@@ -440,6 +448,12 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
                                 if (getManga.await(manga.id)?.favorite != true) {
                                     return@forEach
                                 }
+
+                                // KMK -->
+                                if (updatedInSource++ > 0) {
+                                    PauseBetweenTitles.pause(pauseEnabled, pauseRange)
+                                }
+                                // KMK <--
 
                                 withUpdateNotification(
                                     currentlyUpdatingManga,

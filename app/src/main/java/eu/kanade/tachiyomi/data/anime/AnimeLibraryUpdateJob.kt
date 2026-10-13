@@ -12,6 +12,7 @@ import androidx.work.WorkerParameters
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
 import eu.kanade.tachiyomi.data.notification.Notifications
+import eu.kanade.tachiyomi.util.PauseBetweenTitles
 import eu.kanade.tachiyomi.util.system.cancelNotification
 import eu.kanade.tachiyomi.util.system.notify
 import eu.kanade.tachiyomi.util.system.workManager
@@ -26,6 +27,7 @@ import logcat.LogPriority
 import tachiyomi.core.common.i18n.pluralStringResource
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.i18n.kmk.KMR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -57,6 +59,9 @@ class AnimeLibraryUpdateJob(
         val newEpisodes = AtomicInteger(0)
         val updatedTitles = mutableListOf<String>()
         val semaphore = Semaphore(5)
+        val libraryPreferences = Injekt.get<LibraryPreferences>()
+        val pauseEnabled = libraryPreferences.updatePauseEnabled().get()
+        val pauseRange = libraryPreferences.updatePause().get()
 
         showProgress(0, favorites.size)
         try {
@@ -64,9 +69,12 @@ class AnimeLibraryUpdateJob(
                 favorites.groupBy { it.source }.values.map { animes ->
                     async {
                         semaphore.withPermit {
+                            // "Pause between titles" counts between titles of the same source
+                            var updatedInSource = 0
                             animes.forEach { anime ->
                                 val source = sourceManager.get(anime.source)
                                 if (source != null) {
+                                    if (updatedInSource++ > 0) PauseBetweenTitles.pause(pauseEnabled, pauseRange)
                                     try {
                                         val count = repository.refreshFromSource(anime, source)
                                         if (count > 0) {

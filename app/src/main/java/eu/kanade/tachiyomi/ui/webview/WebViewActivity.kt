@@ -60,6 +60,8 @@ class WebViewActivity : BaseActivity() {
 
         val url = intent.extras?.getString(URL_KEY) ?: return
         assistUrl = url
+        // KMK: the site's bot check is being passed now, so its notification goes away
+        eu.kanade.tachiyomi.data.notification.BotCheckNotifier.clear(url)
 
         var headers = emptyMap<String, String>()
         (sourceManager.get(intent.extras!!.getLong(SOURCE_KEY)) as? HttpSource)?.let { source ->

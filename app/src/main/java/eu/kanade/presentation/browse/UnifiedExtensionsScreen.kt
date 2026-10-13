@@ -284,22 +284,22 @@ private fun Chip(
     )
 }
 
-// KMK: fixed colors that don't follow the app theme: Mihon blue, Aniyomi green, JS yellow. Each has a darker shade
+// KMK: fixed colors that don't follow the app theme: Mihon blue, Aniyomi pink, JS yellow. Each has a darker shade
 // for light themes so the text stays readable.
 @Composable
 private fun kindColor(kind: ExtensionKind): androidx.compose.ui.graphics.Color {
     val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
     return when (kind) {
         ExtensionKind.MIHON -> if (dark) MihonBlueDark else MihonBlueLight
-        ExtensionKind.ANIYOMI -> if (dark) AniyomiGreenDark else AniyomiGreenLight
+        ExtensionKind.ANIYOMI -> if (dark) AniyomiPinkDark else AniyomiPinkLight
         ExtensionKind.JS -> if (dark) JsYellowDark else JsYellowLight
     }
 }
 
 private val MihonBlueDark = androidx.compose.ui.graphics.Color(0xFF8AB4F8)
 private val MihonBlueLight = androidx.compose.ui.graphics.Color(0xFF1A62C9)
-private val AniyomiGreenDark = androidx.compose.ui.graphics.Color(0xFF81C995)
-private val AniyomiGreenLight = androidx.compose.ui.graphics.Color(0xFF1E7B3C)
+private val AniyomiPinkDark = androidx.compose.ui.graphics.Color(0xFFE3B9DE)
+private val AniyomiPinkLight = androidx.compose.ui.graphics.Color(0xFF8B4A83)
 private val JsYellowDark = androidx.compose.ui.graphics.Color(0xFFFFCA28)
 private val JsYellowLight = androidx.compose.ui.graphics.Color(0xFFA67C00)
 

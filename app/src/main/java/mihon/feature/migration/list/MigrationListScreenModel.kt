@@ -7,6 +7,7 @@ import cafe.adriel.voyager.core.model.screenModelScope
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.getNameForMangaInfo
+import eu.kanade.tachiyomi.util.PauseBetweenTitles
 import exh.source.MERGED_SOURCE_ID
 import exh.util.ThrottleManager
 import kotlinx.collections.immutable.ImmutableList
@@ -70,6 +71,10 @@ class MigrationListScreenModel(
 
     // KMK
     private val context: Application = Injekt.get()
+
+    // KMK: the "Pause between titles" chosen in the migration options
+    private suspend fun pauseBetweenTitles() =
+        PauseBetweenTitles.pause(preferences.migrationDelayEnabled().get(), preferences.migrationDelay().get())
 
     val items
         inline get() = state.value.items
@@ -167,7 +172,7 @@ class MigrationListScreenModel(
             if (!manga.migrationScope.isActive) continue
 
             // KMK: a random pause between titles, so the sources don't see a bot-like stream of searches
-            if (searched++ > 0) migrationPause(preferences.migrationDelay().get())
+            if (searched++ > 0) pauseBetweenTitles()
 
             val result = try {
                 // KMK -->
@@ -374,7 +379,7 @@ class MigrationListScreenModel(
                         }
                         if (target != null) {
                             // KMK: the same random pause between titles as the search
-                            if (moved++ > 0) migrationPause(preferences.migrationDelay().get())
+                            if (moved++ > 0) pauseBetweenTitles()
                             migrateManga(
                                 current = manga.manga,
                                 target = target,

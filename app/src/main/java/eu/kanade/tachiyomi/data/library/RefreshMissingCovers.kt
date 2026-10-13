@@ -8,6 +8,7 @@ import coil3.request.SuccessResult
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.data.notification.Notifications
+import eu.kanade.tachiyomi.util.PauseBetweenTitles
 import eu.kanade.tachiyomi.util.system.cancelNotification
 import eu.kanade.tachiyomi.util.system.notify
 import kotlinx.coroutines.CancellationException
@@ -20,6 +21,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import mihon.domain.source.interactor.UpdateMangaFromRemote
 import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.asMangaCover
@@ -63,9 +65,16 @@ object RefreshMissingCovers {
         val updateFromRemote = Injekt.get<UpdateMangaFromRemote>()
         val getManga = Injekt.get<GetManga>()
         var fixed = 0
+        // "Pause between titles" from Settings › Library, between titles of the same source
+        val libraryPreferences = Injekt.get<LibraryPreferences>()
+        val pauseEnabled = libraryPreferences.updatePauseEnabled().get()
+        val pauseRange = libraryPreferences.updatePause().get()
+        var lastSource: Long? = null
         try {
             missing.forEachIndexed { index, manga ->
                 currentCoroutineContext().ensureActive()
+                if (lastSource == manga.source) PauseBetweenTitles.pause(pauseEnabled, pauseRange)
+                lastSource = manga.source
                 context.notify(NOTIFICATION_ID, Notifications.CHANNEL_LIBRARY_PROGRESS) {
                     setSmallIcon(R.drawable.ic_refresh_24dp)
                     setContentTitle(title)

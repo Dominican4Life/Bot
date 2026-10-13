@@ -11,6 +11,7 @@ import eu.kanade.tachiyomi.util.system.buildNotificationChannel
 import eu.kanade.tachiyomi.util.system.buildNotificationChannelGroup
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.i18n.MR
+import tachiyomi.i18n.kmk.KMR
 
 /**
  * Class to manage the basic information of all the notifications used in the app.
@@ -59,6 +60,11 @@ object Notifications {
     const val ID_ANIME_DOWNLOAD_PROGRESS = -1803
     const val ID_ANIME_DOWNLOAD_ERROR = -1804
     const val ID_MIGRATION_PROGRESS = -1806
+
+    // KMK: a site asked for a bot check the app couldn't pass by itself
+    const val CHANNEL_BOT_CHECK = "bot_check_channel"
+    const val GROUP_BOT_CHECK = "eu.kanade.tachiyomi.BOT_CHECK"
+    const val ID_BOT_CHECK_SUMMARY = -1807
     // KMK <--
     const val GROUP_NEW_CHAPTERS = "eu.kanade.tachiyomi.NEW_CHAPTERS"
 
@@ -209,6 +215,11 @@ object Notifications {
                     setName(context.getString(R.string.pref_discord_rpc))
                 },
                 // <-- AM (DISCORD)
+                // KMK -->
+                buildNotificationChannel(CHANNEL_BOT_CHECK, IMPORTANCE_DEFAULT) {
+                    setName(context.stringResource(KMR.strings.channel_bot_check))
+                },
+                // KMK <--
                 // SY -->
                 buildNotificationChannel(CHANNEL_LIBRARY_EHENTAI, IMPORTANCE_LOW) {
                     setName("EHentai")

@@ -448,6 +448,11 @@
     <string name="browse_panorama">Panorama</string>
     <!-- Migration pacing -->
     <string name="migration_delay_title">Pause between titles</string>
-    <string name="migration_delay_summary">A random wait between titles, so sources are less likely to bot-check a big migration. When a site still asks to slow down, the migration waits longer on its own and tries again.</string>
+    <string name="migration_delay_summary">Search time between titles to avoid bot-checks.</string>
     <string name="migration_delay_none">None</string>
+    <string name="migration_remove_downloads_title">Delete download entries after migration</string>
+    <string name="channel_bot_check">Bot checks</string>
+    <string name="bot_check_title">Bot check needed: %1$s</string>
+    <string name="bot_check_text">Tap to open it in WebView and pass the check</string>
+    <string name="bot_check_summary">%1$d sources need a bot check</string>
 </resources>

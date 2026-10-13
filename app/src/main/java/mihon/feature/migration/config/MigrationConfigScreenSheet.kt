@@ -33,6 +33,7 @@ import androidx.compose.ui.util.fastForEach
 import eu.kanade.core.util.fastFilterNot
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.presentation.components.AdaptiveSheet
+import eu.kanade.presentation.components.PauseBetweenTitlesItem
 import mihon.domain.migration.models.MigrationFlag
 import mihon.feature.common.utils.getLabel
 import tachiyomi.core.common.preference.Preference
@@ -113,7 +114,8 @@ fun MigrationConfigScreenSheet(
                 }
                 val removeDownloads = MigrationFlag.REMOVE_DOWNLOAD in migrationFlags
                 MigrationSheetSwitchItem(
-                    title = stringResource(MR.strings.migrationConfigScreen_removeDownloadsTitle),
+                    // KMK: renamed from "Delete downloads of current entry after migration"
+                    title = stringResource(KMR.strings.migration_remove_downloads_title),
                     subtitle = null,
                     checked = removeDownloads,
                     onClick = {
@@ -128,6 +130,12 @@ fun MigrationConfigScreenSheet(
                         }
                     },
                 )
+                // KMK -->
+                PauseBetweenTitlesItem(
+                    enabledPreference = preferences.migrationDelayEnabled(),
+                    rangePreference = preferences.migrationDelay(),
+                )
+                // KMK <--
                 MigrationSheetDividerItem()
                 // KMK -->
                 if (fullSettings) {
@@ -158,9 +166,6 @@ fun MigrationConfigScreenSheet(
                     subtitle = stringResource(MR.strings.migrationConfigScreen_hideWithoutUpdatesSubtitle),
                     preference = preferences.migrationHideWithoutUpdates(),
                 )
-                // KMK -->
-                MigrationSheetDelayItem(preferences.migrationDelay())
-                // KMK <--
                 // KMK -->
                 if (fullSettings) {
                     // KMK <--
@@ -254,44 +259,6 @@ private fun MigrationSheetSwitchItem(
         modifier = Modifier.clickable(onClick = onClick),
     )
 }
-
-// KMK -->
-/** A random pause between titles, so a big migration doesn't get bot-checked */
-@Composable
-private fun MigrationSheetDelayItem(preference: Preference<String>) {
-    val current by preference.collectAsState()
-    Column(
-        modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium, vertical = MaterialTheme.padding.small),
-    ) {
-        Text(text = stringResource(KMR.strings.migration_delay_title), style = MaterialTheme.typography.bodyLarge)
-        Text(
-            text = stringResource(KMR.strings.migration_delay_summary),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
-            modifier = Modifier.padding(top = MaterialTheme.padding.extraSmall),
-        ) {
-            listOf("0-0", "1-3", "3-8", "8-15", "15-30").forEach { value ->
-                FilterChip(
-                    selected = current == value,
-                    onClick = { preference.set(value) },
-                    label = {
-                        Text(
-                            if (value == "0-0") {
-                                stringResource(KMR.strings.migration_delay_none)
-                            } else {
-                                value.replace("-", "–") + " s"
-                            },
-                        )
-                    },
-                )
-            }
-        }
-    }
-}
-// KMK <--
 
 @Composable
 private fun MigrationSheetDividerItem() {

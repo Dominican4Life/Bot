@@ -172,6 +172,8 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
         }
 
         setupNotificationChannels()
+        // KMK: a notification when a source needs a bot check passed in WebView
+        eu.kanade.tachiyomi.data.notification.BotCheckNotifier.install(this)
 
         ProcessLifecycleOwner.get().lifecycle.addObserver(this)
 
