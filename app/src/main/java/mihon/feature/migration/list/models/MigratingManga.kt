@@ -24,6 +24,14 @@ class MigratingManga(
 
     val searchResult = MutableStateFlow<SearchResult>(SearchResult.Searching)
 
+    // KMK -->
+    /** The match and the other close results found, to pick a different one; best first */
+    val candidates = MutableStateFlow<List<Candidate>>(emptyList())
+
+    /** A title found while matching; [chapterCount] is null until its chapters are fetched */
+    data class Candidate(val manga: Manga, val source: String, val chapterCount: Int?)
+    // KMK <--
+
     sealed interface SearchResult {
         data object Searching : SearchResult
         data object NotFound : SearchResult

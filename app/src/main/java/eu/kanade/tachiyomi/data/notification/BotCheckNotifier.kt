@@ -111,8 +111,11 @@ object BotCheckNotifier {
             val notification = context.notificationBuilder(Notifications.CHANNEL_BOT_CHECK) {
                 setSmallIcon(R.drawable.ic_warning_white_24dp)
                 if (botCheck) {
-                    setContentTitle(context.stringResource(KMR.strings.bot_check_title, entry.name))
-                    setContentText(context.stringResource(KMR.strings.bot_check_text))
+                    // Like Kototoro: "Cloudflare required" / "NHentai requires Cloudflare to be resolved…"
+                    val text = context.stringResource(KMR.strings.bot_check_text, entry.name)
+                    setContentTitle(context.stringResource(KMR.strings.bot_check_title))
+                    setContentText(text)
+                    setStyle(NotificationCompat.BigTextStyle().bigText(text))
                     val intent = WebViewActivity.newIntent(context, entry.url, entry.sourceId, entry.name)
                     setContentIntent(
                         PendingIntent.getActivity(

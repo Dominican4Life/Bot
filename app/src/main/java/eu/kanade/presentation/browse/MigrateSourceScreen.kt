@@ -120,6 +120,8 @@ private fun MigrateSourceList(
     state: MigrateSourceScreenModel.State,
     onChangeSearchQuery: (String?) -> Unit,
     onClickAll: (Source) -> Unit,
+    /** Set when picking sources in the Migrate window: picked ones are highlighted, and there's no "All" button */
+    selectedIds: Set<Long>? = null,
     // KMK <--
 ) {
     // KMK -->
@@ -210,7 +212,15 @@ private fun MigrateSourceList(
                         // KMK -->
                         // modifier = Modifier.animateItem(),
                         modifier = Modifier.animateItemFastScroll()
+                            .then(
+                                if (selectedIds != null && source.id in selectedIds) {
+                                    Modifier.background(MaterialTheme.colorScheme.secondaryContainer)
+                                } else {
+                                    Modifier
+                                },
+                            )
                             .padding(end = MaterialTheme.padding.small),
+                        showAll = selectedIds == null,
                         // KMK <--
                         source = source,
                         count = count,
@@ -252,6 +262,7 @@ private fun MigrateSourceItem(
     onLongClickItem: () -> Unit,
     // KMK -->
     onClickAll: () -> Unit,
+    showAll: Boolean = true,
     // KMK <--
     modifier: Modifier = Modifier,
 ) {
@@ -267,11 +278,13 @@ private fun MigrateSourceItem(
                 Badge(text = "$count")
             }
             // KMK -->
-            TextButton(onClick = onClickAll) {
-                Text(
-                    text = stringResource(MR.strings.all),
-                    color = MaterialTheme.colorScheme.primary,
-                )
+            if (showAll) {
+                TextButton(onClick = onClickAll) {
+                    Text(
+                        text = stringResource(MR.strings.all),
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
             }
             // KMK <--
         },
@@ -325,5 +338,37 @@ private fun MigrateSourceItem(
                 }
             }
         },
+    )
+}
+
+/**
+ * KMK: The Browse › Migrate source list, for the Migrate window's "Source to migrate": tap sources to pick them
+ * (they're highlighted).
+ */
+@Composable
+fun MigrateSourcePickerList(
+    items: ImmutableList<Pair<Source, Long>>,
+    searchQuery: String?,
+    onChangeSearchQuery: (String?) -> Unit,
+    sortingMode: SetMigrateSorting.Mode,
+    onToggleSortingMode: () -> Unit,
+    sortingDirection: SetMigrateSorting.Direction,
+    onToggleSortingDirection: () -> Unit,
+    selectedIds: Set<Long>,
+    onClickItem: (Source) -> Unit,
+) {
+    MigrateSourceList(
+        list = items,
+        contentPadding = PaddingValues(),
+        onClickItem = onClickItem,
+        onLongClickItem = {},
+        sortingMode = sortingMode,
+        onToggleSortingMode = onToggleSortingMode,
+        sortingDirection = sortingDirection,
+        onToggleSortingDirection = onToggleSortingDirection,
+        state = MigrateSourceScreenModel.State(isLoading = false, items = items, searchQuery = searchQuery),
+        onChangeSearchQuery = onChangeSearchQuery,
+        onClickAll = {},
+        selectedIds = selectedIds,
     )
 }

@@ -53,6 +53,7 @@ import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.flow.combine
 import mihon.feature.migration.list.models.MigratingManga
+import mihon.feature.migration.list.models.MigratingManga.Candidate
 import mihon.feature.migration.list.models.MigratingManga.SearchResult
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.i18n.MR
@@ -85,7 +86,12 @@ fun MigrationListScreenContent(
     openMigrationDialog: (Boolean) -> Unit,
     onCancel: (Long) -> Unit,
     openOptionsDialog: () -> Unit,
+    onPickCandidate: (Long, Candidate) -> Unit,
+    searchCandidates: suspend (String) -> List<Candidate>,
 ) {
+    // The title whose Candidates window is open
+    var candidatesFor by remember { mutableStateOf<MigratingManga?>(null) }
+
     // Every title's result, kept up to date as the search goes
     val resultsFlow = remember(items) { combine(items.map { it.searchResult }) { it.toList() } }
     val results by resultsFlow.collectAsState(initial = items.map { it.searchResult.value })
@@ -223,9 +229,35 @@ fun MigrationListScreenContent(
                     onCancel = { onCancel(item.manga.id) },
                     modifier = Modifier.animateItemFastScroll(),
                 )
+                // The match and other close results, with covers; more in the Candidates window
+                val candidates by item.candidates.collectAsState()
+                CandidatesSection(
+                    result = resultOf(item),
+                    candidates = candidates,
+                    onPick = { onPickCandidate(item.manga.id, it) },
+                    onInfo = { onItemClick(it.manga) },
+                    onOpenCandidates = { candidatesFor = item },
+                )
                 HorizontalDivider()
             }
         }
+    }
+
+    candidatesFor?.let { item ->
+        val candidates by item.candidates.collectAsState()
+        val result by item.searchResult.collectAsState()
+        CandidatesWindow(
+            title = item.manga.title,
+            candidates = candidates,
+            selectedId = (result as? SearchResult.Success)?.manga?.id,
+            search = searchCandidates,
+            onPick = {
+                onPickCandidate(item.manga.id, it)
+                candidatesFor = null
+            },
+            onInfo = { onItemClick(it.manga) },
+            onDismissRequest = { candidatesFor = null },
+        )
     }
 }
 

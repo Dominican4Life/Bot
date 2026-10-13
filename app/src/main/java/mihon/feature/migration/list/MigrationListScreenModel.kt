@@ -32,12 +32,15 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import logcat.LogPriority
+import mihon.domain.manga.model.toDomainManga
 import mihon.domain.migration.usecases.MigrateMangaUseCase
 import mihon.domain.source.interactor.UpdateMangaFromRemote
 import mihon.feature.migration.list.models.MigratingManga
+import mihon.feature.migration.list.models.MigratingManga.Candidate
 import mihon.feature.migration.list.models.MigratingManga.SearchResult
 import mihon.feature.migration.list.search.SmartSourceSearchEngine
 import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
@@ -216,6 +219,7 @@ class MigrationListScreenModel(
             if (searched++ > 0) pauseBetweenTitles()
 
             matchingId.value = manga.manga.id
+            val extras = java.util.Collections.synchronizedList(mutableListOf<Pair<Manga, String>>())
             val result = try {
                 // KMK -->
                 manga.searchingJob = manga.migrationScope.async {
@@ -225,7 +229,7 @@ class MigrationListScreenModel(
                         sources.map { source ->
                             async innerAsync@{
                                 sourceSemaphore.withPermit {
-                                    val result = searchSource(manga.manga, source, deepSearchMode)
+                                    val result = searchSource(manga.manga, source, deepSearchMode, extras)
                                     if (result == null || result.second.chapterCount == 0) return@innerAsync null
                                     result
                                 }
@@ -235,7 +239,7 @@ class MigrationListScreenModel(
                             .maxByOrNull { it.second.latestChapter ?: 0.0 }
                     } else {
                         sources.forEach { source ->
-                            val result = searchSource(manga.manga, source, deepSearchMode)
+                            val result = searchSource(manga.manga, source, deepSearchMode, extras)
                             if (result != null) return@async result
                         }
                         null
@@ -257,7 +261,16 @@ class MigrationListScreenModel(
                 }
             }
 
-            manga.searchResult.value = result?.first?.toSuccessSearchResult() ?: SearchResult.NotFound
+            val success = result?.first?.toSuccessSearchResult()
+            manga.searchResult.value = success ?: SearchResult.NotFound
+            // KMK: the match first, then the other close results
+            manga.candidates.value = buildList {
+                if (success != null) add(Candidate(success.manga, success.source, success.chapterCount))
+                synchronized(extras) { extras.toList() }.forEach { (extra, sourceName) ->
+                    if (none { it.manga.id == extra.id }) add(Candidate(extra, sourceName, null))
+                }
+            }
+            // KMK <--
 
             if (result == null && hideUnmatched) {
                 removeManga(manga)
@@ -282,12 +295,14 @@ class MigrationListScreenModel(
         manga: Manga,
         source: Source,
         deepSearchMode: Boolean,
+        // KMK: other close results go here
+        extras: MutableList<Pair<Manga, String>>? = null,
     ): Pair<Manga, ChapterInfo>? {
         // KMK: when the site asks to slow down (429, bot check), wait longer and try again, up to 3 times
         var attempt = 0
         while (true) {
             try {
-                return searchSourceOnce(manga, source, deepSearchMode)
+                return searchSourceOnce(manga, source, deepSearchMode, extras)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -307,14 +322,17 @@ class MigrationListScreenModel(
         manga: Manga,
         source: Source,
         deepSearchMode: Boolean,
+        // KMK: other close results go here
+        extras: MutableList<Pair<Manga, String>>? = null,
     ): Pair<Manga, ChapterInfo>? {
-        val searchResult = if (deepSearchMode) {
-            smartSearchEngine.deepSearch(source, manga.title)
-        } else {
-            smartSearchEngine.regularSearch(source, manga.title)
+        // KMK: every close result; the best is the match, the next few are kept as other candidates
+        val found = smartSearchEngine.searchAll(source, manga.title, deepSearchMode)
+            .filterNot { it.url == manga.url && source.id == manga.source }
+        val searchResult = found.firstOrNull() ?: return null
+        found.drop(1).take(MAX_EXTRA_CANDIDATES).forEach { extra ->
+            runCatching { extras?.add(networkToLocalManga(extra) to source.name) }
         }
-
-        if (searchResult == null || (searchResult.url == manga.url && source.id == manga.source)) return null
+        // KMK <--
 
         val localManga = networkToLocalManga(searchResult)
         try {
@@ -361,6 +379,38 @@ class MigrationListScreenModel(
         items.all { it.searchResult.value != SearchResult.Searching } &&
             items.any { it.searchResult.value is SearchResult.Success }
 
+    // KMK -->
+    /** Uses one of a title's candidates as its match */
+    fun pickCandidate(current: Long, candidate: Candidate, onMissingChapters: () -> Unit) {
+        val item = items.find { it.manga.id == current } ?: return
+        if (item.candidates.value.none { it.manga.id == candidate.manga.id }) {
+            item.candidates.value = item.candidates.value + candidate
+        }
+        useMangaForMigration(current, candidate.manga.id, onMissingChapters)
+    }
+
+    /** Searches the chosen sources for [query], for the Candidates window */
+    suspend fun searchCandidates(query: String): List<Candidate> = withIOContext {
+        val sources = preferences.migrationSources().get().mapNotNull { sourceManager.get(it) }
+        val semaphore = Semaphore(3)
+        sources.map { source ->
+            async {
+                semaphore.withPermit {
+                    try {
+                        source.getSearchManga(1, query, source.getFilterList()).mangas
+                            .take(MAX_SEARCH_CANDIDATES)
+                            .map { Candidate(networkToLocalManga(it.toDomainManga(source.id)), source.name, null) }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        emptyList()
+                    }
+                }
+            }
+        }.awaitAll().flatten()
+    }
+    // KMK <--
+
     /** Set a manga picked from manual search to be used as migration target */
     fun useMangaForMigration(current: Long, target: Long, onMissingChapters: () -> Unit) {
         val migratingManga = items.find { it.manga.id == current } ?: return
@@ -390,7 +440,13 @@ class MigrationListScreenModel(
                 return@launchIO
             }
 
-            migratingManga.searchResult.value = result.toSuccessSearchResult()
+            val success = result.toSuccessSearchResult()
+            migratingManga.searchResult.value = success
+            // KMK: its chapter count is known now
+            migratingManga.candidates.value = migratingManga.candidates.value.map {
+                if (it.manga.id == success.manga.id) it.copy(chapterCount = success.chapterCount) else it
+            }
+            // KMK <--
             updateMigrationProgress()
         }
     }
@@ -554,6 +610,12 @@ class MigrationListScreenModel(
         deepSearchMode = preferences.migrationDeepSearchMode().get()
     }
     // KMK <--
+
+    // KMK
+    private companion object {
+        const val MAX_EXTRA_CANDIDATES = 5
+        const val MAX_SEARCH_CANDIDATES = 10
+    }
 
     data class ChapterInfo(
         val latestChapter: Double?,

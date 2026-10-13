@@ -452,12 +452,12 @@
     <string name="migration_delay_none">None</string>
     <string name="migration_remove_downloads_title">Delete download entries after migration</string>
     <string name="channel_bot_check">Bot checks</string>
-    <string name="bot_check_title">Bot check needed: %1$s</string>
-    <string name="bot_check_text">Tap to open it in WebView and pass the check</string>
-    <string name="bot_check_summary">%1$d sources need a bot check</string>
+    <string name="bot_check_title">Cloudflare required</string>
+    <string name="bot_check_text">%1$s requires Cloudflare to be resolved to work properly</string>
+    <string name="bot_check_summary">%1$d sources require Cloudflare</string>
     <string name="too_many_requests_title">Too many requests: %1$s</string>
     <string name="too_many_requests_text">The site asked to slow down. It will be tried again in a while</string>
-    <string name="bot_check_waiting_title">Waiting for bot checks (%1$d left)</string>
+    <string name="bot_check_waiting_title">Waiting for Cloudflare (%1$d left)</string>
     <string name="bot_check_skip">Skip</string>
     <string name="restore_covers_title">Loading covers after restore</string>
     <string name="migrate_source_to_migrate">Source to migrate</string>
@@ -504,4 +504,8 @@
     <string name="migrate_clear_shown">Clear shown</string>
     <string name="migrate_showing_sources">Showing %1$d of %2$d sources</string>
     <string name="migrate_n_titles">%1$d titles</string>
+    <string name="migrate_candidates">Candidates</string>
+    <string name="migrate_more_candidates">%1$d more candidates ›</string>
+    <string name="migrate_search_target_sources">Search in target sources</string>
+    <string name="migrate_n_chapters">%1$d ch.</string>
 </resources>

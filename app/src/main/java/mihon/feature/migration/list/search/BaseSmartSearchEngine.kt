@@ -17,13 +17,21 @@ abstract class BaseSmartSearchEngine<T>(
 
     protected abstract fun getTitle(result: T): String
 
-    protected suspend fun regularSearch(searchAction: SearchAction<T>, title: String): T? {
+    protected suspend fun regularSearch(searchAction: SearchAction<T>, title: String): T? =
+        regularSearchAll(searchAction, title).firstOrNull()
+
+    protected suspend fun deepSearch(searchAction: SearchAction<T>, title: String): T? =
+        deepSearchAll(searchAction, title).firstOrNull()
+
+    // KMK -->
+    /** Every close enough result, best first: the first is the match, the rest are other candidates */
+    protected suspend fun regularSearchAll(searchAction: SearchAction<T>, title: String): List<T> {
         return baseSearch(searchAction, listOf(title)) {
             normalizedLevenshtein.similarity(title, getTitle(it))
         }
     }
 
-    protected suspend fun deepSearch(searchAction: SearchAction<T>, title: String): T? {
+    protected suspend fun deepSearchAll(searchAction: SearchAction<T>, title: String): List<T> {
         val cleanedTitle = cleanDeepSearchTitle(title)
 
         val queries = getDeepSearchQueries(cleanedTitle)
@@ -33,12 +41,13 @@ abstract class BaseSmartSearchEngine<T>(
             normalizedLevenshtein.similarity(cleanedTitle, cleanedMangaTitle)
         }
     }
+    // KMK <--
 
     private suspend fun baseSearch(
         searchAction: SearchAction<T>,
         queries: List<String>,
         calculateDistance: (T) -> Double,
-    ): T? {
+    ): /* KMK --> */ List<T> /* KMK <-- */ {
         val eligibleManga = supervisorScope {
             queries.map { query ->
                 async(Dispatchers.Default) {
@@ -69,7 +78,8 @@ abstract class BaseSmartSearchEngine<T>(
                 .flatMap { it.await() }
         }
 
-        return eligibleManga.maxByOrNull { it.distance }?.entry
+        // KMK: all of them, best first (the same title found by two queries counts once)
+        return eligibleManga.sortedByDescending { it.distance }.map { it.entry }.distinct()
     }
 
     private fun cleanDeepSearchTitle(title: String): String {

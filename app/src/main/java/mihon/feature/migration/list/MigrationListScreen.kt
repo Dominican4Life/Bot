@@ -157,6 +157,16 @@ class MigrationListScreen(
             // KMK -->
             onCancel = { screenModel.cancelManga(it) },
             openOptionsDialog = screenModel::openOptionsDialog,
+            onPickCandidate = { current, candidate ->
+                screenModel.pickCandidate(
+                    current = current,
+                    candidate = candidate,
+                    onMissingChapters = {
+                        context.toast(MR.strings.migrationListScreen_matchWithoutChapterToast, Toast.LENGTH_LONG)
+                    },
+                )
+            },
+            searchCandidates = screenModel::searchCandidates,
             // KMK <--
         )
 

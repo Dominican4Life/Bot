@@ -21,6 +21,15 @@ class SmartSourceSearchEngine(extraSearchParams: String?) : BaseSmartSearchEngin
         }
     }
 
+    // KMK -->
+    /** Every close enough result, best first */
+    suspend fun searchAll(source: Source, title: String, deep: Boolean): List<Manga> {
+        val action = makeSearchAction(source)
+        val found = if (deep) deepSearchAll(action, title) else regularSearchAll(action, title)
+        return found.map { it.toDomainManga(source.id) }
+    }
+    // KMK <--
+
     private fun makeSearchAction(source: Source): SearchAction<SManga> = { query ->
         source.getSearchManga(1, query, source.getFilterList()).mangas
     }

@@ -5,10 +5,10 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -434,14 +434,13 @@ private fun SheetSwitch(title: String, subtitle: String?, checked: Boolean, onCl
     )
 }
 
-/** KMK: "Data to migrate" chips on one row (it scrolls sideways when narrow); a picked chip just turns blue */
+/** KMK: "Data to migrate" chips, wrapping onto the next row when needed; a picked chip just changes color */
 @Composable
 fun MigrationFlagChips(flags: Set<MigrationFlag>, onToggle: (MigrationFlag) -> Unit) {
-    Row(
+    FlowRow(
         horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
         modifier = Modifier
             .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
             .padding(horizontal = MaterialTheme.padding.medium),
     ) {
         MigrationFlag.entries
