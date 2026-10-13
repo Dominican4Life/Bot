@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -21,8 +22,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Deselect
 import androidx.compose.material.icons.outlined.DragHandle
+import androidx.compose.material.icons.outlined.FlipToBack
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PushPin
+import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
@@ -57,11 +60,14 @@ import eu.kanade.presentation.browse.MigrateSourcePickerList
 import eu.kanade.presentation.browse.components.SourceIcon
 import eu.kanade.presentation.components.AnimatedFloatingSearchBox
 import eu.kanade.presentation.components.SOURCE_SEARCH_BOX_HEIGHT
+import eu.kanade.presentation.manga.components.MangaCover
 import eu.kanade.tachiyomi.source.online.HttpSource
 import kotlinx.collections.immutable.toImmutableList
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 import tachiyomi.core.common.util.lang.withIOContext
+import tachiyomi.domain.manga.interactor.GetFavorites
+import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.model.Source
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
@@ -87,6 +93,8 @@ private fun PickerWindow(
     onDismissRequest: () -> Unit,
     onConfirm: () -> Unit,
     actions: @Composable () -> Unit = {},
+    /** What the back arrow does; closes the window when not set */
+    onBack: (() -> Unit)? = null,
     content: @Composable BoxScope.() -> Unit,
 ) {
     Dialog(
@@ -108,7 +116,7 @@ private fun PickerWindow(
                         .fillMaxWidth()
                         .padding(start = 4.dp, end = MaterialTheme.padding.small, top = MaterialTheme.padding.small),
                 ) {
-                    IconButton(onClick = onDismissRequest) {
+                    IconButton(onClick = onBack ?: onDismissRequest) {
                         Icon(imageVector = Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = null)
                     }
                     Text(
@@ -302,14 +310,15 @@ fun SearchSourcesPickerDialog(
 }
 
 /**
- * KMK: Picks the sources whose library titles are migrated, when nothing was selected: the Browse › Migrate list
- * (search, sorting, title counts) in a window; tap sources to pick them.
+ * KMK: Picks the library titles to migrate, when nothing was selected, like Browse › Migrate used to: the source list
+ * (search, sorting, title counts) in a window. All picks every title of a source; tapping a source opens its titles
+ * in the same window to pick some. Sources with picked titles are highlighted; OK finishes.
  */
 @Composable
 fun SourceToMigratePickerDialog(
     initial: Set<Long>,
     onDismissRequest: () -> Unit,
-    onConfirm: (List<Pair<Source, Long>>) -> Unit,
+    onConfirm: (picked: Set<Long>, sources: List<Source>) -> Unit,
 ) {
     val sourcePreferences = remember { Injekt.get<SourcePreferences>() }
     val setMigrateSorting = remember { Injekt.get<SetMigrateSorting>() }
@@ -317,19 +326,69 @@ fun SourceToMigratePickerDialog(
     val sortingDirection by sourcePreferences.migrationSortingDirection().collectAsState()
     val flow = remember { Injekt.get<GetSourcesWithFavoriteCount>().subscribe() }
     val withCounts by flow.collectFlowAsState(initial = null)
+    // Every library title by source
+    val bySource by produceState<Map<Long, List<Manga>>?>(null) {
+        value = withIOContext { Injekt.get<GetFavorites>().await().groupBy { it.source } }
+    }
 
     var picked by remember { mutableStateOf(initial) }
     var searchQuery by remember { mutableStateOf<String?>(null) }
+    // The source whose titles are open, if any
+    var open by remember { mutableStateOf<Source?>(null) }
 
+    val titles = bySource.orEmpty()
+    val pickedSources = remember(picked, titles) {
+        titles.filterValues { list -> list.any { it.id in picked } }.keys
+    }
+    fun confirm() {
+        val sources = withCounts.orEmpty().map { it.first }.filter { it.id in pickedSources }
+        onConfirm(picked, sources)
+    }
+
+    val openSource = open
     PickerWindow(
-        title = stringResource(KMR.strings.migrate_source_to_migrate),
+        title = openSource?.name ?: stringResource(KMR.strings.migrate_source_to_migrate),
         okEnabled = picked.isNotEmpty(),
         onDismissRequest = onDismissRequest,
-        onConfirm = { onConfirm(withCounts.orEmpty().filter { it.first.id in picked }) },
+        onConfirm = ::confirm,
+        onBack = if (openSource != null) ({ open = null }) else null,
+        actions = {
+            if (openSource != null) {
+                val ids = titles[openSource.id].orEmpty().map { it.id }
+                Text(
+                    text = "${ids.count { it in picked }}",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(horizontal = MaterialTheme.padding.small),
+                )
+                // Select all / invert, like the old titles list
+                IconButton(onClick = { picked = picked + ids }) {
+                    Icon(
+                        imageVector = Icons.Outlined.SelectAll,
+                        contentDescription = stringResource(MR.strings.action_select_all),
+                    )
+                }
+                IconButton(onClick = {
+                    picked = picked - ids.filter { it in picked }.toSet() + ids.filter { it !in picked }
+                }) {
+                    Icon(
+                        imageVector = Icons.Outlined.FlipToBack,
+                        contentDescription = stringResource(MR.strings.action_select_inverse),
+                    )
+                }
+            }
+        },
     ) {
         val list = withCounts
-        if (list == null) {
+        if (list == null || bySource == null) {
             LoadingScreen()
+            return@PickerWindow
+        }
+        if (openSource != null) {
+            MigrateTitlesPicker(
+                titles = titles[openSource.id].orEmpty().sortedBy { it.title.lowercase() },
+                picked = picked,
+                onToggle = { id -> picked = if (id in picked) picked - id else picked + id },
+            )
             return@PickerWindow
         }
         val shown = remember(list, searchQuery) {
@@ -361,11 +420,57 @@ fun SourceToMigratePickerDialog(
                 }
                 setMigrateSorting.await(sortingMode, direction)
             },
-            selectedIds = picked,
-            onClickItem = { source ->
-                picked = if (source.id in picked) picked - source.id else picked + source.id
+            selectedIds = pickedSources,
+            onClickItem = { source -> open = source },
+            onClickAll = { source ->
+                val ids = titles[source.id].orEmpty().map { it.id }.toSet()
+                picked = if (ids.all { it in picked }) picked - ids else picked + ids
             },
         )
+    }
+}
+
+/**
+ * KMK: A source's library titles to pick from, in the "Source to migrate" window: cover and title, picked ones
+ * highlighted
+ */
+@Composable
+private fun MigrateTitlesPicker(
+    titles: List<Manga>,
+    picked: Set<Long>,
+    onToggle: (Long) -> Unit,
+) {
+    LazyColumn(modifier = Modifier.fillMaxSize()) {
+        itemsIndexed(titles, key = { _, manga -> manga.id }) { _, manga ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(
+                        if (manga.id in picked) {
+                            Modifier.background(MaterialTheme.colorScheme.secondaryContainer)
+                        } else {
+                            Modifier
+                        },
+                    )
+                    .clickable { onToggle(manga.id) }
+                    .padding(horizontal = MaterialTheme.padding.medium, vertical = MaterialTheme.padding.small),
+            ) {
+                MangaCover.Square(
+                    data = manga,
+                    modifier = Modifier.size(48.dp),
+                )
+                Text(
+                    text = manga.title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(start = MaterialTheme.padding.medium),
+                )
+            }
+        }
     }
 }
 

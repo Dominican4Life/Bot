@@ -14,6 +14,7 @@ import coil3.request.Options
 import com.hippo.unifile.UniFile
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.tachiyomi.data.cache.CoverCache
+import eu.kanade.tachiyomi.data.cache.CoverFolders
 import eu.kanade.tachiyomi.data.coil.MangaCoverFetcher.Companion.USE_CUSTOM_COVER_KEY
 import eu.kanade.tachiyomi.data.notification.SourceHold
 import eu.kanade.tachiyomi.network.BotCheckReporter
@@ -167,6 +168,16 @@ class MangaCoverFetcher(
                 )
             }
 
+            // KMK -->
+            // A cover kept in the title's download folder ("Save covers in download folders") is used instead of
+            // downloading it again, as after a restore
+            if (libraryCoverCacheFile != null &&
+                CoverFolders.restoreInto(mangaCover.mangaId, mangaCover.sourceId, isAnimeCover(), libraryCoverCacheFile)
+            ) {
+                return fileLoader(libraryCoverCacheFile)
+            }
+            // KMK <--
+
             // Fetch from network
             val response = executeNetworkRequest()
             val responseBody = checkNotNull(response.body) { "Null response source" }
@@ -174,6 +185,8 @@ class MangaCoverFetcher(
                 // Read from cover cache after library manga cover updated
                 val responseCoverCache = writeResponseToCoverCache(response, libraryCoverCacheFile)
                 if (responseCoverCache != null) {
+                    // KMK: also kept in the title's download folder
+                    CoverFolders.save(mangaCover.mangaId, mangaCover.sourceId, isAnimeCover(), responseCoverCache)
                     return fileLoader(responseCoverCache)
                 }
 
@@ -232,6 +245,9 @@ class MangaCoverFetcher(
     }
 
     private fun animeSource() = animeSourceLazy.value
+
+    /** True for an anime's cover (its source is an anime source) */
+    private fun isAnimeCover() = sourceLazy.value == null && animeSource() != null
     // KMK <--
 
     private suspend fun executeNetworkRequest(): Response {

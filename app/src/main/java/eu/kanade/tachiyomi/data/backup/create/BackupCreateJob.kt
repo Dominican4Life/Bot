@@ -48,8 +48,12 @@ class BackupCreateJob(private val context: Context, workerParams: WorkerParamete
 
         setForegroundSafely()
 
-        val options = inputData.getBooleanArray(OPTIONS_KEY)?.let { BackupOptions.fromBooleanArray(it) }
-            ?: BackupOptions()
+        val options = (
+            inputData.getBooleanArray(OPTIONS_KEY)?.let { BackupOptions.fromBooleanArray(it) }
+                ?: BackupOptions()
+            )
+            // KMK: only titles in the chosen categories
+            .copy(categoryKeys = inputData.getStringArray(CATEGORIES_KEY)?.toSet())
 
         return try {
             val location = BackupCreator(context, isAutoBackup).backup(uri, options)
@@ -119,6 +123,9 @@ class BackupCreateJob(private val context: Context, workerParams: WorkerParamete
                 IS_AUTO_BACKUP_KEY to false,
                 LOCATION_URI_KEY to uri.toString(),
                 OPTIONS_KEY to options.asBooleanArray(),
+                // KMK -->
+                CATEGORIES_KEY to options.categoryKeys?.toTypedArray(),
+                // KMK <--
             )
             val request = OneTimeWorkRequestBuilder<BackupCreateJob>()
                 .addTag(TAG_MANUAL)
@@ -147,3 +154,6 @@ private const val TAG_MANUAL = "$TAG_AUTO:manual"
 private const val IS_AUTO_BACKUP_KEY = "is_auto_backup" // Boolean
 private const val LOCATION_URI_KEY = "location_uri" // String
 private const val OPTIONS_KEY = "options" // BooleanArray
+
+// KMK
+private const val CATEGORIES_KEY = "categories" // Array<String>

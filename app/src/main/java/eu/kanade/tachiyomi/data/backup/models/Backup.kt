@@ -20,5 +20,7 @@ data class Backup(
     // Anime (merged from Anikku)
     @ProtoNumber(700) var backupAnime: List<BackupAnime> = emptyList(),
     @ProtoNumber(701) var backupAnimeExtensionStores: List<BackupExtensionStore> = emptyList(),
+    // Sources made in the Code editor
+    @ProtoNumber(710) var backupJsSources: List<BackupJsSource> = emptyList(),
     // KMK <--
 )

@@ -39,6 +39,9 @@ class DownloadPreferences(
 
     fun parallelSourceLimit() = preferenceStore.getInt("download_parallel_source_limit", 5)
 
+    // KMK: each title's cover kept as cover.jpg in its download folder, to load from there after a restore
+    fun saveCoversInFolders() = preferenceStore.getBoolean("save_covers_in_folders", false)
+
     fun parallelPageLimit() = preferenceStore.getInt("download_parallel_page_limit", 5)
 
     // SY -->

@@ -14,6 +14,11 @@ data class RestoreOptions(
     // SY -->
     val savedSearchesFeeds: Boolean = true,
     // SY <--
+    // KMK -->
+    val jsSources: Boolean = true,
+    /** Only titles in these categories ([CategoryChoice] keys); null for all */
+    val categoryKeys: Set<String>? = null,
+    // KMK <--
 ) {
 
     fun asBooleanArray() = booleanArrayOf(
@@ -25,6 +30,9 @@ data class RestoreOptions(
         // SY -->
         savedSearchesFeeds,
         // SY <--
+        // KMK -->
+        jsSources,
+        // KMK <--
     )
 
     fun canRestore() =
@@ -33,7 +41,8 @@ data class RestoreOptions(
             appSettings ||
             extensionStores ||
             sourceSettings /* SY --> */ ||
-            savedSearchesFeeds /* SY <-- */
+            savedSearchesFeeds /* SY <-- */ ||
+            /* KMK --> */ jsSources /* KMK <-- */
 
     companion object {
         val options = persistentListOf(
@@ -71,6 +80,13 @@ data class RestoreOptions(
                 setter = { options, enabled -> options.copy(savedSearchesFeeds = enabled) },
             ),
             // SY <--
+            // KMK -->
+            Entry(
+                label = KMR.strings.backup_js_sources,
+                getter = RestoreOptions::jsSources,
+                setter = { options, enabled -> options.copy(jsSources = enabled) },
+            ),
+            // KMK <--
         )
 
         fun fromBooleanArray(array: BooleanArray) = RestoreOptions(
@@ -82,6 +98,8 @@ data class RestoreOptions(
             // SY -->
             savedSearchesFeeds = array[5],
             // SY <--
+            // KMK: older saved choices are shorter
+            jsSources = array.getOrElse(6) { true },
         )
     }
 

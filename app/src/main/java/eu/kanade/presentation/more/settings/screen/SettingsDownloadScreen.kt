@@ -8,10 +8,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.util.fastMap
 import eu.kanade.presentation.category.visualName
 import eu.kanade.presentation.more.settings.Preference
 import eu.kanade.presentation.more.settings.widget.TriStateListDialog
+import eu.kanade.tachiyomi.data.cache.CoverFolders
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.toImmutableMap
@@ -41,6 +43,10 @@ object SettingsDownloadScreen : SearchableSettings {
         val downloadPreferences = remember { Injekt.get<DownloadPreferences>() }
         val parallelSourceLimit by downloadPreferences.parallelSourceLimit().collectAsState()
         val parallelPageLimit by downloadPreferences.parallelPageLimit().collectAsState()
+        // KMK -->
+        val saveCoversInFolders by downloadPreferences.saveCoversInFolders().collectAsState()
+        val context = LocalContext.current
+        // KMK <--
         return listOf(
             Preference.PreferenceItem.SwitchPreference(
                 preference = downloadPreferences.downloadOnlyOverWifi(),
@@ -55,6 +61,19 @@ object SettingsDownloadScreen : SearchableSettings {
                 title = stringResource(MR.strings.split_tall_images),
                 subtitle = stringResource(MR.strings.split_tall_images_summary),
             ),
+            // KMK -->
+            Preference.PreferenceItem.SwitchPreference(
+                preference = downloadPreferences.saveCoversInFolders(),
+                title = stringResource(KMR.strings.pref_save_covers_in_folders),
+                subtitle = stringResource(KMR.strings.pref_save_covers_in_folders_summary),
+            ),
+            Preference.PreferenceItem.TextPreference(
+                title = stringResource(KMR.strings.pref_save_all_covers_now),
+                subtitle = stringResource(KMR.strings.pref_save_all_covers_now_summary),
+                enabled = saveCoversInFolders,
+                onClick = { CoverFolders.saveAll(context) },
+            ),
+            // KMK <--
             Preference.PreferenceItem.SliderPreference(
                 value = parallelSourceLimit,
                 valueRange = 1..10,

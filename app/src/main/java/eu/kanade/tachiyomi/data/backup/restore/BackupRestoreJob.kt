@@ -39,6 +39,8 @@ class BackupRestoreJob(private val context: Context, workerParams: WorkerParamet
     override suspend fun doWork(): Result {
         val uri = inputData.getString(LOCATION_URI_KEY)?.toUri()
         val options = inputData.getBooleanArray(OPTIONS_KEY)?.let { RestoreOptions.fromBooleanArray(it) }
+            // KMK: only titles in the chosen categories
+            ?.copy(categoryKeys = inputData.getStringArray(CATEGORIES_KEY)?.toSet())
 
         if (uri == null || options == null) {
             return Result.failure()
@@ -99,6 +101,9 @@ class BackupRestoreJob(private val context: Context, workerParams: WorkerParamet
                 LOCATION_URI_KEY to uri.toString(),
                 SYNC_KEY to sync,
                 OPTIONS_KEY to options.asBooleanArray(),
+                // KMK -->
+                CATEGORIES_KEY to options.categoryKeys?.toTypedArray(),
+                // KMK <--
             )
             val request = OneTimeWorkRequestBuilder<BackupRestoreJob>()
                 .addTag(TAG)
@@ -122,3 +127,6 @@ private const val TAG = "BackupRestore"
 private const val LOCATION_URI_KEY = "location_uri" // String
 private const val SYNC_KEY = "sync" // Boolean
 private const val OPTIONS_KEY = "options" // BooleanArray
+
+// KMK
+private const val CATEGORIES_KEY = "categories" // Array<String>

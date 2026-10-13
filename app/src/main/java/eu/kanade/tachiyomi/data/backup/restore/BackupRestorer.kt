@@ -4,13 +4,21 @@ import android.content.Context
 import android.net.Uri
 import eu.kanade.tachiyomi.data.backup.BackupDecoder
 import eu.kanade.tachiyomi.data.backup.BackupNotifier
+import eu.kanade.tachiyomi.data.backup.CategoryChoice
 import eu.kanade.tachiyomi.data.backup.models.BackupCategory
 import eu.kanade.tachiyomi.data.backup.models.BackupExtensionStore
 import eu.kanade.tachiyomi.data.backup.models.BackupFeed
+import eu.kanade.tachiyomi.data.backup.models.BackupJsSource
 import eu.kanade.tachiyomi.data.backup.models.BackupManga
 import eu.kanade.tachiyomi.data.backup.models.BackupPreference
 import eu.kanade.tachiyomi.data.backup.models.BackupSavedSearch
 import eu.kanade.tachiyomi.data.backup.models.BackupSourcePreferences
+import eu.kanade.tachiyomi.data.backup.models.BooleanPreferenceValue
+import eu.kanade.tachiyomi.data.backup.models.FloatPreferenceValue
+import eu.kanade.tachiyomi.data.backup.models.IntPreferenceValue
+import eu.kanade.tachiyomi.data.backup.models.LongPreferenceValue
+import eu.kanade.tachiyomi.data.backup.models.StringPreferenceValue
+import eu.kanade.tachiyomi.data.backup.models.StringSetPreferenceValue
 import eu.kanade.tachiyomi.data.backup.restore.restorers.CategoriesRestorer
 import eu.kanade.tachiyomi.data.backup.restore.restorers.ExtensionStoreRestorer
 import eu.kanade.tachiyomi.data.backup.restore.restorers.FeedRestorer
@@ -18,6 +26,7 @@ import eu.kanade.tachiyomi.data.backup.restore.restorers.MangaRestorer
 import eu.kanade.tachiyomi.data.backup.restore.restorers.PreferenceRestorer
 import eu.kanade.tachiyomi.data.backup.restore.restorers.SavedSearchRestorer
 import eu.kanade.tachiyomi.data.notification.Notifications
+import eu.kanade.tachiyomi.sumizuri.SumizuriManager
 import eu.kanade.tachiyomi.util.system.createFileInCacheDir
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.coroutineScope
@@ -26,6 +35,8 @@ import kotlinx.coroutines.launch
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -95,7 +106,17 @@ class BackupRestorer(
     }
 
     private suspend fun restoreFromFile(uri: Uri, options: RestoreOptions) {
-        val backup = BackupDecoder(context).decode(uri)
+        val decoded = BackupDecoder(context).decode(uri)
+        // KMK: only library titles in the chosen categories
+        val backup = options.categoryKeys?.let { keys ->
+            val orderToName = decoded.backupCategories.associate { it.order to it.name }
+            decoded.copy(
+                backupManga = decoded.backupManga.filter { manga ->
+                    !manga.favorite || CategoryChoice.keepManga(keys, manga.categories.mapNotNull { orderToName[it] })
+                },
+                backupAnime = decoded.backupAnime.filter { CategoryChoice.keepAnime(keys, it.categories) },
+            )
+        } ?: decoded
 
         // Store source mapping for error messages
         val backupMaps = backup.backupSources
@@ -133,6 +154,11 @@ class BackupRestorer(
         if (options.sourceSettings) {
             restoreAmount += 1
         }
+        // KMK -->
+        if (options.jsSources && backup.backupJsSources.isNotEmpty()) {
+            restoreAmount += 1
+        }
+        // KMK <--
 
         coroutineScope {
             if (options.categories) {
@@ -166,6 +192,9 @@ class BackupRestorer(
             }
             if (options.extensionStores) {
                 restoreAnimeExtensionStores(backup.backupAnimeExtensionStores)
+            }
+            if (options.jsSources && backup.backupJsSources.isNotEmpty()) {
+                restoreJsSources(backup.backupJsSources)
             }
             // KMK <--
 
@@ -339,6 +368,40 @@ class BackupRestorer(
                 }
             }
         }
+
+    /** Sources made in the Code editor; a source already here is only replaced by a newer copy */
+    private fun CoroutineScope.restoreJsSources(sources: List<BackupJsSource>) = launch {
+        val manager = Injekt.get<SumizuriManager>()
+        sources.forEach { source ->
+            ensureActive()
+            try {
+                manager.restoreSource(source.info, source.code) { editor ->
+                    source.settings.forEach { pref ->
+                        when (val value = pref.value) {
+                            is IntPreferenceValue -> editor.putInt(pref.key, value.value)
+                            is LongPreferenceValue -> editor.putLong(pref.key, value.value)
+                            is FloatPreferenceValue -> editor.putFloat(pref.key, value.value)
+                            is StringPreferenceValue -> editor.putString(pref.key, value.value)
+                            is BooleanPreferenceValue -> editor.putBoolean(pref.key, value.value)
+                            is StringSetPreferenceValue -> editor.putStringSet(pref.key, value.value)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                errors.add(Date() to "JS source: ${e.message}")
+            }
+        }
+        restoreProgress += 1
+        with(notifier) {
+            showRestoreProgress(
+                context.stringResource(KMR.strings.backup_js_sources),
+                restoreProgress,
+                restoreAmount,
+                isSync,
+            )
+                .show(Notifications.ID_RESTORE_PROGRESS)
+        }
+    }
 
     private fun CoroutineScope.restoreAnimeExtensionStores(stores: List<BackupExtensionStore>) = launch {
         val helper = eu.kanade.tachiyomi.data.backup.AnimeBackupHelper()

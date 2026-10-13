@@ -21,6 +21,12 @@ data class BackupOptions(
     val customInfo: Boolean = true,
     val savedSearchesFeeds: Boolean = true,
     // SY <--
+    // KMK -->
+    /** Sources made in the Code editor: code, details, on/off switch, custom id and settings */
+    val jsSources: Boolean = true,
+    /** Only titles in these categories ([CategoryChoice] keys); null for all */
+    val categoryKeys: Set<String>? = null,
+    // KMK <--
 ) {
 
     fun asBooleanArray() = booleanArrayOf(
@@ -38,10 +44,14 @@ data class BackupOptions(
         customInfo,
         savedSearchesFeeds,
         // SY <--
+        // KMK -->
+        jsSources,
+        // KMK <--
     )
 
     fun canCreate() =
-        libraryEntries || categories || appSettings || extensionStores || sourceSettings || savedSearchesFeeds
+        libraryEntries || categories || appSettings || extensionStores || sourceSettings || savedSearchesFeeds ||
+            /* KMK --> */ jsSources /* KMK <-- */
 
     companion object {
         val libraryOptions = persistentListOf(
@@ -118,6 +128,13 @@ data class BackupOptions(
                 setter = { options, enabled -> options.copy(privateSettings = enabled) },
                 enabled = { it.appSettings || it.sourceSettings },
             ),
+            // KMK -->
+            Entry(
+                label = KMR.strings.backup_js_sources,
+                getter = BackupOptions::jsSources,
+                setter = { options, enabled -> options.copy(jsSources = enabled) },
+            ),
+            // KMK <--
         )
 
         fun fromBooleanArray(array: BooleanArray) = BackupOptions(
@@ -135,6 +152,8 @@ data class BackupOptions(
             customInfo = array[10],
             savedSearchesFeeds = array[11],
             // SY <--
+            // KMK: older saved choices are shorter
+            jsSources = array.getOrElse(12) { true },
         )
     }
 

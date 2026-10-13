@@ -508,4 +508,15 @@
     <string name="migrate_more_candidates">%1$d more candidates ›</string>
     <string name="migrate_search_target_sources">Search in target sources</string>
     <string name="migrate_n_chapters">%1$d ch.</string>
+    <string name="backup_js_sources">JS sources</string>
+    <string name="backup_categories_title">Categories</string>
+    <string name="backup_categories_summary">Only titles in the ticked categories are included</string>
+    <string name="backup_category_anime">Anime</string>
+    <string name="backup_no_category">No category</string>
+    <string name="pref_save_covers_in_folders">Save covers in download folders</string>
+    <string name="pref_save_covers_in_folders_summary">Keeps each title\'s cover as cover.jpg in its folder in the downloads location, so after a restore covers load from there instead of being downloaded again</string>
+    <string name="pref_save_all_covers_now">Save all covers now</string>
+    <string name="pref_save_all_covers_now_summary">Copies every cover you already have into the title folders</string>
+    <string name="save_covers_title">Saving covers to folders</string>
+    <string name="save_covers_done">Saved %1$d covers</string>
 </resources>

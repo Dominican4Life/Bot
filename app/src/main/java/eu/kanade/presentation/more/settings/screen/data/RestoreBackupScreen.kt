@@ -22,16 +22,19 @@ import androidx.compose.ui.text.withStyle
 import androidx.core.net.toUri
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.rememberScreenModel
+import cafe.adriel.voyager.core.model.screenModelScope
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.WarningBanner
 import eu.kanade.presentation.util.Screen
+import eu.kanade.tachiyomi.data.backup.BackupDecoder
 import eu.kanade.tachiyomi.data.backup.BackupFileValidator
 import eu.kanade.tachiyomi.data.backup.restore.BackupRestoreJob
 import eu.kanade.tachiyomi.data.backup.restore.RestoreOptions
 import eu.kanade.tachiyomi.util.system.DeviceUtil
 import kotlinx.coroutines.flow.update
+import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.LabeledCheckbox
 import tachiyomi.presentation.core.components.LazyColumnWithAction
@@ -90,6 +93,19 @@ class RestoreBackupScreen(
                         }
                     }
                 }
+
+                // KMK -->
+                if (state.canRestore && state.categoryEntries.isNotEmpty()) {
+                    item {
+                        CategoryChoiceCard(
+                            entries = state.categoryEntries,
+                            picked = state.pickedCategories,
+                            enabled = state.options.libraryEntries,
+                            onToggle = model::toggleCategory,
+                        )
+                    }
+                }
+                // KMK <--
 
                 if (state.error != null) {
                     errorMessageItem(state.error)
@@ -171,7 +187,24 @@ private class RestoreBackupScreenModel(
 
     init {
         validate(uri.toUri())
+        // KMK: the categories inside the backup, to restore only some of them
+        screenModelScope.launchIO {
+            val entries = runCatching {
+                backupCategoryChoices(BackupDecoder(context).decode(uri.toUri()))
+            }.getOrDefault(emptyList())
+            mutableState.update {
+                it.copy(categoryEntries = entries, pickedCategories = entries.map { entry -> entry.key }.toSet())
+            }
+        }
     }
+
+    // KMK -->
+    fun toggleCategory(key: String, picked: Boolean) {
+        mutableState.update {
+            it.copy(pickedCategories = if (picked) it.pickedCategories + key else it.pickedCategories - key)
+        }
+    }
+    // KMK <--
 
     fun toggle(setter: (RestoreOptions, Boolean) -> RestoreOptions, enabled: Boolean) {
         mutableState.update {
@@ -182,10 +215,13 @@ private class RestoreBackupScreenModel(
     }
 
     fun startRestore() {
+        // KMK: every category ticked means everything, as before
+        val state = state.value
+        val keys = state.pickedCategories.takeIf { it.size < state.categoryEntries.size }
         BackupRestoreJob.start(
             context = context,
             uri = uri.toUri(),
-            options = state.value.options,
+            options = state.options.copy(categoryKeys = keys),
         )
     }
 
@@ -225,6 +261,10 @@ private class RestoreBackupScreenModel(
         val error: Any? = null,
         val canRestore: Boolean = false,
         val options: RestoreOptions = RestoreOptions(),
+        // KMK -->
+        val categoryEntries: List<CategoryChoiceEntry> = emptyList(),
+        val pickedCategories: Set<String> = emptySet(),
+        // KMK <--
     )
 }
 

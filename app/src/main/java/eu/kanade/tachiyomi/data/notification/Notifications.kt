@@ -68,6 +68,7 @@ object Notifications {
     const val ID_BOT_CHECK_WAITING = -1808
     const val ID_RESTORE_COVERS = -1809
     const val ID_MIGRATION_DONE = -1810
+    const val ID_SAVE_COVERS = -1811
     // KMK <--
     const val GROUP_NEW_CHAPTERS = "eu.kanade.tachiyomi.NEW_CHAPTERS"
 

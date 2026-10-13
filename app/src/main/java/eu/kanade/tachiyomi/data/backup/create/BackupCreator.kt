@@ -6,6 +6,7 @@ import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.data.backup.AnimeBackupHelper
 import eu.kanade.tachiyomi.data.backup.BackupFileValidator
+import eu.kanade.tachiyomi.data.backup.CategoryChoice
 import eu.kanade.tachiyomi.data.backup.create.creators.CategoriesBackupCreator
 import eu.kanade.tachiyomi.data.backup.create.creators.ExtensionStoresBackupCreator
 import eu.kanade.tachiyomi.data.backup.create.creators.FeedBackupCreator
@@ -17,11 +18,19 @@ import eu.kanade.tachiyomi.data.backup.models.Backup
 import eu.kanade.tachiyomi.data.backup.models.BackupCategory
 import eu.kanade.tachiyomi.data.backup.models.BackupExtensionStore
 import eu.kanade.tachiyomi.data.backup.models.BackupFeed
+import eu.kanade.tachiyomi.data.backup.models.BackupJsSource
 import eu.kanade.tachiyomi.data.backup.models.BackupManga
 import eu.kanade.tachiyomi.data.backup.models.BackupPreference
 import eu.kanade.tachiyomi.data.backup.models.BackupSavedSearch
 import eu.kanade.tachiyomi.data.backup.models.BackupSource
 import eu.kanade.tachiyomi.data.backup.models.BackupSourcePreferences
+import eu.kanade.tachiyomi.data.backup.models.BooleanPreferenceValue
+import eu.kanade.tachiyomi.data.backup.models.FloatPreferenceValue
+import eu.kanade.tachiyomi.data.backup.models.IntPreferenceValue
+import eu.kanade.tachiyomi.data.backup.models.LongPreferenceValue
+import eu.kanade.tachiyomi.data.backup.models.StringPreferenceValue
+import eu.kanade.tachiyomi.data.backup.models.StringSetPreferenceValue
+import eu.kanade.tachiyomi.sumizuri.SumizuriManager
 import kotlinx.serialization.protobuf.ProtoBuf
 import logcat.LogPriority
 import okio.buffer
@@ -96,6 +105,17 @@ class BackupCreator(
             // SY <--
             val backupManga =
                 backupMangas(getFavorites.await() + nonFavoriteManga /* SY --> */ + mergedManga /* SY <-- */, options)
+                    // KMK -->
+                    .let { list ->
+                        // Only library titles in the chosen categories (titles read outside the library stay)
+                        val keys = options.categoryKeys ?: return@let list
+                        val orderToName = categoriesBackupCreator().associate { it.order to it.name }
+                        list.filter { manga ->
+                            !manga.favorite ||
+                                CategoryChoice.keepManga(keys, manga.categories.mapNotNull { orderToName[it] })
+                        }
+                    }
+            // KMK <--
 
             val backup = Backup(
                 backupManga = backupManga,
@@ -111,7 +131,14 @@ class BackupCreator(
 
                 // KMK -->
                 backupFeeds = backupFeeds(options),
-                backupAnime = if (options.libraryEntries) AnimeBackupHelper().createAnime() else emptyList(),
+                backupAnime = if (options.libraryEntries) {
+                    AnimeBackupHelper().createAnime().filter {
+                        CategoryChoice.keepAnime(options.categoryKeys, it.categories)
+                    }
+                } else {
+                    emptyList()
+                },
+                backupJsSources = if (options.jsSources) backupJsSources() else emptyList(),
                 backupAnimeExtensionStores = if (options.extensionStores) {
                     AnimeBackupHelper().createStores()
                 } else {
@@ -161,6 +188,28 @@ class BackupCreator(
 
         return mangaBackupCreator(mangas, options)
     }
+
+    // KMK -->
+    /** Sources made in the Code editor, with their settings */
+    private fun backupJsSources(): List<BackupJsSource> = runCatching {
+        Injekt.get<SumizuriManager>().backupSources().map { (info, code, settings) ->
+            BackupJsSource(info = info, code = code, settings = settings.toBackupPreferences())
+        }
+    }.getOrDefault(emptyList())
+
+    @Suppress("UNCHECKED_CAST")
+    private fun Map<String, *>.toBackupPreferences(): List<BackupPreference> = mapNotNull { (key, value) ->
+        when (value) {
+            is Int -> BackupPreference(key, IntPreferenceValue(value))
+            is Long -> BackupPreference(key, LongPreferenceValue(value))
+            is Float -> BackupPreference(key, FloatPreferenceValue(value))
+            is String -> BackupPreference(key, StringPreferenceValue(value))
+            is Boolean -> BackupPreference(key, BooleanPreferenceValue(value))
+            is Set<*> -> (value as? Set<String>)?.let { BackupPreference(key, StringSetPreferenceValue(it)) }
+            else -> null
+        }
+    }
+    // KMK <--
 
     fun backupSources(mangas: List<BackupManga>): List<BackupSource> {
         return sourcesBackupCreator(mangas)

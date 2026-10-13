@@ -13,6 +13,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.rememberScreenModel
+import cafe.adriel.voyager.core.model.screenModelScope
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.components.AppBar
@@ -25,6 +26,7 @@ import eu.kanade.tachiyomi.util.system.DeviceUtil
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.coroutines.flow.update
+import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.LabeledCheckbox
 import tachiyomi.presentation.core.components.LazyColumnWithAction
@@ -92,6 +94,19 @@ class CreateBackupScreen : Screen() {
                     }
                 }
 
+                // KMK -->
+                if (state.categoryEntries.isNotEmpty()) {
+                    item {
+                        CategoryChoiceCard(
+                            entries = state.categoryEntries,
+                            picked = state.pickedCategories,
+                            enabled = state.options.libraryEntries,
+                            onToggle = model::toggleCategory,
+                        )
+                    }
+                }
+                // KMK <--
+
                 item {
                     SectionCard(MR.strings.label_settings) {
                         Options(BackupOptions.settingsOptions, state, model)
@@ -122,6 +137,23 @@ class CreateBackupScreen : Screen() {
 
 private class CreateBackupScreenModel : StateScreenModel<CreateBackupScreenModel.State>(State()) {
 
+    // KMK -->
+    init {
+        screenModelScope.launchIO {
+            val entries = libraryCategoryChoices()
+            mutableState.update {
+                it.copy(categoryEntries = entries, pickedCategories = entries.map { entry -> entry.key }.toSet())
+            }
+        }
+    }
+
+    fun toggleCategory(key: String, picked: Boolean) {
+        mutableState.update {
+            it.copy(pickedCategories = if (picked) it.pickedCategories + key else it.pickedCategories - key)
+        }
+    }
+    // KMK <--
+
     fun toggle(setter: (BackupOptions, Boolean) -> BackupOptions, enabled: Boolean) {
         mutableState.update {
             it.copy(
@@ -131,11 +163,18 @@ private class CreateBackupScreenModel : StateScreenModel<CreateBackupScreenModel
     }
 
     fun createBackup(context: Context, uri: Uri) {
-        BackupCreateJob.startNow(context, uri, state.value.options)
+        // KMK: every category ticked means everything, as before
+        val state = state.value
+        val keys = state.pickedCategories.takeIf { it.size < state.categoryEntries.size }
+        BackupCreateJob.startNow(context, uri, state.options.copy(categoryKeys = keys))
     }
 
     @Immutable
     data class State(
         val options: BackupOptions = BackupOptions(),
+        // KMK -->
+        val categoryEntries: List<CategoryChoiceEntry> = emptyList(),
+        val pickedCategories: Set<String> = emptySet(),
+        // KMK <--
     )
 }

@@ -249,6 +249,33 @@ class SumizuriManager(private val context: Application) {
     }
     // KMK <--
 
+    // KMK --> backup and restore
+
+    /** Every saved source as (details as JSON, code, its settings) */
+    fun backupSources(): List<Triple<String, String, Map<String, *>>> = _saved.value.mapNotNull { info ->
+        val code = code(info.key) ?: return@mapNotNull null
+        val settings = runCatching { SumizuriPreferences.of(context, info.id).all }.getOrDefault(emptyMap<String, Any>())
+        Triple(sumizuriJson.encodeToString(SumizuriSourceInfo.serializer(), info), code, settings)
+    }
+
+    /**
+     * Restores a source from a backup, unless this device has the same or a newer copy (the newer one wins). Its
+     * settings are written with [writeSettings]. Returns true when it was restored.
+     */
+    fun restoreSource(
+        infoJson: String,
+        code: String,
+        writeSettings: (android.content.SharedPreferences.Editor) -> Unit,
+    ): Boolean {
+        if (!importSource(infoJson, code)) return false
+        val info = sumizuriJson.decodeFromString(SumizuriSourceInfo.serializer(), infoJson)
+        runCatching {
+            SumizuriPreferences.of(context, info.id).edit().also(writeSettings).apply()
+        }
+        return true
+    }
+    // KMK <--
+
     // KMK --> the tab catalog each source was last opened on
     private val tabPrefs by lazy { context.getSharedPreferences("sumizuri_tabs", android.content.Context.MODE_PRIVATE) }
 
