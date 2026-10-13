@@ -117,6 +117,7 @@ class BackupNotifier(private val context: Context) {
         // KMK -->
         backupRestoreStatus.updateProgress(progress.toFloat() / maxAmount)
         // KMK <--
+        // KMK: changed under a lock, so another part of the restore can't build it at the same moment
         val builder = synchronized(progressNotificationBuilder) {
             progressNotificationBuilder.apply {
                 val contentTitle = if (sync) {
@@ -139,78 +140,6 @@ class BackupNotifier(private val context: Context) {
                     context.stringResource(MR.strings.action_cancel),
                     NotificationReceiver.cancelRestorePendingBroadcast(context, Notifications.ID_RESTORE_PROGRESS),
                 )
-            }
-        }
-
-        // KMK -->
-        // Avoid calling show() before returning builder for ForegroundInfo.
-        // Calling show() here can cause duplicate notifications, as setForegroundSafely will display the notification using the returned builder.
-        // builder.show(Notifications.ID_BACKUP_PROGRESS)
-        // KMK <--
-
-        return builder
-    }
-
-    fun showBackupError(error: String?) {
-        context.cancelNotification(Notifications.ID_BACKUP_PROGRESS)
-
-        with(completeNotificationBuilder) {
-            setContentTitle(context.stringResource(MR.strings.creating_backup_error))
-            setContentText(error)
-
-            show(Notifications.ID_BACKUP_COMPLETE)
-        }
-    }
-
-    fun showBackupComplete(file: UniFile) {
-        context.cancelNotification(Notifications.ID_BACKUP_PROGRESS)
-
-        with(completeNotificationBuilder) {
-            setContentTitle(context.stringResource(MR.strings.backup_created))
-            setContentText(file.displayablePath)
-
-            clearActions()
-            addAction(
-                R.drawable.ic_share_24dp,
-                context.stringResource(MR.strings.action_share),
-                NotificationReceiver.shareBackupPendingActivity(context, file.uri),
-            )
-
-            show(Notifications.ID_BACKUP_COMPLETE)
-        }
-    }
-
-    suspend fun showRestoreProgress(
-        content: String = "",
-        progress: Int = 0,
-        maxAmount: Int = 100,
-        sync: Boolean = false,
-    ): NotificationCompat.Builder {
-        // KMK -->
-        backupRestoreStatus.updateProgress(progress.toFloat() / maxAmount)
-        // KMK <--
-        val builder = synchronized(progressNotificationBuilder) {
-            progressNotificationBuilder.apply {
-                val contentTitle = if (sync) {
-                    context.stringResource(MR.strings.syncing_library)
-                } else {
-                    context.stringResource(MR.strings.restoring_backup)
-            }
-            setContentTitle(contentTitle)
-
-            if (!preferences.hideNotificationContent().get()) {
-                setContentText(content)
-            }
-
-            setProgress(maxAmount, progress, false)
-            setOnlyAlertOnce(true)
-
-            clearActions()
-            addAction(
-                R.drawable.ic_close_24dp,
-                context.stringResource(MR.strings.action_cancel),
-                NotificationReceiver.cancelRestorePendingBroadcast(context, Notifications.ID_RESTORE_PROGRESS),
-            )
             }
         }
 
