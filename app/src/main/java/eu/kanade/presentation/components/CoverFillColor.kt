@@ -8,6 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.palette.graphics.Palette
 import coil3.asDrawable
@@ -15,21 +16,29 @@ import coil3.imageLoader
 import coil3.request.ImageRequest
 import coil3.request.SuccessResult
 import coil3.request.allowHardware
+import com.materialkolor.PaletteStyle
 import com.materialkolor.dynamicColorScheme
 import com.materialkolor.dynamiccolor.ColorSpec
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.tachiyomi.data.coil.getBestColor
 import eu.kanade.tachiyomi.util.system.getBitmapOrNull
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.domain.manga.model.MangaCover
 import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * KMK: The color around a wide cover in the "Panorama: color fill" style. It's picked from the cover and
  * colored with Settings › Appearance › Cover based theme style (Tonal Spot, Vibrant, Monochrome…), like the
  * details page's colors. Null while the cover's color isn't known yet, or when [enabled] is false.
+ *
+ * Nothing heavy happens while the screen is drawn: the styled color is worked out in the background, once per
+ * cover color, style and dark/AMOLED, and kept for every cover with the same color. Until it's ready the cover
+ * shows the plain background.
  */
 @Composable
 fun rememberCoverFillColor(cover: MangaCover, enabled: Boolean): Color? {
@@ -46,8 +55,8 @@ fun rememberCoverFillColor(cover: MangaCover, enabled: Boolean): Color? {
         mutableStateOf(cover.vibrantCoverColor ?: cover.dominantCoverColors?.first)
     }
 
-    LaunchedEffect(cover.mangaId, enabled) {
-        if (!enabled || seed != null) return@LaunchedEffect
+    LaunchedEffect(cover.mangaId) {
+        if (seed != null) return@LaunchedEffect
         seed = withIOContext {
             runCatching {
                 val request = ImageRequest.Builder(context)
@@ -61,14 +70,28 @@ fun rememberCoverFillColor(cover: MangaCover, enabled: Boolean): Color? {
         }?.also { cover.vibrantCoverColor = it }
     }
 
-    return remember(enabled, seed, style, isDark, amoled) {
-        val color = seed.takeIf { enabled } ?: return@remember null
+    val key = seed?.let { FillKey(it, style, isDark, isDark && amoled) }
+    var fill by remember(key) { mutableStateOf(key?.let { FillColors.cache[it] }?.let(::Color)) }
+    LaunchedEffect(key) {
+        if (key == null || fill != null) return@LaunchedEffect
+        fill = Color(withContext(Dispatchers.Default) { FillColors.of(key) })
+    }
+    return fill
+}
+
+private data class FillKey(val seed: Int, val style: PaletteStyle, val dark: Boolean, val amoled: Boolean)
+
+/** Styled fill colors already worked out, shared by every cover */
+private object FillColors {
+    val cache = ConcurrentHashMap<FillKey, Int>()
+
+    fun of(key: FillKey): Int = cache.getOrPut(key) {
         dynamicColorScheme(
-            seedColor = Color(color),
-            isDark = isDark,
-            isAmoled = isDark && amoled,
-            style = style,
+            seedColor = Color(key.seed),
+            isDark = key.dark,
+            isAmoled = key.amoled,
+            style = key.style,
             specVersion = ColorSpec.SpecVersion.SPEC_2025,
-        ).primaryContainer
+        ).primaryContainer.toArgb()
     }
 }

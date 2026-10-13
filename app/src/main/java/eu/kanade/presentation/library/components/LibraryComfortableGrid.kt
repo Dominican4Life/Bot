@@ -52,7 +52,9 @@ internal fun LibraryComfortableGrid(
         } else {
             uniqueItems.mapNotNullTo(HashSet()) { item ->
                 val id = item.libraryManga.manga.id
-                id.takeIf { (MangaCover.coverRatioMap[id] ?: Float.MAX_VALUE) <= WideCovers.WIDE_RATIO }
+                // The saved shape is width / height (a book cover is about 0.7); wide means height / width <= the limit
+                val widthOverHeight = MangaCover.coverRatioMap[id] ?: return@mapNotNullTo null
+                id.takeIf { widthOverHeight > 0f && 1f / widthOverHeight <= WideCovers.WIDE_RATIO }
             }
         }
     }
