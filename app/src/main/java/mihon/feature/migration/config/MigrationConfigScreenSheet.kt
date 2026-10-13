@@ -1,9 +1,7 @@
 package mihon.feature.migration.config
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -11,9 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Warning
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
@@ -29,13 +25,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.util.fastForEach
-import eu.kanade.core.util.fastFilterNot
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.presentation.components.AdaptiveSheet
 import eu.kanade.presentation.components.PauseBetweenTitlesItem
 import mihon.domain.migration.models.MigrationFlag
-import mihon.feature.common.utils.getLabel
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.getAndSet
 import tachiyomi.core.common.preference.toggle
@@ -78,65 +71,20 @@ fun MigrationConfigScreenSheet(
                         .padding(horizontal = MaterialTheme.padding.medium),
                 )
                 Spacer(modifier = Modifier.height(MaterialTheme.padding.extraSmall))
-                FlowRow(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = MaterialTheme.padding.medium)
-                        .padding(bottom = MaterialTheme.padding.extraSmall),
-                    horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
-                ) {
-                    MigrationFlag.entries
-                        .fastFilterNot { it == MigrationFlag.REMOVE_DOWNLOAD }
-                        .fastForEach { flag ->
-                            val selected = flag in migrationFlags
-                            FilterChip(
-                                selected = selected,
-                                onClick = {
-                                    preferences.migrationFlags().getAndSet { currentFlags ->
-                                        if (flag in currentFlags) {
-                                            currentFlags - flag
-                                        } else {
-                                            currentFlags + flag
-                                        }
-                                    }
-                                },
-                                label = { Text(stringResource(flag.getLabel())) },
-                                leadingIcon = {
-                                    if (selected) {
-                                        Icon(
-                                            imageVector = Icons.Outlined.Check,
-                                            contentDescription = null,
-                                        )
-                                    }
-                                },
-                            )
-                        }
-                }
-                val removeDownloads = MigrationFlag.REMOVE_DOWNLOAD in migrationFlags
-                MigrationSheetSwitchItem(
-                    // KMK: renamed from "Delete downloads of current entry after migration"
-                    title = stringResource(KMR.strings.migration_remove_downloads_title),
-                    subtitle = null,
-                    checked = removeDownloads,
-                    onClick = {
-                        preferences.migrationFlags().getAndSet {
-                            // KMK -->
-                            if (MigrationFlag.REMOVE_DOWNLOAD in it) {
-                                // KMK <--
-                                it - MigrationFlag.REMOVE_DOWNLOAD
-                            } else {
-                                it + MigrationFlag.REMOVE_DOWNLOAD
-                            }
-                        }
+                // KMK -->
+                // One row of chips without check marks, then Pause between titles, like the Migrate window
+                MigrationFlagChips(
+                    flags = migrationFlags,
+                    onToggle = { flag ->
+                        preferences.migrationFlags().getAndSet { if (flag in it) it - flag else it + flag }
                     },
                 )
-                // KMK -->
                 PauseBetweenTitlesItem(
                     enabledPreference = preferences.migrationDelayEnabled(),
                     rangePreference = preferences.migrationDelay(),
                 )
-                // KMK <--
                 MigrationSheetDividerItem()
+                // KMK <--
                 // KMK -->
                 if (fullSettings) {
                     // KMK <--
@@ -156,6 +104,20 @@ fun MigrationConfigScreenSheet(
                             ),
                     )
                 }
+                // KMK -->
+                DeleteDownloadsSwitch(
+                    checked = MigrationFlag.REMOVE_DOWNLOAD in migrationFlags,
+                    onClick = {
+                        preferences.migrationFlags().getAndSet {
+                            if (MigrationFlag.REMOVE_DOWNLOAD in it) {
+                                it - MigrationFlag.REMOVE_DOWNLOAD
+                            } else {
+                                it + MigrationFlag.REMOVE_DOWNLOAD
+                            }
+                        }
+                    },
+                )
+                // KMK <--
                 MigrationSheetSwitchItem(
                     title = stringResource(MR.strings.migrationConfigScreen_hideUnmatchedTitle),
                     subtitle = null,
@@ -182,7 +144,6 @@ fun MigrationConfigScreenSheet(
                     }
                     if (!isSingleEntry || isSmartSearchSingleEntry) {
                         // KMK <--
-                        MigrationSheetWarningItem(stringResource(MR.strings.migrationConfigScreen_enhancedOptionsWarning))
                         MigrationSheetSwitchItem(
                             title = stringResource(MR.strings.migrationConfigScreen_deepSearchModeTitle),
                             subtitle = stringResource(MR.strings.migrationConfigScreen_deepSearchModeSubtitle),

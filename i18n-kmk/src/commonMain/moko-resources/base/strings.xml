@@ -463,7 +463,7 @@
     <string name="migrate_source_to_migrate">Source to migrate</string>
     <string name="migrate_pick_source_to_migrate">Pick a source to migrate</string>
     <string name="migrate_sources_titles">%1$s · %2$d titles</string>
-    <string name="migrate_search_these_sources">Search these sources (in order)</string>
+    <string name="migrate_search_these_sources">Select sources to search</string>
     <string name="migrate_pick_search_sources">Pick at least one source</string>
     <string name="migrate_sources_in_total">%1$s · %2$d in total</string>
     <string name="migrate_matching">Matching</string>
@@ -491,4 +491,17 @@
     <string name="migrate_notif_done">Matching done</string>
     <string name="migrate_notif_done_text">Tap to review, then Migrate or Copy</string>
     <string name="migrate_stop">Cancel</string>
+    <string name="migrate_covers">Covers</string>
+    <string name="migrate_delete_downloads">Delete downloads</string>
+    <string name="migrate_delete_downloads_summary">Only deletes downloads of entries migrating</string>
+    <string name="migrate_n_of_m_selected">%1$d of %2$d selected</string>
+    <string name="migrate_order_hint">Sources are searched in the order you tick them</string>
+    <string name="migrate_picker_all">All</string>
+    <string name="migrate_picker_selected">Selected</string>
+    <string name="migrate_picker_unselected">Unselected</string>
+    <string name="migrate_picker_pinned">Pinned</string>
+    <string name="migrate_select_shown">Select shown</string>
+    <string name="migrate_clear_shown">Clear shown</string>
+    <string name="migrate_showing_sources">Showing %1$d of %2$d sources</string>
+    <string name="migrate_n_titles">%1$d titles</string>
 </resources>

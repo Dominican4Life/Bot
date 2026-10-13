@@ -5,10 +5,10 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -22,13 +22,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowForward
-import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
-import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.Warning
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -78,7 +73,6 @@ import tachiyomi.presentation.core.components.material.Button
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.pluralStringResource
 import tachiyomi.presentation.core.i18n.stringResource
-import tachiyomi.presentation.core.theme.active
 import tachiyomi.presentation.core.theme.header
 import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
@@ -158,7 +152,6 @@ fun MigrationStartSheet(
     var extraSearchQuery by rememberSaveable { mutableStateOf("") }
 
     val migrationFlags by preferences.migrationFlags().collectAsState()
-    val mostChapters by preferences.migrationPrioritizeByChapters().collectAsState()
 
     // Where the selected titles come from, for the subtitle
     val fromNames by produceState("", initialMangaIds) {
@@ -223,62 +216,24 @@ fun MigrationStartSheet(
                     onClick = { showSearchPicker = true },
                 )
 
-                // Data to migrate
+                // Data to migrate: one row, a picked chip just turns blue
                 Spacer(Modifier.height(MaterialTheme.padding.small))
                 SectionHeader(stringResource(MR.strings.migrationConfigScreen_dataToMigrateHeader))
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = MaterialTheme.padding.medium),
-                ) {
-                    MigrationFlag.entries
-                        .fastFilterNot { it == MigrationFlag.REMOVE_DOWNLOAD }
-                        .fastForEach { flag ->
-                            val selected = flag in migrationFlags
-                            FilterChip(
-                                selected = selected,
-                                onClick = {
-                                    preferences.migrationFlags().getAndSet {
-                                        if (flag in it) it - flag else it + flag
-                                    }
-                                },
-                                label = { Text(stringResource(flag.getLabel())) },
-                                leadingIcon = {
-                                    if (selected) Icon(imageVector = Icons.Outlined.Check, contentDescription = null)
-                                },
-                            )
-                        }
-                }
+                MigrationFlagChips(
+                    flags = migrationFlags,
+                    onToggle = { flag ->
+                        preferences.migrationFlags().getAndSet { if (flag in it) it - flag else it + flag }
+                    },
+                )
 
-                // Matching
+                // Pause between titles, always in view
                 Spacer(Modifier.height(MaterialTheme.padding.small))
-                SectionHeader(stringResource(KMR.strings.migrate_matching))
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = MaterialTheme.padding.medium),
-                ) {
-                    MatchingCard(
-                        selected = !mostChapters,
-                        title = stringResource(KMR.strings.migrate_first_match),
-                        summary = stringResource(KMR.strings.migrate_first_match_summary),
-                        onClick = { preferences.migrationPrioritizeByChapters().set(false) },
-                        modifier = Modifier.weight(1f),
-                    )
-                    MatchingCard(
-                        selected = mostChapters,
-                        title = stringResource(KMR.strings.migrate_most_chapters),
-                        summary = stringResource(KMR.strings.migrate_most_chapters_summary),
-                        onClick = { preferences.migrationPrioritizeByChapters().set(true) },
-                        modifier = Modifier.weight(1f),
-                    )
-                }
+                PauseBetweenTitlesItem(
+                    enabledPreference = preferences.migrationDelayEnabled(),
+                    rangePreference = preferences.migrationDelay(),
+                )
 
                 // More options, closed until opened
-                Spacer(Modifier.height(MaterialTheme.padding.small))
-                HorizontalDivider(modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
@@ -298,24 +253,6 @@ fun MigrationStartSheet(
                 }
                 AnimatedVisibility(visible = moreOptions) {
                     Column {
-                        SheetSwitch(
-                            title = stringResource(KMR.strings.migration_remove_downloads_title),
-                            subtitle = null,
-                            checked = MigrationFlag.REMOVE_DOWNLOAD in migrationFlags,
-                            onClick = {
-                                preferences.migrationFlags().getAndSet {
-                                    if (MigrationFlag.REMOVE_DOWNLOAD in it) {
-                                        it - MigrationFlag.REMOVE_DOWNLOAD
-                                    } else {
-                                        it + MigrationFlag.REMOVE_DOWNLOAD
-                                    }
-                                }
-                            },
-                        )
-                        PauseBetweenTitlesItem(
-                            enabledPreference = preferences.migrationDelayEnabled(),
-                            rangePreference = preferences.migrationDelay(),
-                        )
                         OutlinedTextField(
                             value = extraSearchQuery,
                             onValueChange = { extraSearchQuery = it },
@@ -333,6 +270,12 @@ fun MigrationStartSheet(
                                     horizontal = MaterialTheme.padding.medium,
                                     vertical = MaterialTheme.padding.small,
                                 ),
+                        )
+                        DeleteDownloadsSwitch(
+                            checked = MigrationFlag.REMOVE_DOWNLOAD in migrationFlags,
+                            onClick = {
+                                preferences.migrationFlags().getAndSet { it.toggled(MigrationFlag.REMOVE_DOWNLOAD) }
+                            },
                         )
                         PrefSwitch(
                             title = stringResource(MR.strings.migrationConfigScreen_hideUnmatchedTitle),
@@ -353,27 +296,15 @@ fun MigrationStartSheet(
                                 preference = preferences.migrationSmartSearchSingleEntry(),
                             )
                         }
-                        HorizontalDivider(modifier = Modifier.padding(vertical = MaterialTheme.padding.extraSmall))
-                        ListItem(
-                            leadingContent = {
-                                Icon(
-                                    imageVector = Icons.Outlined.Warning,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.active,
-                                )
-                            },
-                            headlineContent = {
-                                Text(
-                                    text = stringResource(MR.strings.migrationConfigScreen_enhancedOptionsWarning),
-                                    color = MaterialTheme.colorScheme.error,
-                                )
-                            },
-                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                        )
                         PrefSwitch(
                             title = stringResource(MR.strings.migrationConfigScreen_deepSearchModeTitle),
                             subtitle = stringResource(MR.strings.migrationConfigScreen_deepSearchModeSubtitle),
                             preference = preferences.migrationDeepSearchMode(),
+                        )
+                        PrefSwitch(
+                            title = stringResource(MR.strings.migrationConfigScreen_prioritizeByChaptersTitle),
+                            subtitle = stringResource(MR.strings.migrationConfigScreen_prioritizeByChaptersSubtitle),
+                            preference = preferences.migrationPrioritizeByChapters(),
                         )
                     }
                 }
@@ -391,9 +322,7 @@ fun MigrationStartSheet(
                     .fillMaxWidth()
                     .padding(horizontal = MaterialTheme.padding.medium, vertical = MaterialTheme.padding.small),
             ) {
-                Icon(imageVector = Icons.Outlined.Search, contentDescription = null)
-                Spacer(Modifier.width(MaterialTheme.padding.small))
-                Text(stringResource(KMR.strings.migrate_start_matching))
+                Text(stringResource(MR.strings.migrationConfigScreen_continueButtonText))
             }
         }
     }
@@ -485,48 +414,6 @@ private fun SourcesBox(
 }
 
 @Composable
-private fun MatchingCard(
-    selected: Boolean,
-    title: String,
-    summary: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Card(
-        onClick = onClick,
-        colors = CardDefaults.cardColors(
-            containerColor = if (selected) {
-                MaterialTheme.colorScheme.secondaryContainer
-            } else {
-                MaterialTheme.colorScheme.surfaceContainerHigh
-            },
-        ),
-        border = if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
-        modifier = modifier,
-    ) {
-        Column(modifier = Modifier.padding(MaterialTheme.padding.medium)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (selected) {
-                    Icon(
-                        imageVector = Icons.Outlined.Check,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Spacer(Modifier.width(MaterialTheme.padding.extraSmall))
-                }
-                Text(text = title, style = MaterialTheme.typography.titleMedium)
-            }
-            Text(
-                text = summary,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-@Composable
 private fun PrefSwitch(title: String, subtitle: String?, preference: Preference<Boolean>) {
     SheetSwitch(
         title = title,
@@ -546,3 +433,38 @@ private fun SheetSwitch(title: String, subtitle: String?, checked: Boolean, onCl
         modifier = Modifier.clickable(onClick = onClick),
     )
 }
+
+/** KMK: "Data to migrate" chips on one row (it scrolls sideways when narrow); a picked chip just turns blue */
+@Composable
+fun MigrationFlagChips(flags: Set<MigrationFlag>, onToggle: (MigrationFlag) -> Unit) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = MaterialTheme.padding.medium),
+    ) {
+        MigrationFlag.entries
+            .fastFilterNot { it == MigrationFlag.REMOVE_DOWNLOAD }
+            .fastForEach { flag ->
+                FilterChip(
+                    selected = flag in flags,
+                    onClick = { onToggle(flag) },
+                    label = { Text(stringResource(flag.getLabel())) },
+                )
+            }
+    }
+}
+
+/** KMK: "Delete downloads", for the titles being migrated */
+@Composable
+fun DeleteDownloadsSwitch(checked: Boolean, onClick: () -> Unit) {
+    SheetSwitch(
+        title = stringResource(KMR.strings.migrate_delete_downloads),
+        subtitle = stringResource(KMR.strings.migrate_delete_downloads_summary),
+        checked = checked,
+        onClick = onClick,
+    )
+}
+
+private fun Set<MigrationFlag>.toggled(flag: MigrationFlag) = if (flag in this) this - flag else this + flag
