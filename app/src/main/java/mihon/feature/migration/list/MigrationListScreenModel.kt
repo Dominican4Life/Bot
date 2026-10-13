@@ -3,7 +3,6 @@ package mihon.feature.migration.list
 import android.app.Application
 import androidx.annotation.FloatRange
 import cafe.adriel.voyager.core.model.StateScreenModel
-import cafe.adriel.voyager.core.model.screenModelScope
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.getNameForMangaInfo
@@ -26,6 +25,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -72,6 +72,47 @@ class MigrationListScreenModel(
     // KMK
     private val context: Application = Injekt.get()
 
+    // KMK -->
+    /**
+     * Where searching runs. It's the model's own, not the screen's, so leaving the screen with the back arrow
+     * keeps the migration going in the background; it's only cancelled by [stop] or when the migration is over.
+     */
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** True while the matching screen shows this migration */
+    @Volatile
+    var attached = false
+        private set
+
+    /** The title being searched right now, to tell "Matching…" from "Waiting" */
+    val matchingId = MutableStateFlow<Long?>(null)
+
+    @Volatile
+    private var finished = false
+
+    @Volatile
+    private var stopped = false
+
+    fun setAttached(value: Boolean) {
+        attached = value
+        if (value) ActiveMigration.cancelDoneNotification(context)
+    }
+
+    /** Stops everything (the X button, or Cancel in the notification) */
+    fun stop() {
+        stopped = true
+        cancelMigrate()
+        cleanUp()
+    }
+
+    private fun cleanUp() {
+        items.forEach { it.migrationScope.cancel() }
+        scope.cancel()
+        MigrationProgress.clear()
+        ActiveMigration.clear(this, context)
+    }
+    // KMK <--
+
     // KMK: the "Pause between titles" chosen in the migration options
     private suspend fun pauseBetweenTitles() =
         PauseBetweenTitles.pause(preferences.migrationDelayEnabled().get(), preferences.migrationDelay().get())
@@ -93,7 +134,7 @@ class MigrationListScreenModel(
     private var migrateJob: Job? = null
 
     init {
-        screenModelScope.launchIO {
+        scope.launchIO {
             val manga = mangaIds
                 .map {
                     async {
@@ -112,7 +153,7 @@ class MigrationListScreenModel(
                                 },
                                 // KMK <--
                             ),
-                            parentContext = screenModelScope.coroutineContext,
+                            parentContext = scope.coroutineContext,
                             // KMK -->
                         ).apply {
                             if (runManually) searchResult.value = SearchResult.NotFound
@@ -174,6 +215,7 @@ class MigrationListScreenModel(
             // KMK: a random pause between titles, so the sources don't see a bot-like stream of searches
             if (searched++ > 0) pauseBetweenTitles()
 
+            matchingId.value = manga.manga.id
             val result = try {
                 // KMK -->
                 manga.searchingJob = manga.migrationScope.async {
@@ -229,8 +271,11 @@ class MigrationListScreenModel(
 
             updateMigrationProgress()
         }
+        matchingId.value = null
         // KMK: searching is done; moving shows its own progress
         if (migrateJob == null) MigrationProgress.clear()
+        // Done while nobody is looking: a notification to come back and pick Migrate or Copy
+        if (!attached && !stopped && items.isNotEmpty()) ActiveMigration.showDoneNotification(context)
     }
 
     private suspend fun searchSource(
@@ -320,7 +365,7 @@ class MigrationListScreenModel(
     fun useMangaForMigration(current: Long, target: Long, onMissingChapters: () -> Unit) {
         val migratingManga = items.find { it.manga.id == current } ?: return
         migratingManga.searchResult.value = SearchResult.Searching
-        screenModelScope.launchIO {
+        scope.launchIO {
             val result = migratingManga.migrationScope.async {
                 val manga = getManga.await(target) ?: return@async null
                 try {
@@ -414,11 +459,15 @@ class MigrationListScreenModel(
     }
 
     private fun navigateBack() {
+        // KMK: the migration is over; when the screen isn't showing, nothing will close it, so clean up now
+        finished = true
+        if (!attached) cleanUp()
+        // KMK <--
         navigateBackChannel.trySend(Unit)
     }
 
     fun migrateNow(mangaId: Long, replace: Boolean) {
-        screenModelScope.launchIO {
+        scope.launchIO {
             val manga = items.find { it.manga.id == mangaId } ?: return@launchIO
             val target = (manga.searchResult.value as? SearchResult.Success)?.manga ?: return@launchIO
             migrateManga(current = manga.manga, target = target, replace = replace)
@@ -430,7 +479,7 @@ class MigrationListScreenModel(
     // KMK -->
     /** Cancel searching without remove it from list so user can perform manual search */
     fun cancelManga(mangaId: Long) {
-        screenModelScope.launchIO {
+        scope.launchIO {
             val item = items.find { it.manga.id == mangaId } ?: return@launchIO
             item.searchingJob?.cancel()
             item.searchingJob = null
@@ -441,7 +490,7 @@ class MigrationListScreenModel(
     // KMK <--
 
     fun removeManga(mangaId: Long) {
-        screenModelScope.launchIO {
+        scope.launchIO {
             val item = items.find { it.manga.id == mangaId } ?: return@launchIO
             removeManga(item)
             item.migrationScope.cancel()
@@ -455,11 +504,16 @@ class MigrationListScreenModel(
 
     override fun onDispose() {
         super.onDispose()
-        items.forEach {
-            it.migrationScope.cancel()
+        // KMK: leaving with the back arrow keeps the migration running in the background; it's only cleaned up
+        // once it's over or stopped
+        attached = false
+        if (finished || stopped) {
+            cleanUp()
+        } else if (migrateJob == null && MigrationProgress.state.value == null && items.isNotEmpty()) {
+            // Matching was already done: a notification to come back to it
+            ActiveMigration.showDoneNotification(context)
         }
-        // KMK: moving carries on without the screen; searching stops with it
-        if (migrateJob == null) MigrationProgress.clear()
+        // KMK <--
     }
 
     fun showMigrateDialog(copy: Boolean) {

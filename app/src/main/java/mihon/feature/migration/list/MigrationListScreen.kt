@@ -3,6 +3,7 @@ package mihon.feature.migration.list
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -36,6 +37,13 @@ class MigrationListScreen(
     // KMK <--
 ) : Screen() {
 
+    // KMK -->
+    companion object {
+        /** The matching screen of the migration running in the background, opened from its notification */
+        fun resume() = MigrationListScreen(emptyList(), null)
+    }
+    // KMK <--
+
     private var matchOverride: Pair<Long, Long>? = null
 
     fun addMatchOverride(current: Long, target: Long) {
@@ -48,9 +56,32 @@ class MigrationListScreen(
         // KMK -->
         val singleEntryNoSmartSearch = mangaIds.size == 1 && !isSmartSearchSingleEntry
         // KMK <--
-        val screenModel = rememberScreenModel { MigrationListScreenModel(mangaIds, extraSearchQuery, /* KMK --> */ singleEntryNoSmartSearch /* KMK <-- */) }
+        // KMK -->
+        // A screen opened from the notification (no titles) comes back to the migration that's running
+        val resuming = mangaIds.isEmpty()
+        val screenModel = rememberScreenModel {
+            if (resuming) {
+                ActiveMigration.model ?: MigrationListScreenModel(emptyList(), null)
+            } else {
+                MigrationListScreenModel(mangaIds, extraSearchQuery, singleEntryNoSmartSearch)
+                    .also(ActiveMigration::start)
+            }
+        }
+        // KMK <--
         val state by screenModel.state.collectAsState()
         val context = LocalContext.current
+
+        // KMK -->
+        if (resuming && ActiveMigration.model == null) {
+            LaunchedEffect(Unit) { navigator.pop() }
+            return
+        }
+        DisposableEffect(screenModel) {
+            screenModel.setAttached(true)
+            onDispose { screenModel.setAttached(false) }
+        }
+        val matchingId by screenModel.matchingId.collectAsState()
+        // KMK <--
 
         // KMK -->
         var hasPushedManual by rememberSaveable(mangaIds) { mutableStateOf(false) }
@@ -108,6 +139,11 @@ class MigrationListScreen(
             items = state.items,
             migrationComplete = state.migrationComplete,
             finishedCount = state.finishedCount,
+            // KMK -->
+            matchingId = matchingId,
+            onBack = navigator::pop,
+            onStop = screenModel::showExitDialog,
+            // KMK <--
             onItemClick = {
                 navigator.push(MangaScreen(it.id, true))
             },
@@ -149,7 +185,12 @@ class MigrationListScreen(
             MigrationListScreenModel.Dialog.Exit -> {
                 MigrationExitDialog(
                     onDismissRequest = screenModel::dismissDialog,
-                    exitMigration = navigator::pop,
+                    // KMK: Stop ends the migration; the back arrow alone keeps it running in the background
+                    exitMigration = {
+                        screenModel.dismissDialog()
+                        screenModel.stop()
+                        navigator.pop()
+                    },
                 )
             }
             // KMK -->
@@ -168,8 +209,9 @@ class MigrationListScreen(
             null -> Unit
         }
 
+        // KMK: back keeps the migration going in the background; its notification brings you back here
         BackHandler(true) {
-            screenModel.showExitDialog()
+            navigator.pop()
         }
     }
 }

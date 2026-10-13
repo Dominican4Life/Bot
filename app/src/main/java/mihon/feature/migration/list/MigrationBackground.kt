@@ -1,6 +1,5 @@
 package mihon.feature.migration.list
 
-import android.app.PendingIntent
 import android.content.Context
 import android.content.pm.ServiceInfo
 import android.os.Build
@@ -22,6 +21,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.takeWhile
+import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.i18n.kmk.KMR
 
 /**
  * KMK: What a migration is doing right now, for its notification. Set by [MigrationListScreenModel] while it searches
@@ -98,22 +99,29 @@ class MigrationProgressJob(private val context: Context, params: WorkerParameter
     private fun notification(status: MigrationProgress.Status) =
         context.notificationBuilder(Notifications.CHANNEL_LIBRARY_PROGRESS) {
             setSmallIcon(R.drawable.ic_refresh_24dp)
-            setContentTitle(if (status.moving) "Migrating titles" else "Finding titles on the new sources")
-            setContentText(
-                buildString {
-                    append("${status.done} of ${status.total}")
-                    status.pausedSeconds?.let { append(" · site asked to slow down, waiting ${it}s") }
-                },
+            val total = status.total
+            val done = status.done.coerceAtMost(total)
+            setContentTitle(
+                context.stringResource(
+                    if (status.moving) KMR.strings.migrate_notif_migrating else KMR.strings.migrate_notif_matching,
+                    done,
+                    total,
+                ),
             )
-            setProgress(status.total.coerceAtLeast(1), status.done.coerceAtMost(status.total), status.total == 0)
+            status.pausedSeconds?.let {
+                setContentText(context.stringResource(KMR.strings.migrate_notif_slow_down, it))
+            }
+            setProgress(total.coerceAtLeast(1), done, total == 0)
             setOngoing(true)
             setOnlyAlertOnce(true)
             setCategory(NotificationCompat.CATEGORY_PROGRESS)
-            context.packageManager.getLaunchIntentForPackage(context.packageName)?.let { intent ->
-                setContentIntent(
-                    PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_IMMUTABLE),
-                )
-            }
+            // Tap: back to the matching screen. Cancel: stops the migration
+            setContentIntent(ActiveMigration.showIntent(context))
+            addAction(
+                R.drawable.ic_close_24dp,
+                context.stringResource(KMR.strings.migrate_stop),
+                ActiveMigration.cancelIntent(context),
+            )
         }.build()
 
     companion object {

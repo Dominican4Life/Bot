@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <plurals name="migrate_n_entries">
+        <item quantity="one">Migrate %d entry</item>
+        <item quantity="other">Migrate %d entries</item>
+    </plurals>
     <plurals name="anime_new_episodes">
         <item quantity="one">%d new episode</item>
         <item quantity="other">%d new episodes</item>

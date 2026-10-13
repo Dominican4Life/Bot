@@ -390,6 +390,9 @@ class MainActivity : BaseActivity() {
 
                 HandleOnNewIntent(context = context, navigator = navigator)
 
+                // KMK: the Migrate window, opened from the library, a title's page or migrate by source
+                mihon.feature.migration.config.MigrationStartHost(navigator)
+
                 // KMK -->
                 RearmJobs()
                 // KMK <--
@@ -672,6 +675,13 @@ class MainActivity : BaseActivity() {
                 HomeScreen.Tab.More(toDownloads = true)
             }
             // KMK -->
+            // The migration notification: back to the matching screen of the migration running in the background
+            mihon.feature.migration.list.ActiveMigration.ACTION_SHOW -> {
+                if (navigator.lastItem !is mihon.feature.migration.list.MigrationListScreen) {
+                    navigator.push(mihon.feature.migration.list.MigrationListScreen.resume())
+                }
+                null
+            }
             Constants.SHORTCUT_LIBRARY_UPDATE_ERRORS -> {
                 navigator.popUntilRoot()
                 HomeScreen.Tab.More(toDownloads = false, toLibraryUpdateErrors = true)

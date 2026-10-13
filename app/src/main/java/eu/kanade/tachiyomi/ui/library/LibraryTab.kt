@@ -71,7 +71,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
-import mihon.feature.migration.config.MigrationConfigScreen
+import mihon.feature.migration.config.MigrationStart
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.domain.category.model.Category
@@ -218,7 +218,14 @@ data object LibraryTab : Tab {
                         Unit
                     }.takeIf { !showAnime },
                     // Migrate by source (it used to be a tab in Browse), manga or anime like the library
-                    onClickMigrate = { navigator.push(MigrateSourcesScreen(anime = showAnime)) },
+                    onClickMigrate = {
+                        // KMK: manga opens the Migrate window ("Source to migrate"); anime keeps its own screen
+                        if (showAnime) {
+                            navigator.push(MigrateSourcesScreen(anime = true))
+                        } else {
+                            MigrationStart.open(emptyList())
+                        }
+                    },
                     // KMK <--
                 )
             },
@@ -244,7 +251,7 @@ data object LibraryTab : Tab {
                             context.toast(SYMR.strings.no_valid_entry)
                         } else {
                             // KMK <--
-                            navigator.push(MigrationConfigScreen(selection))
+                            MigrationStart.open(selection)
                         }
                     },
                     // KMK -->

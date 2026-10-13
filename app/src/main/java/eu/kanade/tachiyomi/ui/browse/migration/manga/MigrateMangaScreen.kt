@@ -56,7 +56,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import mihon.feature.migration.config.MigrationConfigScreen
+import mihon.feature.migration.config.MigrationStart
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
@@ -130,7 +130,7 @@ data class MigrateMangaScreen(
                 MigrateMangaBottomBar(
                     selectionMode = state.selectionMode,
                     onMultiMigrateClicked = {
-                        navigator.push(MigrationConfigScreen(state.selection))
+                        MigrationStart.open(state.selection)
                     },
                     enableScrollToTop = enableScrollToTop,
                     enableScrollToBottom = enableScrollToBottom,
@@ -162,7 +162,7 @@ data class MigrateMangaScreen(
                 state = state,
                 // KMK -->
                 onMangaSelected = screenModel::toggleSelection,
-                onClickItem = { navigator.push(MigrationConfigScreen(it.id)) },
+                onClickItem = { MigrationStart.open(listOf(it.id)) },
                 // KMK <--
                 onClickCover = { navigator.push(MangaScreen(it.id)) },
             )
