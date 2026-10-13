@@ -40,6 +40,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState as collectFlowAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -103,7 +104,7 @@ object MigrationStart {
 /** Shows the Migrate window when asked, over any screen; Start matching opens the matching screen */
 @Composable
 fun MigrationStartHost(navigator: Navigator) {
-    val request by MigrationStart.request.collectAsState()
+    val request by MigrationStart.request.collectFlowAsState()
     val ids = request ?: return
     val preferences = remember { Injekt.get<SourcePreferences>() }
     MigrationStartSheet(
