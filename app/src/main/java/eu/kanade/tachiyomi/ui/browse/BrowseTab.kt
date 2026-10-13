@@ -174,7 +174,7 @@ data object BrowseTab : Tab {
         // KMK <--
 
         // SY -->
-        // KMK: Migrate moved to the Library menu, so Browse is Sources, Extensions and Feed
+        // KMK: Migrate moved to the Library menu, so Browse is Sources, Feed and Extensions
         val tabs = when {
             hideFeedTab ->
                 persistentListOf(
@@ -194,17 +194,17 @@ data object BrowseTab : Tab {
                     extensions,
                 )
 
-            // KMK: Extensions sits right after Sources, Feed after it
+            // KMK: Sources, Feed, then Extensions
             else ->
                 persistentListOf(
                     sourcesTab().withAnimeSwitch(animeSources),
-                    extensions,
                     feedTab(
                         // KMK -->
                         feedScreenModel,
                         bulkFavoriteScreenModel,
                         // KMK <--
                     ),
+                    extensions,
                 )
         }
         // SY <--
@@ -225,8 +225,8 @@ data object BrowseTab : Tab {
         LaunchedEffect(Unit) {
             switchToExtensionTabChannel.receiveAsFlow()
                 .collectLatest {
-                    // KMK: Extensions is the 3rd tab only when Feed is in front
-                    state.scrollToPage(if (feedTabInFront && !hideFeedTab) 2 else 1)
+                    // KMK: Extensions is the last tab: 2nd when Feed is hidden, otherwise 3rd
+                    state.scrollToPage(if (hideFeedTab) 1 else 2)
                 }
         }
 
