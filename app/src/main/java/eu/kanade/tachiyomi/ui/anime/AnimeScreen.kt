@@ -875,6 +875,7 @@ private fun LazyListScope.episodeItems(
         EpisodeItem(
             episode = episode,
             displayNumber = anime.displayNumber,
+            inLibrary = anime.favorite,
             sourceLabel = state.memberSources[episode.animeId],
             downloadState = state.downloadState(episode),
             downloadProgress = state.downloadProgress(episode),
@@ -890,6 +891,7 @@ private fun LazyListScope.episodeItems(
 private fun EpisodeItem(
     episode: Episode,
     displayNumber: Boolean,
+    inLibrary: Boolean,
     sourceLabel: String?,
     downloadState: Download.State,
     downloadProgress: Int,
@@ -938,7 +940,15 @@ private fun EpisodeItem(
                 else -> "$title: ${episode.name}"
             },
             summary = episode.summary,
-            previewUrl = episode.previewUrl,
+            // KMK: kept in the anime's download folder when it's in the library (Auto save covers)
+            preview = episode.previewUrl?.takeIf { it.isNotBlank() }?.let { url ->
+                eu.kanade.tachiyomi.data.coil.EpisodePreview(
+                    animeId = episode.animeId,
+                    key = eu.kanade.tachiyomi.data.coil.episodePreviewKey(episode.episodeNumber, episode.url),
+                    url = url,
+                    inLibrary = inLibrary,
+                )
+            },
             info = listOfNotNull(date, progress, info).joinToString(" • ").ifEmpty { null },
             seen = episode.seen,
             bookmark = episode.bookmark,
@@ -992,7 +1002,7 @@ private fun EpisodeItem(
 private fun RichEpisodeItem(
     title: String,
     summary: String?,
-    previewUrl: String?,
+    preview: eu.kanade.tachiyomi.data.coil.EpisodePreview?,
     info: String?,
     seen: Boolean,
     bookmark: Boolean,
@@ -1012,9 +1022,9 @@ private fun RichEpisodeItem(
             .padding(start = 16.dp, top = 10.dp, end = 8.dp, bottom = 10.dp),
     ) {
         Row(verticalAlignment = Alignment.Top) {
-            if (!previewUrl.isNullOrBlank()) {
+            if (preview != null) {
                 coil3.compose.AsyncImage(
-                    model = previewUrl,
+                    model = preview,
                     contentDescription = null,
                     contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                     alpha = alpha,

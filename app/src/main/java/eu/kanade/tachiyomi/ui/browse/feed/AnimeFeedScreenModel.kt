@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.data.anime.Anime
 import eu.kanade.tachiyomi.data.anime.AnimeRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.util.lang.launchIO
@@ -53,15 +54,19 @@ class AnimeFeedScreenModel(
 
     init {
         screenModelScope.launchIO {
-            saved.changes().collectLatest { raw ->
-                val entries = decode(raw)
-                val old = state.value.rows.associateBy { it.entry }
-                val rows = entries.map { entry ->
-                    old[entry] ?: Row(entry, sourceManager.get(entry.sourceId)?.name ?: entry.sourceId.toString())
+            // KMK: rows of turned-off sources are hidden until the source is turned on again
+            saved.changes()
+                .combine(sourcePreferences.animeDisabledSources().changes()) { raw, _ -> raw }
+                .collectLatest { raw ->
+                    val entries = decode(raw)
+                        .filterNot { eu.kanade.tachiyomi.source.DisabledSources.isDisabled(it.sourceId) }
+                    val old = state.value.rows.associateBy { it.entry }
+                    val rows = entries.map { entry ->
+                        old[entry] ?: Row(entry, sourceManager.get(entry.sourceId)?.name ?: entry.sourceId.toString())
+                    }
+                    mutableState.update { it.copy(rows = rows) }
+                    rows.filter { it.items == null }.forEach { load(it.entry) }
                 }
-                mutableState.update { it.copy(rows = rows) }
-                rows.filter { it.items == null }.forEach { load(it.entry) }
-            }
         }
     }
 

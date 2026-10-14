@@ -1,11 +1,15 @@
 package eu.kanade.tachiyomi.data.cache
 
 import android.annotation.SuppressLint
+import android.app.Application
 import android.content.Context
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import coil3.imageLoader
+import coil3.request.ImageRequest
 import com.hippo.unifile.UniFile
 import eu.kanade.domain.manga.interactor.UpdateManga
+import eu.kanade.presentation.anime.asMangaCover
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
 import eu.kanade.tachiyomi.data.anime.AnimeRepository
@@ -22,6 +26,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -32,6 +37,7 @@ import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.manga.interactor.GetFavorites
 import tachiyomi.domain.manga.interactor.GetManga
+import tachiyomi.domain.manga.model.asMangaCover
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.storage.service.StorageManager
 import tachiyomi.i18n.kmk.KMR
@@ -51,6 +57,11 @@ object CoverFolders {
     private const val COVER_NAME = "cover.jpg"
     private const val LISTING_TTL_MS = 2 * 60_000L
     private const val SOURCES_WAIT_MS = 20_000L
+    private const val PREVIEWS = "previews"
+    private const val ADD_DELAY_MS = 3_000L
+
+    /** The folders that sort downloads by kind, not sources */
+    private val TYPE_FOLDERS = setOf("manga", "anime")
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -63,12 +74,12 @@ object CoverFolders {
     /** Where a title's cover.jpg is written: its download folder, made if missing */
     private suspend fun folder(id: Long, sourceId: Long, anime: Boolean, create: Boolean): UniFile? = runCatching {
         if (anime) {
-            val title = Injekt.get<AnimeRepository>().getAnime(id) ?: return@runCatching null
+            val title = Injekt.get<AnimeRepository>().getAnime(animeId(id)) ?: return@runCatching null
             Injekt.get<AnimeDownloadManager>().animeDir(title, create)
         } else {
             val manga = Injekt.get<GetManga>().await(id) ?: return@runCatching null
             if (manga.isLocal()) return@runCatching null
-            val source = Injekt.get<SourceManager>().getOrStub(sourceId)
+            val source = Injekt.get<SourceManager>().getOrStub(manga.source)
             val provider = Injekt.get<DownloadProvider>()
             // The original title, as downloads use: a title renamed in Edit info keeps its downloads' folder
             if (create) {
@@ -78,6 +89,9 @@ object CoverFolders {
             }
         }
     }.getOrNull()
+
+    /** Anime covers are drawn with negative ids (kept apart from manga in the cover caches) */
+    private fun animeId(id: Long): Long = if (id < 0) -id else id
 
     /** A title being looked for: the names its folder may have, and its source's name */
     private class Wanted(val names: List<String>, val sourceName: String?, val exact: String)
@@ -91,15 +105,22 @@ object CoverFolders {
         awaitSources()
         folder(id, sourceId, anime, create = false)?.let { return it }
         val wanted = wanted(id, sourceId, anime) ?: return null
-        val downloads = Injekt.get<StorageManager>().getDownloadsDirectory()
+        val storage = Injekt.get<StorageManager>()
+        val downloads = storage.getDownloadsDirectory()
         if (downloads == null) {
             logOnce("no-downloads") {
                 "No access to the download folder: choose it again in Settings › Data and storage"
             }
             return null
         }
-        val root = if (anime) children(downloads)["anime"] ?: return miss(wanted) else downloads
-        val sourceDirs = children(root).values.filter { it.isDirectory }
+        // downloads/Manga or downloads/Anime; for manga also downloads itself, where they were before r37
+        val roots = if (anime) {
+            listOfNotNull(storage.getAnimeDownloadsDirectory(create = false))
+        } else {
+            listOfNotNull(storage.getMangaDownloadsDirectory(create = false), downloads)
+        }
+        val sourceDirs = roots.flatMap { root -> children(root).values }
+            .filter { it.isDirectory && (it.name ?: "").lowercase() !in TYPE_FOLDERS }
         val prefix = wanted.sourceName?.lowercase()
         val ordered = if (prefix.isNullOrBlank()) {
             sourceDirs
@@ -107,7 +128,6 @@ object CoverFolders {
             sourceDirs.sortedByDescending { (it.name ?: "").lowercase().startsWith(prefix) }
         }
         for (dir in ordered) {
-            if (!anime && dir.name == "anime") continue
             val inside = children(dir)
             wanted.names.firstNotNullOfOrNull { inside[it.lowercase()] }?.let { found ->
                 logcat("cover", LogPriority.INFO) { "Cover folder found as ${dir.name}/${found.name}" }
@@ -124,21 +144,21 @@ object CoverFolders {
 
     private suspend fun wanted(id: Long, sourceId: Long, anime: Boolean): Wanted? = runCatching {
         if (anime) {
-            val title = Injekt.get<AnimeRepository>().getAnime(id) ?: return@runCatching null
+            val title = Injekt.get<AnimeRepository>().getAnime(animeId(id)) ?: return@runCatching null
             val name = DiskUtil.buildValidFilename(title.title)
-            val sourceName = Injekt.get<AnimeSourceManager>().get(sourceId)?.name
-            Wanted(listOf(name), sourceName, "anime/${sourceName ?: sourceId}/$name")
+            val sourceName = Injekt.get<AnimeSourceManager>().get(title.source)?.name
+            Wanted(listOf(name), sourceName, "Anime/${sourceName ?: title.source}/$name")
         } else {
             val manga = Injekt.get<GetManga>().await(id) ?: return@runCatching null
             if (manga.isLocal()) return@runCatching null
-            val source = Injekt.get<SourceManager>().getOrStub(sourceId)
+            val source = Injekt.get<SourceManager>().getOrStub(manga.source)
             val provider = Injekt.get<DownloadProvider>()
             // Covers saved by r33–r35 went under the displayed title, which differs for renamed titles
             val names = listOf(manga.ogTitle, manga.title).map(provider::getMangaDirName).distinct()
             Wanted(
                 names = names,
                 sourceName = source.name.takeIf { it.isNotBlank() },
-                exact = "${provider.getSourceDirName(source)}/${names.first()}",
+                exact = "Manga/${provider.getSourceDirName(source)}/${names.first()}",
             )
         }
     }.getOrNull()
@@ -248,11 +268,102 @@ object CoverFolders {
         }
     }
 
+    /**
+     * A title just added to the library: its cover (the one being shown, or loaded now) is saved to its folder. The
+     * cover being shown moves into the library's own copy when it's drawn again, so this waits a moment first.
+     */
+    fun onAddedToLibrary(id: Long, anime: Boolean) {
+        if (!enabled) return
+        scope.launch {
+            delay(ADD_DELAY_MS)
+            val coverCache = Injekt.get<CoverCache>()
+            val app = Injekt.get<Application>()
+            val (sourceId, url, data) = if (anime) {
+                val title = Injekt.get<AnimeRepository>().getAnime(animeId(id)) ?: return@launch
+                Triple(title.source, title.thumbnailUrl, title.asMangaCover())
+            } else {
+                val manga = Injekt.get<GetManga>().await(id) ?: return@launch
+                if (manga.isLocal()) return@launch
+                Triple(manga.source, manga.thumbnailUrl, manga.asMangaCover())
+            }
+            var file = (if (anime) null else coverCache.getCustomCoverFile(id).takeIf { it.exists() })
+                ?: coverCache.getCoverFile(url)?.takeIf { it.exists() }
+            if (file == null && !url.isNullOrBlank()) {
+                runCatching { app.imageLoader.execute(ImageRequest.Builder(app).data(data).build()) }
+                file = coverCache.getCoverFile(url)?.takeIf { it.exists() }
+            }
+            if (file != null && write(animeIdOr(id, anime), sourceId, anime, file)) {
+                logcat("cover", LogPriority.DEBUG) { "Cover saved for a title added to the library" }
+            }
+        }
+    }
+
+    private fun animeIdOr(id: Long, anime: Boolean) = if (anime) animeId(id) else id
+
+    /**
+     * A title taken out of the library: what was made for it here goes (cover.jpg and the episode previews), and its
+     * folder too when nothing else is left in it. Downloaded chapters or episodes are left to the remove choice.
+     */
+    fun onRemovedFromLibrary(id: Long, anime: Boolean) {
+        scope.launch {
+            try {
+                val dir = folder(id, 0L, anime, create = false) ?: return@launch
+                dir.findFile(COVER_NAME)?.delete()
+                dir.findFile(PREVIEWS)?.delete()
+                if (dir.listFiles().isNullOrEmpty()) dir.delete()
+                listings.clear()
+                logcat("cover", LogPriority.DEBUG) { "Cover folder cleaned up for ${dir.name}" }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                logcat("cover", LogPriority.WARN) { "Couldn't clean up a removed title's folder: ${e.message}" }
+            }
+        }
+    }
+
+    /** An episode preview's file in the anime's folder */
+    private fun previewName(key: String) = DiskUtil.buildValidFilename("$key.jpg")
+
+    /** An episode preview saved in the anime's folder, or null */
+    suspend fun readPreview(animeId: Long, key: String): ByteArray? {
+        if (!enabled) return null
+        return try {
+            val dir = folder(animeId, 0L, anime = true, create = false) ?: return null
+            val previews = children(dir)[PREVIEWS] ?: return null
+            val file = children(previews)[previewName(key).lowercase()] ?: return null
+            file.openInputStream().use { it.readBytes() }.takeIf { it.isNotEmpty() }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** Keeps an episode preview in the anime's folder, in the background */
+    fun savePreview(animeId: Long, key: String, bytes: ByteArray) {
+        if (!enabled || bytes.isEmpty()) return
+        scope.launch {
+            try {
+                val dir = folder(animeId, 0L, anime = true, create = true) ?: return@launch
+                val previews = dir.findFile(PREVIEWS) ?: dir.createDirectory(PREVIEWS) ?: return@launch
+                val name = previewName(key)
+                if (previews.findFile(name) != null) return@launch
+                val file = previews.createFile(name) ?: return@launch
+                file.openOutputStream().use { it.write(bytes) }
+                listings.remove(previews.uri.toString())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // the preview loads from the internet next time
+            }
+        }
+    }
+
     val isSavingAll: Boolean get() = saveAllJob?.isActive == true
 
-    /** "Save all covers now": every library title's cover that's already on the device, into its folder */
-    fun saveAll(context: Context) {
-        if (isSavingAll) return
+    /** When the setting is turned on: every library title's cover that's already on the device, into its folder */
+    fun saveAll(context: Context, force: Boolean = false) {
+        if (isSavingAll || (!force && !enabled)) return
         val app = context.applicationContext
         saveAllJob = scope.launch {
             val coverCache = Injekt.get<CoverCache>()

@@ -91,6 +91,12 @@ class AnimeRepository(
                 id = anime.id,
             )
         }
+        // KMK: the anime's cover is saved to (or cleaned from) its download folder
+        if (favorite && !anime.favorite) {
+            eu.kanade.tachiyomi.data.cache.CoverFolders.onAddedToLibrary(anime.id, anime = true)
+        } else if (!favorite && anime.favorite) {
+            eu.kanade.tachiyomi.data.cache.CoverFolders.onRemovedFromLibrary(anime.id, anime = true)
+        }
     }
 
     suspend fun setEpisodeFlags(anime: Anime, flags: Long) {

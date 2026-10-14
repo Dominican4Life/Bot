@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.data.notification
 
 import eu.kanade.tachiyomi.data.anime.AnimeRepository
 import eu.kanade.tachiyomi.network.BotCheckReporter
+import eu.kanade.tachiyomi.source.DisabledSources
 import eu.kanade.tachiyomi.network.SiteBlockedException
 import eu.kanade.tachiyomi.network.await
 import kotlinx.coroutines.CancellationException
@@ -55,7 +56,8 @@ object SourceStatusCheck {
                 .getOrDefault(emptyList())
             val anime = runCatching { Injekt.get<AnimeRepository>().getFavorites().map { it.source } }
                 .getOrDefault(emptyList())
-            val ids = (manga + anime).toSet()
+            // Turned-off sources are left alone
+            val ids = (manga + anime).toSet() - DisabledSources.ids()
             logcat(TAG) { "Checking ${ids.size} library sources for bot checks" }
             val semaphore = Semaphore(MAX_CHECKS_AT_ONCE)
             coroutineScope {
@@ -66,6 +68,7 @@ object SourceStatusCheck {
 
     /** A cover of [sourceId] failed to load: its source is checked, unless it was checked a short while ago */
     fun onCoverFailed(sourceId: Long) {
+        if (DisabledSources.isDisabled(sourceId)) return
         val now = System.currentTimeMillis()
         val last = lastChecked[sourceId]
         if (last != null && now - last < RECHECK_AFTER_MS) return
@@ -75,6 +78,7 @@ object SourceStatusCheck {
 
     /** After WebView closes: the source is checked again, and its notification clears when it's fine */
     fun recheck(sourceId: Long) {
+        if (DisabledSources.isDisabled(sourceId)) return
         scope.launch {
             val site = BotCheckNotifier.siteInfo(sourceId) ?: return@launch
             when (val kind = check(sourceId)) {

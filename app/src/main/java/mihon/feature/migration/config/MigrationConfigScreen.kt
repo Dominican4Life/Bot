@@ -451,6 +451,8 @@ class MigrationConfigScreen(private val mangaIds: Collection<Long>) : Screen() {
                 .asSequence()
                 .filterIsInstance<HttpSource>()
                 .filter { it.lang in languages }
+                // KMK: turned-off sources aren't offered to search
+                .filterNot { it.id in disabledSources }
                 .map {
                     val source = Source(
                         id = it.id,

@@ -737,7 +737,16 @@ private fun AnimeSourceSheet(
                 Injekt.get<eu.kanade.tachiyomi.sumizuri.SumizuriManager>().delete(it.info.key)
             }
         },
-        onSettings = ext?.let { { onSettings(it.pkgName) } } ?: js?.let {
+        // A Code editor source opens its own settings, like in Extensions, and has Code editor in place of Latest
+        onSettings = js?.let {
+            {
+                onDismiss()
+                navigator?.push(
+                    eu.kanade.tachiyomi.ui.browse.extension.details.SourcePreferencesScreen(it.id, anime = true),
+                )
+            }
+        } ?: ext?.let { { onSettings(it.pkgName) } },
+        onOpenCodeEditor = js?.let {
             {
                 onDismiss()
                 navigator?.push(eu.kanade.tachiyomi.ui.sumizuri.SourceEditorScreen(it.info.key))

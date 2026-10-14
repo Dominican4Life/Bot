@@ -154,6 +154,8 @@ class MangaCoverFetcher(
             if (snapshot != null) {
                 val snapshotCoverCache = moveSnapshotToCoverCache(snapshot, libraryCoverCacheFile)
                 if (snapshotCoverCache != null) {
+                    // KMK: a title just added to the library: its cover is kept in its download folder too
+                    CoverFolders.save(mangaCover.mangaId, mangaCover.sourceId, isAnimeCover(), snapshotCoverCache)
                     // Read from cover cache after added to library
                     return fileLoader(snapshotCoverCache)
                 }

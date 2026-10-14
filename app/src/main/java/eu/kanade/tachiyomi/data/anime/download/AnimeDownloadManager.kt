@@ -234,8 +234,8 @@ class AnimeDownloadManager(
 
     // KMK: also where the anime's cover is kept (CoverFolders)
     internal fun animeDir(anime: Anime, create: Boolean): UniFile? {
-        val root = storageManager.getDownloadsDirectory() ?: return null
-        val animeRoot = if (create) root.createDirectory(ANIME_DIR) else root.findFile(ANIME_DIR)
+        // downloads/Anime (the older "anime" folder counts too)
+        val animeRoot = storageManager.getAnimeDownloadsDirectory(create)
         val sourceDir = animeRoot?.let { if (create) it.createDirectory(sourceDirName(anime)) else it.findFile(sourceDirName(anime)) }
         val title = DiskUtil.buildValidFilename(anime.title)
         return sourceDir?.let { if (create) it.createDirectory(title) else it.findFile(title) }

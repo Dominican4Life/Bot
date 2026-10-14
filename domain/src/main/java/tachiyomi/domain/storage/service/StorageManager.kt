@@ -78,6 +78,23 @@ class StorageManager(
         return baseDir?.createDirectory(DOWNLOADS_PATH)
     }
 
+    // KMK -->
+    /** Manga downloads: downloads/Manga/<source>/<title> */
+    fun getMangaDownloadsDirectory(create: Boolean = true): UniFile? =
+        getDownloadsDirectory()?.let { childDirectory(it, MANGA_PATH, create) }
+
+    /** Anime downloads: downloads/Anime/<source>/<title> (the older "anime" folder counts too) */
+    fun getAnimeDownloadsDirectory(create: Boolean = true): UniFile? =
+        getDownloadsDirectory()?.let { childDirectory(it, ANIME_PATH, create) }
+
+    /** A folder inside [parent], upper or lower case not mattering (SD cards don't tell them apart) */
+    private fun childDirectory(parent: UniFile, name: String, create: Boolean): UniFile? {
+        parent.findFile(name)?.takeIf { it.isDirectory }?.let { return it }
+        parent.listFiles()?.firstOrNull { it.isDirectory && it.name.equals(name, ignoreCase = true) }?.let { return it }
+        return if (create) parent.createDirectory(name) else null
+    }
+    // KMK <--
+
     fun getLocalSourceDirectory(): UniFile? {
         return baseDir?.createDirectory(LOCAL_SOURCE_PATH)
     }
@@ -244,6 +261,10 @@ class StorageManager(
 private const val AUTOMATIC_BACKUPS_PATH = "autobackup"
 private const val DOWNLOADS_PATH = "downloads"
 private const val LOCAL_SOURCE_PATH = "local"
+
+// KMK: manga and anime downloads each in their own folder inside downloads
+private const val MANGA_PATH = "Manga"
+private const val ANIME_PATH = "Anime"
 
 // KMK -->
 private const val MPV_CONFIG_PATH = "mpv-config"

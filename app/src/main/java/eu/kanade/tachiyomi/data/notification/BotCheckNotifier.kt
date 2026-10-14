@@ -12,6 +12,7 @@ import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.BotCheckReporter
+import eu.kanade.tachiyomi.source.DisabledSources
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
@@ -60,8 +61,8 @@ object BotCheckNotifier {
     fun onReport(url: String, kind: BotCheckReporter.Kind, sourceId: Long?, force: Boolean) {
         if (!::appContext.isInitialized) return
         val site = sourceId?.let(::siteInfo) ?: hostOf(url)?.let(::siteForHost)
-        // Image servers and other addresses that aren't a source of yours are left out
-        if (site == null) return
+        // Image servers and other addresses that aren't a source of yours are left out, and so are turned-off sources
+        if (site == null || DisabledSources.isDisabled(site.id)) return
         val key = site.id.toString()
         val now = System.currentTimeMillis()
         synchronized(entries) {

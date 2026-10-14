@@ -44,7 +44,6 @@ object SettingsDownloadScreen : SearchableSettings {
         val parallelSourceLimit by downloadPreferences.parallelSourceLimit().collectAsState()
         val parallelPageLimit by downloadPreferences.parallelPageLimit().collectAsState()
         // KMK -->
-        val saveCoversInFolders by downloadPreferences.saveCoversInFolders().collectAsState()
         val context = LocalContext.current
         // KMK <--
         return listOf(
@@ -66,12 +65,11 @@ object SettingsDownloadScreen : SearchableSettings {
                 preference = downloadPreferences.saveCoversInFolders(),
                 title = stringResource(KMR.strings.pref_save_covers_in_folders),
                 subtitle = stringResource(KMR.strings.pref_save_covers_in_folders_summary),
-            ),
-            Preference.PreferenceItem.TextPreference(
-                title = stringResource(KMR.strings.pref_save_all_covers_now),
-                subtitle = stringResource(KMR.strings.pref_save_all_covers_now_summary),
-                enabled = saveCoversInFolders,
-                onClick = { CoverFolders.saveAll(context) },
+                // Turned on: the covers already on the device are saved too, in the background
+                onValueChanged = { on ->
+                    if (on) CoverFolders.saveAll(context, force = true)
+                    true
+                },
             ),
             // KMK <--
             Preference.PreferenceItem.SliderPreference(

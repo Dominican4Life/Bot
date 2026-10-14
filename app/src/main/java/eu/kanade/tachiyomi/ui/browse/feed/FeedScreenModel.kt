@@ -22,6 +22,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
@@ -82,6 +83,8 @@ open class FeedScreenModel(
     init {
         getFeedSavedSearchGlobal.subscribe()
             .distinctUntilChanged()
+            // KMK: shown again or hidden when a source is turned on or off
+            .combine(sourcePreferences.disabledSources().changes()) { feeds, _ -> feeds }
             .onEach {
                 sourceManager.isInitialized.first { it }
                 val items = getSourcesToGetFeed(it).map { (feed, savedSearch) ->
@@ -235,6 +238,8 @@ open class FeedScreenModel(
         val savedSearches = getSavedSearchGlobalFeed.await()
             .associateBy { it.id }
         return feedSavedSearch
+            // KMK: feeds of turned-off sources are hidden until the source is turned on again
+            .filterNot { eu.kanade.tachiyomi.source.DisabledSources.isDisabled(it.source) }
             .map { it to savedSearches[it.savedSearch] }
     }
 

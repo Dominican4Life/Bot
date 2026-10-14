@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Cookie
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.NewReleases
@@ -107,6 +108,8 @@ fun SourceInfoSheet(
     onOpenLatest: (() -> Unit)?,
     onRemove: (() -> Unit)?,
     onSettings: (() -> Unit)?,
+    // A Code editor source: its code, in place of Latest
+    onOpenCodeEditor: (() -> Unit)? = null,
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismissRequest,
@@ -219,7 +222,13 @@ fun SourceInfoSheet(
                 if (onOpenWebView != null) {
                     ActionTile(Icons.AutoMirrored.Outlined.OpenInNew, stringResource(MR.strings.action_open_in_web_view), onOpenWebView)
                 }
-                if (onOpenLatest != null) {
+                if (onOpenCodeEditor != null) {
+                    ActionTile(
+                        Icons.Outlined.Code,
+                        stringResource(KMR.strings.source_sheet_code_editor),
+                        onOpenCodeEditor,
+                    )
+                } else if (onOpenLatest != null) {
                     ActionTile(Icons.Outlined.NewReleases, stringResource(MR.strings.latest), onOpenLatest)
                 }
                 ActionTile(Icons.Outlined.Cookie, stringResource(MR.strings.pref_clear_cookies), onClearCookies)

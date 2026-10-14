@@ -103,10 +103,11 @@ class DownloadCache(
         .stateIn(scope, SharingStarted.WhileSubscribed(), false)
 
     private val diskCacheFile: File
-        get() = File(context.cacheDir, "dl_index_cache_v3")
+        // KMK: v4 since manga downloads moved into downloads/Manga, so the index is built again there
+        get() = File(context.cacheDir, "dl_index_cache_v4")
 
     private val rootDownloadsDirMutex = Mutex()
-    private var rootDownloadsDir = RootDirectory(storageManager.getDownloadsDirectory())
+    private var rootDownloadsDir = RootDirectory(storageManager.getMangaDownloadsDirectory())
 
     init {
         // Attempt to read cache file
@@ -425,7 +426,7 @@ class DownloadCache(
             val sourceMap = sources.associate { provider.getSourceDirName(it).lowercase() to it.id }
 
             rootDownloadsDirMutex.withLock {
-                val updatedRootDir = RootDirectory(storageManager.getDownloadsDirectory())
+                val updatedRootDir = RootDirectory(storageManager.getMangaDownloadsDirectory())
 
                 updatedRootDir.sourceDirs = updatedRootDir.dir?.listFiles().orEmpty()
                     .filter { it.isDirectory && !it.name.isNullOrBlank() }

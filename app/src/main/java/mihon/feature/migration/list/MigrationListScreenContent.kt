@@ -1,5 +1,6 @@
 package mihon.feature.migration.list
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -121,8 +122,10 @@ fun MigrationListScreenContent(
     val allDone = items.isNotEmpty() && finishedCount >= items.size
 
     Scaffold(
-        topBar = { scrollBehavior ->
-            Column {
+        // KMK: the whole top (title, progress, filter chips) stays put on a solid background, so the list doesn't
+        // slide under the chips
+        topBar = { _ ->
+            Column(modifier = Modifier.background(MaterialTheme.colorScheme.surface)) {
                 AppBar(
                     title = if (allDone) {
                         stringResource(KMR.strings.migrate_matching_done)
@@ -147,7 +150,7 @@ fun MigrationListScreenContent(
                             ),
                         )
                     },
-                    scrollBehavior = scrollBehavior,
+                    scrollBehavior = null,
                 )
                 if (items.isNotEmpty()) {
                     LinearProgressIndicator(

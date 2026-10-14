@@ -157,6 +157,8 @@ fun SearchSourcesPickerDialog(
             Injekt.get<SourceManager>().getVisibleSources()
                 .filterIsInstance<HttpSource>()
                 .filter { it.lang in languages }
+                // KMK: turned-off sources aren't offered to search
+                .filterNot { it.id in disabled }
                 .map {
                     Source(id = it.id, lang = it.lang, name = it.name, supportsLatest = false, isStub = false)
                 }

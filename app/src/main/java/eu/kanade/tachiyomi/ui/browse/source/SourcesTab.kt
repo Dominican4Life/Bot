@@ -26,6 +26,7 @@ import eu.kanade.presentation.browse.SourcesScreen
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.TabContent
 import eu.kanade.tachiyomi.ui.browse.extension.details.ExtensionDetailsScreen
+import eu.kanade.tachiyomi.ui.browse.extension.details.SourcePreferencesScreen
 import eu.kanade.tachiyomi.ui.browse.source.SourcesScreen.SmartSearchConfig
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreen
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreenModel.Listing
@@ -187,13 +188,20 @@ fun Screen.sourcesTab(
                             Injekt.get<eu.kanade.tachiyomi.sumizuri.SumizuriManager>().delete(js.info.key)
                         }
                     },
-                    onSettings = extension?.let { ext ->
+                    // A Code editor source (even one using an installed APK's id) opens its own settings, like in
+                    // Extensions; an APK source opens its extension's page
+                    onSettings = (httpSource as? eu.kanade.tachiyomi.sumizuri.SumizuriMangaSource)?.let { js ->
+                        {
+                            sheetSource = null
+                            navigator.push(SourcePreferencesScreen(js.id))
+                        }
+                    } ?: extension?.let { ext ->
                         {
                             sheetSource = null
                             navigator.push(ExtensionDetailsScreen(ext.pkgName))
                         }
-                    } ?: (httpSource as? eu.kanade.tachiyomi.sumizuri.SumizuriMangaSource)?.let { js ->
-                        // A source from the Code editor: its code opens in the editor
+                    },
+                    onOpenCodeEditor = (httpSource as? eu.kanade.tachiyomi.sumizuri.SumizuriMangaSource)?.let { js ->
                         {
                             sheetSource = null
                             navigator.push(eu.kanade.tachiyomi.ui.sumizuri.SourceEditorScreen(js.info.key))

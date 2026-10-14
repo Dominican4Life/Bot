@@ -206,7 +206,9 @@ class MigrationListScreenModel(
         // val deepSearchMode = preferences.migrationDeepSearchMode().get()
         // KMK <--
 
+        // KMK: turned-off sources aren't searched
         val sources = preferences.migrationSources().get()
+            .filterNot(eu.kanade.tachiyomi.source.DisabledSources::isDisabled)
             .mapNotNull { sourceManager.get(it) }
 
         for (manga in mangas) {
@@ -391,7 +393,9 @@ class MigrationListScreenModel(
 
     /** Searches the chosen sources for [query], for the Candidates window */
     suspend fun searchCandidates(query: String): List<Candidate> = withIOContext {
-        val sources = preferences.migrationSources().get().mapNotNull { sourceManager.get(it) }
+        val sources = preferences.migrationSources().get()
+            .filterNot(eu.kanade.tachiyomi.source.DisabledSources::isDisabled)
+            .mapNotNull { sourceManager.get(it) }
         val semaphore = Semaphore(3)
         sources.map { source ->
             async {

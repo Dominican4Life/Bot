@@ -46,5 +46,14 @@ class UpdateManga(
         return mangaRepository.update(
             MangaUpdate(id = mangaId, favorite = favorite, dateAdded = dateAdded),
         )
+            // KMK: the title's cover is saved to (or cleaned from) its download folder
+            .also { updated ->
+                if (!updated) return@also
+                if (favorite) {
+                    eu.kanade.tachiyomi.data.cache.CoverFolders.onAddedToLibrary(mangaId, anime = false)
+                } else {
+                    eu.kanade.tachiyomi.data.cache.CoverFolders.onRemovedFromLibrary(mangaId, anime = false)
+                }
+            }
     }
 }

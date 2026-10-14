@@ -292,6 +292,8 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
                 add(SourcePageFetcher.Factory())
                 add(LocalPageKeyer())
                 add(LocalPageFetcher.Factory())
+                add(eu.kanade.tachiyomi.data.coil.EpisodePreviewKeyer())
+                add(eu.kanade.tachiyomi.data.coil.EpisodePreviewFetcher.Factory(callFactoryLazy))
                 // KMK <--
             }
 

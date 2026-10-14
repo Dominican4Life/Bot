@@ -36,7 +36,8 @@ class DownloadProvider(
 ) {
 
     private val downloadsDir: UniFile?
-        get() = storageManager.getDownloadsDirectory()
+        // KMK: manga downloads go in downloads/Manga
+        get() = storageManager.getMangaDownloadsDirectory()
 
     /**
      * Returns the download directory for a manga. For internal use only.

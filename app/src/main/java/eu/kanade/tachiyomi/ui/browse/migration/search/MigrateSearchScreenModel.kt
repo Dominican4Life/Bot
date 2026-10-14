@@ -46,6 +46,9 @@ class MigrateSearchScreenModel(
     }
 
     override fun getEnabledSources(): List<Source> {
-        return migrationSources.mapNotNull { sourceManager.get(it) }
+        // KMK: turned-off sources aren't searched
+        return migrationSources
+            .filterNot(eu.kanade.tachiyomi.source.DisabledSources::isDisabled)
+            .mapNotNull { sourceManager.get(it) }
     }
 }
