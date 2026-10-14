@@ -215,6 +215,8 @@ class MainActivity : BaseActivity() {
         // KMK --> copy the anime player's mpv scripts, fonts and shaders
         if (isLaunch) {
             uy.kohesive.injekt.Injekt.get<animiru.feature.mpvfiles.MpvConfig>().copyFiles()
+            // Your library's sources are checked for bot checks; any that need one get a notification
+            eu.kanade.tachiyomi.data.notification.SourceStatusCheck.checkLibrarySources()
         }
         // KMK <--
 

@@ -97,8 +97,8 @@ class WebViewActivity : BaseActivity() {
 
     // AM (DISCORD) -->
     override fun onDestroy() {
-        // KMK: a source waiting for its bot check is checked again once WebView closes
-        botCheckSourceId?.let { eu.kanade.tachiyomi.data.backup.restore.RestoreSourceCheck.recheck(it) }
+        // KMK: a source opened to pass its bot check is checked again once WebView closes
+        botCheckSourceId?.let { eu.kanade.tachiyomi.data.notification.SourceStatusCheck.recheck(it) }
         with(DiscordRPCService) {
             discordScope.launchIO { setScreen(this@WebViewActivity) }
         }

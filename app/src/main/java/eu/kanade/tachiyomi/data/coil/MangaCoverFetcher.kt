@@ -16,11 +16,12 @@ import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.data.cache.CoverFolders
 import eu.kanade.tachiyomi.data.coil.MangaCoverFetcher.Companion.USE_CUSTOM_COVER_KEY
-import eu.kanade.tachiyomi.data.notification.SourceHold
+import eu.kanade.tachiyomi.data.notification.SourceStatusCheck
 import eu.kanade.tachiyomi.network.BotCheckReporter
 import eu.kanade.tachiyomi.network.SiteBlockedException
 import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.source.online.HttpSource
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -253,16 +254,23 @@ class MangaCoverFetcher(
     private suspend fun executeNetworkRequest(): Response {
         // KMK: anime covers use their anime source's client and headers
         // KMK -->
-        // A source waiting for its bot check to be passed isn't asked for anything until then
         val sourceId = mangaCover.sourceId
-        if (SourceHold.isHeld(sourceId)) {
-            throw SiteBlockedException(BotCheckReporter.Kind.BOT_CHECK, "Waiting for a bot check to be passed")
-        }
         // KMK <--
         val client = sourceLazy.value?.client ?: animeSource()?.client ?: callFactoryLazy.value
-        val response = client.newCall(newRequest()).await()
+        // KMK -->
+        // A cover that fails is written to the Logs screen, and its source is checked for a bot check
+        val response = try {
+            client.newCall(newRequest()).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            coverFailed(sourceId, "${e.javaClass.simpleName}: ${e.message}")
+            throw e
+        }
+        // KMK <--
         if (!response.isSuccessful && response.code != HTTP_NOT_MODIFIED) {
             // KMK -->
+            coverFailed(sourceId, "HTTP ${response.code}")
             // A bot check or "too many requests" gets a notification for the cover's source
             val blocked = BotCheckReporter.classify(response)
             if (blocked != null) {
@@ -276,6 +284,13 @@ class MangaCoverFetcher(
         }
         return response
     }
+
+    // KMK -->
+    private fun coverFailed(sourceId: Long, reason: String) {
+        logcat.logcat("cover", LogPriority.WARN) { "Cover failed ($reason): $url" }
+        SourceStatusCheck.onCoverFailed(sourceId)
+    }
+    // KMK <--
 
     private fun newRequest(): Request {
         val request = Request.Builder().apply {

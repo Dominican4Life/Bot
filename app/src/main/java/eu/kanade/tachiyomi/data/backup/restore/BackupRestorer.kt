@@ -81,16 +81,10 @@ class BackupRestorer(
      */
     private var sourceMapping: Map<Long, String> = emptyMap()
 
-    // KMK: the sources checked for bot checks before this restore
-    private var checkedSources: Set<Long> = emptySet()
-
     suspend fun restore(uri: Uri, options: RestoreOptions) {
         val startTime = System.currentTimeMillis()
 
         restoreFromFile(uri, options)
-
-        // KMK: missing covers of the backup's sources load in the background now, paced, after the bot checks
-        if (checkedSources.isNotEmpty()) RestoreSourceCheck.afterRestore(checkedSources)
 
         val time = System.currentTimeMillis() - startTime
 
@@ -121,15 +115,6 @@ class BackupRestorer(
         // Store source mapping for error messages
         val backupMaps = backup.backupSources
         sourceMapping = backupMaps.associate { it.sourceId to it.name }
-
-        // KMK -->
-        // Every source the backup uses is checked for a bot check right away, all at once, so they can be passed
-        // in WebView while the restore runs
-        if (options.libraryEntries && !isSync) {
-            checkedSources = (backup.backupManga.map { it.source } + backup.backupAnime.map { it.source }).toSet()
-            RestoreSourceCheck.start(context, checkedSources)
-        }
-        // KMK <--
 
         if (options.libraryEntries) {
             restoreAmount += backup.backupManga.size
