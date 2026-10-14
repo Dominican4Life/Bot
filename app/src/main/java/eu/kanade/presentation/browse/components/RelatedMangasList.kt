@@ -73,7 +73,7 @@ fun RelatedMangasList(
                         ) {
                             HorizontalDivider()
                             RelatedMangaTitle(
-                                title = if (hasKeyword) {
+                                title = relatedManga.label ?: if (hasKeyword) {
                                     stringResource(KMR.strings.related_mangas_more)
                                 } else {
                                     stringResource(KMR.strings.related_mangas_website_suggestions)

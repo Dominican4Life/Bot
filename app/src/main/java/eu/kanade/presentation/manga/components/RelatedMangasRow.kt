@@ -11,11 +11,13 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.browse.components.EmptyResultItem
 import eu.kanade.presentation.browse.components.GlobalSearchLoadingResultItem
@@ -59,29 +61,56 @@ fun RelatedMangaCardRow(
     onMangaClick: (Manga) -> Unit,
     onMangaLongClick: (Manga) -> Unit,
 ) {
-    val mangas = relatedMangas.filterIsInstance<RelatedManga.Success>().map { it.mangaList }.flatten()
+    val groups = relatedMangas.filterIsInstance<RelatedManga.Success>()
     val loading = relatedMangas.filterIsInstance<RelatedManga.Loading>().firstOrNull()
 
     LazyRow(
         contentPadding = PaddingValues(MaterialTheme.padding.small),
         horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.extraSmall),
     ) {
-        items(mangas, key = { "related-row-${it.id}" }) {
-            val manga by getManga(it)
-            MangaItem(
-                title = manga.title,
-                cover = manga.asMangaCover(),
-                isFavorite = manga.favorite,
-                onClick = { onMangaClick(manga) },
-                onLongClick = { onMangaLongClick(manga) },
-                isSelected = false,
-            )
+        groups.forEachIndexed { index, group ->
+            // KMK: a source's named group (JS getRelated) starts with its name, so the groups can be told apart
+            if (group.label != null && group.mangaList.isNotEmpty()) {
+                item(key = "related-row-label-$index") {
+                    RelatedMangaGroupLabel(group.label)
+                }
+            }
+            items(group.mangaList, key = { "related-row-${it.id}" }) {
+                val manga by getManga(it)
+                MangaItem(
+                    title = manga.title,
+                    cover = manga.asMangaCover(),
+                    isFavorite = manga.favorite,
+                    onClick = { onMangaClick(manga) },
+                    onLongClick = { onMangaLongClick(manga) },
+                    isSelected = false,
+                )
+            }
         }
         if (loading != null) {
             item {
                 RelatedMangaLoadingItem()
             }
         }
+    }
+}
+
+@Composable
+private fun RelatedMangaGroupLabel(label: String) {
+    Box(
+        modifier = Modifier
+            .width(72.dp)
+            .aspectRatio(MangaCover.Book.ratio)
+            .padding(horizontal = MaterialTheme.padding.extraSmall),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+            textAlign = TextAlign.Center,
+            maxLines = 3,
+        )
     }
 }
 

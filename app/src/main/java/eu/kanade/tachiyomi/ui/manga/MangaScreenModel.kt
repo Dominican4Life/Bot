@@ -2145,15 +2145,27 @@ sealed interface RelatedManga {
     data class Success(
         val keyword: String,
         val mangaList: List<Manga>,
+        /** A named group the source gave (JS getRelated), shown under this name and kept in the source's order */
+        val label: String? = null,
     ) : RelatedManga {
         val isEmpty: Boolean
             get() = mangaList.isEmpty()
 
         companion object {
+            /**
+             * A source names a group of its own suggestions by pushing it with this in front of the name: it isn't a
+             * search keyword, so it gets no "search this" arrow
+             */
+            const val GROUP_PREFIX = "\u001Fgroup:"
+
             suspend fun fromPair(
                 pair: Pair<String, List<SManga>>,
                 toManga: suspend (mangaList: List<SManga>) -> List<Manga>,
-            ) = Success(pair.first, toManga(pair.second))
+            ) = if (pair.first.startsWith(GROUP_PREFIX)) {
+                Success("", toManga(pair.second), label = pair.first.removePrefix(GROUP_PREFIX))
+            } else {
+                Success(pair.first, toManga(pair.second))
+            }
         }
     }
 
@@ -2167,7 +2179,10 @@ sealed interface RelatedManga {
             val loading = filterIsInstance<Loading>()
             val title = manga.title.lowercase()
             val ogTitle = manga.ogTitle.lowercase()
-            return success.filter { it.keyword.isEmpty() } +
+            // A source's own named groups first, in the order it gave them
+            val named = success.filter { it.label != null }
+            return named +
+                success.filter { it.label == null && it.keyword.isEmpty() } +
                 success.filter { it.keyword.lowercase() == title } +
                 success.filter { it.keyword.lowercase() == ogTitle && ogTitle != title } +
                 success.filter { it.keyword.isNotEmpty() && it.keyword.lowercase() !in listOf(title, ogTitle) }
@@ -2181,9 +2196,8 @@ sealed interface RelatedManga {
 
             return map { relatedManga ->
                 if (relatedManga is Success) {
-                    Success(
-                        relatedManga.keyword,
-                        relatedManga.mangaList
+                    relatedManga.copy(
+                        mangaList = relatedManga.mangaList
                             .filter { mangaIds.add(it.id) },
                     )
                 } else {

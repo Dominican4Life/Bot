@@ -11,11 +11,14 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.ui.manga.RelatedManga
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import logcat.LogPriority
 import okhttp3.Headers
 import okhttp3.Response
+import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
@@ -39,11 +42,37 @@ class SumizuriMangaSource(
     // and then the title searches are left out
     override val disableRelatedMangasBySearch: Boolean get() = info.hasRelated
 
-    override suspend fun fetchRelatedMangaList(manga: SManga): List<SManga> {
+    override suspend fun fetchRelatedMangaList(manga: SManga): List<SManga> =
+        relatedGroups(manga).flatMap { it.second }
+
+    /**
+     * getRelated may give one list, or named groups as `{ "Related Comics": [...], "Same genres": [...] }`. Each named
+     * group is shown under its name, in the source's order
+     */
+    override suspend fun getRelatedMangaListByExtension(
+        manga: SManga,
+        pushResults: suspend (relatedManga: Pair<String, List<SManga>>, completed: Boolean) -> Unit,
+    ) {
+        runCatching { relatedGroups(manga) }
+            .onSuccess { groups ->
+                groups.filter { it.second.isNotEmpty() }.forEach { pushResults(it, false) }
+            }
+            .onFailure { e -> logcat(LogPriority.ERROR, e) { "${info.name}: getRelated failed" } }
+    }
+
+    private suspend fun relatedGroups(manga: SManga): List<Pair<String, List<SManga>>> {
         if (!info.hasRelated) return emptyList()
-        val list = SumizuriMapping.list(runtime().call("getRelated", manga.url))
-        webUrls.remember(list)
-        return list.mapNotNull { SumizuriMapping.toSManga(it) }.filter { it.url != manga.url }
+        val result = runtime().call("getRelated", manga.url)
+        fun entries(element: JsonElement): List<SManga> {
+            val list = SumizuriMapping.list(element)
+            webUrls.remember(list)
+            return list.mapNotNull { SumizuriMapping.toSManga(it) }.filter { it.url != manga.url }
+        }
+        return if (result is JsonObject) {
+            result.map { (name, value) -> (RelatedManga.Success.GROUP_PREFIX + name) to entries(value) }
+        } else {
+            listOf("" to entries(result))
+        }
     }
 
     override val baseUrl: String = info.baseUrl.trimEnd('/')
