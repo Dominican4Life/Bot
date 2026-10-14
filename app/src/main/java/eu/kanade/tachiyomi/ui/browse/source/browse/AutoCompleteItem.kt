@@ -6,9 +6,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -30,6 +31,8 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
@@ -123,6 +126,9 @@ fun AutoCompleteTextField(
     onSubmit: (String) -> Boolean,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    // KMK: the box's width, so the list below it can have a fixed size (see the menu)
+    var anchorWidth by remember { mutableStateOf(0) }
+    val density = LocalDensity.current
     var value by remember { mutableStateOf(TextFieldValue("")) }
     val focusManager = LocalFocusManager.current
     fun submit() {
@@ -161,6 +167,7 @@ fun AutoCompleteTextField(
             modifier = Modifier
                 .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryEditable)
                 .fillMaxWidth()
+                .onSizeChanged { anchorWidth = it.width }
                 .runOnEnterKeyPressed { submit() },
             singleLine = true,
             keyboardActions = KeyboardActions { submit() },
@@ -193,7 +200,8 @@ fun AutoCompleteTextField(
             }
         }
         // KMK: shown as soon as the box is tapped, before anything is typed, like a dropdown. A lazy list, so a list
-        // of thousands of tags only builds the rows on screen; its height is bounded because the menu itself scrolls
+        // of thousands of tags only builds the rows on screen. The menu measures its content's intrinsic width,
+        // which a lazy list can't answer, so the list gets a fixed width (the box's) as well as a fixed height
         if (filteredValues.isNotEmpty()) {
             ExposedDropdownMenu(
                 modifier = Modifier
@@ -202,7 +210,9 @@ fun AutoCompleteTextField(
                 onDismissRequest = { expanded = false },
             ) {
                 LazyColumn(
-                    modifier = Modifier.height((filteredValues.size.coerceAtMost(6) * 48).dp),
+                    modifier = Modifier
+                        .width(with(density) { anchorWidth.toDp() }.coerceAtLeast(200.dp))
+                        .height((filteredValues.size.coerceAtMost(6) * 48).dp),
                 ) {
                     items(filteredValues) {
                         DropdownMenuItem(
