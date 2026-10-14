@@ -23,8 +23,14 @@ import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.source.online.HttpSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import logcat.LogPriority
 import okhttp3.CacheControl
 import okhttp3.Call
@@ -47,6 +53,7 @@ import uy.kohesive.injekt.api.get
 import uy.kohesive.injekt.injectLazy
 import java.io.File
 import java.io.IOException
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * A [Fetcher] that fetches cover image for [Manga] object.
@@ -172,6 +179,17 @@ class MangaCoverFetcher(
             }
 
             // KMK -->
+            // A library cover is fetched in the background and kept, even when the cover scrolls out of view before
+            // it arrives (the request is cancelled then): next time it loads from the app's copy
+            if (libraryCoverCacheFile != null &&
+                options.diskCachePolicy.writeEnabled &&
+                options.networkCachePolicy.readEnabled
+            ) {
+                val file = LibraryCoverStore.obtain(libraryCoverCacheFile.path) { fetchLibraryCover(libraryCoverCacheFile) }
+                    .await()
+                return fileLoader(file)
+            }
+
             // A cover kept in the title's download folder ("Save covers in download folders") is used instead of
             // downloading it again, as after a restore
             if (libraryCoverCacheFile != null &&
@@ -232,6 +250,24 @@ class MangaCoverFetcher(
     }
 
     // KMK -->
+    /**
+     * A library cover: from the app's copy, else the title's download folder, else downloaded and written to the
+     * app's copy (and the download folder). Runs in [LibraryCoverStore], so it isn't stopped by scrolling.
+     */
+    private suspend fun fetchLibraryCover(target: File): File {
+        if (target.exists() && target.length() > 0) return target
+        if (CoverFolders.restoreInto(mangaCover.mangaId, mangaCover.sourceId, isAnimeCover(), target)) return target
+        executeNetworkRequest().use { response ->
+            response.body.source().use { writeSourceToCoverCache(it, target) }
+        }
+        if (!target.exists() || target.length() == 0L) {
+            target.delete()
+            throw IOException("Empty cover")
+        }
+        CoverFolders.save(mangaCover.mangaId, mangaCover.sourceId, isAnimeCover(), target)
+        return target
+    }
+
     private class CoverConnection(val client: okhttp3.OkHttpClient, val headers: okhttp3.Headers)
 
     private val animeSourceLazy = lazy {
@@ -484,6 +520,38 @@ class MangaCoverFetcher(
             )
         }
     }
+
+    // KMK -->
+    /**
+     * Library covers being fetched, one job per cover file, a few at a time. A job keeps going when the screen that
+     * asked for it stops waiting, so the cover is kept for next time.
+     */
+    private object LibraryCoverStore {
+        private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        private val gate = Semaphore(PARALLEL_COVERS)
+        private val inFlight = ConcurrentHashMap<String, Deferred<File>>()
+
+        fun obtain(key: String, block: suspend () -> File): Deferred<File> {
+            inFlight[key]?.let { return it }
+            val job = scope.async(start = CoroutineStart.LAZY) {
+                try {
+                    gate.withPermit { block() }
+                } finally {
+                    inFlight.remove(key)
+                }
+            }
+            val existing = inFlight.putIfAbsent(key, job)
+            if (existing != null) {
+                job.cancel()
+                return existing
+            }
+            job.start()
+            return job
+        }
+
+        private const val PARALLEL_COVERS = 6
+    }
+    // KMK <--
 
     companion object {
         val USE_CUSTOM_COVER_KEY = Extras.Key(true)

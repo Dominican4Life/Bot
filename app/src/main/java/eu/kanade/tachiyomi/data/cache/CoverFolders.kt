@@ -30,6 +30,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import logcat.LogPriority
 import logcat.logcat
@@ -37,6 +39,8 @@ import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.manga.interactor.GetFavorites
 import tachiyomi.domain.manga.interactor.GetManga
+import tachiyomi.domain.manga.model.Manga
+import tachiyomi.domain.manga.model.MangaUpdate
 import tachiyomi.domain.manga.model.asMangaCover
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.storage.service.StorageManager
@@ -59,6 +63,9 @@ object CoverFolders {
     private const val SOURCES_WAIT_MS = 20_000L
     private const val PREVIEWS = "previews"
     private const val ADD_DELAY_MS = 3_000L
+    private const val INDEX_TTL_MS = 15 * 60_000L
+    private const val MISS_TTL_MS = 30 * 60_000L
+    private const val IMPORT_UPDATE_CHUNK = 500
 
     /** The folders that sort downloads by kind, not sources */
     private val TYPE_FOLDERS = setOf("manga", "anime")
@@ -93,18 +100,120 @@ object CoverFolders {
     /** Anime covers are drawn with negative ids (kept apart from manga in the cover caches) */
     private fun animeId(id: Long): Long = if (id < 0) -id else id
 
-    /** A title being looked for: the names its folder may have, and its source's name */
-    private class Wanted(val names: List<String>, val sourceName: String?, val exact: String)
+    /** A title being looked for: the names its folder may have, its source's folder and name */
+    private class Wanted(
+        val names: List<String>,
+        val sourceDir: String?,
+        val sourceName: String?,
+        val exact: String,
+    )
 
     /**
-     * The folder holding a title's cover.jpg. First where downloads put it; when that's not there (a source whose
-     * name was different, or that wasn't loaded yet), every source folder is searched for the title's folder, with
-     * upper and lower case not mattering, the title's own source first.
+     * The folder holding a title's cover.jpg, looked up in [FolderIndex] (the download folders listed once), so
+     * scrolling the library doesn't search the SD card again for each cover. A title with no folder is remembered for
+     * a while ([MISS_TTL_MS]) and goes straight to downloading its cover.
      */
     private suspend fun findFolder(id: Long, sourceId: Long, anime: Boolean): UniFile? {
+        val key = missKey(id, anime)
+        misses[key]?.let { at -> if (System.currentTimeMillis() - at < MISS_TTL_MS) return null }
         awaitSources()
-        folder(id, sourceId, anime, create = false)?.let { return it }
         val wanted = wanted(id, sourceId, anime) ?: return null
+        val index = index() ?: return null
+        index.find(wanted, anime)?.let { return it }
+        misses[key] = System.currentTimeMillis()
+        logcat("cover", LogPriority.WARN) { "No download folder for ${wanted.exact}" }
+        return null
+    }
+
+    private fun missKey(id: Long, anime: Boolean) = if (anime) -animeId(id) else id
+
+    /** Titles with no download folder, by when they were looked for */
+    private val misses = ConcurrentHashMap<Long, Long>()
+
+    private suspend fun wanted(id: Long, sourceId: Long, anime: Boolean): Wanted? = runCatching {
+        if (anime) {
+            val title = Injekt.get<AnimeRepository>().getAnime(animeId(id)) ?: return@runCatching null
+            val name = DiskUtil.buildValidFilename(title.title)
+            val sourceName = Injekt.get<AnimeSourceManager>().get(title.source)?.name
+            Wanted(listOf(name), null, sourceName, "Anime/${sourceName ?: title.source}/$name")
+        } else {
+            val manga = Injekt.get<GetManga>().await(id) ?: return@runCatching null
+            if (manga.isLocal()) return@runCatching null
+            wantedManga(manga)
+        }
+    }.getOrNull()
+
+    private fun wantedManga(manga: Manga): Wanted {
+        val source = Injekt.get<SourceManager>().getOrStub(manga.source)
+        val provider = Injekt.get<DownloadProvider>()
+        // Covers saved by r33–r35 went under the displayed title, which differs for renamed titles
+        val names = listOf(manga.ogTitle, manga.title).map(provider::getMangaDirName).distinct()
+        val sourceDir = provider.getSourceDirName(source)
+        return Wanted(
+            names = names,
+            sourceDir = sourceDir,
+            sourceName = source.name.takeIf { it.isNotBlank() },
+            exact = "Manga/$sourceDir/${names.first()}",
+        )
+    }
+
+    /**
+     * Every title folder in the download folders, listed in one go: by "source/title" and by title alone (for a
+     * source whose folder name changed), upper and lower case not mattering. Kept for [INDEX_TTL_MS]; folders made or
+     * removed by the app in the meantime are added or taken out as that happens.
+     */
+    private class FolderIndex(val at: Long) {
+        /** "manga|source/title" or "anime|source/title" */
+        val exact = ConcurrentHashMap<String, UniFile>()
+
+        /** "manga|title" → the folders with that title, with their source folder's name */
+        val byTitle = ConcurrentHashMap<String, MutableList<Pair<String, UniFile>>>()
+
+        fun add(kind: String, sourceDir: String, dir: UniFile) {
+            val title = dir.name?.lowercase() ?: return
+            val source = sourceDir.lowercase()
+            exact["$kind|$source/$title"] = dir
+            byTitle.getOrPut("$kind|$title") { java.util.Collections.synchronizedList(mutableListOf()) }
+                .add(source to dir)
+        }
+
+        fun remove(dir: UniFile) {
+            val uri = dir.uri
+            exact.values.removeAll { it.uri == uri }
+            byTitle.values.forEach { list -> list.removeAll { it.second.uri == uri } }
+        }
+
+        fun find(wanted: Wanted, anime: Boolean): UniFile? {
+            val kind = if (anime) "anime" else "manga"
+            val source = wanted.sourceDir?.lowercase()
+            if (source != null) {
+                wanted.names.firstNotNullOfOrNull { exact["$kind|$source/${it.lowercase()}"] }?.let { return it }
+            }
+            // The title's folder under another source folder: the title's own source first
+            val prefix = wanted.sourceName?.lowercase().orEmpty()
+            return wanted.names.firstNotNullOfOrNull { name ->
+                val found = byTitle["$kind|${name.lowercase()}"]?.toList().orEmpty()
+                (found.firstOrNull { prefix.isNotBlank() && it.first.startsWith(prefix) } ?: found.firstOrNull())
+                    ?.second
+                    ?.also { logcat("cover", LogPriority.INFO) { "Cover folder found as ${it.name}" } }
+            }
+        }
+    }
+
+    @Volatile
+    private var folderIndex: FolderIndex? = null
+    private val indexLock = Mutex()
+
+    /** The download folders' index, listed again once it's [INDEX_TTL_MS] old; null without access to them */
+    private suspend fun index(): FolderIndex? {
+        folderIndex?.takeIf { System.currentTimeMillis() - it.at < INDEX_TTL_MS }?.let { return it }
+        return indexLock.withLock {
+            folderIndex?.takeIf { System.currentTimeMillis() - it.at < INDEX_TTL_MS }?.let { return@withLock it }
+            buildIndex()?.also { folderIndex = it }
+        }
+    }
+
+    private fun buildIndex(): FolderIndex? {
         val storage = Injekt.get<StorageManager>()
         val downloads = storage.getDownloadsDirectory()
         if (downloads == null) {
@@ -113,57 +222,38 @@ object CoverFolders {
             }
             return null
         }
-        // downloads/Manga or downloads/Anime; for manga also downloads itself, where they were before r37
-        val roots = if (anime) {
-            listOfNotNull(storage.getAnimeDownloadsDirectory(create = false))
-        } else {
-            listOfNotNull(storage.getMangaDownloadsDirectory(create = false), downloads)
+        val started = System.currentTimeMillis()
+        val index = FolderIndex(started)
+        // downloads/Manga and downloads/Anime; for manga also downloads itself, where they were before r37
+        val roots = listOfNotNull(
+            storage.getMangaDownloadsDirectory(create = false)?.let { "manga" to it },
+            "manga" to downloads,
+            storage.getAnimeDownloadsDirectory(create = false)?.let { "anime" to it },
+        )
+        roots.forEach { (kind, root) ->
+            root.listFiles().orEmpty()
+                .filter { it.isDirectory && (it.name ?: "").lowercase() !in TYPE_FOLDERS }
+                .forEach { sourceDir ->
+                    val sourceName = sourceDir.name ?: return@forEach
+                    sourceDir.listFiles().orEmpty().filter { it.isDirectory }.forEach { index.add(kind, sourceName, it) }
+                }
         }
-        val sourceDirs = roots.flatMap { root -> children(root).values }
-            .filter { it.isDirectory && (it.name ?: "").lowercase() !in TYPE_FOLDERS }
-        val prefix = wanted.sourceName?.lowercase()
-        val ordered = if (prefix.isNullOrBlank()) {
-            sourceDirs
-        } else {
-            sourceDirs.sortedByDescending { (it.name ?: "").lowercase().startsWith(prefix) }
+        // Titles missed before may have a folder now
+        misses.clear()
+        logcat("cover", LogPriority.INFO) {
+            "Download folders listed: ${index.exact.size} titles in ${System.currentTimeMillis() - started} ms"
         }
-        for (dir in ordered) {
-            val inside = children(dir)
-            wanted.names.firstNotNullOfOrNull { inside[it.lowercase()] }?.let { found ->
-                logcat("cover", LogPriority.INFO) { "Cover folder found as ${dir.name}/${found.name}" }
-                return found
-            }
-        }
-        return miss(wanted)
+        return index
     }
 
-    private fun miss(wanted: Wanted): UniFile? {
-        logcat("cover", LogPriority.WARN) { "No download folder for ${wanted.exact}" }
-        return null
+    /** Lists the download folders again the next time a cover is looked for */
+    private fun forgetIndex() {
+        folderIndex = null
+        misses.clear()
+        listings.clear()
     }
 
-    private suspend fun wanted(id: Long, sourceId: Long, anime: Boolean): Wanted? = runCatching {
-        if (anime) {
-            val title = Injekt.get<AnimeRepository>().getAnime(animeId(id)) ?: return@runCatching null
-            val name = DiskUtil.buildValidFilename(title.title)
-            val sourceName = Injekt.get<AnimeSourceManager>().get(title.source)?.name
-            Wanted(listOf(name), sourceName, "Anime/${sourceName ?: title.source}/$name")
-        } else {
-            val manga = Injekt.get<GetManga>().await(id) ?: return@runCatching null
-            if (manga.isLocal()) return@runCatching null
-            val source = Injekt.get<SourceManager>().getOrStub(manga.source)
-            val provider = Injekt.get<DownloadProvider>()
-            // Covers saved by r33–r35 went under the displayed title, which differs for renamed titles
-            val names = listOf(manga.ogTitle, manga.title).map(provider::getMangaDirName).distinct()
-            Wanted(
-                names = names,
-                sourceName = source.name.takeIf { it.isNotBlank() },
-                exact = "Manga/${provider.getSourceDirName(source)}/${names.first()}",
-            )
-        }
-    }.getOrNull()
-
-    /** Folder contents by lower-case name, kept for a short while so a screen of covers doesn't list them each time */
+    /** Folder contents by lower-case name, kept for a short while so a folder isn't listed twice in a row */
     private val listings = ConcurrentHashMap<String, Pair<Long, Map<String, UniFile>>>()
 
     private fun children(dir: UniFile): Map<String, UniFile> {
@@ -188,7 +278,7 @@ object CoverFolders {
 
     /**
      * Copies the title's saved cover.jpg into [target] (the app's cover copy). True when there was one, so the cover
-     * doesn't need downloading.
+     * doesn't need downloading. From then on the cover loads from the app's copy, not the folder.
      */
     suspend fun restoreInto(id: Long, sourceId: Long, anime: Boolean, target: File): Boolean {
         if (!enabled) {
@@ -196,6 +286,10 @@ object CoverFolders {
             return false
         }
         val dir = findFolder(id, sourceId, anime) ?: return false
+        return copyInto(dir, target)
+    }
+
+    private fun copyInto(dir: UniFile, target: File): Boolean {
         val saved = children(dir)[COVER_NAME] ?: dir.findFile(COVER_NAME)
         if (saved == null) {
             logcat("cover", LogPriority.WARN) { "No $COVER_NAME in ${dir.name}" }
@@ -205,10 +299,12 @@ object CoverFolders {
             target.parentFile?.mkdirs()
             saved.openInputStream().use { input -> target.outputStream().use { input.copyTo(it) } }
             (target.length() > 0).also { ok ->
-                if (ok) logcat("cover", LogPriority.DEBUG) { "Cover read from ${dir.name}/$COVER_NAME" }
+                if (ok) {
+                    logcat("cover", LogPriority.DEBUG) { "Cover read from ${dir.name}/$COVER_NAME" }
+                } else {
+                    target.delete()
+                }
             }
-        } catch (e: CancellationException) {
-            throw e
         } catch (e: Exception) {
             logcat("cover", LogPriority.WARN) { "Couldn't read ${dir.name}/$COVER_NAME: ${e.message}" }
             target.delete()
@@ -216,34 +312,78 @@ object CoverFolders {
         }
     }
 
-    /**
-     * After a restore: library titles whose cover isn't on the device get it from their download folder, and are
-     * redrawn. Nothing is downloaded here.
-     */
+    @Volatile
+    private var importJob: Job? = null
+
+    val isImporting: Boolean get() = importJob?.isActive == true
+
+    /** After a restore: the covers missing from the device come from the download folders, quietly */
     fun fillMissingAfterRestore() {
         if (!enabled) return
-        scope.launch {
+        importAll(Injekt.get<Application>(), notify = false)
+    }
+
+    /**
+     * "Import covers from download folders": every library title whose cover isn't on the device gets its saved
+     * cover.jpg copied into the app, once, with a progress notification. The download folders are listed a single
+     * time for all of them, and the library is redrawn once at the end. Nothing is downloaded here.
+     */
+    fun importAll(context: Context, notify: Boolean = true) {
+        if (isImporting) return
+        val app = context.applicationContext
+        importJob = scope.launch {
             awaitSources()
+            forgetIndex()
+            val index = index()
+            val title = app.stringResource(KMR.strings.import_covers_title)
+            if (index == null) {
+                if (notify) done(app, title, app.stringResource(KMR.strings.import_covers_no_access))
+                return@launch
+            }
             val coverCache = Injekt.get<CoverCache>()
-            val updateManga = Injekt.get<UpdateManga>()
-            var filled = 0
-            Injekt.get<GetFavorites>().await()
+            val manga = Injekt.get<GetFavorites>().await()
                 .filter { !it.isLocal() && RefreshMissingCovers.isMissing(it, coverCache) }
-                .forEach { manga ->
-                    currentCoroutineContext().ensureActive()
-                    val target = coverCache.getCoverFile(manga.thumbnailUrl) ?: return@forEach
-                    if (restoreInto(manga.id, manga.source, anime = false, target)) {
-                        updateManga.awaitUpdateCoverLastModified(manga.id)
-                        filled++
-                    }
+            val anime = runCatching { Injekt.get<AnimeRepository>().getFavorites() }.getOrDefault(emptyList())
+                .filter { coverCache.getCoverFile(it.thumbnailUrl)?.exists() == false }
+            val total = manga.size + anime.size
+            val filled = mutableListOf<Long>()
+            var noFolder = 0
+            var checked = 0
+            manga.forEach { item ->
+                currentCoroutineContext().ensureActive()
+                val target = coverCache.getCoverFile(item.thumbnailUrl)
+                val dir = index.find(wantedManga(item), anime = false)
+                when {
+                    target == null -> Unit
+                    dir == null -> noFolder++
+                    copyInto(dir, target) -> filled += item.id
                 }
-            runCatching { Injekt.get<AnimeRepository>().getFavorites() }.getOrDefault(emptyList())
-                .forEach { anime ->
-                    currentCoroutineContext().ensureActive()
-                    val target = coverCache.getCoverFile(anime.thumbnailUrl) ?: return@forEach
-                    if (!target.exists() && restoreInto(anime.id, anime.source, anime = true, target)) filled++
+                if (notify && ++checked % 20 == 0) progress(app, title, checked, total)
+            }
+            var animeFilled = 0
+            anime.forEach { item ->
+                currentCoroutineContext().ensureActive()
+                val target = coverCache.getCoverFile(item.thumbnailUrl)
+                val dir = wanted(item.id, item.source, anime = true)?.let { index.find(it, anime = true) }
+                when {
+                    target == null -> Unit
+                    dir == null -> noFolder++
+                    copyInto(dir, target) -> animeFilled++
                 }
-            logcat("cover", LogPriority.INFO) { "After the restore, $filled covers came from download folders" }
+                if (notify && ++checked % 20 == 0) progress(app, title, checked, total)
+            }
+            // One update for all of them, so the library is redrawn once instead of once per cover
+            if (filled.isNotEmpty()) {
+                val now = java.time.Instant.now().toEpochMilli()
+                filled.chunked(IMPORT_UPDATE_CHUNK).forEach { ids ->
+                    Injekt.get<UpdateManga>().awaitAll(ids.map { MangaUpdate(id = it, coverLastModified = now) })
+                }
+            }
+            val imported = filled.size + animeFilled
+            logcat("cover", LogPriority.INFO) {
+                "Covers imported from download folders: $imported of $total missing ($noFolder had no folder)"
+            }
+            if (notify) done(app, title, app.stringResource(KMR.strings.import_covers_done, imported, total))
         }
     }
 
@@ -258,8 +398,10 @@ object CoverFolders {
         return try {
             val dir = folder(id, sourceId, anime, create = true) ?: return false
             val file = dir.findFile(COVER_NAME) ?: dir.createFile(COVER_NAME) ?: return false
-            if (file.length() == cover.length()) return true
-            file.openOutputStream().use { out -> cover.inputStream().use { it.copyTo(out) } }
+            if (file.length() != cover.length()) {
+                file.openOutputStream().use { out -> cover.inputStream().use { it.copyTo(out) } }
+            }
+            remember(dir, id, anime)
             true
         } catch (e: CancellationException) {
             throw e
@@ -300,24 +442,42 @@ object CoverFolders {
 
     private fun animeIdOr(id: Long, anime: Boolean) = if (anime) animeId(id) else id
 
+    /** A folder the app just wrote to: added to the index, and the title isn't a miss anymore */
+    private fun remember(dir: UniFile, id: Long, anime: Boolean) {
+        misses.remove(missKey(id, anime))
+        val sourceDir = dir.parentFile?.name ?: return
+        folderIndex?.add(if (anime) "anime" else "manga", sourceDir, dir)
+    }
+
     /**
      * A title taken out of the library: what was made for it here goes (cover.jpg and the episode previews), and its
      * folder too when nothing else is left in it. Downloaded chapters or episodes are left to the remove choice.
      */
     fun onRemovedFromLibrary(id: Long, anime: Boolean) {
-        scope.launch {
-            try {
-                val dir = folder(id, 0L, anime, create = false) ?: return@launch
-                dir.findFile(COVER_NAME)?.delete()
-                dir.findFile(PREVIEWS)?.delete()
-                if (dir.listFiles().isNullOrEmpty()) dir.delete()
-                listings.clear()
-                logcat("cover", LogPriority.DEBUG) { "Cover folder cleaned up for ${dir.name}" }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                logcat("cover", LogPriority.WARN) { "Couldn't clean up a removed title's folder: ${e.message}" }
+        scope.launch { cleanUp(id, anime) }
+    }
+
+    /** Many manga taken out at once: their folders are cleaned one after another, in the background */
+    fun onRemovedFromLibrary(mangaIds: List<Long>) {
+        if (mangaIds.isEmpty()) return
+        scope.launch { mangaIds.forEach { cleanUp(it, anime = false) } }
+    }
+
+    private suspend fun cleanUp(id: Long, anime: Boolean) {
+        try {
+            val dir = folder(id, 0L, anime, create = false) ?: return
+            dir.findFile(COVER_NAME)?.delete()
+            dir.findFile(PREVIEWS)?.delete()
+            if (dir.listFiles().isNullOrEmpty()) {
+                dir.delete()
+                folderIndex?.remove(dir)
             }
+            listings.remove(dir.uri.toString())
+            logcat("cover", LogPriority.DEBUG) { "Cover folder cleaned up for ${dir.name}" }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logcat("cover", LogPriority.WARN) { "Couldn't clean up a removed title's folder: ${e.message}" }
         }
     }
 
@@ -366,6 +526,7 @@ object CoverFolders {
         if (isSavingAll || (!force && !enabled)) return
         val app = context.applicationContext
         saveAllJob = scope.launch {
+            forgetIndex()
             val coverCache = Injekt.get<CoverCache>()
             val manga = Injekt.get<GetFavorites>().await().filterNot { it.isLocal() }.map { manga ->
                 Triple(manga.id, manga.source, coverOf(coverCache, manga.id, manga.thumbnailUrl))

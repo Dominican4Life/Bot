@@ -24,6 +24,7 @@ import eu.kanade.presentation.components.SEARCH_DEBOUNCE_MILLIS
 import eu.kanade.presentation.library.components.LibraryToolbarTitle
 import eu.kanade.presentation.manga.DownloadAction
 import eu.kanade.tachiyomi.data.cache.CoverCache
+import eu.kanade.tachiyomi.data.cache.CoverFolders
 import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
@@ -35,6 +36,7 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.source.online.all.MergedSource
 import eu.kanade.tachiyomi.util.chapter.getNextUnread
 import eu.kanade.tachiyomi.util.removeCovers
+import eu.kanade.tachiyomi.util.system.toast
 import exh.favorites.FavoritesSyncHelper
 import exh.log.xLogE
 import exh.md.utils.FollowStatus
@@ -90,6 +92,7 @@ import tachiyomi.core.common.util.lang.compareToWithCollator
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.launchNonCancellable
 import tachiyomi.core.common.util.lang.withIOContext
+import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.category.interactor.SetMangaCategories
 import tachiyomi.domain.category.model.Category
@@ -121,6 +124,7 @@ import tachiyomi.domain.track.interactor.GetTracks
 import tachiyomi.domain.track.interactor.GetTracksPerManga
 import tachiyomi.domain.track.model.Track
 import tachiyomi.i18n.MR
+import tachiyomi.i18n.kmk.KMR
 import tachiyomi.i18n.sy.SYMR
 import tachiyomi.source.local.LocalSource
 import tachiyomi.source.local.isLocal
@@ -1111,18 +1115,21 @@ class LibraryScreenModel(
      */
     fun removeMangas(mangas: List<Manga>, deleteFromLibrary: Boolean, deleteChapters: Boolean) {
         screenModelScope.launchNonCancellable {
-            if (deleteFromLibrary) {
-                val toDelete = mangas
-                    .distinctBy { it.id }
-                    .map {
-                        it.removeCovers(coverCache)
-                        MangaUpdate(
-                            favorite = false,
-                            id = it.id,
-                        )
-                    }
-                updateManga.awaitAll(toDelete)
+            // KMK -->
+            // A big removal says so right away, and when it's done: the work below can take a while
+            val distinct = mangas.distinctBy { it.id }
+            val app = Injekt.get<Application>()
+            val announce = distinct.size >= BULK_REMOVE_NOTICE
+            if (announce) {
+                withUIContext { app.toast(app.stringResource(KMR.strings.removing_entries, distinct.size)) }
             }
+            if (deleteFromLibrary) {
+                // Out of the library first, in one write, so the titles disappear straight away; their cover files
+                // are cleaned up after that
+                updateManga.awaitAll(distinct.map { MangaUpdate(favorite = false, id = it.id) })
+                distinct.forEach { it.removeCovers(coverCache) }
+            }
+            // KMK <--
 
             if (deleteChapters) {
                 mangas.forEach { manga ->
@@ -1144,6 +1151,15 @@ class LibraryScreenModel(
                     }
                 }
             }
+            // KMK -->
+            // The saved cover.jpg in each removed title's download folder goes too, as when removing one title
+            if (deleteFromLibrary) {
+                CoverFolders.onRemovedFromLibrary(distinct.map { it.id })
+            }
+            if (announce) {
+                withUIContext { app.toast(app.stringResource(KMR.strings.removed_entries, distinct.size)) }
+            }
+            // KMK <--
         }
     }
 
@@ -1818,6 +1834,9 @@ class LibraryScreenModel(
 
     // KMK -->
     companion object {
+        // KMK: removals this big show a "Removing…" and a "Removed" message
+        private const val BULK_REMOVE_NOTICE = 50
+
         /** List of MangaDex UUIDs subject to DMCA takedowns */
         @Volatile
         private var mangaDexDmcaUuids = hashSetOf<String>()

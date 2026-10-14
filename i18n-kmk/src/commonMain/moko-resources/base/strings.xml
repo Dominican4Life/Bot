@@ -518,4 +518,12 @@
     <string name="pref_save_covers_in_folders_summary">Each library title\'s cover is kept as cover.jpg in its download folder (and an anime\'s episode previews with it), so after a restore they load from the device instead of being downloaded again. Turning this on saves your whole library\'s covers.</string>
     <string name="save_covers_title">Saving covers to folders</string>
     <string name="save_covers_done">Saved %1$d covers</string>
+    <string name="import_covers_title">Import covers from download folders</string>
+    <string name="import_covers_summary">Copies each library title\'s saved cover.jpg from its download folder into the app, once, so covers load from the app instead of being looked for on the device each time</string>
+    <string name="import_covers_started">Importing covers in the background</string>
+    <string name="import_covers_running">Covers are already being imported</string>
+    <string name="import_covers_no_access">No access to the download folder: choose it again in Data and storage</string>
+    <string name="import_covers_done">Imported %1$d of %2$d missing covers</string>
+    <string name="removing_entries">Removing %1$d entries…</string>
+    <string name="removed_entries">Removed %1$d entries</string>
 </resources>

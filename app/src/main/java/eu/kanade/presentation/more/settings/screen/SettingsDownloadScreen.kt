@@ -14,6 +14,7 @@ import eu.kanade.presentation.category.visualName
 import eu.kanade.presentation.more.settings.Preference
 import eu.kanade.presentation.more.settings.widget.TriStateListDialog
 import eu.kanade.tachiyomi.data.cache.CoverFolders
+import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.toImmutableMap
@@ -69,6 +70,19 @@ object SettingsDownloadScreen : SearchableSettings {
                 onValueChanged = { on ->
                     if (on) CoverFolders.saveAll(context, force = true)
                     true
+                },
+            ),
+            // The reverse of saving: covers kept in the download folders are copied into the app, once
+            Preference.PreferenceItem.TextPreference(
+                title = stringResource(KMR.strings.import_covers_title),
+                subtitle = stringResource(KMR.strings.import_covers_summary),
+                onClick = {
+                    if (CoverFolders.isImporting) {
+                        context.toast(KMR.strings.import_covers_running)
+                    } else {
+                        CoverFolders.importAll(context)
+                        context.toast(KMR.strings.import_covers_started)
+                    }
                 },
             ),
             // KMK <--
