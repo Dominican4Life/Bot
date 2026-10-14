@@ -317,10 +317,10 @@ object CoverFolders {
 
     val isImporting: Boolean get() = importJob?.isActive == true
 
-    /** After a restore: the covers missing from the device come from the download folders, quietly */
+    /** After a restore: the covers missing from the device come from the download folders, with progress shown */
     fun fillMissingAfterRestore() {
         if (!enabled) return
-        importAll(Injekt.get<Application>(), notify = false)
+        importAll(Injekt.get<Application>())
     }
 
     /**
