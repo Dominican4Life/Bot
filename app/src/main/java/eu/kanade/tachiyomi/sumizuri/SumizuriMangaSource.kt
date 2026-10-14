@@ -11,16 +11,11 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import eu.kanade.tachiyomi.source.online.HttpSource
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import logcat.LogPriority
 import okhttp3.Headers
 import okhttp3.Response
-import tachiyomi.core.common.util.QuerySanitizer.sanitize
-import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
@@ -39,8 +34,7 @@ class SumizuriMangaSource(
     override val versionId: Int = 1
     override val supportsLatest: Boolean = true
 
-    // Suggestions come from searching the title and its words. Here they run one after another with a short gap
-    // (see getRelatedMangaListBySearch), not all at once, which sites answer with 429 (too many requests)
+    // Suggestions work as for APK sources: the title and each of its words are searched (Source's default)
     override val baseUrl: String = info.baseUrl.trimEnd('/')
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder().apply {
@@ -66,34 +60,6 @@ class SumizuriMangaSource(
         webUrls.remember(list)
         val mangas = list.mapNotNull { SumizuriMapping.toSManga(it) }
         return MangasPage(mangas, hasNextPage = mangas.isNotEmpty())
-    }
-
-    /** Suggestions: the full title first, then up to [MAX_RELATED_WORDS] of its words, one search at a time */
-    override suspend fun getRelatedMangaListBySearch(
-        manga: SManga,
-        pushResults: suspend (relatedManga: Pair<String, List<SManga>>, completed: Boolean) -> Unit,
-    ) {
-        val words = LinkedHashSet<String>()
-        words.add(manga.title)
-        if (manga.title.lowercase() != manga.originalTitle.lowercase()) words.add(manga.originalTitle)
-        (manga.title.stripKeywordForRelatedMangas() + manga.originalTitle.stripKeywordForRelatedMangas())
-            .filterNot { word -> words.any { it.lowercase() == word } }
-            .distinct()
-            .take(MAX_RELATED_WORDS)
-            .forEach { words.add(it) }
-        val filterList = getFilterList()
-        words.filter { it.isNotBlank() }.forEachIndexed { index, keyword ->
-            if (index > 0) delay(RELATED_SEARCH_GAP_MS)
-            try {
-                val found = getSearchManga(1, keyword.sanitize(), filterList).mangas
-                    .filterNot { it.url == manga.url }
-                if (found.isNotEmpty()) pushResults(Pair(keyword, found), false)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                logcat(LogPriority.WARN, e) { "Suggestions search failed for \"$keyword\"" }
-            }
-        }
     }
 
     override suspend fun getPopularManga(page: Int): MangasPage = listing("getPopular", page)
@@ -349,9 +315,4 @@ class SumizuriMangaSource(
     }
 
     override fun toString(): String = "$name (${if (info.json) "JSON" else "JS"})"
-
-    private companion object {
-        const val MAX_RELATED_WORDS = 5
-        const val RELATED_SEARCH_GAP_MS = 1_500L
-    }
 }
