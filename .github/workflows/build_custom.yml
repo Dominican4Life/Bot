@@ -70,11 +70,15 @@ jobs:
           body=$(sed 's/%/%25/g' errors.txt | sed ':a;N;$!ba;s/\n/%0A/g')
           echo "::error title=Build errors::${body}"
 
+      # The release below is where APKs are downloaded from; this copy is only kept a few days, and a full artifact
+      # storage quota doesn't stop the release
       - name: Upload APKs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        continue-on-error: true
         with:
           name: Komikku-preview-${{ github.sha }}
           path: app/build/outputs/apk/preview/*.apk
+          retention-days: 3
 
       # Publish the APK as a release so it can be downloaded directly on the device
       - name: Publish release
