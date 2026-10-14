@@ -162,6 +162,7 @@ class SumizuriManager(private val context: Application) {
             catalogs = optional("getCatalogs", "hasCatalogs"),
             preferences = optional("getSourcePreferences", "hasPreferences"),
             hasTags = meta.bool("hasTags") == true,
+            hasRelated = meta.bool("hasRelated") == true,
             customId = customId(meta.str("id"), key, meta.str("name")),
             enabled = existing?.enabled ?: true,
             createdAt = existing?.createdAt ?: System.currentTimeMillis(),
@@ -320,7 +321,8 @@ class SumizuriManager(private val context: Application) {
             runCatching {
                 val fresh = describe(runtime(info), info.key, info.json, info.anime, info).copy(updatedAt = info.updatedAt)
                 val changed = fresh.filters != info.filters || fresh.catalogs != info.catalogs ||
-                    fresh.preferences != info.preferences || fresh.hasTags != info.hasTags
+                    fresh.preferences != info.preferences || fresh.hasTags != info.hasTags ||
+                    fresh.hasRelated != info.hasRelated
                 if (changed) {
                     File(dir(info.key), META).writeText(sumizuriJson.encodeToString(SumizuriSourceInfo.serializer(), fresh))
                     _saved.value = _saved.value.map { if (it.key == info.key) fresh else it }
