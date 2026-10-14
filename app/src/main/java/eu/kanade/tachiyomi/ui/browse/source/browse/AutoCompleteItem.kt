@@ -5,6 +5,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -33,7 +36,6 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.util.fastForEach
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -126,6 +128,8 @@ fun AutoCompleteTextField(
     fun submit() {
         if (onSubmit(value.text)) {
             focusManager.clearFocus()
+            // KMK: the list now also shows for an empty box, so close it after a pick
+            expanded = false
             value = TextFieldValue("")
         }
     }
@@ -172,9 +176,10 @@ fun AutoCompleteTextField(
         val filteredValues by produceState(emptyList(), value) {
             withContext(Dispatchers.Default) {
                 val (filter, prefix) = onValueFilter(value.text)
+                // KMK: every match, not only the first 100: the list scrolls, so tapping the empty box shows the
+                // whole tag list and typing narrows it down
                 this@produceState.value = values.asSequence()
                     .filter(filter)
-                    .take(100)
                     .let {
                         if (prefix != null) {
                             it.map { tag ->
@@ -187,21 +192,27 @@ fun AutoCompleteTextField(
                     .toList()
             }
         }
-        if (value.text.length > 2 && filteredValues.isNotEmpty()) {
+        // KMK: shown as soon as the box is tapped, before anything is typed, like a dropdown. A lazy list, so a list
+        // of thousands of tags only builds the rows on screen; its height is bounded because the menu itself scrolls
+        if (filteredValues.isNotEmpty()) {
             ExposedDropdownMenu(
                 modifier = Modifier
                     .exposedDropdownSize(matchAnchorWidth = true),
                 expanded = expanded,
                 onDismissRequest = { expanded = false },
             ) {
-                filteredValues.fastForEach {
-                    DropdownMenuItem(
-                        text = { Text(it) },
-                        onClick = {
-                            value = TextFieldValue(it, TextRange(it.length))
-                            submit()
-                        },
-                    )
+                LazyColumn(
+                    modifier = Modifier.height((filteredValues.size.coerceAtMost(6) * 48).dp),
+                ) {
+                    items(filteredValues) {
+                        DropdownMenuItem(
+                            text = { Text(it) },
+                            onClick = {
+                                value = TextFieldValue(it, TextRange(it.length))
+                                submit()
+                            },
+                        )
+                    }
                 }
             }
         }

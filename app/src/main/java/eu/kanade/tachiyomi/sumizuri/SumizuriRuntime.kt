@@ -47,7 +47,7 @@ class SumizuriRuntime private constructor(
 
     fun clearConsole() = host.console.clear()
 
-    /** name, lang, iconUrl, baseUrl, hasPopular, hasLatest, hasDetails, hasFilters, hasTags, hasCatalogs, hasPreferences, rateLimitMs, headers */
+    /** name, lang, iconUrl, baseUrl, hasPopular, hasLatest, hasDetails, hasFilters, hasTags, hasRelated, hasCatalogs, hasPreferences, rateLimitMs, headers */
     suspend fun metadata(): JsonObject = mutex.withLock {
         val text = qjs.evaluate<String>(METADATA_SCRIPT, "<metadata>")
         sumizuriJson.parseToJsonElement(text).jsonObject.also { meta ->
@@ -504,6 +504,7 @@ class SumizuriRuntime private constructor(
                 hasDetails: typeof extension.getDetails === 'function',
                 hasFilters: typeof extension.getFilters === 'function',
                 hasTags: typeof extension.getTags === 'function',
+                hasRelated: typeof extension.getRelated === 'function',
                 hasCatalogs: typeof extension.getCatalogs === 'function' && typeof extension.getCatalog === 'function',
                 hasPreferences: typeof extension.getSourcePreferences === 'function' || typeof getSourcePreferences === 'function',
                 hasVideos: typeof extension.getVideoList === 'function',

@@ -34,7 +34,18 @@ class SumizuriMangaSource(
     override val versionId: Int = 1
     override val supportsLatest: Boolean = true
 
-    // Suggestions work as for APK sources: the title and each of its words are searched (Source's default)
+    // Suggestions work as for APK sources: the title and each of its words are searched (Source's default).
+    // KMK: a source with getRelated(url) gives its own instead, the way an APK with its own related list does,
+    // and then the title searches are left out
+    override val disableRelatedMangasBySearch: Boolean get() = info.hasRelated
+
+    override suspend fun fetchRelatedMangaList(manga: SManga): List<SManga> {
+        if (!info.hasRelated) return emptyList()
+        val list = SumizuriMapping.list(runtime().call("getRelated", manga.url))
+        webUrls.remember(list)
+        return list.mapNotNull { SumizuriMapping.toSManga(it) }.filter { it.url != manga.url }
+    }
+
     override val baseUrl: String = info.baseUrl.trimEnd('/')
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder().apply {
