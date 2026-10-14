@@ -86,6 +86,9 @@ class BackupRestorer(
 
         restoreFromFile(uri, options)
 
+        // KMK: library covers that aren't on the device come back from the titles' download folders
+        if (options.libraryEntries) eu.kanade.tachiyomi.data.cache.CoverFolders.fillMissingAfterRestore()
+
         val time = System.currentTimeMillis() - startTime
 
         val logFile = writeErrorLog()
