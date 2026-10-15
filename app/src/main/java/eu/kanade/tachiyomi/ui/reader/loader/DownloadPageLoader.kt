@@ -8,6 +8,7 @@ import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.Page
+import eu.kanade.tachiyomi.sumizuri.ChapterVideoDownloads
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import mihon.core.archive.archiveReader
@@ -44,8 +45,11 @@ internal class DownloadPageLoader(
         )
         return if (chapterPath?.isFile == true) {
             getPagesFromArchive(chapterPath)
+                // KMK: video pages get their saved videos back
+                .also { ChapterVideoDownloads.attachFromArchive(it, chapterPath) }
         } else {
             getPagesFromDirectory()
+                .also { ChapterVideoDownloads.attachFromDirectory(it, chapterPath) }
         }
     }
 
@@ -65,6 +69,8 @@ internal class DownloadPageLoader(
             ReaderPage(page.index, page.url, page.imageUrl) {
                 context.contentResolver.openInputStream(page.uri ?: Uri.EMPTY)!!
             }.apply {
+                // KMK: kept so a saved chapter video can be matched to its page
+                uri = page.uri
                 status = Page.State.Ready
             }
         }

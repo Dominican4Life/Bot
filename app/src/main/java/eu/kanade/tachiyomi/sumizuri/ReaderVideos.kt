@@ -157,6 +157,12 @@ object ReaderVideos {
      */
     suspend fun videosOf(pageUrl: String): List<Video> {
         val data = decode(pageUrl) ?: return emptyList()
+        // KMK: a video saved in a downloaded chapter archive is copied out, then played from the file
+        data.str("archive")?.let { archive ->
+            val entry = data.str("entry") ?: return emptyList()
+            val path = withIOContext { ChapterVideoDownloads.extract(archive, entry) }
+            return listOf(Video(videoUrl = path, videoTitle = "Downloaded", initialized = true))
+        }
         val listUrl = data.str("listUrl")
         if (listUrl != null) {
             val source = data.str("sourceId")?.toLongOrNull()

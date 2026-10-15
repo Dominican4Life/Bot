@@ -37,6 +37,7 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.BrokenImage
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.CircularProgressIndicator
@@ -52,6 +53,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -68,11 +70,15 @@ import coil3.request.ImageRequest
 import coil3.request.crossfade
 import eu.kanade.presentation.manga.components.ChapterDownloadAction
 import eu.kanade.tachiyomi.source.model.Page
+import eu.kanade.tachiyomi.sumizuri.ReaderVideos
 import eu.kanade.tachiyomi.ui.reader.chapter.ReaderChapterItem
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
+import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.collections.immutable.ImmutableList
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
@@ -402,6 +408,11 @@ private fun PageThumbnail(
             }
         }
 
+        // KMK: a video page gets the reader's round play button; tapping it plays the video
+        if (ReaderVideos.isVideo(page.url)) {
+            VideoPlayButton(page)
+        }
+
         // Page number badge
         Box(
             modifier = Modifier
@@ -426,5 +437,38 @@ private fun PageThumbnail(
                 color = if (isCurrent) MaterialTheme.colorScheme.onPrimary else Color.White,
             )
         }
+    }
+}
+
+/** KMK: the reader's play button (dark circle, white ring, white arrow), sized for a page thumbnail */
+@Composable
+private fun VideoPlayButton(page: ReaderPage) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    Box(
+        modifier = Modifier
+            .size(44.dp)
+            .clip(CircleShape)
+            .background(Color.Black.copy(alpha = 170f / 255f))
+            .border(BorderStroke(1.5.dp, Color.White.copy(alpha = 200f / 255f)), CircleShape)
+            .clickable {
+                scope.launch {
+                    try {
+                        ReaderVideos.play(context, page)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        context.toast("Couldn't play this video: ${e.message}")
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = Icons.Filled.PlayArrow,
+            contentDescription = "Play video",
+            tint = Color.White,
+            modifier = Modifier.size(28.dp),
+        )
     }
 }
