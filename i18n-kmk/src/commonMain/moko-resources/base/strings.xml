@@ -301,7 +301,6 @@
     <string name="anime_episode_number">Episode %1$s</string>
     <string name="anime_clear_episodes">Remove the saved episode list? It will be fetched again from the source.</string>
     <string name="anime_downloads_coming">Anime downloads are coming in the next update</string>
-    <string name="anime_no_source_settings">This source has no settings</string>
     <string name="anime_preview_tap_to_play">Tap to preview %1$s</string>
     <string name="anime_preview_loading">Loading video…</string>
     <string name="anime_preview_no_videos">No videos found for this episode</string>

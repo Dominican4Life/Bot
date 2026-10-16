@@ -335,6 +335,8 @@ class AnimeScreenModel(
             DownloadAction.NEXT_25_CHAPTERS -> unseen.take(25)
             DownloadAction.UNREAD_CHAPTERS -> unseen
             DownloadAction.BOOKMARKED_CHAPTERS -> inOrder.filter { it.bookmark }
+            // KMK: every episode, seen or not
+            DownloadAction.ALL_CHAPTERS -> inOrder
         }
         episodes.groupBy { state.value.animeOf(it) ?: anime }
             .forEach { (owner, list) -> downloadManager.enqueue(owner, list) }

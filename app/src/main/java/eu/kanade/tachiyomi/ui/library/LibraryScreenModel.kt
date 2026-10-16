@@ -904,6 +904,8 @@ class LibraryScreenModel(
             DownloadAction.NEXT_25_CHAPTERS -> downloadNextChapters(25)
             DownloadAction.UNREAD_CHAPTERS -> downloadNextChapters(null)
             DownloadAction.BOOKMARKED_CHAPTERS -> downloadBookmarkedChapters()
+            // KMK: only offered on a title page; here it means every unread chapter
+            DownloadAction.ALL_CHAPTERS -> downloadNextChapters(null)
         }
         clearSelection()
     }

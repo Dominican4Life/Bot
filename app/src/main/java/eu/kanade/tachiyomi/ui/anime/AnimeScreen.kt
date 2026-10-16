@@ -90,14 +90,12 @@ import eu.kanade.presentation.manga.components.ScanlatorFilterDialog
 import eu.kanade.presentation.theme.CoverSeedTheme
 import eu.kanade.presentation.util.Screen
 import eu.kanade.presentation.util.isTabletUi
-import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.data.anime.Anime
 import eu.kanade.tachiyomi.data.anime.Episode
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.ui.anime.source.AnimeSourceScreen
-import eu.kanade.tachiyomi.ui.browse.extension.details.SourcePreferencesScreen
 import eu.kanade.tachiyomi.ui.player.PlayerActivity
 import eu.kanade.tachiyomi.ui.player.settings.PlayerPreferences
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
@@ -194,14 +192,6 @@ class AnimeScreen(private val animeId: Long) : Screen() {
             onEpisodeDownload = screenModel::episodeDownloadAction,
             onEditNotes = { dialog = AnimeDialog.Notes },
             onClearAnime = { dialog = AnimeDialog.Clear },
-            onSourceSettings = {
-                val source = screenModel.source
-                if (source is ConfigurableAnimeSource) {
-                    navigator.push(SourcePreferencesScreen(source.id, anime = true))
-                } else {
-                    context.toast(KMR.strings.anime_no_source_settings)
-                }
-            },
             onRelatedScreen = { navigator.push(AnimeRelatedScreen(anime.id)) },
             onMerge = { navigator.push(AnimeGlobalSearchScreen(anime.title, mergeIntoId = anime.id)) },
             onMergeSettings = { dialog = AnimeDialog.MergeSettings },
@@ -287,7 +277,6 @@ private class AnimeActions(
     val onEpisodeDownload: (Episode, ChapterDownloadAction) -> Unit,
     val onEditNotes: () -> Unit,
     val onClearAnime: () -> Unit,
-    val onSourceSettings: () -> Unit,
     val onRelatedScreen: () -> Unit,
     val onMerge: () -> Unit,
     val onMergeSettings: () -> Unit,
@@ -397,12 +386,10 @@ private fun AnimeToolbar(
         onClickShare = actions.onShare,
         onClickDownload = actions.onDownload,
         onClickEditCategory = null,
-        onClickRefresh = actions.onRefresh,
         onClickMigrate = null,
         onClickEditNotes = actions.onEditNotes,
         onClickEditInfo = null,
         onClickRelatedMangas = actions.onRelatedScreen.takeIf { !expandRelated && relatedInOverflow },
-        onClickSourceSettings = actions.onSourceSettings,
         onClearManga = actions.onClearAnime,
         onOpenMangaFolder = null,
         onClickRecommend = null,
