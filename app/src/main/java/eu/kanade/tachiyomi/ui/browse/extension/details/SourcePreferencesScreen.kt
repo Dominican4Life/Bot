@@ -8,9 +8,11 @@ import androidx.appcompat.view.ContextThemeWrapper
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -126,6 +128,48 @@ class SourcePreferencesScreen(
         )
         method.isAccessible = true
         method.invoke(this, view)
+    }
+}
+
+/**
+ * KMK: A source's settings inside another screen, such as the Settings panel of the Browse screen: the same
+ * settings the full page shows. The settings are removed again when this leaves the screen.
+ */
+@Composable
+fun SourceSettingsContent(
+    sourceId: Long,
+    modifier: Modifier = Modifier,
+    anime: Boolean = false,
+) {
+    val context = LocalContext.current
+    val fragmentManager = (context as FragmentActivity).supportFragmentManager
+    val containerId = remember { View.generateViewId() }
+    val tag = remember(sourceId, anime) { "source_settings_panel_${if (anime) "anime" else "manga"}_$sourceId" }
+    // Added once, without recomposing
+    val added = remember { booleanArrayOf(false) }
+    AndroidView(
+        modifier = modifier,
+        factory = { FragmentContainerView(it).apply { id = containerId } },
+        update = { view ->
+            if (!added[0]) {
+                added[0] = true
+                fragmentManager.findFragmentByTag(tag)?.let { old ->
+                    fragmentManager.commit(allowStateLoss = true) { remove(old) }
+                }
+                fragmentManager.commit(allowStateLoss = true) {
+                    add(view.id, SourcePreferencesFragment.getInstance(sourceId, anime), tag)
+                }
+            }
+        },
+    )
+    DisposableEffect(tag) {
+        onDispose {
+            fragmentManager.findFragmentByTag(tag)?.let { fragment ->
+                if (!fragmentManager.isStateSaved) {
+                    fragmentManager.commit(allowStateLoss = true) { remove(fragment) }
+                }
+            }
+        }
     }
 }
 

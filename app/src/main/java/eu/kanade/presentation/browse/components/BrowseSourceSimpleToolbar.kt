@@ -103,7 +103,7 @@ fun BrowseSourceSimpleToolbar(
                     selectingDisplayMode = false
                     onDisplayModeChange(LibraryDisplayMode.List)
                 }
-                // KMK: the Panorama styles, as a row of icons like Panels
+                // KMK: the Panorama styles, as a row of icons
                 PanoramaStyleSection(
                     displayMode = displayMode,
                     onDisplayModeChange = onDisplayModeChange,

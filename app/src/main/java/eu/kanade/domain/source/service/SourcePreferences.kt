@@ -39,7 +39,10 @@ class SourcePreferences(
     fun historyMediaTab() = preferenceStore.getInt("pref_history_media_tab", 0)
     fun updatesMediaTab() = preferenceStore.getInt("pref_updates_media_tab", 0)
 
-    /** Which preview panels open on the first tap of a cover: [PREVIEW_PANELS_LEFT], [PREVIEW_PANELS_BOTH] or [PREVIEW_PANELS_NONE] */
+    /**
+     * Which preview panels open on the first tap of a cover: [PREVIEW_PANELS_LEFT], [PREVIEW_PANELS_RIGHT],
+     * [PREVIEW_PANELS_BOTH] or [PREVIEW_PANELS_NONE]. Set by the Left Panel / Right Panel buttons.
+     */
     fun browsePreviewPanels() = preferenceStore.getInt("pref_browse_preview_panels", PREVIEW_PANELS_BOTH)
     // KMK <--
 
@@ -185,6 +188,20 @@ class SourcePreferences(
         const val PREVIEW_PANELS_LEFT = 0
         const val PREVIEW_PANELS_BOTH = 1
         const val PREVIEW_PANELS_NONE = 2
+        const val PREVIEW_PANELS_RIGHT = 3
+
+        /** The left (chapters / episodes) panel opens on the first tap of a cover */
+        fun previewLeftOn(mode: Int) = mode == PREVIEW_PANELS_LEFT || mode == PREVIEW_PANELS_BOTH
+
+        /** The right (pages / player) panel opens on the first tap of a cover */
+        fun previewRightOn(mode: Int) = mode == PREVIEW_PANELS_RIGHT || mode == PREVIEW_PANELS_BOTH
+
+        fun previewPanels(left: Boolean, right: Boolean) = when {
+            left && right -> PREVIEW_PANELS_BOTH
+            left -> PREVIEW_PANELS_LEFT
+            right -> PREVIEW_PANELS_RIGHT
+            else -> PREVIEW_PANELS_NONE
+        }
     }
     // KMK <--
 }

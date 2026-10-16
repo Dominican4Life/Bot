@@ -5,8 +5,10 @@ import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.FlipToBack
 import androidx.compose.material.icons.outlined.SelectAll
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -21,7 +23,7 @@ import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarActions
 import eu.kanade.presentation.components.AppBarTitle
-import eu.kanade.presentation.components.DownloadDropdownMenu
+import eu.kanade.presentation.components.DropdownMenu
 import eu.kanade.presentation.manga.DownloadAction
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreen
 import eu.kanade.tachiyomi.ui.browse.source.feed.SourceFeedScreen
@@ -45,14 +47,12 @@ fun MangaToolbar(
     onClickShare: (() -> Unit)?,
     onClickDownload: ((DownloadAction) -> Unit)?,
     onClickEditCategory: (() -> Unit)?,
-    onClickRefresh: () -> Unit,
     onClickMigrate: (() -> Unit)?,
     onClickEditNotes: () -> Unit,
     // SY -->
     onClickEditInfo: (() -> Unit)?,
     // KMK -->
     onClickRelatedMangas: (() -> Unit)?,
-    onClickSourceSettings: (() -> Unit)?,
     onClearManga: () -> Unit,
     onOpenMangaFolder: (() -> Unit)?,
     // KMK <--
@@ -109,12 +109,25 @@ fun MangaToolbar(
         actions = {
             var downloadExpanded by remember { mutableStateOf(false) }
             if (onClickDownload != null) {
-                val onDismissRequest = { downloadExpanded = false }
-                DownloadDropdownMenu(
+                // KMK: the same three choices as the Browse chapter panel's download button
+                DropdownMenu(
                     expanded = downloadExpanded,
-                    onDismissRequest = onDismissRequest,
-                    onDownloadClicked = onClickDownload,
-                )
+                    onDismissRequest = { downloadExpanded = false },
+                ) {
+                    listOf(
+                        DownloadAction.UNREAD_CHAPTERS to stringResource(MR.strings.download_unread),
+                        DownloadAction.ALL_CHAPTERS to stringResource(KMR.strings.browse_download_all_chapters),
+                        DownloadAction.BOOKMARKED_CHAPTERS to stringResource(MR.strings.download_bookmarked),
+                    ).forEach { (action, label) ->
+                        DropdownMenuItem(
+                            text = { Text(text = label) },
+                            onClick = {
+                                downloadExpanded = false
+                                onClickDownload(action)
+                            },
+                        )
+                    }
+                }
             }
 
             val filterTint = if (hasFilters) MaterialTheme.colorScheme.active else LocalContentColor.current
@@ -154,12 +167,7 @@ fun MangaToolbar(
                             onClick = onClickFilter,
                         ),
                     )
-                    add(
-                        AppBar.OverflowAction(
-                            title = stringResource(MR.strings.action_webview_refresh),
-                            onClick = onClickRefresh,
-                        ),
-                    )
+                    // KMK: no Refresh here; pull down on the page to refresh
                     if (onClickEditCategory != null) {
                         add(
                             AppBar.OverflowAction(
@@ -249,14 +257,6 @@ fun MangaToolbar(
                             onClick = onClearManga,
                         ),
                     )
-                    if (onClickSourceSettings != null) {
-                        add(
-                            AppBar.OverflowAction(
-                                title = stringResource(MR.strings.source_settings),
-                                onClick = onClickSourceSettings,
-                            ),
-                        )
-                    }
                     if (isDebugBuildType) {
                         add(
                             AppBar.OverflowAction(

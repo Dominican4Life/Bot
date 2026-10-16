@@ -91,18 +91,19 @@ class BrowsePreviewScreenModel(
 
     /**
      * Selects a cover and opens the panels.
-     * @param showPages also open the right (pages) panel, otherwise only the left (chapters) one
+     * @param showChapters open the left (chapters) panel
+     * @param showPages open the right (pages) panel
      */
-    fun select(manga: Manga, showPages: Boolean = true) {
+    fun select(manga: Manga, showChapters: Boolean = true, showPages: Boolean = true) {
         if (state.value.manga?.id == manga.id) {
-            mutableState.update { it.copy(chapterPanelOpen = true, pagePanelOpen = showPages) }
+            mutableState.update { it.copy(chapterPanelOpen = showChapters, pagePanelOpen = showPages) }
             return
         }
         cancelAll()
         mutableState.update {
             State(
                 manga = manga,
-                chapterPanelOpen = true,
+                chapterPanelOpen = showChapters,
                 pagePanelOpen = showPages,
                 chaptersLoading = true,
             )
@@ -327,7 +328,7 @@ class BrowsePreviewScreenModel(
             DownloadAction.NEXT_25_CHAPTERS -> unread.take(25)
             DownloadAction.UNREAD_CHAPTERS -> unread
             DownloadAction.BOOKMARKED_CHAPTERS -> notDownloaded.filter { it.bookmark }
-            null -> notDownloaded
+            DownloadAction.ALL_CHAPTERS, null -> notDownloaded
         }
         if (toDownload.isNotEmpty()) downloadManager.downloadChapters(manga, toDownload)
     }
@@ -420,6 +421,23 @@ class BrowsePreviewScreenModel(
     }
 
     // Panels
+
+    // KMK: the Left Panel / Right Panel buttons open a panel for the cover that is already selected
+
+    fun openChapterPanel() {
+        if (state.value.manga == null) return
+        mutableState.update { it.copy(chapterPanelOpen = true) }
+    }
+
+    fun openPagePanel() {
+        val s = state.value
+        if (s.manga == null) return
+        mutableState.update { it.copy(pagePanelOpen = true) }
+        // The pages are only read while the panel is open
+        if (s.pages == null && s.localPages == null) {
+            s.allChapters.firstOrNull { it.chapter.id == s.selectedChapterId }?.let { selectChapter(it.chapter) }
+        }
+    }
 
     fun closeChapterPanel() {
         mutableState.update { it.copy(chapterPanelOpen = false) }

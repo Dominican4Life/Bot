@@ -23,6 +23,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PlainTooltip
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TooltipAnchorPosition
@@ -43,6 +44,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -292,9 +294,28 @@ fun AppBarActions(
                 DropdownMenuItem(
                     onClick = {
                         it.onClick()
-                        showMenu = false
+                        // KMK: a switch item stays open so its switch can be seen flipping
+                        if (it.checked == null) showMenu = false
                     },
                     text = { Text(it.title, fontWeight = FontWeight.Normal) },
+                    // KMK -->
+                    leadingIcon = if (it.icon != null) {
+                        { Icon(imageVector = it.icon, contentDescription = null) }
+                    } else {
+                        null
+                    },
+                    trailingIcon = if (it.checked != null) {
+                        {
+                            Switch(
+                                checked = it.checked,
+                                onCheckedChange = null,
+                                modifier = Modifier.scale(0.8f),
+                            )
+                        }
+                    } else {
+                        null
+                    },
+                    // KMK <--
                 )
             }
         }
@@ -480,5 +501,11 @@ sealed interface AppBar {
     data class OverflowAction(
         val title: String,
         val onClick: () -> Unit,
+        // KMK -->
+        /** An icon in front of the title */
+        val icon: ImageVector? = null,
+        /** Not null: a switch after the title, on or off */
+        val checked: Boolean? = null,
+        // KMK <--
     ) : AppBarAction
 }

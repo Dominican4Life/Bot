@@ -27,6 +27,7 @@ import kotlinx.collections.immutable.toImmutableList
 import tachiyomi.core.common.preference.TriState
 import tachiyomi.domain.source.model.EXHSavedSearch
 import tachiyomi.i18n.MR
+import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.components.CheckboxItem
 import tachiyomi.presentation.core.components.CollapsibleBox
 import tachiyomi.presentation.core.components.HeadingItem
@@ -59,9 +60,50 @@ fun SourceFilterDialog(
     openMangaDexFollows: (() -> Unit)?,
     // SY <--
 ) {
+    AdaptiveSheet(onDismissRequest = onDismissRequest) {
+        SourceFilterContent(
+            onDismissRequest = onDismissRequest,
+            filters = filters,
+            onReset = onReset,
+            onFilter = onFilter,
+            onUpdate = onUpdate,
+            startExpanded = startExpanded,
+            savedSearches = savedSearches,
+            onSave = onSave,
+            onSavedSearch = onSavedSearch,
+            onSavedSearchPress = onSavedSearchPress,
+            onSavedSearchPressDesc = onSavedSearchPressDesc,
+            shouldShowSavingButton = shouldShowSavingButton,
+            openMangaDexRandom = openMangaDexRandom,
+            openMangaDexFollows = openMangaDexFollows,
+        )
+    }
+}
+
+/**
+ * KMK: The filter sheet's contents, also shown in the Browse screen's Filter panel. A source without filters
+ * shows a line saying so, and keeps Save so the list can still be saved for Feed.
+ */
+@Composable
+fun SourceFilterContent(
+    onDismissRequest: () -> Unit,
+    filters: FilterList,
+    onReset: () -> Unit,
+    onFilter: () -> Unit,
+    onUpdate: (FilterList) -> Unit,
+    startExpanded: Boolean,
+    savedSearches: ImmutableList<EXHSavedSearch>,
+    onSave: () -> Unit,
+    onSavedSearch: (EXHSavedSearch) -> Unit,
+    onSavedSearchPress: (EXHSavedSearch) -> Unit,
+    onSavedSearchPressDesc: String,
+    shouldShowSavingButton: Boolean,
+    openMangaDexRandom: (() -> Unit)?,
+    openMangaDexFollows: (() -> Unit)?,
+) {
     val updateFilters = { onUpdate(filters) }
 
-    AdaptiveSheet(onDismissRequest = onDismissRequest) {
+    run {
         LazyColumn {
             stickyHeader(
                 key = "$STICKY_HEADER_KEY_PREFIX-title",
@@ -128,6 +170,18 @@ fun SourceFilterDialog(
             items(filters) {
                 FilterItem(it, updateFilters /* SY --> */, startExpanded /* SY <-- */)
             }
+            // KMK -->
+            if (filters.isEmpty()) {
+                item {
+                    Text(
+                        text = stringResource(KMR.strings.browse_no_filters),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(16.dp),
+                    )
+                }
+            }
+            // KMK <--
         }
     }
 }

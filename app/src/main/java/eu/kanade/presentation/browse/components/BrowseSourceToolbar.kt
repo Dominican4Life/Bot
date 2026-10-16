@@ -12,7 +12,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ViewList
+import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.filled.ViewModule
+import androidx.compose.material.icons.outlined.Checklist
+import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material3.FilledTonalIconToggleButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -29,10 +32,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.PopupProperties
 import androidx.core.graphics.drawable.toBitmap
-import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.domain.ui.model.PanoramaStyle
 import eu.kanade.presentation.components.AppBar
@@ -42,6 +46,7 @@ import eu.kanade.presentation.components.DropdownMenu
 import eu.kanade.presentation.components.PanoramaIcons
 import eu.kanade.presentation.components.RadioMenuItem
 import eu.kanade.presentation.components.SearchToolbar
+import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.animeextension.AnimeExtensionManager
 import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.source.Source
@@ -69,7 +74,8 @@ fun BrowseSourceToolbar(
     onHelpClick: () -> Unit,
     // KMK -->
     onToggleIncognito: () -> Unit,
-    onSettingsClick: (() -> Unit)?,
+    /** Incognito is on for this source: its switch in the menu shows it */
+    incognito: Boolean = false,
     // KMK <--
     onSearch: (String) -> Unit,
     scrollBehavior: TopAppBarScrollBehavior? = null,
@@ -79,9 +85,6 @@ fun BrowseSourceToolbar(
     /** Covers per row shown in the display menu slider (0 = auto), or null to hide the slider */
     columns: Int? = null,
     onColumnsChange: (Int) -> Unit = {},
-    /** Which preview panels open on the first tap of a cover (SourcePreferences.PREVIEW_PANELS_*), null to hide */
-    previewPanels: Int? = null,
-    onPreviewPanelsChange: (Int) -> Unit = {},
     /** Title when there is no manga [source] (anime sources) */
     titleOverride: String? = null,
     /** The source whose icon shows next to the title (anime sources, which aren't a manga [source]) */
@@ -130,12 +133,16 @@ fun BrowseSourceToolbar(
                             )
                         }
                         // KMK -->
-                        if (showBulkSelection) add(bulkSelectionButton(isRunning, toggleSelectionMode))
+                        // A bulk add that is still running keeps its spinner in the bar
+                        if (showBulkSelection && isRunning) add(bulkSelectionButton(isRunning, toggleSelectionMode))
+                        // The menu: Incognito, WebView, Bulk Selection. Settings is a button next to Filter.
                         if (showIncognito) {
                             add(
                                 AppBar.OverflowAction(
-                                    title = stringResource(MR.strings.pref_incognito_mode),
+                                    title = stringResource(KMR.strings.browse_menu_incognito),
                                     onClick = onToggleIncognito,
+                                    icon = ImageVector.vectorResource(R.drawable.ic_glasses_with_hat_24dp),
+                                    checked = incognito,
                                 ),
                             )
                         }
@@ -145,6 +152,9 @@ fun BrowseSourceToolbar(
                                 AppBar.OverflowAction(
                                     title = stringResource(MR.strings.label_help),
                                     onClick = onHelpClick,
+                                    // KMK -->
+                                    icon = Icons.AutoMirrored.Outlined.HelpOutline,
+                                    // KMK <--
                                 ),
                             )
                         } else {
@@ -152,20 +162,23 @@ fun BrowseSourceToolbar(
                                 AppBar.OverflowAction(
                                     title = stringResource(MR.strings.action_web_view),
                                     onClick = onWebViewClick,
+                                    // KMK -->
+                                    icon = Icons.Outlined.Public,
+                                    // KMK <--
                                 ),
                             )
                         }
-                        // SY <--
                         // KMK -->
-                        onSettingsClick?.let {
-                            // KMK <--
+                        if (showBulkSelection && !isRunning) {
                             add(
                                 AppBar.OverflowAction(
-                                    title = stringResource(MR.strings.action_settings),
-                                    onClick = onSettingsClick,
+                                    title = stringResource(KMR.strings.browse_menu_bulk_selection),
+                                    onClick = toggleSelectionMode,
+                                    icon = Icons.Outlined.Checklist,
                                 ),
                             )
                         }
+                        // KMK <--
                     }
                     .build(),
             )
@@ -208,7 +221,7 @@ fun BrowseSourceToolbar(
                     selectingDisplayMode = false
                     onDisplayModeChange(LibraryDisplayMode.List)
                 }
-                // KMK: the Panorama styles, as a row of icons like Panels
+                // KMK: the Panorama styles, as a row of icons
                 PanoramaStyleSection(
                     displayMode = displayMode,
                     onDisplayModeChange = onDisplayModeChange,
@@ -229,35 +242,6 @@ fun BrowseSourceToolbar(
                             onChange = onColumnsChange,
                             pillColor = MaterialTheme.colorScheme.surfaceContainerHighest,
                         )
-                    }
-                }
-                if (previewPanels != null) {
-                    HorizontalDivider()
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.width(300.dp).padding(vertical = 8.dp),
-                    ) {
-                        Text(
-                            text = stringResource(KMR.strings.browse_panels),
-                            style = MaterialTheme.typography.titleSmall,
-                        )
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(16.dp),
-                            modifier = Modifier.padding(top = 8.dp),
-                        ) {
-                            listOf(
-                                Triple(SourcePreferences.PREVIEW_PANELS_LEFT, PanelIcons.LeftOnly, KMR.strings.browse_panels_left),
-                                Triple(SourcePreferences.PREVIEW_PANELS_BOTH, PanelIcons.Both, KMR.strings.browse_panels_both),
-                                Triple(SourcePreferences.PREVIEW_PANELS_NONE, PanelIcons.None, KMR.strings.browse_panels_none),
-                            ).forEach { (mode, icon, label) ->
-                                FilledTonalIconToggleButton(
-                                    checked = previewPanels == mode,
-                                    onCheckedChange = { onPreviewPanelsChange(mode) },
-                                ) {
-                                    Icon(imageVector = icon, contentDescription = stringResource(label))
-                                }
-                            }
-                        }
                     }
                 }
                 // KMK <--
@@ -295,7 +279,7 @@ fun sourceIconBitmap(sourceId: Long): ImageBitmap? = runCatching {
 }.getOrNull()
 
 // KMK -->
-/** "Panorama comfortable grid" in its three styles (color fill, fit width, wide), as a row of icons like Panels */
+/** "Panorama comfortable grid" in its three styles (color fill, fit width, wide), as a row of icons */
 @Composable
 internal fun PanoramaStyleSection(
     displayMode: LibraryDisplayMode?,

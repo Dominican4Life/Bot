@@ -127,10 +127,10 @@ class AnimeSourceScreenModel(
     private var previewJob: Job? = null
     private var previewRefreshJob: Job? = null
 
-    fun selectPreview(anime: Anime, showPlayer: Boolean = true) {
+    fun selectPreview(anime: Anime, showEpisodes: Boolean = true, showPlayer: Boolean = true) {
         previewJob?.cancel()
         previewRefreshJob?.cancel()
-        _preview.value = Preview(anime = anime, panelOpen = true, playerPanelOpen = showPlayer, loading = true)
+        _preview.value = Preview(anime = anime, panelOpen = showEpisodes, playerPanelOpen = showPlayer, loading = true)
         eu.kanade.presentation.anime.loadAnimeSeedColor(anime) { color ->
             _preview.update { if (it.anime?.id == anime.id) it.copy(seedColor = color) else it }
         }
@@ -187,7 +187,14 @@ class AnimeSourceScreenModel(
     }
 
     fun openPlayerPanel() {
+        if (_preview.value.anime == null) return
         _preview.update { it.copy(playerPanelOpen = true) }
+    }
+
+    // KMK: the Left Panel button opens the episode panel for the cover that is already selected
+    fun openPreviewPanel() {
+        if (_preview.value.anime == null) return
+        _preview.update { it.copy(panelOpen = true) }
     }
 
     fun toggleFavorite(anime: Anime) {

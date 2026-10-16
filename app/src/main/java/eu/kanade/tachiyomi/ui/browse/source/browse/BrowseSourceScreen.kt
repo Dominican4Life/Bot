@@ -14,14 +14,13 @@ import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Favorite
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.NewReleases
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -35,7 +34,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -54,10 +55,13 @@ import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.presentation.browse.BrowseSourceContent
 import eu.kanade.presentation.browse.MissingSourceScreen
 import eu.kanade.presentation.browse.components.BrowseChapterPanel
+import eu.kanade.presentation.browse.components.BrowseOverlayPanel
 import eu.kanade.presentation.browse.components.BrowsePagePanel
 import eu.kanade.presentation.browse.components.BrowsePreviewInfoHeader
 import eu.kanade.presentation.browse.components.BrowseSourceToolbar
+import eu.kanade.presentation.browse.components.BrowseTabChip
 import eu.kanade.presentation.browse.components.BulkFavoriteDialogs
+import eu.kanade.presentation.browse.components.PreviewPanelButtons
 import eu.kanade.presentation.browse.components.RemoveMangaDialog
 import eu.kanade.presentation.browse.components.SavedSearchCreateDialog
 import eu.kanade.presentation.browse.components.SavedSearchDeleteDialog
@@ -75,7 +79,7 @@ import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.sumizuri.SumizuriTabs
 import eu.kanade.tachiyomi.ui.browse.BulkFavoriteScreenModel
-import eu.kanade.tachiyomi.ui.browse.extension.details.SourcePreferencesScreen
+import eu.kanade.tachiyomi.ui.browse.extension.details.SourceSettingsContent
 import eu.kanade.tachiyomi.ui.browse.source.SourcesScreen
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreenModel.Listing
 import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchScreen
@@ -199,13 +203,23 @@ data class BrowseSourceScreen(
         val previewScreenModel = rememberScreenModel { BrowsePreviewScreenModel(screenModel.source) }
         val previewState by previewScreenModel.state.collectAsState()
         val previewEnabled = smartSearchConfig == null
-        // Which panels open on the first tap of a cover (set from the display menu)
+        // Which panels open on the first tap of a cover (set with the Left Panel / Right Panel buttons)
         val previewPanelsPreference = remember { Injekt.get<SourcePreferences>().browsePreviewPanels() }
         val previewPanels by previewPanelsPreference.collectAsState()
+        // Filter (left) and Settings (right) slide in over the covers
+        val filterPanelOpen = state.dialog is BrowseSourceScreenModel.Dialog.Filter
+        var settingsPanelOpen by rememberSaveable { mutableStateOf(false) }
+        val closeSidePanels = {
+            settingsPanelOpen = false
+            if (filterPanelOpen) screenModel.setDialog(null)
+        }
         // Without close buttons, back closes the panels
         BackHandler(enabled = previewState.manga != null && !bulkFavoriteState.selectionMode) {
             previewScreenModel.clear()
         }
+        // Registered after, so Back closes Filter or Settings first
+        BackHandler(enabled = settingsPanelOpen) { settingsPanelOpen = false }
+        BackHandler(enabled = filterPanelOpen) { screenModel.setDialog(null) }
         // Same as long-pressing a cover: add to or remove from the library
         val toggleFavorite: (Manga) -> Unit = { manga ->
             scope.launchIO {
@@ -288,33 +302,13 @@ data class BrowseSourceScreen(
                                 onHelpClick = onHelpClick,
                                 // KMK -->
                                 onToggleIncognito = screenModel::toggleIncognitoMode,
-                                onSettingsClick = {
-                                    when {
-                                        screenModel.source.isEhBasedSource() && isHentaiEnabled ->
-                                            navigator.push(SettingsEhScreen)
-                                        screenModel.source.anyIs<ConfigurableSource>() ->
-                                            navigator.push(SourcePreferencesScreen(sourceId))
-                                        else -> {}
-                                    }
-                                }.takeIf { isConfigurableSource },
+                                incognito = screenModel.incognitoMode.value,
                                 // KMK <--
                                 onSearch = screenModel::search,
                                 // KMK -->
                                 toggleSelectionMode = bulkFavoriteScreenModel::toggleSelectionMode,
                                 isRunning = bulkFavoriteState.isRunning,
                                 columns = columnCount,
-                                previewPanels = previewPanels.takeIf { previewEnabled },
-                                onPreviewPanelsChange = { mode ->
-                                    previewPanelsPreference.set(mode)
-                                    val selected = previewScreenModel.state.value.manga
-                                    when {
-                                        mode == SourcePreferences.PREVIEW_PANELS_NONE -> previewScreenModel.clear()
-                                        selected != null -> previewScreenModel.select(
-                                            selected,
-                                            showPages = mode == SourcePreferences.PREVIEW_PANELS_BOTH,
-                                        )
-                                    }
-                                },
                                 onColumnsChange = columnsPreference::set,
                                 // KMK <--
                             )
@@ -327,110 +321,151 @@ data class BrowseSourceScreen(
                             ?.let { listing ->
                                 sourceTabs?.let { runCatching { it.selectedCatalog(listing.filters) }.getOrNull() }
                             }
-                        Row(
-                            modifier = Modifier
-                                .horizontalScroll(rememberScrollState())
-                                .padding(horizontal = MaterialTheme.padding.small),
-                            horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
-                        ) {
-                            // KMK: tab catalogs replace Popular and Latest
-                            if (sourceTabs?.hasCatalogTabs != true) {
-                                FilterChip(
-                                    selected = state.listing == Listing.Popular,
-                                    onClick = {
-                                        screenModel.resetFilters()
-                                        screenModel.setListing(Listing.Popular)
-                                    },
-                                    leadingIcon = {
-                                        Icon(
-                                            imageVector = Icons.Outlined.Favorite,
-                                            contentDescription = null,
-                                            modifier = Modifier
-                                                .size(FilterChipDefaults.IconSize),
+                        // KMK -->
+                        // The selected button shows its name, the others only their icon. Filter and Settings
+                        // open panels over the covers; the Left / Right Panel buttons sit at the far end.
+                        val searchListing = state.listing as? Listing.Search
+                        val filterSelected = filterPanelOpen ||
+                            (
+                                !settingsPanelOpen &&
+                                    searchListing != null &&
+                                    searchListing.savedSearchId == null &&
+                                    selectedCatalog == null
+                                )
+                        val panelOpen = filterPanelOpen || settingsPanelOpen
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .horizontalScroll(rememberScrollState())
+                                    .padding(horizontal = MaterialTheme.padding.small),
+                                horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                // Tab catalogs replace Popular and Latest
+                                if (sourceTabs?.hasCatalogTabs != true) {
+                                    BrowseTabChip(
+                                        selected = !panelOpen && state.listing == Listing.Popular,
+                                        label = stringResource(MR.strings.popular),
+                                        icon = Icons.Outlined.FavoriteBorder,
+                                        filledIcon = Icons.Outlined.Favorite,
+                                        onClick = {
+                                            closeSidePanels()
+                                            screenModel.resetFilters()
+                                            screenModel.setListing(Listing.Popular)
+                                        },
+                                    )
+                                    if (screenModel.source.supportsLatest) {
+                                        BrowseTabChip(
+                                            selected = !panelOpen && state.listing == Listing.Latest,
+                                            label = stringResource(MR.strings.latest),
+                                            icon = Icons.Outlined.NewReleases,
+                                            onClick = {
+                                                closeSidePanels()
+                                                screenModel.resetFilters()
+                                                screenModel.setListing(Listing.Latest)
+                                            },
                                         )
-                                    },
-                                    label = {
-                                        Text(text = stringResource(MR.strings.popular))
+                                    }
+                                }
+                                sourceTabs?.catalogTabs.orEmpty().forEach { catalog ->
+                                    BrowseTabChip(
+                                        selected = !panelOpen && selectedCatalog == catalog.id,
+                                        label = catalog.name,
+                                        icon = null,
+                                        onClick = {
+                                            closeSidePanels()
+                                            screenModel.showCatalog(catalog.id)
+                                        },
+                                    )
+                                }
+                                // Always there: a source without filters can still save its list for Feed
+                                BrowseTabChip(
+                                    selected = filterSelected,
+                                    label = stringResource(MR.strings.action_filter),
+                                    icon = Icons.Outlined.FilterList,
+                                    onClick = {
+                                        if (filterPanelOpen) {
+                                            screenModel.setDialog(null)
+                                        } else {
+                                            settingsPanelOpen = false
+                                            screenModel.openFilterSheet()
+                                        }
                                     },
                                 )
-                                if (screenModel.source.supportsLatest) {
-                                    FilterChip(
-                                        selected = state.listing == Listing.Latest,
+                                if (isConfigurableSource) {
+                                    BrowseTabChip(
+                                        selected = settingsPanelOpen,
+                                        label = stringResource(MR.strings.action_settings),
+                                        icon = Icons.Outlined.Settings,
                                         onClick = {
-                                            screenModel.resetFilters()
-                                            screenModel.setListing(Listing.Latest)
+                                            when {
+                                                // E-Hentai's settings are a whole section of the app's settings
+                                                screenModel.source.isEhBasedSource() && isHentaiEnabled ->
+                                                    navigator.push(SettingsEhScreen)
+                                                settingsPanelOpen -> settingsPanelOpen = false
+                                                else -> {
+                                                    if (filterPanelOpen) screenModel.setDialog(null)
+                                                    settingsPanelOpen = true
+                                                }
+                                            }
                                         },
-                                        leadingIcon = {
-                                            Icon(
-                                                imageVector = Icons.Outlined.NewReleases,
-                                                contentDescription = null,
-                                                modifier = Modifier
-                                                    .size(FilterChipDefaults.IconSize),
-                                            )
-                                        },
-                                        label = {
-                                            Text(text = stringResource(MR.strings.latest))
+                                    )
+                                }
+                                state.savedSearches.forEach { savedSearch ->
+                                    BrowseTabChip(
+                                        selected = !panelOpen &&
+                                            searchListing?.savedSearchId == savedSearch.id,
+                                        label = savedSearch.name,
+                                        icon = null,
+                                        onClick = {
+                                            closeSidePanels()
+                                            screenModel.onSavedSearch(savedSearch) {
+                                                context.toast(it)
+                                            }
                                         },
                                     )
                                 }
                             }
-                            // KMK -->
-                            sourceTabs?.catalogTabs.orEmpty().forEach { catalog ->
-                                FilterChip(
-                                    selected = selectedCatalog == catalog.id,
-                                    onClick = { screenModel.showCatalog(catalog.id) },
-                                    label = { Text(text = catalog.name) },
-                                )
-                            }
-                            // KMK <--
-                            if (/* SY --> */ state.filterable /* SY <-- */) {
-                                FilterChip(
-                                    selected = state.listing is Listing.Search &&
-                                        // KMK -->
-                                        (state.listing as Listing.Search).savedSearchId == null &&
-                                        selectedCatalog == null,
-                                    // KMK <--
-                                    onClick = screenModel::openFilterSheet,
-                                    leadingIcon = {
-                                        Icon(
-                                            imageVector = Icons.Outlined.FilterList,
-                                            contentDescription = null,
-                                            modifier = Modifier
-                                                .size(FilterChipDefaults.IconSize),
-                                        )
-                                    },
-                                    label = {
-                                        // SY -->
-                                        Text(
-                                            text = if (state.filters.isNotEmpty()) {
-                                                stringResource(MR.strings.action_filter)
+                            if (previewEnabled) {
+                                Row(
+                                    modifier = Modifier.padding(end = MaterialTheme.padding.small),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    PreviewPanelButtons(
+                                        leftOn = SourcePreferences.previewLeftOn(previewPanels),
+                                        rightOn = SourcePreferences.previewRightOn(previewPanels),
+                                        onLeftChange = { on ->
+                                            previewPanelsPreference.set(
+                                                SourcePreferences.previewPanels(
+                                                    left = on,
+                                                    right = SourcePreferences.previewRightOn(previewPanels),
+                                                ),
+                                            )
+                                            if (on) {
+                                                previewScreenModel.openChapterPanel()
                                             } else {
-                                                stringResource(MR.strings.action_search)
-                                            },
-                                        )
-                                        // SY <--
-                                    },
-                                )
+                                                previewScreenModel.closeChapterPanel()
+                                            }
+                                        },
+                                        onRightChange = { on ->
+                                            previewPanelsPreference.set(
+                                                SourcePreferences.previewPanels(
+                                                    left = SourcePreferences.previewLeftOn(previewPanels),
+                                                    right = on,
+                                                ),
+                                            )
+                                            if (on) {
+                                                previewScreenModel.openPagePanel()
+                                            } else {
+                                                previewScreenModel.closePagePanel()
+                                            }
+                                        },
+                                    )
+                                }
                             }
-                            // KMK -->
-                            state.savedSearches.forEach { savedSearch ->
-                                FilterChip(
-                                    selected = state.listing is Listing.Search &&
-                                        (state.listing as Listing.Search).savedSearchId == savedSearch.id,
-                                    onClick = {
-                                        screenModel.onSavedSearch(savedSearch) {
-                                            context.toast(it)
-                                        }
-                                    },
-                                    label = {
-                                        Text(
-                                            text = savedSearch.name,
-                                        )
-                                    },
-                                )
-                            }
-                            // KMK <--
                         }
+                        // KMK <--
 
                         HorizontalDivider()
                     }
@@ -482,7 +517,8 @@ data class BrowseSourceScreen(
                                 // First tap: highlight and preview. Second tap on the same cover: open it.
                                 previewScreenModel.select(
                                     manga,
-                                    showPages = previewPanels == SourcePreferences.PREVIEW_PANELS_BOTH,
+                                    showChapters = SourcePreferences.previewLeftOn(previewPanels),
+                                    showPages = SourcePreferences.previewRightOn(previewPanels),
                                 )
                             } else {
                                 // KMK <--
@@ -573,6 +609,58 @@ data class BrowseSourceScreen(
                                 )
                             },
                         )
+                        BrowseOverlayPanel(
+                            visible = filterPanelOpen,
+                            fromStart = true,
+                            title = stringResource(MR.strings.action_filter),
+                            onDismiss = { screenModel.setDialog(null) },
+                        ) {
+                            SourceFilterContent(
+                                onDismissRequest = { screenModel.setDialog(null) },
+                                filters = state.filters,
+                                onReset = screenModel::resetFilters,
+                                onFilter = { screenModel.search(filters = state.filters) },
+                                onUpdate = screenModel::setFilters,
+                                startExpanded = screenModel.startExpanded,
+                                savedSearches = state.savedSearches,
+                                onSave = screenModel::onSaveSearch,
+                                onSavedSearch = { search ->
+                                    screenModel.onSavedSearch(search) {
+                                        context.toast(it)
+                                    }
+                                },
+                                onSavedSearchPress = screenModel::onSavedSearchPress,
+                                onSavedSearchPressDesc = stringResource(KMR.strings.saved_searches_delete),
+                                shouldShowSavingButton = true,
+                                openMangaDexRandom = if (screenModel.source.isMdBasedSource()) {
+                                    {
+                                        screenModel.onMangaDexRandom {
+                                            navigator.replace(BrowseSourceScreen(sourceId, "id:$it"))
+                                        }
+                                    }
+                                } else {
+                                    null
+                                },
+                                openMangaDexFollows = if (screenModel.source.isMdBasedSource()) {
+                                    { navigator.push(MangaDexFollowsScreen(sourceId)) }
+                                } else {
+                                    null
+                                },
+                            )
+                        }
+                        BrowseOverlayPanel(
+                            visible = settingsPanelOpen,
+                            fromStart = false,
+                            title = stringResource(MR.strings.source_settings),
+                            onDismiss = { settingsPanelOpen = false },
+                        ) {
+                            if (settingsPanelOpen) {
+                                SourceSettingsContent(
+                                    sourceId = sourceId,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
+                        }
                     }
 
                     if (showChapterSettings) {
@@ -607,53 +695,7 @@ data class BrowseSourceScreen(
 
         val onDismissRequest = { screenModel.setDialog(null) }
         when (val dialog = state.dialog) {
-            is BrowseSourceScreenModel.Dialog.Filter -> {
-                SourceFilterDialog(
-                    onDismissRequest = onDismissRequest,
-                    filters = state.filters,
-                    onReset = screenModel::resetFilters,
-                    onFilter = { screenModel.search(filters = state.filters) },
-                    onUpdate = screenModel::setFilters,
-                    // SY -->
-                    startExpanded = screenModel.startExpanded,
-                    onSave = screenModel::onSaveSearch,
-                    savedSearches = state.savedSearches,
-                    onSavedSearch = { search ->
-                        screenModel.onSavedSearch(search) {
-                            context.toast(it)
-                        }
-                    },
-                    onSavedSearchPress = screenModel::onSavedSearchPress,
-                    // KMK -->
-                    onSavedSearchPressDesc = stringResource(KMR.strings.saved_searches_delete),
-                    // KMK <--
-                    openMangaDexRandom = if (screenModel.source.isMdBasedSource()) {
-                        {
-                            screenModel.onMangaDexRandom {
-                                navigator.replace(
-                                    BrowseSourceScreen(
-                                        sourceId,
-                                        "id:$it",
-                                    ),
-                                )
-                            }
-                        }
-                    } else {
-                        null
-                    },
-                    openMangaDexFollows = if (screenModel.source.isMdBasedSource()) {
-                        {
-                            // KMK -->
-                            // navigator.replace(MangaDexFollowsScreen(sourceId))
-                            navigator.push(MangaDexFollowsScreen(sourceId))
-                            // KMK <--
-                        }
-                    } else {
-                        null
-                    },
-                    // SY <--
-                )
-            }
+            // KMK: Filter is a panel over the covers (above)
             is BrowseSourceScreenModel.Dialog.AddDuplicateManga -> {
                 DuplicateMangaDialog(
                     duplicates = dialog.duplicates,

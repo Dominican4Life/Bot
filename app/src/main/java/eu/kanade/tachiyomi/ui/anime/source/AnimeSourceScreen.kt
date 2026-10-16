@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.ui.anime.source
 
 import android.content.res.Configuration
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -15,7 +16,6 @@ import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -29,13 +29,12 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Favorite
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.NewReleases
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -68,8 +67,11 @@ import eu.kanade.presentation.anime.AnimePlayerPanel
 import eu.kanade.presentation.anime.asMangaCover
 import eu.kanade.presentation.anime.toMangaFilterList
 import eu.kanade.presentation.anime.writeBackToAnime
+import eu.kanade.presentation.browse.components.BrowseOverlayPanel
 import eu.kanade.presentation.browse.components.BrowseSourceToolbar
+import eu.kanade.presentation.browse.components.BrowseTabChip
 import eu.kanade.presentation.browse.components.InLibraryBadge
+import eu.kanade.presentation.browse.components.PreviewPanelButtons
 import eu.kanade.presentation.components.wideSpan
 import eu.kanade.presentation.library.components.CommonMangaItemDefaults
 import eu.kanade.presentation.library.components.MangaComfortableGridItem
@@ -83,8 +85,8 @@ import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.data.anime.Anime
 import eu.kanade.tachiyomi.sumizuri.SumizuriTabs
 import eu.kanade.tachiyomi.ui.anime.AnimeScreen
-import eu.kanade.tachiyomi.ui.browse.extension.details.SourcePreferencesScreen
-import eu.kanade.tachiyomi.ui.browse.source.browse.SourceFilterDialog
+import eu.kanade.tachiyomi.ui.browse.extension.details.SourceSettingsContent
+import eu.kanade.tachiyomi.ui.browse.source.browse.SourceFilterContent
 import eu.kanade.tachiyomi.ui.player.PlayerActivity
 import eu.kanade.tachiyomi.ui.player.settings.PlayerPreferences
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
@@ -125,6 +127,10 @@ class AnimeSourceScreen(
 
         var searchQuery by rememberSaveable { mutableStateOf(initialQuery) }
         var showFilters by rememberSaveable { mutableStateOf(openFilters) }
+        // KMK: Settings slides in from the right over the covers, like Filter from the left
+        var showSettings by rememberSaveable { mutableStateOf(false) }
+        BackHandler(enabled = showFilters) { showFilters = false }
+        BackHandler(enabled = showSettings) { showSettings = false }
 
         LaunchedEffect(Unit) {
             when {
@@ -198,19 +204,11 @@ class AnimeSourceScreen(
                             },
                             onHelpClick = {},
                             onToggleIncognito = {},
-                            onSettingsClick = {
-                                navigator.push(SourcePreferencesScreen(sourceId, anime = true))
-                            }.takeIf { source is ConfigurableAnimeSource },
                             onSearch = { screenModel.search(it) },
                             toggleSelectionMode = {},
                             isRunning = false,
                             columns = columnCount,
                             onColumnsChange = columnsPref::set,
-                            previewPanels = previewPanels,
-                            onPreviewPanelsChange = { mode ->
-                                previewPanelsPref.set(mode)
-                                if (mode == SourcePreferences.PREVIEW_PANELS_NONE) screenModel.clearPreview()
-                            },
                             titleOverride = source?.name ?: sourceId.toString(),
                             showBulkSelection = false,
                             showIncognito = false,
@@ -228,7 +226,34 @@ class AnimeSourceScreen(
                                 screenModel.resetFilters()
                                 screenModel.setListing(AnimeSourceScreenModel.Listing.Latest)
                             },
-                            onFilter = { showFilters = true },
+                            filterOpen = showFilters,
+                            onFilter = {
+                                showSettings = false
+                                showFilters = !showFilters
+                            },
+                            settingsOpen = showSettings,
+                            onSettings = {
+                                showFilters = false
+                                showSettings = !showSettings
+                            }.takeIf { source is ConfigurableAnimeSource },
+                            onClosePanels = {
+                                showFilters = false
+                                showSettings = false
+                            },
+                            leftOn = SourcePreferences.previewLeftOn(previewPanels),
+                            rightOn = SourcePreferences.previewRightOn(previewPanels),
+                            onLeftChange = { on ->
+                                previewPanelsPref.set(
+                                    SourcePreferences.previewPanels(on, SourcePreferences.previewRightOn(previewPanels)),
+                                )
+                                if (on) screenModel.openPreviewPanel() else screenModel.closePreviewPanel()
+                            },
+                            onRightChange = { on ->
+                                previewPanelsPref.set(
+                                    SourcePreferences.previewPanels(SourcePreferences.previewLeftOn(previewPanels), on),
+                                )
+                                if (on) screenModel.openPlayerPanel() else screenModel.closePlayerPanel()
+                            },
                             // KMK: a JS / JSON source's tab catalogs, as buttons
                             tabs = source as? SumizuriTabs,
                             onCatalog = { id ->
@@ -292,7 +317,8 @@ class AnimeSourceScreen(
                                     // First tap: highlight and preview. Second tap on the same cover: open it.
                                     screenModel.selectPreview(
                                         anime,
-                                        showPlayer = previewPanels == SourcePreferences.PREVIEW_PANELS_BOTH,
+                                        showEpisodes = SourcePreferences.previewLeftOn(previewPanels),
+                                        showPlayer = SourcePreferences.previewRightOn(previewPanels),
                                     )
                                 } else {
                                     navigator.push(AnimeScreen(anime.id))
@@ -355,108 +381,159 @@ class AnimeSourceScreen(
                                 }
                             },
                         )
+                        // KMK: Filter (left) and Settings (right) slide in over the covers
+                        BrowseOverlayPanel(
+                            visible = showFilters,
+                            fromStart = true,
+                            title = stringResource(MR.strings.action_filter),
+                            onDismiss = { showFilters = false },
+                        ) {
+                            // Rebuilt after every change so the panel redraws with the new choices
+                            var mangaFilters by remember(state.filters) {
+                                mutableStateOf(state.filters.toMangaFilterList(), neverEqualPolicy())
+                            }
+                            SourceFilterContent(
+                                onDismissRequest = { showFilters = false },
+                                filters = mangaFilters,
+                                onReset = {
+                                    screenModel.resetFilters()
+                                },
+                                onFilter = {
+                                    mangaFilters.writeBackToAnime()
+                                    showFilters = false
+                                    screenModel.search(searchQuery.orEmpty())
+                                },
+                                onUpdate = {
+                                    mangaFilters.writeBackToAnime()
+                                    mangaFilters = state.filters.toMangaFilterList()
+                                },
+                                startExpanded = false,
+                                savedSearches = persistentListOf(),
+                                onSave = {},
+                                onSavedSearch = {},
+                                onSavedSearchPress = {},
+                                onSavedSearchPressDesc = "",
+                                shouldShowSavingButton = false,
+                                openMangaDexRandom = null,
+                                openMangaDexFollows = null,
+                            )
+                        }
+                        BrowseOverlayPanel(
+                            visible = showSettings,
+                            fromStart = false,
+                            title = stringResource(MR.strings.source_settings),
+                            onDismiss = { showSettings = false },
+                        ) {
+                            if (showSettings) {
+                                SourceSettingsContent(
+                                    sourceId = sourceId,
+                                    modifier = Modifier.fillMaxSize(),
+                                    anime = true,
+                                )
+                            }
+                        }
                     }
                 }
             }
 
-            if (showFilters) {
-                // Rebuilt after every change so the sheet redraws with the new choices
-                var mangaFilters by remember(state.filters) {
-                    mutableStateOf(state.filters.toMangaFilterList(), neverEqualPolicy())
-                }
-                SourceFilterDialog(
-                    onDismissRequest = { showFilters = false },
-                    filters = mangaFilters,
-                    onReset = {
-                        screenModel.resetFilters()
-                    },
-                    onFilter = {
-                        mangaFilters.writeBackToAnime()
-                        showFilters = false
-                        screenModel.search(searchQuery.orEmpty())
-                    },
-                    onUpdate = {
-                        mangaFilters.writeBackToAnime()
-                        mangaFilters = state.filters.toMangaFilterList()
-                    },
-                    startExpanded = false,
-                    savedSearches = persistentListOf(),
-                    onSave = {},
-                    onSavedSearch = {},
-                    onSavedSearchPress = {},
-                    onSavedSearchPressDesc = "",
-                    shouldShowSavingButton = false,
-                    openMangaDexRandom = null,
-                    openMangaDexFollows = null,
-                )
-            }
         }
     }
 }
 
+/** KMK: Popular / Latest / Filter / Settings: the selected one shows its name, the others only their icon */
 @Composable
 private fun ListingChips(
     state: AnimeSourceScreenModel.State,
     supportsLatest: Boolean,
     onPopular: () -> Unit,
     onLatest: () -> Unit,
+    filterOpen: Boolean,
     onFilter: () -> Unit,
+    settingsOpen: Boolean,
+    onSettings: (() -> Unit)?,
+    onClosePanels: () -> Unit,
+    leftOn: Boolean,
+    rightOn: Boolean,
+    onLeftChange: (Boolean) -> Unit,
+    onRightChange: (Boolean) -> Unit,
     tabs: SumizuriTabs? = null,
     onCatalog: (String) -> Unit = {},
 ) {
     val selectedCatalog = (state.listing as? AnimeSourceScreenModel.Listing.Search)
         ?.takeIf { it.query.isBlank() }
         ?.let { tabs?.let { t -> runCatching { t.selectedCatalog(state.filters) }.getOrNull() } }
-    Row(
-        modifier = Modifier
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = MaterialTheme.padding.small),
-        horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
-    ) {
-        // KMK: tab catalogs replace Popular and Latest
-        if (tabs?.hasCatalogTabs != true) {
-            FilterChip(
-                selected = state.listing == AnimeSourceScreenModel.Listing.Popular,
-                onClick = onPopular,
-                leadingIcon = {
-                    Icon(Icons.Outlined.Favorite, null, Modifier.size(FilterChipDefaults.IconSize))
-                },
-                label = { Text(text = stringResource(MR.strings.popular)) },
-            )
-            if (supportsLatest) {
-                FilterChip(
-                    selected = state.listing == AnimeSourceScreenModel.Listing.Latest,
-                    onClick = onLatest,
-                    leadingIcon = {
-                        Icon(Icons.Outlined.NewReleases, null, Modifier.size(FilterChipDefaults.IconSize))
+    val panelOpen = filterOpen || settingsOpen
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = MaterialTheme.padding.small),
+            horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // KMK: tab catalogs replace Popular and Latest
+            if (tabs?.hasCatalogTabs != true) {
+                BrowseTabChip(
+                    selected = !panelOpen && state.listing == AnimeSourceScreenModel.Listing.Popular,
+                    label = stringResource(MR.strings.popular),
+                    icon = Icons.Outlined.FavoriteBorder,
+                    filledIcon = Icons.Outlined.Favorite,
+                    onClick = {
+                        onClosePanels()
+                        onPopular()
                     },
-                    label = { Text(text = stringResource(MR.strings.latest)) },
+                )
+                if (supportsLatest) {
+                    BrowseTabChip(
+                        selected = !panelOpen && state.listing == AnimeSourceScreenModel.Listing.Latest,
+                        label = stringResource(MR.strings.latest),
+                        icon = Icons.Outlined.NewReleases,
+                        onClick = {
+                            onClosePanels()
+                            onLatest()
+                        },
+                    )
+                }
+            }
+            tabs?.catalogTabs.orEmpty().forEach { catalog ->
+                BrowseTabChip(
+                    selected = !panelOpen && selectedCatalog == catalog.id,
+                    label = catalog.name,
+                    icon = null,
+                    onClick = {
+                        onClosePanels()
+                        onCatalog(catalog.id)
+                    },
+                )
+            }
+            BrowseTabChip(
+                selected = filterOpen ||
+                    (!settingsOpen && state.listing is AnimeSourceScreenModel.Listing.Search && selectedCatalog == null),
+                label = stringResource(MR.strings.action_filter),
+                icon = Icons.Outlined.FilterList,
+                onClick = onFilter,
+            )
+            if (onSettings != null) {
+                BrowseTabChip(
+                    selected = settingsOpen,
+                    label = stringResource(MR.strings.action_settings),
+                    icon = Icons.Outlined.Settings,
+                    onClick = onSettings,
                 )
             }
         }
-        tabs?.catalogTabs.orEmpty().forEach { catalog ->
-            FilterChip(
-                selected = selectedCatalog == catalog.id,
-                onClick = { onCatalog(catalog.id) },
-                label = { Text(text = catalog.name) },
+        Row(
+            modifier = Modifier.padding(end = MaterialTheme.padding.small),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            PreviewPanelButtons(
+                leftOn = leftOn,
+                rightOn = rightOn,
+                onLeftChange = onLeftChange,
+                onRightChange = onRightChange,
             )
         }
-        FilterChip(
-            selected = state.listing is AnimeSourceScreenModel.Listing.Search && selectedCatalog == null,
-            onClick = onFilter,
-            leadingIcon = {
-                Icon(Icons.Outlined.FilterList, null, Modifier.size(FilterChipDefaults.IconSize))
-            },
-            label = {
-                Text(
-                    text = if (state.filters.list.isNotEmpty()) {
-                        stringResource(MR.strings.action_filter)
-                    } else {
-                        stringResource(MR.strings.action_search)
-                    },
-                )
-            },
-        )
     }
 }
 

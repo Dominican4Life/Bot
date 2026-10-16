@@ -241,10 +241,11 @@
     <!-- Reader chapter side sheet -->
     <string name="reader_pages">Pages</string>
     <string name="browse_download_all_chapters">All chapters</string>
-    <string name="browse_panels">Panels</string>
-    <string name="browse_panels_left">Chapters panel only</string>
-    <string name="browse_panels_both">Chapters and pages panels</string>
-    <string name="browse_panels_none">No panels</string>
+    <string name="browse_left_panel">Left Panel</string>
+    <string name="browse_right_panel">Right Panel</string>
+    <string name="browse_menu_incognito">Incognito</string>
+    <string name="browse_menu_bulk_selection">Bulk Selection</string>
+    <string name="browse_no_filters">This source has no filters. You can still save the list to use in Feed.</string>
     <string name="browse_page_previews_unavailable">Page previews aren\'t available for this source</string>
     <string name="reader_page_grid_view">All pages in this chapter</string>
     <string name="reader_chapter_not_loaded">This chapter\'s pages aren\'t loaded yet</string>
