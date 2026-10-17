@@ -248,6 +248,19 @@ object ChapterVideoDownloads {
         }
     }
 
+    /**
+     * KMK: of all the file (or archive entry) names of a downloaded chapter, the pictures that have a saved video,
+     * so the Browse page panel can mark them with ▶ ("005.jpg" when "005.video.mp4" is there).
+     */
+    fun picturesWithVideo(allNames: List<String>): Set<String> {
+        val videos = allNames
+            .filter { isVideoFile(it) && !it.endsWith(TMP) }
+            .map { it.substringAfterLast('/').substringBefore(MARK) }
+            .toSet()
+        if (videos.isEmpty()) return emptySet()
+        return allNames.filter { !isVideoFile(it) && numberOf(it.substringAfterLast('/')) in videos }.toSet()
+    }
+
     /** "005.jpg" -> "005"; "005__001.jpg" -> "005"; the other parts of a split picture -> null */
     private fun numberOf(fileName: String): String? {
         val base = fileName.substringBeforeLast('.')

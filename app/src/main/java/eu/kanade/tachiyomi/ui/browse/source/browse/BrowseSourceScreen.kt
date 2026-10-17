@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Favorite
@@ -31,11 +33,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -97,6 +101,7 @@ import exh.ui.smartsearch.SmartSearchScreen
 import kotlinx.collections.immutable.toImmutableSet
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.receiveAsFlow
 import mihon.feature.migration.dialog.MigrateMangaDialog
 import mihon.presentation.core.util.collectAsLazyPagingItems
@@ -250,6 +255,25 @@ data class BrowseSourceScreen(
         // KMK -->
         val mangaList = screenModel.mangaPagerFlowFlow.collectAsLazyPagingItems()
 
+        // Each kept tab (Popular, Latest, a JS source's tab, a saved search) remembers where it was scrolled to, so
+        // switching back puts it there again; anything else starts at the top
+        val tabCacheKey = screenModel.tabCacheKey(state.listing)
+        val scrollKey: Any = tabCacheKey ?: state.listing
+        val savedScroll = remember(scrollKey, state.reloadToken) { tabCacheKey?.let { BrowseTabCache.scroll(it) } }
+        val gridState = key(scrollKey, state.reloadToken) {
+            rememberLazyGridState(savedScroll?.first ?: 0, savedScroll?.second ?: 0)
+        }
+        val listState = key(scrollKey, state.reloadToken) {
+            rememberLazyListState(savedScroll?.first ?: 0, savedScroll?.second ?: 0)
+        }
+        LaunchedEffect(gridState, listState, tabCacheKey) {
+            val cacheKey = tabCacheKey ?: return@LaunchedEffect
+            merge(
+                snapshotFlow { gridState.firstVisibleItemIndex to gridState.firstVisibleItemScrollOffset },
+                snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset },
+            ).collect { (index, offset) -> BrowseTabCache.saveScroll(cacheKey, index, offset) }
+        }
+
         val isHentaiEnabled: Boolean = Injekt.get<ExhPreferences>().isHentaiEnabled().get()
         val isConfigurableSource = screenModel.source.anyIs<ConfigurableSource>() ||
             (screenModel.source.isEhBasedSource() && isHentaiEnabled)
@@ -350,9 +374,14 @@ data class BrowseSourceScreen(
                                         icon = Icons.Outlined.FavoriteBorder,
                                         filledIcon = Icons.Outlined.Favorite,
                                         onClick = {
-                                            closeSidePanels()
-                                            screenModel.resetFilters()
-                                            screenModel.setListing(Listing.Popular)
+                                            if (!panelOpen && state.listing == Listing.Popular) {
+                                                // Tapping the selected tab loads it again from page 1
+                                                screenModel.reloadListing()
+                                            } else {
+                                                closeSidePanels()
+                                                screenModel.resetFilters()
+                                                screenModel.setListing(Listing.Popular)
+                                            }
                                         },
                                     )
                                     if (screenModel.source.supportsLatest) {
@@ -361,9 +390,13 @@ data class BrowseSourceScreen(
                                             label = stringResource(MR.strings.latest),
                                             icon = Icons.Outlined.NewReleases,
                                             onClick = {
-                                                closeSidePanels()
-                                                screenModel.resetFilters()
-                                                screenModel.setListing(Listing.Latest)
+                                                if (!panelOpen && state.listing == Listing.Latest) {
+                                                    screenModel.reloadListing()
+                                                } else {
+                                                    closeSidePanels()
+                                                    screenModel.resetFilters()
+                                                    screenModel.setListing(Listing.Latest)
+                                                }
                                             },
                                         )
                                     }
@@ -374,8 +407,12 @@ data class BrowseSourceScreen(
                                         label = catalog.name,
                                         icon = null,
                                         onClick = {
-                                            closeSidePanels()
-                                            screenModel.showCatalog(catalog.id)
+                                            if (!panelOpen && selectedCatalog == catalog.id) {
+                                                screenModel.reloadListing()
+                                            } else {
+                                                closeSidePanels()
+                                                screenModel.showCatalog(catalog.id)
+                                            }
                                         },
                                     )
                                 }
@@ -419,6 +456,10 @@ data class BrowseSourceScreen(
                                         label = savedSearch.name,
                                         icon = null,
                                         onClick = {
+                                            if (!panelOpen && searchListing?.savedSearchId == savedSearch.id) {
+                                                screenModel.reloadListing()
+                                                return@BrowseTabChip
+                                            }
                                             closeSidePanels()
                                             screenModel.onSavedSearch(savedSearch) {
                                                 context.toast(it)
@@ -495,6 +536,10 @@ data class BrowseSourceScreen(
                     BrowseSourceContent(
                         source = screenModel.source,
                         mangaList = mangaList,
+                        // KMK -->
+                        gridState = gridState,
+                        listState = listState,
+                        // KMK <--
                         columns = screenModel.columnsToGridCells(columnCount),
                         // SY -->
                         ehentaiBrowseDisplayMode = screenModel.ehentaiBrowseDisplayMode,

@@ -50,6 +50,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -301,6 +302,8 @@ fun AppBarActions(
                     // KMK -->
                     leadingIcon = if (it.icon != null) {
                         { Icon(imageVector = it.icon, contentDescription = null) }
+                    } else if (it.painter != null) {
+                        { Icon(painter = it.painter, contentDescription = null) }
                     } else {
                         null
                     },
@@ -504,6 +507,8 @@ sealed interface AppBar {
         // KMK -->
         /** An icon in front of the title */
         val icon: ImageVector? = null,
+        /** An icon in front of the title, when it's not an [ImageVector] (e.g. an animated one) */
+        val painter: Painter? = null,
         /** Not null: a switch after the title, on or off */
         val checked: Boolean? = null,
         // KMK <--

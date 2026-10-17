@@ -2,7 +2,11 @@ package eu.kanade.presentation.browse
 
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.Public
@@ -60,6 +64,9 @@ fun BrowseSourceContent(
     onMangaLongClick: (Manga) -> Unit,
     // KMK -->
     selection: List<Manga>,
+    /** The grid and list scroll states, held by the screen so each tab keeps its place */
+    gridState: LazyGridState = rememberLazyGridState(),
+    listState: LazyListState = rememberLazyListState(),
     // KMK <--
 ) {
     val context = LocalContext.current
@@ -148,6 +155,7 @@ fun BrowseSourceContent(
             onMangaLongClick = onMangaLongClick,
             // KMK -->
             selection = selection,
+            listState = listState,
             // KMK <--
         )
         return
@@ -164,6 +172,7 @@ fun BrowseSourceContent(
                 onMangaLongClick = onMangaLongClick,
                 // KMK -->
                 selection = selection,
+                gridState = gridState,
                 // KMK <--
             )
         }
@@ -177,6 +186,7 @@ fun BrowseSourceContent(
                 onMangaLongClick = onMangaLongClick,
                 // KMK -->
                 selection = selection,
+                gridState = gridState,
                 usePanoramaCover = true,
                 // KMK <--
             )
@@ -190,6 +200,7 @@ fun BrowseSourceContent(
                 onMangaLongClick = onMangaLongClick,
                 // KMK -->
                 selection = selection,
+                listState = listState,
                 // KMK <--
             )
         }
@@ -202,6 +213,7 @@ fun BrowseSourceContent(
                 onMangaLongClick = onMangaLongClick,
                 // KMK -->
                 selection = selection,
+                gridState = gridState,
                 showTitle = displayMode == LibraryDisplayMode.CompactGrid,
                 // KMK <--
             )

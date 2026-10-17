@@ -29,6 +29,8 @@ data class LocalPageThumbnail(
     val fileUri: Uri? = null,
     val archiveUri: Uri? = null,
     val entryName: String? = null,
+    // KMK: this page has a saved video: the Browse page panel shows ▶ on it
+    val isVideo: Boolean = false,
 )
 
 class LocalPageFetcher(

@@ -4,7 +4,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -34,10 +36,10 @@ import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaCover
 import tachiyomi.presentation.core.components.Badge
 import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.util.collectAsState as collectPrefAsState
 import tachiyomi.presentation.core.util.plus
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import tachiyomi.presentation.core.util.collectAsState as collectPrefAsState
 
 @Composable
 fun BrowseSourceComfortableGrid(
@@ -49,6 +51,8 @@ fun BrowseSourceComfortableGrid(
     // KMK -->
     selection: List<Manga>,
     usePanoramaCover: Boolean = false,
+    /** Held by the screen so each tab keeps its scroll position */
+    gridState: LazyGridState = rememberLazyGridState(),
     // KMK <--
 ) {
     // KMK -->
@@ -62,6 +66,7 @@ fun BrowseSourceComfortableGrid(
     ProvideCoverFillSettings {
         LazyVerticalGrid(
             columns = columns,
+            state = gridState,
             contentPadding = contentPadding + PaddingValues(8.dp),
             verticalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridVerticalSpacer),
             horizontalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridHorizontalSpacer),

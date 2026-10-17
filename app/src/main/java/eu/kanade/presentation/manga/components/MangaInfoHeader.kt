@@ -397,47 +397,18 @@ fun ExpandableMangaDescription(
                     .animateContentSize(animationSpec = spring())
                     .fillMaxWidth(),
             ) {
-                var showMenu by remember { mutableStateOf(false) }
-                var tagSelected by remember { mutableStateOf("") }
-                DropdownMenu(
-                    expanded = showMenu,
-                    onDismissRequest = { showMenu = false },
-                ) {
-                    DropdownMenuItem(
-                        text = { Text(text = stringResource(MR.strings.action_search)) },
-                        onClick = {
-                            onTagSearch(tagSelected)
-                            showMenu = false
-                        },
-                    )
-                    // SY -->
-                    DropdownMenuItem(
-                        text = { Text(text = stringResource(MR.strings.action_global_search)) },
-                        onClick = {
-                            doSearch(tagSelected, true)
-                            showMenu = false
-                        },
-                    )
-                    // SY <--
-                    DropdownMenuItem(
-                        text = { Text(text = stringResource(MR.strings.action_copy_to_clipboard)) },
-                        onClick = {
-                            onCopyTagToClipboard(tagSelected)
-                            showMenu = false
-                        },
-                    )
-                }
+                // KMK: tap a tag to search it in this source, hold it for a global search (no menu)
+                val onTagClick: (String) -> Unit = { onTagSearch(it) }
+                val onTagHold: (String) -> Unit = { doSearch(it, true) }
                 if (expanded) {
                     // SY -->
                     if (searchMetadataChips != null) {
                         NamespaceTags(
                             tags = searchMetadataChips,
-                            onClick = {
-                                tagSelected = it
-                                showMenu = true
-                            },
+                            onClick = onTagClick,
                             // KMK -->
                             pureDarkMode = pureDarkMode,
+                            onLongClick = onTagHold,
                             // KMK <--
                         )
                     } else {
@@ -450,12 +421,10 @@ fun ExpandableMangaDescription(
                                 TagsChip(
                                     modifier = DefaultTagChipModifier,
                                     text = it,
-                                    onClick = {
-                                        tagSelected = it
-                                        showMenu = true
-                                    },
+                                    onClick = { onTagClick(it) },
                                     // KMK -->
                                     pureDarkMode = pureDarkMode,
+                                    onLongClick = { onTagHold(it) },
                                     // KMK <--
                                 )
                             }
@@ -470,12 +439,10 @@ fun ExpandableMangaDescription(
                             TagsChip(
                                 modifier = DefaultTagChipModifier,
                                 text = it,
-                                onClick = {
-                                    tagSelected = it
-                                    showMenu = true
-                                },
+                                onClick = { onTagClick(it) },
                                 // KMK -->
                                 pureDarkMode = pureDarkMode,
+                                onLongClick = { onTagHold(it) },
                                 // KMK <--
                             )
                         }

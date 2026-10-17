@@ -63,6 +63,12 @@ abstract class BaseSourcePagingSource(
             getPageLoadResult(params, mangasPage)
             // SY <--
         } catch (e: Exception) {
+            // KMK -->
+            // An empty page after the first is the end of the list, not "No results found"
+            if (e is NoResultsException && page > 1) {
+                return LoadResult.Page(data = emptyList(), prevKey = null, nextKey = null)
+            }
+            // KMK <--
             xLogE("${this::class.simpleName}: Failed to load paging source", e)
             LoadResult.Error(e)
         }

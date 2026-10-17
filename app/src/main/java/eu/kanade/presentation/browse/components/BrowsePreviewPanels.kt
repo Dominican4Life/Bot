@@ -1,6 +1,8 @@
 package eu.kanade.presentation.browse.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Circle
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.Download
@@ -33,8 +36,8 @@ import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Icon
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -71,7 +74,10 @@ import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.sumizuri.ReaderVideos
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowsePreviewScreenModel
+import java.text.DateFormat
+import java.util.Date
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import tachiyomi.domain.chapter.model.Chapter
@@ -85,8 +91,6 @@ import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.selectedBackground
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import java.text.DateFormat
-import java.util.Date
 
 /**
  * KMK: Left panel on the browse source screen with the chapters of the selected cover.
@@ -397,6 +401,7 @@ fun BrowsePagePanel(
                         PageThumbnailBox(
                             model = page,
                             number = index + 1,
+                            isVideo = page.isVideo,
                             onClick = { onOpenPage(chapter, index) },
                         )
                     }
@@ -454,15 +459,18 @@ private fun SourcePageThumbnailItem(
     PageThumbnailBox(
         model = remember(source.id, chapterUrl, page.index) { SourcePageThumbnail(source, chapterUrl, page) },
         number = page.number,
+        // KMK: the same check as the reader's Pages panel
+        isVideo = ReaderVideos.isVideo(page.url),
         onClick = onClick,
     )
 }
 
-/** One page tile: the image (from the source or a download) with its number in the corner */
+/** One page tile: the image (from the source or a download) with its number in the corner, and ▶ on a video */
 @Composable
 private fun PageThumbnailBox(
     model: Any,
     number: Int,
+    isVideo: Boolean,
     onClick: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -488,6 +496,24 @@ private fun PageThumbnailBox(
             alignment = Alignment.TopCenter,
             modifier = Modifier.fillMaxSize(),
         )
+        // KMK: the reader's play button look (dark circle, white ring, white arrow); tapping opens the reader there
+        if (isVideo) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 170f / 255f))
+                    .border(BorderStroke(1.5.dp, Color.White.copy(alpha = 200f / 255f)), CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.PlayArrow,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(28.dp),
+                )
+            }
+        }
         Box(
             modifier = Modifier
                 .align(Alignment.BottomEnd)

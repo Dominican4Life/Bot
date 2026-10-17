@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
@@ -45,6 +47,8 @@ import exh.util.SourceTagsUtil
 import exh.util.SourceTagsUtil.GenreColor
 import exh.util.SourceTagsUtil.genreTextColor
 import exh.util.floor
+import java.time.Instant
+import java.time.ZoneId
 import kotlinx.coroutines.flow.StateFlow
 import tachiyomi.core.common.i18n.pluralStringResource
 import tachiyomi.core.common.util.lang.withIOContext
@@ -56,8 +60,6 @@ import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.icons.FlagEmoji.Companion.getEmojiLangFlag
 import tachiyomi.presentation.core.util.selectedBackground
-import java.time.Instant
-import java.time.ZoneId
 
 @Composable
 fun BrowseSourceEHentaiList(
@@ -67,9 +69,12 @@ fun BrowseSourceEHentaiList(
     onMangaLongClick: (Manga) -> Unit,
     // KMK -->
     selection: List<Manga>,
+    /** Held by the screen so each tab keeps its scroll position */
+    listState: LazyListState = rememberLazyListState(),
     // KMK <--
 ) {
     LazyColumn(
+        state = listState,
         contentPadding = contentPadding,
     ) {
         item {

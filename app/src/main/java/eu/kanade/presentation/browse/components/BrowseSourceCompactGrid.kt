@@ -4,7 +4,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -42,10 +44,13 @@ fun BrowseSourceCompactGrid(
     selection: List<Manga>,
     /** False for the cover-only grid */
     showTitle: Boolean = true,
+    /** Held by the screen so each tab keeps its scroll position */
+    gridState: LazyGridState = rememberLazyGridState(),
     // KMK <--
 ) {
     LazyVerticalGrid(
         columns = columns,
+        state = gridState,
         contentPadding = contentPadding + PaddingValues(8.dp),
         verticalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridVerticalSpacer),
         horizontalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridHorizontalSpacer),

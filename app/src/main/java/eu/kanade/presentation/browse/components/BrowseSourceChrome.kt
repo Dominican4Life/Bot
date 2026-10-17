@@ -4,18 +4,22 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
-import androidx.compose.material3.FilledTonalIconToggleButton
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PlainTooltip
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TooltipAnchorPosition
 import androidx.compose.material3.TooltipBox
@@ -23,6 +27,7 @@ import androidx.compose.material3.TooltipDefaults.rememberTooltipPositionProvide
 import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -94,6 +99,7 @@ fun RowScope.PreviewPanelButtons(
         icon = PanelToggleIcons.Left,
         label = stringResource(KMR.strings.browse_left_panel),
     )
+    Spacer(modifier = Modifier.width(8.dp))
     PanelToggleButton(
         checked = rightOn,
         onCheckedChange = onRightChange,
@@ -115,14 +121,32 @@ private fun PanelToggleButton(
         state = rememberTooltipState(),
         focusable = false,
     ) {
-        FilledTonalIconToggleButton(
+        // Same height, corner and icon size as the chips beside it; square, and filled like a selected chip when on
+        Surface(
             checked = checked,
             onCheckedChange = onCheckedChange,
+            modifier = Modifier.size(PanelButtonSize),
+            shape = FilterChipDefaults.shape,
+            color = if (checked) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+            contentColor = if (checked) {
+                MaterialTheme.colorScheme.onSecondaryContainer
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            border = if (checked) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         ) {
-            Icon(imageVector = icon, contentDescription = label)
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = label,
+                    modifier = Modifier.size(FilterChipDefaults.IconSize),
+                )
+            }
         }
     }
 }
+
+private val PanelButtonSize = 32.dp
 
 /**
  * KMK: Filter (from the left) or source settings (from the right), slid in over the covers and the preview panels

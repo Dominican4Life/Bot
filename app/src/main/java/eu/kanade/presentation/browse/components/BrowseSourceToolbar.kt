@@ -1,6 +1,9 @@
 package eu.kanade.presentation.browse.components
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.graphics.res.animatedVectorResource
+import androidx.compose.animation.graphics.res.rememberAnimatedVectorPainter
+import androidx.compose.animation.graphics.vector.AnimatedImageVector
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,8 +35,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.PopupProperties
 import androidx.core.graphics.drawable.toBitmap
@@ -141,7 +142,11 @@ fun BrowseSourceToolbar(
                                 AppBar.OverflowAction(
                                     title = stringResource(KMR.strings.browse_menu_incognito),
                                     onClick = onToggleIncognito,
-                                    icon = ImageVector.vectorResource(R.drawable.ic_glasses_with_hat_24dp),
+                                    // The More screen's Incognito icon: glasses when off, the hat drops on when on
+                                    painter = rememberAnimatedVectorPainter(
+                                        AnimatedImageVector.animatedVectorResource(R.drawable.anim_incognito),
+                                        incognito,
+                                    ),
                                     checked = incognito,
                                 ),
                             )

@@ -1,6 +1,8 @@
 package eu.kanade.presentation.manga.components
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
@@ -11,6 +13,7 @@ import androidx.compose.material3.ElevatedSuggestionChip
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SuggestionChip
+import androidx.compose.material3.SuggestionChipDefaults as SuggestionChipDefaultsM3
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -18,6 +21,10 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.PreviewLightDark
 import androidx.compose.ui.unit.dp
@@ -31,7 +38,6 @@ import exh.metadata.metadata.base.RaisedTag
 import exh.source.EXH_SOURCE_ID
 import exh.source.eHentaiSourceIds
 import exh.util.SourceTagsUtil
-import androidx.compose.material3.SuggestionChipDefaults as SuggestionChipDefaultsM3
 
 @Immutable
 data class DisplayTag(
@@ -98,6 +104,7 @@ fun NamespaceTags(
     onClick: (item: String) -> Unit,
     // KMK -->
     pureDarkMode: Boolean = false,
+    onLongClick: ((item: String) -> Unit)? = null,
     // KMK <--
 ) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -123,6 +130,9 @@ fun NamespaceTags(
                             modifier = Modifier.padding(vertical = 4.dp),
                             text = text,
                             onClick = { onClick(search) },
+                            // KMK -->
+                            onLongClick = onLongClick?.let { { it(search) } },
+                            // KMK <--
                             border = borderDp?.let {
                                 SuggestionChipDefaults.suggestionChipBorder(
                                     borderWidth = it,
@@ -167,8 +177,22 @@ fun TagsChip(
     // borderM3: BorderStroke? = SuggestionChipDefaultsM3.suggestionChipBorder(enabled = true),
     borderM3: BorderStroke? = null,
     pureDarkMode: Boolean = false,
+    /** Holding the chip; a tap still goes to [onClick] */
+    onLongClick: (() -> Unit)? = null,
     // KMK <--
 ) {
+    // KMK -->
+    val haptic = LocalHapticFeedback.current
+    @Suppress("NAME_SHADOWING")
+    val modifier = if (onClick != null && onLongClick != null) {
+        modifier.onHold {
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            onLongClick()
+        }
+    } else {
+        modifier
+    }
+    // KMK <--
     CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
         if (onClick != null) {
             // KMK -->
@@ -276,3 +300,31 @@ fun NamespaceTagsPreview() {
         }
     }
 }
+
+/**
+ * KMK: Calls [onHold] when the element is held for the long-press time, and then swallows the rest of that touch so
+ * the element's own tap doesn't fire too. A tap, or a touch that moves (scrolling), is left alone.
+ */
+private fun Modifier.onHold(onHold: () -> Unit): Modifier = pointerInput(onHold) {
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+        val ended = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                if (!change.pressed || change.isConsumed) break
+                if ((change.position - down.position).getDistance() > viewConfiguration.touchSlop) break
+            }
+            true
+        }
+        if (ended == null) {
+            onHold()
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                event.changes.forEach { it.consume() }
+                if (event.changes.none { it.pressed }) break
+            }
+        }
+    }
+}
+

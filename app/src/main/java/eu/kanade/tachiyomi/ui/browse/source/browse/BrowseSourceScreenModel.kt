@@ -226,14 +226,24 @@ open class BrowseSourceScreenModel(
      * Flow of Pager flow tied to [State.listing]
      */
     private val hideInLibraryItems = sourcePreferences.hideInLibraryItems().get()
-    val mangaPagerFlowFlow = state.map { it.listing }
+    val mangaPagerFlowFlow = state.map { it.listing to it.reloadToken }
         .distinctUntilChanged()
-        .map { listing ->
-            Pager(PagingConfig(pageSize = 25)) {
-                // SY -->
-                createSourcePagingSource(listing.query ?: "", listing.filters)
-                // SY <--
-            }.flow.map { pagingData ->
+        .map { (listing, _) ->
+            // KMK: a tab's list is kept until the app closes (see BrowseTabCache); a typed search loads fresh
+            val newPager = {
+                Pager(PagingConfig(pageSize = 25)) {
+                    // SY -->
+                    createSourcePagingSource(listing.query ?: "", listing.filters)
+                    // SY <--
+                }.flow
+            }
+            val cacheKey = tabCacheKey(listing)
+            val rawFlow = if (cacheKey != null) {
+                BrowseTabCache.pager(cacheKey, newPager)
+            } else {
+                newPager()
+            }
+            rawFlow.map { pagingData ->
                 pagingData.map { (manga, metadata) ->
                     getManga.subscribe(manga.url, manga.source)
                         .map { it ?: manga }
@@ -247,6 +257,28 @@ open class BrowseSourceScreenModel(
                 .cachedIn(ioCoroutineScope)
         }
         .stateIn(ioCoroutineScope, SharingStarted.Lazily, emptyFlow())
+
+    // KMK -->
+    /**
+     * The key a tab's list is kept under until the app closes: Popular, Latest, a JS source's tab or a saved search.
+     * Null for a typed search or changed filters, which always load fresh. Includes the screen, so a screen that
+     * loads its lists differently (e.g. migration) never shares Browse's lists.
+     */
+    fun tabCacheKey(listing: Listing = state.value.listing): String? {
+        val tab = when (listing) {
+            Listing.Popular -> "popular"
+            Listing.Latest -> "latest"
+            is Listing.Search -> listing.tabKey ?: return null
+        }
+        return "${this::class.qualifiedName}:${source.id}:$tab"
+    }
+
+    /** Tapping the selected tab: forget its kept list and load it again from page 1 */
+    fun reloadListing() {
+        tabCacheKey()?.let { BrowseTabCache.drop(it) }
+        mutableState.update { it.copy(reloadToken = it.reloadToken + 1) }
+    }
+    // KMK <--
 
     fun getColumnsPreference(orientation: Int): GridCells {
         // KMK -->
@@ -310,7 +342,7 @@ open class BrowseSourceScreenModel(
         if (runCatching { tabs.selectCatalog(filters, id) }.getOrNull() != true) return
         runCatching { tabs.rememberTab(id) }
         setFilters(filters)
-        setListing(Listing.Search(query = null, filters = filters))
+        setListing(Listing.Search(query = null, filters = filters, tabKey = "catalog:$id"))
     }
 
     /** For a source with tab catalogs: opens the one used last (or the first). False when it has none */
@@ -357,6 +389,8 @@ open class BrowseSourceScreenModel(
                     filters = filters ?: input.filters,
                     // KMK -->
                     savedSearchId = savedSearchId,
+                    // A changed search is no longer a kept tab
+                    tabKey = null,
                     // KMK <--
                 ),
                 toolbarQuery = query ?: input.query,
@@ -540,6 +574,8 @@ open class BrowseSourceScreenModel(
             override val filters: FilterList,
             // KMK -->
             val savedSearchId: Long? = null,
+            /** A tab whose list is kept until the app closes ("catalog:<id>", "saved:<id>"); null for a search */
+            val tabKey: String? = null,
             // KMK <--
         ) : Listing(query = query, filters = filters)
 
@@ -580,6 +616,8 @@ open class BrowseSourceScreenModel(
         val savedSearches: ImmutableList<EXHSavedSearch> = persistentListOf(),
         val filterable: Boolean = true,
         // SY <--
+        // KMK: bumped to load the current tab again from page 1
+        val reloadToken: Int = 0,
     ) {
         val isUserQuery get() = listing is Listing.Search && !listing.query.isNullOrEmpty()
     }
@@ -641,6 +679,7 @@ open class BrowseSourceScreenModel(
                         filters = filters,
                         // KMK -->
                         savedSearchId = search.id,
+                        tabKey = "saved:${search.id}",
                         // KMK <--
                     ),
                     filters = filters,

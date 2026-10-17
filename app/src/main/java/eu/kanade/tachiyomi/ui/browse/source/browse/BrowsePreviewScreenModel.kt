@@ -21,6 +21,7 @@ import eu.kanade.presentation.manga.DownloadAction
 import eu.kanade.presentation.manga.components.ChapterDownloadAction
 import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.data.coil.LocalPageThumbnail
+import eu.kanade.tachiyomi.sumizuri.ChapterVideoDownloads
 import eu.kanade.tachiyomi.data.coil.getBestColor
 import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
@@ -401,21 +402,38 @@ class BrowsePreviewScreenModel(
             ?: return null
         val context = Injekt.get<Application>()
         return if (dir.isFile) {
-            dir.archiveReader(context).use { reader ->
+            val (names, videoPictures) = dir.archiveReader(context).use { reader ->
                 reader.useEntries { entries ->
-                    entries
-                        .filter { it.isFile && ImageUtil.isImage(it.name) { reader.getInputStream(it.name)!! } }
+                    val all = entries.filter { it.isFile }.toList()
+                    val images = all
+                        .filter { !ChapterVideoDownloads.isVideoFile(it.name) }
+                        .filter { ImageUtil.isImage(it.name) { reader.getInputStream(it.name)!! } }
                         .map { it.name }
-                        .toList()
+                    images to ChapterVideoDownloads.picturesWithVideo(all.map { it.name })
                 }
             }
+            names
                 .sortedWith { a, b -> a.compareToCaseInsensitiveNaturalOrder(b) }
                 .mapIndexed { index, name ->
-                    LocalPageThumbnail(chapter.id, index, archiveUri = dir.uri, entryName = name)
+                    LocalPageThumbnail(
+                        chapter.id,
+                        index,
+                        archiveUri = dir.uri,
+                        entryName = name,
+                        isVideo = name in videoPictures,
+                    )
                 }
         } else {
+            val files = dir.listFiles().orEmpty()
+            val nameOf = files.associate { it.uri.toString() to it.name.orEmpty() }
+            val videoPictures = ChapterVideoDownloads.picturesWithVideo(files.map { it.name.orEmpty() })
             downloadManager.buildPageList(source, manga, chapter).map { page ->
-                LocalPageThumbnail(chapter.id, page.index, fileUri = page.uri)
+                LocalPageThumbnail(
+                    chapter.id,
+                    page.index,
+                    fileUri = page.uri,
+                    isVideo = nameOf[page.uri.toString()]?.let { it in videoPictures } == true,
+                )
             }
         }
     }

@@ -2,6 +2,8 @@ package eu.kanade.presentation.browse.components
 
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -33,9 +35,12 @@ fun BrowseSourceList(
     onMangaLongClick: (Manga) -> Unit,
     // KMK -->
     selection: List<Manga>,
+    /** Held by the screen so each tab keeps its scroll position */
+    listState: LazyListState = rememberLazyListState(),
     // KMK <--
 ) {
     LazyColumn(
+        state = listState,
         contentPadding = contentPadding + PaddingValues(vertical = 8.dp),
     ) {
         item {

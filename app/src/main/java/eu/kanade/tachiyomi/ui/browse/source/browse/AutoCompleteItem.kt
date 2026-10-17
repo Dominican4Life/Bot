@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.browse.source.browse
 
+import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -25,15 +26,19 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
@@ -131,22 +136,50 @@ fun AutoCompleteTextField(
     val density = LocalDensity.current
     var value by remember { mutableStateOf(TextFieldValue("")) }
     val focusManager = LocalFocusManager.current
+    // KMK: a box with a list opens the list on the first tap without the keyboard; a second tap in the box brings the
+    // keyboard up to type. A box without a list types right away
+    val hasList = values.isNotEmpty()
+    var typing by remember(hasList) { mutableStateOf(!hasList) }
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focusRequester = remember { FocusRequester() }
+    // When the open list closes because the box itself was tapped, the box asks to open it again right after:
+    // that's the second tap too
+    var listClosedAt by remember { mutableStateOf(0L) }
+    LaunchedEffect(typing) {
+        if (typing && hasList) {
+            focusRequester.requestFocus()
+            keyboard?.show()
+        }
+    }
     fun submit() {
         if (onSubmit(value.text)) {
             focusManager.clearFocus()
             // KMK: the list now also shows for an empty box, so close it after a pick
             expanded = false
+            typing = !hasList
             value = TextFieldValue("")
         }
     }
     BackHandler(expanded) {
         focusManager.clearFocus()
         expanded = false
+        typing = !hasList
     }
 
     ExposedDropdownMenuBox(
         expanded = expanded,
-        onExpandedChange = { expanded = it },
+        onExpandedChange = { open ->
+            // KMK: tapping the box while its list is open (and not typing yet) starts typing instead of closing it
+            if (!open && expanded && !typing) {
+                typing = true
+            } else if (open && hasList && !typing && SystemClock.uptimeMillis() - listClosedAt < 400) {
+                typing = true
+                expanded = true
+            } else {
+                expanded = open
+                if (!open) typing = !hasList
+            }
+        },
     ) {
         OutlinedTextField(
             value = value,
@@ -166,10 +199,13 @@ fun AutoCompleteTextField(
             },
             modifier = Modifier
                 .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryEditable)
+                .focusRequester(focusRequester)
                 .fillMaxWidth()
                 .onSizeChanged { anchorWidth = it.width }
                 .runOnEnterKeyPressed { submit() },
             singleLine = true,
+            // KMK: no keyboard until the second tap (see typing)
+            readOnly = !typing,
             keyboardActions = KeyboardActions { submit() },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
             trailingIcon = {
@@ -207,7 +243,11 @@ fun AutoCompleteTextField(
                 modifier = Modifier
                     .exposedDropdownSize(matchAnchorWidth = true),
                 expanded = expanded,
-                onDismissRequest = { expanded = false },
+                onDismissRequest = {
+                    expanded = false
+                    typing = !hasList
+                    listClosedAt = SystemClock.uptimeMillis()
+                },
             ) {
                 LazyColumn(
                     modifier = Modifier
