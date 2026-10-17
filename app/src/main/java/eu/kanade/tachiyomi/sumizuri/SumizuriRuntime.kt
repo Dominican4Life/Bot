@@ -499,6 +499,8 @@ class SumizuriRuntime private constructor(
                 lang: pick('lang', typeof LANG === 'undefined' ? undefined : LANG) || (cfg && cfg.lang) || null,
                 iconUrl: pick('iconUrl', typeof ICON_URL === 'undefined' ? undefined : ICON_URL) || (cfg && cfg.iconUrl) || null,
                 baseUrl: pick('baseUrl', typeof BASE_URL === 'undefined' ? undefined : BASE_URL) || (cfg && cfg.baseUrl) || null,
+                popularName: pick('popularName', typeof POPULAR_NAME === 'undefined' ? undefined : POPULAR_NAME),
+                latestName: pick('latestName', typeof LATEST_NAME === 'undefined' ? undefined : LATEST_NAME),
                 hasPopular: typeof extension.getPopular === 'function',
                 hasLatest: typeof extension.getLatest === 'function',
                 hasDetails: typeof extension.getDetails === 'function',

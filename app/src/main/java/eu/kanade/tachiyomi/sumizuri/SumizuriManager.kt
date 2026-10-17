@@ -163,6 +163,8 @@ class SumizuriManager(private val context: Application) {
             preferences = optional("getSourcePreferences", "hasPreferences"),
             hasTags = meta.bool("hasTags") == true,
             hasRelated = meta.bool("hasRelated") == true,
+            popularName = meta.str("popularName")?.trim()?.takeIf { it.isNotEmpty() },
+            latestName = meta.str("latestName")?.trim()?.takeIf { it.isNotEmpty() },
             customId = customId(meta.str("id"), key, meta.str("name")),
             enabled = existing?.enabled ?: true,
             createdAt = existing?.createdAt ?: System.currentTimeMillis(),

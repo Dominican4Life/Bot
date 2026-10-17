@@ -21,6 +21,12 @@ interface SumizuriTabs {
 
     fun rememberTab(id: String)
 
+    /** The name the source gives its Popular button (`popularName`), or null for the app's "Popular" */
+    val popularName: String? get() = null
+
+    /** The name the source gives its Latest button (`latestName`), or null for the app's "Latest" */
+    val latestName: String? get() = null
+
     /** True when the source's tab catalogs replace Popular and Latest */
     val hasCatalogTabs: Boolean get() = catalogTabs.isNotEmpty()
 

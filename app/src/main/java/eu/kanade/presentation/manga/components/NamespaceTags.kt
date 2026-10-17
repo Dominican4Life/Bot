@@ -305,7 +305,7 @@ fun NamespaceTagsPreview() {
  * KMK: Calls [onHold] when the element is held for the long-press time, and then swallows the rest of that touch so
  * the element's own tap doesn't fire too. A tap, or a touch that moves (scrolling), is left alone.
  */
-private fun Modifier.onHold(onHold: () -> Unit): Modifier = pointerInput(onHold) {
+fun Modifier.onHold(onHold: () -> Unit): Modifier = pointerInput(onHold) {
     awaitEachGesture {
         val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
         val ended = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {

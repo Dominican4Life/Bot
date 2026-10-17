@@ -142,9 +142,11 @@ fun AutoCompleteTextField(
     var typing by remember(hasList) { mutableStateOf(!hasList) }
     val keyboard = LocalSoftwareKeyboardController.current
     val focusRequester = remember { FocusRequester() }
-    // When the open list closes because the box itself was tapped, the box asks to open it again right after:
-    // that's the second tap too
+    // A tap on the box can reach the open list as a "tap outside" (closing it) as well as reaching the box. These
+    // times tell those apart in either order, so one normal tap on the box always means "type"
     var listClosedAt by remember { mutableStateOf(0L) }
+    var boxTappedAt by remember { mutableStateOf(0L) }
+    fun now() = SystemClock.uptimeMillis()
     LaunchedEffect(typing) {
         if (typing && hasList) {
             focusRequester.requestFocus()
@@ -169,15 +171,15 @@ fun AutoCompleteTextField(
     ExposedDropdownMenuBox(
         expanded = expanded,
         onExpandedChange = { open ->
-            // KMK: tapping the box while its list is open (and not typing yet) starts typing instead of closing it
-            if (!open && expanded && !typing) {
-                typing = true
-            } else if (open && hasList && !typing && SystemClock.uptimeMillis() - listClosedAt < 400) {
-                typing = true
+            // KMK: called when the box is tapped. The first tap opens the list; a tap while it's open starts typing.
+            // Tapping the box never closes the list: Back, a tap outside or a pick does
+            boxTappedAt = now()
+            if (open) {
+                // The list just closed from this same tap (seen as a tap outside): that's the typing tap
+                if (hasList && !typing && now() - listClosedAt < 500) typing = true
                 expanded = true
-            } else {
-                expanded = open
-                if (!open) typing = !hasList
+            } else if (hasList && !typing) {
+                typing = true
             }
         },
     ) {
@@ -244,9 +246,12 @@ fun AutoCompleteTextField(
                     .exposedDropdownSize(matchAnchorWidth = true),
                 expanded = expanded,
                 onDismissRequest = {
-                    expanded = false
-                    typing = !hasList
-                    listClosedAt = SystemClock.uptimeMillis()
+                    // A tap on the box itself also arrives here as a tap outside the list: keep it open
+                    if (now() - boxTappedAt > 500) {
+                        expanded = false
+                        typing = !hasList
+                        listClosedAt = now()
+                    }
                 },
             ) {
                 LazyColumn(

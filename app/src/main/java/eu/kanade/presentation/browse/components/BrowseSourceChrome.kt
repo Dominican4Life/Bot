@@ -18,13 +18,8 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TooltipAnchorPosition
-import androidx.compose.material3.TooltipBox
-import androidx.compose.material3.TooltipDefaults.rememberTooltipPositionProvider
-import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -53,6 +48,26 @@ fun BrowseTabChip(
     filledIcon: ImageVector? = null,
 ) {
     val showLabel = selected || icon == null
+    // KMK: not selected, a button with an icon is a square the size of the Left / Right Panel buttons
+    if (!showLabel) {
+        Surface(
+            onClick = onClick,
+            modifier = modifier.size(PanelButtonSize),
+            shape = FilterChipDefaults.shape,
+            color = Color.Transparent,
+            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = icon!!,
+                    contentDescription = label,
+                    modifier = Modifier.size(FilterChipDefaults.IconSize),
+                )
+            }
+        }
+        return
+    }
     FilterChip(
         selected = selected,
         onClick = onClick,
@@ -84,7 +99,7 @@ fun BrowseTabChip(
 
 /**
  * KMK: The Left Panel and Right Panel buttons at the end of the Browse button row. Each turns its preview panel
- * on or off for the first tap of a cover; holding one shows its name.
+ * on or off for the first tap of a cover.
  */
 @Composable
 fun RowScope.PreviewPanelButtons(
@@ -115,12 +130,7 @@ private fun PanelToggleButton(
     icon: ImageVector,
     label: String,
 ) {
-    TooltipBox(
-        positionProvider = rememberTooltipPositionProvider(TooltipAnchorPosition.Above),
-        tooltip = { PlainTooltip { Text(label) } },
-        state = rememberTooltipState(),
-        focusable = false,
-    ) {
+    run {
         // Same height, corner and icon size as the chips beside it; square, and filled like a selected chip when on
         Surface(
             checked = checked,

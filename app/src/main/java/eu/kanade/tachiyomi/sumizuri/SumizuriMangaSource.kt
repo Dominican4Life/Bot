@@ -193,6 +193,9 @@ class SumizuriMangaSource(
     private val catalogs by lazy { SumizuriFilters.catalogs(info.catalogs) }
 
     // KMK: the source's tab catalogs, as buttons at the top of Browse
+    override val popularName: String? get() = info.popularName
+    override val latestName: String? get() = info.latestName
+
     override val catalogTabs: List<SumizuriCatalogTab> by lazy {
         catalogs.filter { it.tab }.map { SumizuriCatalogTab(it.id, it.name) }
     }

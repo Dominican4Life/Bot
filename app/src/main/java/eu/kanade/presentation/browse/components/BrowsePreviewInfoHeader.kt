@@ -28,10 +28,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.manga.components.MangaActionRow
+import eu.kanade.presentation.manga.components.onHold
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.getNameForMangaInfo
 import eu.kanade.tachiyomi.source.model.SManga
@@ -154,14 +157,20 @@ fun BrowsePreviewInfoHeader(
                 expanded = tagsExpandedState,
                 onToggle = { tagsExpandedState = !tagsExpandedState },
             )
+            val haptic = LocalHapticFeedback.current
             AnimatedVisibility(visible = tagsExpandedState) {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.padding(horizontal = 16.dp),
                 ) {
                     tags.forEach { tag ->
+                        // KMK: tap searches this source, hold does a global search (like the title page)
                         SuggestionChip(
                             onClick = { onSearch(tag, false) },
+                            modifier = Modifier.onHold {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onSearch(tag, true)
+                            },
                             label = { Text(tag, style = MaterialTheme.typography.bodySmall) },
                         )
                     }

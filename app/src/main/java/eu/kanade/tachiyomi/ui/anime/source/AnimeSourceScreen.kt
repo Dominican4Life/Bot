@@ -476,7 +476,7 @@ private fun ListingChips(
             if (tabs?.hasCatalogTabs != true) {
                 BrowseTabChip(
                     selected = !panelOpen && state.listing == AnimeSourceScreenModel.Listing.Popular,
-                    label = stringResource(MR.strings.popular),
+                    label = tabs?.popularName ?: stringResource(MR.strings.popular),
                     icon = Icons.Outlined.FavoriteBorder,
                     filledIcon = Icons.Outlined.Favorite,
                     onClick = {
@@ -487,7 +487,7 @@ private fun ListingChips(
                 if (supportsLatest) {
                     BrowseTabChip(
                         selected = !panelOpen && state.listing == AnimeSourceScreenModel.Listing.Latest,
-                        label = stringResource(MR.strings.latest),
+                        label = tabs?.latestName ?: stringResource(MR.strings.latest),
                         icon = Icons.Outlined.NewReleases,
                         onClick = {
                             onClosePanels()

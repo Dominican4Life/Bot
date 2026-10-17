@@ -55,6 +55,7 @@ import eu.kanade.tachiyomi.ui.browse.source.SourcesScreen
 import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchScreen
 import eu.kanade.tachiyomi.ui.category.CategoryScreen
 import eu.kanade.tachiyomi.ui.home.HomeScreen
+import eu.kanade.tachiyomi.ui.library.checkdownloads.CheckDownloadsScreen
 import eu.kanade.tachiyomi.ui.main.MainActivity
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
@@ -86,8 +87,8 @@ import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.EmptyScreen
 import tachiyomi.presentation.core.screens.EmptyScreenAction
 import tachiyomi.presentation.core.screens.LoadingScreen
-import tachiyomi.source.local.isLocal
 import tachiyomi.presentation.core.util.collectAsState
+import tachiyomi.source.local.isLocal
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
@@ -255,6 +256,11 @@ data object LibraryTab : Tab {
                         }
                     },
                     // KMK -->
+                    onCheckDownloadsClicked = {
+                        val ids = state.selectedManga.map { it.id }
+                        screenModel.clearSelection()
+                        navigator.push(CheckDownloadsScreen(ids))
+                    },
                     onMergeClicked = {
                         if (state.selection.size == 1) {
                             val manga = state.selectedManga.first()

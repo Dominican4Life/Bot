@@ -267,6 +267,7 @@ fun LibraryBottomActionMenu(
     // KMK -->
     onMergeClicked: () -> Unit,
     onSelectionUpdateClicked: () -> Unit,
+    onCheckDownloadsClicked: (() -> Unit)? = null,
     // KMK <--
     // SY -->
     onClickCleanTitles: (() -> Unit)?,
@@ -405,6 +406,15 @@ fun LibraryBottomActionMenu(
                             text = { Text(stringResource(SYMR.strings.merge)) },
                             onClick = onMergeClicked,
                         )
+                        if (onCheckDownloadsClicked != null) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(KMR.strings.action_check_downloads)) },
+                                onClick = {
+                                    overflowMenuOpen = false
+                                    onCheckDownloadsClicked()
+                                },
+                            )
+                        }
                         if (onClickCleanTitles != null) {
                             DropdownMenuItem(
                                 text = { Text(stringResource(SYMR.strings.action_clean_titles)) },

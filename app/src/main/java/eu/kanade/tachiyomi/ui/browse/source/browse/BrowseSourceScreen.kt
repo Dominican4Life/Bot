@@ -370,7 +370,7 @@ data class BrowseSourceScreen(
                                 if (sourceTabs?.hasCatalogTabs != true) {
                                     BrowseTabChip(
                                         selected = !panelOpen && state.listing == Listing.Popular,
-                                        label = stringResource(MR.strings.popular),
+                                        label = sourceTabs?.popularName ?: stringResource(MR.strings.popular),
                                         icon = Icons.Outlined.FavoriteBorder,
                                         filledIcon = Icons.Outlined.Favorite,
                                         onClick = {
@@ -387,7 +387,7 @@ data class BrowseSourceScreen(
                                     if (screenModel.source.supportsLatest) {
                                         BrowseTabChip(
                                             selected = !panelOpen && state.listing == Listing.Latest,
-                                            label = stringResource(MR.strings.latest),
+                                            label = sourceTabs?.latestName ?: stringResource(MR.strings.latest),
                                             icon = Icons.Outlined.NewReleases,
                                             onClick = {
                                                 if (!panelOpen && state.listing == Listing.Latest) {

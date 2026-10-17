@@ -35,6 +35,9 @@ data class SumizuriSourceInfo(
     val hasTags: Boolean = false,
     /** KMK: the source has getRelated(url): its own suggestions under a title, used instead of the title searches */
     val hasRelated: Boolean = false,
+    /** KMK: the names the source gives its Popular and Latest buttons (`popularName`, `latestName`); null = the app's */
+    val popularName: String? = null,
+    val latestName: String? = null,
     /**
      * KMK: the id the source asked for (`id` on the extension object), usually the id of the APK it replaces, so
      * the library, history and progress made with the APK open through this source with no migrating
