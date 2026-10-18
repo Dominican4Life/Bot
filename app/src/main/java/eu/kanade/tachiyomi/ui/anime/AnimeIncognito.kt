@@ -5,6 +5,7 @@ import eu.kanade.domain.source.service.SourcePreferences
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import tachiyomi.core.common.preference.getAndSet
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
