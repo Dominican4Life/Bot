@@ -518,4 +518,11 @@
     <string name="pref_save_covers_in_folders_summary">Each library title\'s cover is kept as cover.jpg in its download folder (and an anime\'s episode previews with it), so after a restore they load from the device instead of being downloaded again. Turning this on saves your whole library\'s covers.</string>
     <string name="save_covers_title">Saving covers to folders</string>
     <string name="save_covers_done">Saved %1$d covers</string>
+    <string name="pref_episode_swipe_start">Episode on swipe to left</string>
+    <string name="pref_episode_swipe_end">Episode on swipe to right</string>
+    <string name="anime_action_mark_seen">Mark as seen</string>
+    <string name="anime_action_mark_unseen">Mark as unseen</string>
+    <string name="anime_remove_selected_confirm">Remove %1$d anime from your library?</string>
+    <string name="anime_incognito_on">Incognito on for this source: no watch history or progress is saved</string>
+    <string name="anime_incognito_off">Incognito off for this source</string>
 </resources>
