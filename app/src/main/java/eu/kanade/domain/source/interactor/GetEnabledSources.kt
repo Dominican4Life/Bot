@@ -60,9 +60,7 @@ class GetEnabledSources(
                         categories = categories,
                     )
                     val toFlatten = mutableListOf(source)
-                    if (source.id == lastUsedSource) {
-                        toFlatten.add(source.copy(isUsedLast = true, pin = source.pin - Pin.Actual))
-                    }
+                    // KMK: no "Last used" section at the top of Sources (lastUsedSource isn't shown)
                     // SY -->
                     categories.forEach { category ->
                         toFlatten.add(source.copy(category = category, pin = source.pin - Pin.Actual))

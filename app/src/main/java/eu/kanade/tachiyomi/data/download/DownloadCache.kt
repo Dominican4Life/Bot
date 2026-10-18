@@ -423,6 +423,16 @@ class DownloadCache(
             }
             // SY <--
 
+            // KMK: nothing in the library yet (a fresh install): don't list the download folders. Checked again in a
+            // minute, and a restore asks for a full reindex when it's done
+            libraryWasEmpty = runCatching {
+                Injekt.get<tachiyomi.domain.manga.interactor.GetFavorites>().await().isEmpty()
+            }.getOrDefault(false)
+            if (libraryWasEmpty) {
+                _isInitializing.emit(false)
+                return@launchIO
+            }
+
             val sourceMap = sources.associate { provider.getSourceDirName(it).lowercase() to it.id }
 
             rootDownloadsDirMutex.withLock {
@@ -474,6 +484,8 @@ class DownloadCache(
                     logcat(LogPriority.ERROR, exception) { "DownloadCache: failed to create cache" }
                 }
                 lastRenew = System.currentTimeMillis()
+                // KMK: skipped for an empty library: try again in a minute rather than after the usual wait
+                if (libraryWasEmpty && renewInterval > 60_000L) lastRenew -= renewInterval - 60_000L
                 notifyChanges()
             }
         }
@@ -481,6 +493,10 @@ class DownloadCache(
         // Mainly to notify the indexing notifier UI
         notifyChanges()
     }
+
+    // KMK
+    @Volatile
+    private var libraryWasEmpty = false
 
     private fun getSources(): List<Source> {
         // SY -->

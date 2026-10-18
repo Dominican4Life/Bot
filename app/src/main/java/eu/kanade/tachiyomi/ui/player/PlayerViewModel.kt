@@ -462,7 +462,11 @@ class PlayerViewModel @JvmOverloads constructor(
         viewModelScope.launchIO {
             try {
                 currentAnime.collect { anime ->
-                    if (anime != null && fillerEpisodes.isEmpty()) {
+                    // KMK: not for videos inside manga chapters (played through a hidden source): they have no
+                    // filler episodes, and the lookup was a wasted request to animefillerlist.com
+                    if (anime != null && fillerEpisodes.isEmpty() &&
+                        anime.source != eu.kanade.tachiyomi.sumizuri.ReaderVideos.SOURCE_ID
+                    ) {
                         fillerEpisodes = animeFillerListFetcher.getFillerEpisodes(anime.title)
                     }
                 }

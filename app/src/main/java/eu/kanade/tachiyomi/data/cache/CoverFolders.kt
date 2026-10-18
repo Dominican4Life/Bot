@@ -206,11 +206,28 @@ object CoverFolders {
 
     /** The download folders' index, listed again once it's [INDEX_TTL_MS] old; null without access to them */
     private suspend fun index(): FolderIndex? {
+        // KMK: nothing in the library yet (a fresh install): don't list the download folders for covers
+        if (libraryIsEmpty()) return null
         folderIndex?.takeIf { System.currentTimeMillis() - it.at < INDEX_TTL_MS }?.let { return it }
         return indexLock.withLock {
             folderIndex?.takeIf { System.currentTimeMillis() - it.at < INDEX_TTL_MS }?.let { return@withLock it }
             buildIndex()?.also { folderIndex = it }
         }
+    }
+
+    @Volatile
+    private var emptyCheck: Pair<Long, Boolean>? = null
+
+    /** True when neither the manga nor the anime library has anything; checked at most every 30 s */
+    private suspend fun libraryIsEmpty(): Boolean {
+        val now = System.currentTimeMillis()
+        emptyCheck?.let { (at, empty) -> if (now - at < 30_000) return empty }
+        val empty = runCatching {
+            Injekt.get<GetFavorites>().await().isEmpty() &&
+                Injekt.get<AnimeRepository>().getFavorites().isEmpty()
+        }.getOrDefault(false)
+        emptyCheck = now to empty
+        return empty
     }
 
     private fun buildIndex(): FolderIndex? {
@@ -249,6 +266,7 @@ object CoverFolders {
     /** Lists the download folders again the next time a cover is looked for */
     private fun forgetIndex() {
         folderIndex = null
+        emptyCheck = null
         misses.clear()
         listings.clear()
     }

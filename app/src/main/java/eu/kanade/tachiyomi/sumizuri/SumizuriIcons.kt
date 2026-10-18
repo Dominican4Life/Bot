@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import eu.kanade.tachiyomi.network.NetworkHelper
+import eu.kanade.tachiyomi.util.storage.DiskUtil
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -13,6 +14,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import okhttp3.Request
+import tachiyomi.domain.storage.service.StorageManager
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.File
@@ -22,6 +24,9 @@ import java.util.concurrent.ConcurrentHashMap
  * KMK: Icons of the sources made in the Code editor, so they show in Browse, the source sheets and the source
  * pages like an extension's icon does. Each is downloaded once (its iconUrl, else the site's touch icon or favicon)
  * and kept next to the source; extensions' icon lookups fall back to these.
+ *
+ * KMK: Each icon is also saved as "<source name>.png" in downloads/Icon, which survives a reinstall: after one
+ * (or a restore) the icon is copied back from there instead of being downloaded again.
  */
 object SumizuriIcons {
 
@@ -44,7 +49,15 @@ object SumizuriIcons {
             if (!file.exists()) {
                 memory.remove(info.id)
                 missing.remove(info.id)
-                scope.launch { lock.withLock { download(info, file) } }
+                // An older icon of this source here means its icon address changed: download the new one. None means
+                // a fresh install or a restore: take the saved one from downloads/Icon if it's there
+                val changed = file.parentFile?.listFiles { f -> f.name.startsWith("icon-") }?.isNotEmpty() == true
+                scope.launch {
+                    lock.withLock { if (changed || !fromIconFolder(info, file)) download(info, file) }
+                }
+            } else {
+                // Icons kept from before the Icon folder existed: put a copy there too
+                scope.launch { lock.withLock { toIconFolder(info, file.readBytes(), replace = false) } }
             }
         }
     }
@@ -93,7 +106,43 @@ object SumizuriIcons {
             }
             memory[info.id] = bitmap
             missing.remove(info.id)
+            toIconFolder(info, bytes, replace = true)
             return
+        }
+    }
+
+    private fun iconName(info: SumizuriSourceInfo): String =
+        DiskUtil.buildValidFilename(info.name.ifBlank { info.key }) + ".png"
+
+    /** Copies the source's icon back from downloads/Icon. False when it isn't there */
+    private fun fromIconFolder(info: SumizuriSourceInfo, file: File): Boolean {
+        val saved = runCatching {
+            Injekt.get<StorageManager>().getIconsDirectory(create = false)?.findFile(iconName(info))
+        }.getOrNull() ?: return false
+        val bytes = runCatching { saved.openInputStream().use { it.readBytes() } }.getOrNull() ?: return false
+        val bitmap = runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }.getOrNull() ?: return false
+        runCatching {
+            file.parentFile?.listFiles { f -> f.name.startsWith("icon-") }?.forEach { it.delete() }
+            file.parentFile?.mkdirs()
+            file.writeBytes(bytes)
+        }
+        memory[info.id] = bitmap
+        missing.remove(info.id)
+        return true
+    }
+
+    /** Saves the icon as a PNG in downloads/Icon (replacing an older one of the same source) */
+    private fun toIconFolder(info: SumizuriSourceInfo, bytes: ByteArray, replace: Boolean) {
+        runCatching {
+            val dir = Injekt.get<StorageManager>().getIconsDirectory() ?: return
+            val name = iconName(info)
+            val existing = dir.findFile(name)
+            if (!replace && existing != null && existing.length() > 0) return
+            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return
+            // A new file rather than writing over the old one (some storage keeps the old file's tail)
+            existing?.delete()
+            val target = dir.createFile(name) ?: return
+            target.openOutputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         }
     }
 }

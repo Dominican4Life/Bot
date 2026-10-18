@@ -85,6 +85,7 @@ import tachiyomi.domain.manga.model.Manga
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.components.material.DISABLED_ALPHA
+import tachiyomi.presentation.core.components.material.PullRefresh
 import tachiyomi.presentation.core.components.material.SECONDARY_ALPHA
 import tachiyomi.presentation.core.i18n.pluralStringResource
 import tachiyomi.presentation.core.i18n.stringResource
@@ -111,6 +112,8 @@ fun BrowseChapterPanel(
     modifier: Modifier = Modifier,
     /** Manga details shown above the chapter list, like the left side of the details page */
     infoHeader: @Composable (Manga) -> Unit = {},
+    /** Pull down: get the details and chapters from the source again */
+    onRefresh: () -> Unit = {},
 ) {
     SlidingSidePanel(
         visible = state.chapterPanelOpen,
@@ -126,6 +129,12 @@ fun BrowseChapterPanel(
         key(state.manga?.id) {
             val listState = rememberLazyListState()
             val showNumber = state.manga?.displayMode == Manga.CHAPTER_DISPLAY_NUMBER
+            // KMK: pull down to get the details and chapters from the source again
+            PullRefresh(
+                refreshing = state.chaptersLoading && state.chapters.isNotEmpty(),
+                enabled = state.manga != null,
+                onRefresh = onRefresh,
+            ) {
             LazyColumn(
                 state = listState,
                 contentPadding = PaddingValues(bottom = 8.dp),
@@ -232,6 +241,7 @@ fun BrowseChapterPanel(
                         )
                     }
                 }
+            }
             }
         }
     }

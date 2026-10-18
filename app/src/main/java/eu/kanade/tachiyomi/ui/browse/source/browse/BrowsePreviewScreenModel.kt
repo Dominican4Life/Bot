@@ -165,9 +165,30 @@ class BrowsePreviewScreenModel(
                 }
         }
 
-        // Refresh the chapter list from the source
+        // Refresh the details and chapter list from the source, unless they were saved less than a day ago
+        refreshFromSource(manga, force = false)
+
+        loadSeedColor(manga)
+    }
+
+    /**
+     * KMK: Gets the title's details and chapters from the source. A title opened in the last day (with its details
+     * and chapters saved) shows what's saved instead, with no request; pulling down in the chapter panel ([refresh])
+     * always asks the source.
+     */
+    private fun refreshFromSource(manga: Manga, force: Boolean) {
         jobs += screenModelScope.launchIO {
+            if (!force && manga.initialized && PreviewFetchTimes.isFresh(manga.id) &&
+                getMangaWithChapters.awaitChapters(manga.id).isNotEmpty()
+            ) {
+                mutableState.update { if (it.manga?.id != manga.id) it else it.copy(chaptersLoading = false) }
+                return@launchIO
+            }
+            if (force) {
+                mutableState.update { if (it.manga?.id != manga.id) it else it.copy(chaptersLoading = true) }
+            }
             val result = updateMangaFromRemote(source = source, manga = manga, fetchDetails = true, fetchChapters = true)
+            if (result.isSuccess) PreviewFetchTimes.mark(manga.id)
             mutableState.update {
                 if (it.manga?.id != manga.id) {
                     it
@@ -179,8 +200,13 @@ class BrowsePreviewScreenModel(
                 }
             }
         }
+    }
 
-        loadSeedColor(manga)
+    /** Pull down in the chapter panel: get the details and chapters from the source again */
+    fun refresh() {
+        val manga = state.value.manga ?: return
+        if (state.value.chaptersLoading) return
+        refreshFromSource(manga, force = true)
     }
 
     /** Colors the panels to match the cover, like the details page does */

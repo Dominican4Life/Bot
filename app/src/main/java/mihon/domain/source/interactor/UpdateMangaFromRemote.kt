@@ -6,6 +6,7 @@ import eu.kanade.domain.manga.model.hasCustomCover
 import eu.kanade.domain.manga.model.toSManga
 import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
+import eu.kanade.tachiyomi.data.download.MangaIndexFile
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.all.EHentai
@@ -89,7 +90,16 @@ class UpdateMangaFromRemote(
         return try {
             val chapters = chapterRepository.getChapterByMangaId(manga.id)
                 .sortedBy { it.sourceOrder }
-            val update = withIOContext {
+            // KMK: a title with nothing saved yet (after a reinstall or restore) fills in from the index.json in its
+            // download folder instead of asking the source
+            val fromIndex = if ((fetchDetails || fetchChapters) && !manualFetch &&
+                (!manga.initialized || chapters.isEmpty()) && !manga.isLocal() && source !is MergedSource
+            ) {
+                withIOContext { MangaIndexFile.read(manga, source) }
+            } else {
+                null
+            }
+            val update = fromIndex ?: withIOContext {
                 // SY -->
                 if (source is EHentai) {
                     source.getMangaUpdate(
@@ -127,6 +137,10 @@ class UpdateMangaFromRemote(
                     )
                 }
                 val updatedManga = mangaRepository.getMangaById(manga.id)
+                // KMK: keep the title's index.json (in its download folder, when it has one) up to date
+                if (fromIndex == null && fetchDetails && fetchChapters && !updatedManga.isLocal()) {
+                    MangaIndexFile.write(updatedManga, chapterRepository.getChapterByMangaId(manga.id), source)
+                }
                 // KMK -->
                 RemoteMangaUpdate(manga = updatedManga, newChapters = newChapters)
             }

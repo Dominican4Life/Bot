@@ -88,6 +88,11 @@ class BackupRestorer(
 
         // KMK: library covers that aren't on the device come back from the titles' download folders
         if (options.libraryEntries) eu.kanade.tachiyomi.data.cache.CoverFolders.fillMissingAfterRestore()
+        // KMK: then look at the download folders again (Reindex downloads), so the downloads already on the device
+        // show up in the restored library
+        if (options.libraryEntries) {
+            runCatching { Injekt.get<eu.kanade.tachiyomi.data.download.DownloadCache>().invalidateCache() }
+        }
 
         val time = System.currentTimeMillis() - startTime
 

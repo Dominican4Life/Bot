@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.ui.browse.source.browse
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -37,6 +38,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -533,71 +535,132 @@ data class BrowseSourceScreen(
                         end = paddingValues.calculateEndPadding(layoutDirection) + endPadding,
                     )
                     // KMK <--
-                    BrowseSourceContent(
-                        source = screenModel.source,
-                        mangaList = mangaList,
-                        // KMK -->
-                        gridState = gridState,
-                        listState = listState,
-                        // KMK <--
-                        columns = screenModel.columnsToGridCells(columnCount),
-                        // SY -->
-                        ehentaiBrowseDisplayMode = screenModel.ehentaiBrowseDisplayMode,
-                        // SY <--
-                        displayMode = screenModel.displayMode,
-                        snackbarHostState = snackbarHostState,
-                        contentPadding = gridPadding,
-                        onWebViewClick = onWebViewClick,
-                        onHelpClick = { uriHandler.openUri(Constants.URL_HELP) },
-                        onLocalSourceHelpClick = onHelpClick,
-                        onMangaClick = { manga ->
-                            // KMK -->
-                            if (bulkFavoriteState.selectionMode) {
-                                bulkFavoriteScreenModel.toggleSelection(manga)
-                            } else if (
-                                previewEnabled &&
-                                previewPanels != SourcePreferences.PREVIEW_PANELS_NONE &&
-                                previewScreenModel.state.value.manga?.id != manga.id
-                            ) {
-                                // First tap: highlight and preview. Second tap on the same cover: open it.
-                                previewScreenModel.select(
-                                    manga,
-                                    showChapters = SourcePreferences.previewLeftOn(previewPanels),
-                                    showPages = SourcePreferences.previewRightOn(previewPanels),
-                                )
-                            } else {
-                                // KMK <--
-                                navigator.push(
-                                    MangaScreen(
-                                        mangaId = manga.id,
-                                        // KMK -->
-                                        // Finding the entry to be merged to, so we don't want to expand description
-                                        // so that user can see the `Merge to another` button
-                                        fromSource = smartSearchConfig == null,
-                                        // KMK <--
-                                        smartSearchConfig = smartSearchConfig,
-                                    ),
+                    // KMK: swipe left / right over the covers for the next / previous button of the row (Popular,
+                    // Latest, a JS source's tabs, saved searches)
+                    val tabsSource = screenModel.source as? SumizuriTabs
+                    val currentCatalog = (state.listing as? Listing.Search)
+                        ?.takeIf { it.savedSearchId == null && it.query.isNullOrBlank() }
+                        ?.let { l -> tabsSource?.let { runCatching { it.selectedCatalog(l.filters) }.getOrNull() } }
+                    val swipeTabs = buildList<Pair<Boolean, () -> Unit>> {
+                        if (tabsSource?.hasCatalogTabs != true) {
+                            add(
+                                (state.listing == Listing.Popular) to {
+                                    screenModel.resetFilters()
+                                    screenModel.setListing(Listing.Popular)
+                                },
+                            )
+                            if (screenModel.source.supportsLatest) {
+                                add(
+                                    (state.listing == Listing.Latest) to {
+                                        screenModel.resetFilters()
+                                        screenModel.setListing(Listing.Latest)
+                                    },
                                 )
                             }
-                        },
-                        onMangaLongClick = { manga ->
+                        }
+                        tabsSource?.catalogTabs.orEmpty().forEach { catalog ->
+                            add((currentCatalog == catalog.id) to { screenModel.showCatalog(catalog.id) })
+                        }
+                        state.savedSearches.forEach { savedSearch ->
+                            add(
+                                ((state.listing as? Listing.Search)?.savedSearchId == savedSearch.id) to {
+                                    screenModel.onSavedSearch(savedSearch) { context.toast(it) }
+                                },
+                            )
+                        }
+                    }
+                    val currentTab = swipeTabs.indexOfFirst { it.first }
+                    val latestSwipeTabs by rememberUpdatedState(swipeTabs)
+                    val swipeModifier = if (currentTab >= 0 && !filterPanelOpen && !settingsPanelOpen) {
+                        Modifier.pointerInput(currentTab, swipeTabs.size) {
+                            var total = 0f
+                            detectHorizontalDragGestures(
+                                onDragStart = { total = 0f },
+                                onDragEnd = {
+                                    val threshold = 96.dp.toPx()
+                                    val target = when {
+                                        total <= -threshold -> currentTab + 1
+                                        total >= threshold -> currentTab - 1
+                                        else -> -1
+                                    }
+                                    latestSwipeTabs.getOrNull(target)?.second?.invoke()
+                                },
+                                onHorizontalDrag = { change, dragAmount ->
+                                    change.consume()
+                                    total += dragAmount
+                                },
+                            )
+                        }
+                    } else {
+                        Modifier
+                    }
+                    Box(modifier = Modifier.fillMaxSize().then(swipeModifier)) {
+                        BrowseSourceContent(
+                            source = screenModel.source,
+                            mangaList = mangaList,
                             // KMK -->
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            if (bulkFavoriteState.selectionMode) {
-                                navigator.push(MangaScreen(manga.id, true))
+                            gridState = gridState,
+                            listState = listState,
+                            // KMK <--
+                            columns = screenModel.columnsToGridCells(columnCount),
+                            // SY -->
+                            ehentaiBrowseDisplayMode = screenModel.ehentaiBrowseDisplayMode,
+                            // SY <--
+                            displayMode = screenModel.displayMode,
+                            snackbarHostState = snackbarHostState,
+                            contentPadding = gridPadding,
+                            onWebViewClick = onWebViewClick,
+                            onHelpClick = { uriHandler.openUri(Constants.URL_HELP) },
+                            onLocalSourceHelpClick = onHelpClick,
+                            onMangaClick = { manga ->
+                                // KMK -->
+                                if (bulkFavoriteState.selectionMode) {
+                                    bulkFavoriteScreenModel.toggleSelection(manga)
+                                } else if (
+                                    previewEnabled &&
+                                    previewPanels != SourcePreferences.PREVIEW_PANELS_NONE &&
+                                    previewScreenModel.state.value.manga?.id != manga.id
+                                ) {
+                                    // First tap: highlight and preview. Second tap on the same cover: open it.
+                                    previewScreenModel.select(
+                                        manga,
+                                        showChapters = SourcePreferences.previewLeftOn(previewPanels),
+                                        showPages = SourcePreferences.previewRightOn(previewPanels),
+                                    )
+                                } else {
+                                    // KMK <--
+                                    navigator.push(
+                                        MangaScreen(
+                                            mangaId = manga.id,
+                                            // KMK -->
+                                            // Finding the entry to be merged to, so we don't want to expand description
+                                            // so that user can see the `Merge to another` button
+                                            fromSource = smartSearchConfig == null,
+                                            // KMK <--
+                                            smartSearchConfig = smartSearchConfig,
+                                        ),
+                                    )
+                                }
+                            },
+                            onMangaLongClick = { manga ->
+                                // KMK -->
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                if (bulkFavoriteState.selectionMode) {
+                                    navigator.push(MangaScreen(manga.id, true))
+                                } else {
+                                    // KMK <--
+                                    toggleFavorite(manga)
+                                }
+                            },
+                            // KMK -->
+                            selection = if (bulkFavoriteState.selectionMode) {
+                                bulkFavoriteState.selection
                             } else {
-                                // KMK <--
-                                toggleFavorite(manga)
-                            }
-                        },
-                        // KMK -->
-                        selection = if (bulkFavoriteState.selectionMode) {
-                            bulkFavoriteState.selection
-                        } else {
-                            listOfNotNull(previewState.manga)
-                        },
-                        // KMK <--
-                    )
+                                listOfNotNull(previewState.manga)
+                            },
+                            // KMK <--
+                        )
+                    }
 
                     // KMK -->
                     // The panels start below the toolbar and the Popular / Latest / Filter row
@@ -618,6 +681,7 @@ data class BrowseSourceScreen(
                             onChapterDownloadAction = previewScreenModel::runChapterDownloadAction,
                             onDownloadAction = previewScreenModel::runDownloadAction,
                             onOpenFilters = { showChapterSettings = true },
+                            onRefresh = previewScreenModel::refresh,
                             infoHeader = { manga ->
                                 BrowsePreviewInfoHeader(
                                     manga = manga,

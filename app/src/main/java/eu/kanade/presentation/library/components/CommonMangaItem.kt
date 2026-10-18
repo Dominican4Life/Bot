@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -36,8 +37,10 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -48,11 +51,12 @@ import eu.kanade.presentation.manga.components.MangaCover
 import eu.kanade.presentation.manga.components.MangaCoverHide
 import eu.kanade.presentation.manga.components.RatioSwitchToPanorama
 import exh.debug.DebugToggles
+import kotlin.math.roundToInt
+import tachiyomi.domain.manga.model.MangaCover as MangaCoverModel
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.BadgeGroup
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.selectedBackground
-import tachiyomi.domain.manga.model.MangaCover as MangaCoverModel
 
 object CommonMangaItemDefaults {
     val GridHorizontalSpacer = 4.dp
@@ -274,8 +278,9 @@ fun MangaComfortableGridItem(
                                 modifier = Modifier
                                     // KMK -->
                                     // .alpha(if (isSelected) GridSelectedCoverAlpha else coverAlpha)
+                                    // A wide cover fills the box exactly (see MangaGridCover's wide height)
+                                    .then(if (doubleWide) Modifier.fillMaxSize() else Modifier.fillMaxWidth()),
                                     // KMK <--
-                                    .fillMaxWidth(),
                                 data = coverData,
                                 // KMK -->
                                 alpha = if (isSelected) GRID_SELECTED_COVER_ALPHA else coverAlpha,
@@ -319,6 +324,7 @@ fun MangaComfortableGridItem(
                     }
                 },
                 // KMK -->
+                wide = doubleWide,
                 ratio = if (doubleWide) {
                     MangaCover.Wide.ratio
                 } else if (fitWide) {
@@ -366,6 +372,8 @@ private fun MangaGridCover(
     cover: @Composable BoxScope.() -> Unit = {},
     // KMK -->
     ratio: Float = MangaCover.Book.ratio,
+    /** Two places wide: exactly as tall as the book covers beside it */
+    wide: Boolean = false,
     // KMK <--
     badgesStart: (@Composable RowScope.() -> Unit)? = null,
     badgesEnd: (@Composable RowScope.() -> Unit)? = null,
@@ -380,7 +388,9 @@ private fun MangaGridCover(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .aspectRatio(ratio),
+            // KMK -->
+            .then(if (wide) Modifier.wideCoverHeight() else Modifier.aspectRatio(ratio)),
+        // KMK <--
     ) {
         cover()
         // KMK: reading progress along the bottom of the cover
@@ -592,3 +602,21 @@ private fun ContinueReadingButton(
         }
     }
 }
+
+// KMK -->
+/**
+ * A wide cover takes two grid places plus the gap between them, so a fixed ratio makes it a little taller than the
+ * book covers beside it. This gives it their height exactly: half its width without the gap (the space between the
+ * places and each place's inner padding), at the book cover ratio.
+ */
+private fun Modifier.wideCoverHeight(): Modifier = layout { measurable, constraints ->
+    val width = constraints.maxWidth
+    val gap = (CommonMangaItemDefaults.GridHorizontalSpacer + WideCoverItemPadding * 2).roundToPx()
+    val height = (((width - gap) / 2f) / MangaCover.Book.ratio).roundToInt().coerceAtLeast(0)
+    val placeable = measurable.measure(Constraints.fixed(width, height))
+    layout(width, height) { placeable.place(0, 0) }
+}
+
+/** The inner padding of a grid place (GridItemSelectable) */
+private val WideCoverItemPadding = 4.dp
+// KMK <--

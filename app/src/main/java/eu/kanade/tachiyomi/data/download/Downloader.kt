@@ -458,6 +458,15 @@ class Downloader(
 
             DiskUtil.createNoMediaFile(tmpDir, context)
 
+            // KMK: the title's first download also saves its index.json (details and chapter list) in its folder
+            if (mangaDir.findFile(MangaIndexFile.NAME) == null) {
+                runCatching {
+                    val chapters = Injekt.get<tachiyomi.domain.chapter.repository.ChapterRepository>()
+                        .getChapterByMangaId(download.manga.id)
+                    MangaIndexFile.write(download.manga, chapters, download.source)
+                }
+            }
+
             download.status = Download.State.DOWNLOADED
         } catch (error: Throwable) {
             if (error is CancellationException) throw error

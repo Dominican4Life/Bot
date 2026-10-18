@@ -87,6 +87,10 @@ class StorageManager(
     fun getAnimeDownloadsDirectory(create: Boolean = true): UniFile? =
         getDownloadsDirectory()?.let { childDirectory(it, ANIME_PATH, create) }
 
+    /** Source icons kept with the downloads (downloads/Icon), so a reinstall or restore gets them back */
+    fun getIconsDirectory(create: Boolean = true): UniFile? =
+        getDownloadsDirectory()?.let { childDirectory(it, "Icon", create) }
+
     /** A folder inside [parent], upper or lower case not mattering (SD cards don't tell them apart) */
     private fun childDirectory(parent: UniFile, name: String, create: Boolean): UniFile? {
         parent.findFile(name)?.takeIf { it.isDirectory }?.let { return it }
