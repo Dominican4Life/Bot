@@ -35,6 +35,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -381,7 +382,6 @@ data class BrowseSourceScreen(
                                                 screenModel.reloadListing()
                                             } else {
                                                 closeSidePanels()
-                                                screenModel.resetFilters()
                                                 screenModel.setListing(Listing.Popular)
                                             }
                                         },
@@ -396,7 +396,6 @@ data class BrowseSourceScreen(
                                                     screenModel.reloadListing()
                                                 } else {
                                                     closeSidePanels()
-                                                    screenModel.resetFilters()
                                                     screenModel.setListing(Listing.Latest)
                                                 }
                                             },
@@ -428,6 +427,8 @@ data class BrowseSourceScreen(
                                             screenModel.setDialog(null)
                                         } else {
                                             settingsPanelOpen = false
+                                            // KMK: back to the Filter tab's results (if any) behind the panel
+                                            screenModel.showFilterTab()
                                             screenModel.openFilterSheet()
                                         }
                                     },
@@ -545,18 +546,24 @@ data class BrowseSourceScreen(
                         if (tabsSource?.hasCatalogTabs != true) {
                             add(
                                 (state.listing == Listing.Popular) to {
-                                    screenModel.resetFilters()
                                     screenModel.setListing(Listing.Popular)
                                 },
                             )
                             if (screenModel.source.supportsLatest) {
                                 add(
                                     (state.listing == Listing.Latest) to {
-                                        screenModel.resetFilters()
                                         screenModel.setListing(Listing.Latest)
                                     },
                                 )
                             }
+                        }
+                        // The Filter tab, once there's a filter or typed search (until Clear)
+                        if (state.filterListing != null) {
+                            add(
+                                ((state.listing as? Listing.Search)?.tabKey == Listing.FILTER_TAB) to {
+                                    screenModel.showFilterTab()
+                                },
+                            )
                         }
                         tabsSource?.catalogTabs.orEmpty().forEach { catalog ->
                             add((currentCatalog == catalog.id) to { screenModel.showCatalog(catalog.id) })
@@ -718,6 +725,7 @@ data class BrowseSourceScreen(
                                 )
                             },
                         )
+                        var filterVersion by remember { mutableIntStateOf(0) }
                         BrowseOverlayPanel(
                             visible = filterPanelOpen,
                             fromStart = true,
@@ -727,9 +735,19 @@ data class BrowseSourceScreen(
                             SourceFilterContent(
                                 onDismissRequest = { screenModel.setDialog(null) },
                                 filters = state.filters,
-                                onReset = screenModel::resetFilters,
+                                // KMK: Clear empties the panel and forgets the Filter tab
+                                onReset = {
+                                    screenModel.clearFilterTab()
+                                    filterVersion++
+                                },
                                 onFilter = { screenModel.search(filters = state.filters) },
-                                onUpdate = screenModel::setFilters,
+                                onUpdate = {
+                                    screenModel.setFilters(it)
+                                    filterVersion++
+                                },
+                                clearHighlighted = remember(filterVersion, state.filters, filterPanelOpen) {
+                                    screenModel.filtersChanged()
+                                },
                                 startExpanded = screenModel.startExpanded,
                                 savedSearches = state.savedSearches,
                                 onSave = screenModel::onSaveSearch,

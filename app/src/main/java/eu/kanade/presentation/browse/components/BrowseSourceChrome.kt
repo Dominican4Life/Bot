@@ -192,6 +192,8 @@ fun BrowseOverlayPanel(
             applyTopInset = false,
             showClose = false,
             squareTop = true,
+            // KMK: no title bar: the Filter / Settings button that opened it is selected up top
+            showHeader = false,
             actions = actions,
             content = content,
         )

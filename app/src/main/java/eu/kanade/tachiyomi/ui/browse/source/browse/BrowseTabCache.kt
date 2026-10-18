@@ -26,6 +26,9 @@ object BrowseTabCache {
     )
 
     private val entries = ConcurrentHashMap<String, Entry>()
+
+    /** Each source's Filter tab (its last filter or typed search), by screen and source, until Clear */
+    val filterTabs = ConcurrentHashMap<String, Any>()
     private val scrolls = ConcurrentHashMap<String, Pair<Int, Int>>()
 
     /** The kept list for [key], made with [create] the first time */

@@ -154,10 +154,13 @@ open class BrowseSourceScreenModel(
                 listing = Listing.Search(query, source.getFilterList())
             }
 
+            // KMK: the Filter tab (and what was selected for it) is kept until the app closes
+            val keptFilterTab = BrowseTabCache.filterTabs["${this::class.qualifiedName}:${source.id}"] as? Listing.Search
             it.copy(
                 listing = listing,
-                filters = source.getFilterList(),
+                filters = keptFilterTab?.filters ?: source.getFilterList(),
                 toolbarQuery = query,
+                filterListing = keptFilterTab,
             )
         }
 
@@ -379,24 +382,63 @@ open class BrowseSourceScreenModel(
             // KMK <--
         }
         // SY <--
+        // KMK: from Popular / Latest, a typed search uses what's selected in the Filter panel
         val input = state.value.listing as? Listing.Search
-            ?: Listing.Search(query = null, filters = source.getFilterList())
+            ?: Listing.Search(query = null, filters = state.value.filters)
 
+        // KMK: a filter or typed search is the Filter tab: its results are kept like Popular and Latest until the
+        // next search or Clear. A saved search opened this way is that saved search's tab
+        val tabKey = if (savedSearchId != null) "saved:$savedSearchId" else Listing.FILTER_TAB
+        val listing = input.copy(
+            query = query ?: input.query,
+            filters = filters ?: input.filters,
+            savedSearchId = savedSearchId,
+            tabKey = tabKey,
+        )
+        if (tabKey == Listing.FILTER_TAB) {
+            tabCacheKey(listing)?.let { BrowseTabCache.drop(it) }
+            BrowseTabCache.filterTabs[filterTabKey()] = listing
+        }
         mutableState.update {
             it.copy(
-                listing = input.copy(
-                    query = query ?: input.query,
-                    filters = filters ?: input.filters,
-                    // KMK -->
-                    savedSearchId = savedSearchId,
-                    // A changed search is no longer a kept tab
-                    tabKey = null,
-                    // KMK <--
-                ),
+                listing = listing,
                 toolbarQuery = query ?: input.query,
+                filterListing = if (tabKey == Listing.FILTER_TAB) listing else it.filterListing,
+                // a new search loads fresh even when it's the same as the last one
+                reloadToken = it.reloadToken + 1,
             )
         }
     }
+
+    // KMK -->
+    private fun filterTabKey() = "${this::class.qualifiedName}:${source.id}"
+
+    /** The Filter button or a swipe: back to the last filter / typed search's results, if there is one */
+    fun showFilterTab(): Boolean {
+        val listing = state.value.filterListing ?: return false
+        if (state.value.listing != listing) mutableState.update { it.copy(listing = listing, toolbarQuery = listing.query) }
+        return true
+    }
+
+    /** True when the Filter panel has something selected (anything not at its default) */
+    fun filtersChanged(): Boolean = runCatching {
+        filterSerializer.serialize(state.value.filters) != filterSerializer.serialize(source.getFilterList())
+    }.getOrDefault(false)
+
+    /**
+     * Clear in the Filter panel: empties the panel and forgets the Filter tab (its results and its place in the
+     * swipe order). When it's the tab being shown, Browse goes back to its first tab.
+     */
+    fun clearFilterTab() {
+        resetFilters()
+        val filterListing = state.value.filterListing
+        filterListing?.let { listing -> tabCacheKey(listing)?.let { BrowseTabCache.drop(it) } }
+        BrowseTabCache.filterTabs.remove(filterTabKey())
+        val showing = (state.value.listing as? Listing.Search)?.tabKey == Listing.FILTER_TAB
+        mutableState.update { it.copy(filterListing = null) }
+        if (showing && !showHomeTab()) setListing(Listing.Popular)
+    }
+    // KMK <--
 
     fun searchGenre(genreName: String) {
         val defaultFilters = source.getFilterList()
@@ -567,6 +609,7 @@ open class BrowseSourceScreenModel(
     }
 
     sealed class Listing(open val query: String?, open val filters: FilterList) {
+
         data object Popular : Listing(query = GetRemoteManga.QUERY_POPULAR, filters = FilterList())
         data object Latest : Listing(query = GetRemoteManga.QUERY_LATEST, filters = FilterList())
         data class Search(
@@ -580,6 +623,9 @@ open class BrowseSourceScreenModel(
         ) : Listing(query = query, filters = filters)
 
         companion object {
+            /** KMK: the tab key of the Filter tab (a filter or typed search) */
+            const val FILTER_TAB = "filter"
+
             fun valueOf(query: String?): Listing {
                 return when (query) {
                     GetRemoteManga.QUERY_POPULAR -> Popular
@@ -618,6 +664,8 @@ open class BrowseSourceScreenModel(
         // SY <--
         // KMK: bumped to load the current tab again from page 1
         val reloadToken: Int = 0,
+        /** The Filter tab: the last filter or typed search, kept until Clear */
+        val filterListing: Listing.Search? = null,
     ) {
         val isUserQuery get() = listing is Listing.Search && !listing.query.isNullOrEmpty()
     }

@@ -1,23 +1,32 @@
 package eu.kanade.tachiyomi.ui.browse.source.browse
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.components.AdaptiveSheet
 import eu.kanade.tachiyomi.source.model.Filter
@@ -100,6 +109,10 @@ fun SourceFilterContent(
     shouldShowSavingButton: Boolean,
     openMangaDexRandom: (() -> Unit)?,
     openMangaDexFollows: (() -> Unit)?,
+    // KMK -->
+    /** Something is selected: Clear shows like a selected tab */
+    clearHighlighted: Boolean = false,
+    // KMK <--
 ) {
     val updateFilters = { onUpdate(filters) }
 
@@ -108,19 +121,21 @@ fun SourceFilterContent(
             stickyHeader(
                 key = "$STICKY_HEADER_KEY_PREFIX-title",
             ) {
+                // KMK: Clear, Save and Filter look like the tabs at the top of Browse (same height and corners).
+                // Clear is blue like a selected tab while something is selected
                 Row(
                     modifier = Modifier
+                        .fillMaxWidth()
                         .background(MaterialTheme.colorScheme.background)
-                        .padding(8.dp),
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    TextButton(onClick = onReset) {
-                        Text(
-                            text = stringResource(MR.strings.action_reset),
-                            style = LocalTextStyle.current.copy(
-                                color = MaterialTheme.colorScheme.primary,
-                            ),
-                        )
-                    }
+                    FilterChip(
+                        selected = clearHighlighted,
+                        onClick = onReset,
+                        label = { Text(stringResource(KMR.strings.action_clear_filters)) },
+                    )
 
                     Spacer(modifier = Modifier.weight(1f))
 
@@ -128,19 +143,33 @@ fun SourceFilterContent(
                     if (shouldShowSavingButton) {
                         // KMK <--
                         // SY -->
-                        IconButton(onClick = onSave) {
-                            Icon(
-                                Icons.Default.Save,
-                                contentDescription = stringResource(MR.strings.action_save),
-                                tint = MaterialTheme.colorScheme.onBackground,
-                            )
+                        Surface(
+                            onClick = onSave,
+                            modifier = Modifier.size(32.dp),
+                            shape = FilterChipDefaults.shape,
+                            color = Color.Transparent,
+                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    Icons.Default.Save,
+                                    contentDescription = stringResource(MR.strings.action_save),
+                                    modifier = Modifier.size(FilterChipDefaults.IconSize),
+                                )
+                            }
                         }
                         // SY <--
                     }
-                    Button(onClick = {
-                        onFilter()
-                        onDismissRequest()
-                    }) {
+                    androidx.compose.material3.Button(
+                        onClick = {
+                            onFilter()
+                            onDismissRequest()
+                        },
+                        modifier = Modifier.height(32.dp),
+                        shape = FilterChipDefaults.shape,
+                        contentPadding = PaddingValues(horizontal = 16.dp),
+                    ) {
                         Text(stringResource(MR.strings.action_filter))
                     }
                 }
