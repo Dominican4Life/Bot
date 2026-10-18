@@ -121,11 +121,18 @@ class MangaRestorer(
 
     private suspend fun restoreExistingManga(manga: Manga, dbManga: Manga): Manga {
         return if (manga.version > dbManga.version) {
-            updateManga(dbManga.copyFrom(manga).copy(id = dbManga.id))
+            updateManga(dbManga.copyFrom(manga).copy(id = dbManga.id).keepLibraryTitle(manga, dbManga))
         } else {
-            updateManga(manga.copyFrom(dbManga).copy(id = dbManga.id))
+            updateManga(manga.copyFrom(dbManga).copy(id = dbManga.id).keepLibraryTitle(manga, dbManga))
         }
     }
+
+    /**
+     * KMK: A title saved in the app only from browsing (not in the library) takes the backed-up library entry's name,
+     * which its downloads are named after, not the name the browse list gave it ("Byoru · 272").
+     */
+    private fun Manga.keepLibraryTitle(backup: Manga, dbManga: Manga): Manga =
+        if (backup.favorite && !dbManga.favorite && backup.ogTitle.isNotBlank()) copy(ogTitle = backup.ogTitle) else this
 
     private fun Manga.copyFrom(newer: Manga): Manga {
         return this.copy(

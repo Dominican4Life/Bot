@@ -107,7 +107,9 @@ internal fun BrowseSourceCompactGridItem(
     val favoriteCorner = rememberFavoriteBadgeCorner()
     // KMK <--
     MangaCompactGridItem(
-        title = manga.title.takeIf { showTitle },
+        // KMK: with the badge a JS source gave the entry, if any (Browse only)
+        title = eu.kanade.tachiyomi.sumizuri.SumizuriListBadges.browseTitle(manga.source, manga.url, manga.title)
+            .takeIf { showTitle },
         coverData = MangaCover(
             mangaId = manga.id,
             sourceId = manga.source,

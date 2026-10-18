@@ -98,7 +98,12 @@ class SumizuriMangaSource(
         // A source whose tab catalogs replace Popular and Latest may leave those out: an empty list, not an error
         val list = SumizuriMapping.list(optionalListing(runtime(), method, *args))
         webUrls.remember(list)
-        val mangas = list.mapNotNull { SumizuriMapping.toSManga(it) }
+        val mangas = list.mapNotNull { entry ->
+            SumizuriMapping.toSManga(entry)?.also { manga ->
+                // KMK: an entry's `badge` shows after its name in Browse only (see SumizuriListBadges)
+                SumizuriListBadges.put(id, manga.url, entry.str("badge") ?: entry.str("count"))
+            }
+        }
         return MangasPage(mangas, hasNextPage = mangas.isNotEmpty())
     }
 

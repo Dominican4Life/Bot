@@ -72,6 +72,8 @@ enum class MangaCover(val ratio: Float) {
         onCoverLoaded: ((DomainMangaCover, result: AsyncImagePainter.State.Success) -> Unit)? = null,
         size: Size = Size.Normal,
         scale: ContentScale = ContentScale.Crop,
+        /** False: fill the size given exactly instead of keeping this cover type's ratio (a wide grid cover) */
+        keepRatio: Boolean = true,
         // KMK <--
     ) {
         // KMK -->
@@ -79,7 +81,7 @@ enum class MangaCover(val ratio: Float) {
         // KMK <--
 
         val modifierColored = modifier
-            .aspectRatio(ratio)
+            .then(if (keepRatio) Modifier.aspectRatio(ratio) else Modifier)
             .clip(shape)
             // KMK -->
             .alpha(if (succeed) alpha else 1f)

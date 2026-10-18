@@ -286,6 +286,8 @@ fun MangaComfortableGridItem(
                                 alpha = if (isSelected) GRID_SELECTED_COVER_ALPHA else coverAlpha,
                                 bgColor = bgColor ?: MaterialTheme.colorScheme.surface.takeIf { isSelected },
                                 tint = onBgColor,
+                                // A wide cover is exactly as tall as the covers beside it (see wideCoverHeight)
+                                keepRatio = !doubleWide,
                                 onCoverLoaded = { _, result ->
                                     val image = result.result.image
                                     coverRatio.floatValue = image.height.toFloat() / image.width

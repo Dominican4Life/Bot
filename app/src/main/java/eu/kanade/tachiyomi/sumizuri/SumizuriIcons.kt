@@ -68,7 +68,7 @@ object SumizuriIcons {
         if (sourceId in missing) return null
         val file = files[sourceId] ?: return null
         if (!file.exists()) return null
-        val bitmap = runCatching { BitmapFactory.decodeFile(file.absolutePath) }.getOrNull()
+        val bitmap = runCatching { BitmapFactory.decodeFile(file.absolutePath) }.getOrNull()?.let(::withMargin)
         if (bitmap == null) {
             missing += sourceId
             return null
@@ -76,6 +76,23 @@ object SumizuriIcons {
         memory[sourceId] = bitmap
         return bitmap
     }
+
+    /**
+     * KMK: A site's icon fills its whole square, while an extension's app icon has a margin around it, so the same
+     * margin is added here and both look the same size side by side. The saved files keep the original image.
+     */
+    private fun withMargin(icon: Bitmap): Bitmap {
+        val side = maxOf(icon.width, icon.height).coerceAtLeast(1)
+        val canvasSide = (side / (1f - 2 * ICON_MARGIN)).toInt()
+        val out = Bitmap.createBitmap(canvasSide, canvasSide, Bitmap.Config.ARGB_8888)
+        val left = (canvasSide - icon.width) / 2f
+        val top = (canvasSide - icon.height) / 2f
+        android.graphics.Canvas(out).drawBitmap(icon, left, top, android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG))
+        return out
+    }
+
+    /** The margin on each side, as a share of the icon's size (an app icon's is about this) */
+    private const val ICON_MARGIN = 0.12f
 
     fun drawable(context: Context, sourceId: Long): Drawable? =
         bitmap(sourceId)?.let { BitmapDrawable(context.resources, it) }
@@ -104,7 +121,7 @@ object SumizuriIcons {
                 file.parentFile?.mkdirs()
                 file.writeBytes(bytes)
             }
-            memory[info.id] = bitmap
+            memory[info.id] = withMargin(bitmap)
             missing.remove(info.id)
             toIconFolder(info, bytes, replace = true)
             return
@@ -126,7 +143,7 @@ object SumizuriIcons {
             file.parentFile?.mkdirs()
             file.writeBytes(bytes)
         }
-        memory[info.id] = bitmap
+        memory[info.id] = withMargin(bitmap)
         missing.remove(info.id)
         return true
     }
