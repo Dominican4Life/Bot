@@ -254,6 +254,19 @@ class LibraryPreferences(
         ChapterSwipeAction.ToggleRead,
     )
 
+    // KMK -->
+    // Episodes get their own swipe actions, so anime and manga can differ
+    fun episodeSwipeToStartAction() = preferenceStore.getEnum(
+        "pref_episode_swipe_start_action",
+        ChapterSwipeAction.ToggleBookmark,
+    )
+
+    fun episodeSwipeToEndAction() = preferenceStore.getEnum(
+        "pref_episode_swipe_end_action",
+        ChapterSwipeAction.ToggleRead,
+    )
+    // KMK <--
+
     fun updateMangaTitles() = preferenceStore.getBoolean("pref_update_library_manga_titles", false)
 
     fun disallowNonAsciiFilenames() = preferenceStore.getBoolean("disallow_non_ascii_filenames", false)

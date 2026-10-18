@@ -37,13 +37,16 @@ import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.data.anime.Anime
 import eu.kanade.tachiyomi.data.anime.AnimeRepository
+import eu.kanade.tachiyomi.ui.anime.AnimeIncognito
 import eu.kanade.tachiyomi.ui.anime.AnimeScreen
 import eu.kanade.tachiyomi.ui.browse.extension.details.SourcePreferencesScreen
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
+import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.update
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.i18n.MR
+import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.components.ScrollbarLazyColumn
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.components.material.padding
@@ -60,6 +63,7 @@ class AnimeSourceFeedScreen(private val sourceId: Long) : Screen() {
     @Composable
     override fun Content() {
         val navigator = LocalNavigator.currentOrThrow
+        val context = androidx.compose.ui.platform.LocalContext.current
         val haptic = LocalHapticFeedback.current
         val screenModel = rememberScreenModel { AnimeSourceFeedScreenModel(sourceId) }
         val state by screenModel.state.collectAsState()
@@ -85,7 +89,17 @@ class AnimeSourceFeedScreen(private val sourceId: Long) : Screen() {
                     } ?: (source as? eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource)?.let { js ->
                         { navigator.push(WebViewScreen(js.baseUrl, js.name)) }
                     },
-                    onToggleIncognito = {},
+                    // KMK: the source's own incognito, as on its browse screen
+                    onToggleIncognito = {
+                        context.toast(
+                            if (AnimeIncognito.isOn(sourceId)) {
+                                KMR.strings.anime_incognito_off
+                            } else {
+                                KMR.strings.anime_incognito_on
+                            },
+                        )
+                        AnimeIncognito.toggle(sourceId)
+                    },
                     onSourceSettingClick = {
                         navigator.push(SourcePreferencesScreen(sourceId, anime = true))
                     }.takeIf { source is ConfigurableAnimeSource },
@@ -93,7 +107,6 @@ class AnimeSourceFeedScreen(private val sourceId: Long) : Screen() {
                     toggleSelectionMode = {},
                     isRunning = false,
                     showBulkSelection = false,
-                    showIncognito = false,
                 )
             },
             floatingActionButton = {

@@ -100,6 +100,7 @@ import eu.kanade.tachiyomi.ui.anime.source.AnimeSourceScreen
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreen
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
 import eu.kanade.tachiyomi.util.system.toast
+import kotlin.math.roundToInt
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -737,12 +738,65 @@ private fun SourceSettingsDialog(
                         SumizuriPreferences.write(preferences, def.key, value)
                         version++
                     }
+                    // KMK: a section header
+                    if (def.type == SumizuriPreferences.Type.Category) {
+                        Text(
+                            def.title,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                        return@forEach
+                    }
                     Column {
-                        Text(def.title, style = MaterialTheme.typography.titleSmall)
+                        if (def.title.isNotEmpty()) Text(def.title, style = MaterialTheme.typography.titleSmall)
                         def.summary?.let {
                             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         when (def.type) {
+                            // KMK -->
+                            SumizuriPreferences.Type.Category, SumizuriPreferences.Type.Info -> Unit
+                            SumizuriPreferences.Type.Slider -> {
+                                val slider = def.slider ?: SumizuriPreferences.Slider(0, 10, 1, false, "")
+                                val saved = SumizuriPreferences.sliderValues((current as? JsonPrimitive)?.contentOrNull, slider)
+                                var dragging by remember(def.key, version) { mutableStateOf<Pair<Int, Int>?>(null) }
+                                val shown = dragging ?: saved
+                                val bounds = slider.min.toFloat()..slider.max.toFloat()
+                                val stops = ((slider.max - slider.min) / slider.step - 1).coerceAtLeast(0)
+                                val save = {
+                                    dragging?.let { (a, b) -> set(JsonPrimitive(SumizuriPreferences.sliderText(a, b, slider))) }
+                                    dragging = null
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (slider.range) {
+                                        androidx.compose.material3.RangeSlider(
+                                            value = shown.first.toFloat()..shown.second.toFloat(),
+                                            onValueChange = {
+                                                dragging = it.start.roundToInt() to it.endInclusive.roundToInt()
+                                            },
+                                            onValueChangeFinished = save,
+                                            valueRange = bounds,
+                                            steps = stops,
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                    } else {
+                                        androidx.compose.material3.Slider(
+                                            value = shown.first.toFloat(),
+                                            onValueChange = { dragging = it.roundToInt() to it.roundToInt() },
+                                            onValueChangeFinished = save,
+                                            valueRange = bounds,
+                                            steps = stops,
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                    }
+                                    Text(
+                                        SumizuriPreferences.sliderLabel(shown.first, shown.second, slider),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        modifier = Modifier.padding(start = 12.dp),
+                                    )
+                                }
+                            }
+                            // KMK <--
                             SumizuriPreferences.Type.Switch -> Switch(
                                 checked = (current as? JsonPrimitive)?.booleanOrNull ?: false,
                                 onCheckedChange = { set(JsonPrimitive(it)) },

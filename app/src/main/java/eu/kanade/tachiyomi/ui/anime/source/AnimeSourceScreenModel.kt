@@ -8,23 +8,43 @@ import eu.kanade.tachiyomi.animesource.AnimeCatalogueSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.data.anime.Anime
 import eu.kanade.tachiyomi.data.anime.AnimeRepository
+import eu.kanade.presentation.anime.toMangaFilterList
+import eu.kanade.presentation.anime.writeBackToAnime
 import eu.kanade.tachiyomi.sumizuri.SumizuriTabs
+import eu.kanade.tachiyomi.ui.anime.AnimeIncognito
+import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import logcat.LogPriority
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.source.interactor.DeleteSavedSearchById
+import tachiyomi.domain.source.interactor.GetSavedSearchBySourceId
+import tachiyomi.domain.source.interactor.InsertSavedSearch
+import tachiyomi.domain.source.model.SavedSearch
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import xyz.nulldev.ts.api.http.serializer.FilterSerializer
 
 /**
  * KMK: Browsing an anime source: popular, latest and search with filters. Loads one page at a time.
  */
 class AnimeSourceScreenModel(
-    sourceId: Long,
+    private val sourceId: Long,
     private val repository: AnimeRepository = Injekt.get(),
     sourceManager: AnimeSourceManager = Injekt.get(),
+    // KMK -->
+    private val getSavedSearches: GetSavedSearchBySourceId = Injekt.get(),
+    private val insertSavedSearch: InsertSavedSearch = Injekt.get(),
+    private val deleteSavedSearchById: DeleteSavedSearchById = Injekt.get(),
+    // KMK <--
 ) : StateScreenModel<AnimeSourceScreenModel.State>(State()) {
 
     val source: AnimeCatalogueSource? = sourceManager.get(sourceId) as? AnimeCatalogueSource
@@ -35,7 +55,89 @@ class AnimeSourceScreenModel(
         mutableState.update { it.copy(filters = source?.getFilterList() ?: AnimeFilterList()) }
         // KMK: a source whose tab catalogs replace Popular and Latest opens on one of them
         if (!showHomeTab()) loadNextPage()
+        // KMK -->
+        getSavedSearches.subscribe(sourceId)
+            .onEach { list ->
+                val sorted = list.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER, SavedSearch::name))
+                mutableState.update { it.copy(savedSearches = sorted.toImmutableList()) }
+            }
+            .launchIn(screenModelScope)
+        AnimeIncognito.subscribe(sourceId)
+            .onEach { on -> mutableState.update { it.copy(incognito = on) } }
+            .launchIn(screenModelScope)
+        // KMK <--
     }
+
+    // KMK -->
+    private val filterSerializer = FilterSerializer()
+
+    fun toggleIncognito() = AnimeIncognito.toggle(sourceId)
+
+    /** Saves the current search words and filters under [name] */
+    fun saveSearch(name: String) {
+        val current = state.value
+        val query = (current.listing as? Listing.Search)?.query?.trim()?.takeIf { it.isNotBlank() }
+        val json = runCatching {
+            Json.encodeToString(JsonArray.serializer(), filterSerializer.serialize(current.filters.toMangaFilterList()))
+        }.getOrNull()
+        screenModelScope.launchIO {
+            insertSavedSearch.await(
+                SavedSearch(id = -1, source = sourceId, name = name.trim(), query = query, filtersJson = json),
+            )
+        }
+    }
+
+    /** Opens a saved search: its words and filters */
+    fun loadSavedSearch(saved: SavedSearch) {
+        val source = source ?: return
+        val filters = source.getFilterList()
+        saved.filtersJson?.let { text ->
+            runCatching {
+                val mirror = filters.toMangaFilterList()
+                filterSerializer.deserialize(mirror, Json.decodeFromString(JsonArray.serializer(), text))
+                mirror.writeBackToAnime()
+            }.onFailure { logcat(LogPriority.ERROR, it) }
+        }
+        mutableState.update { it.copy(filters = filters) }
+        setListingForce(Listing.Search(saved.query.orEmpty(), savedSearchId = saved.id))
+    }
+
+    fun deleteSavedSearch(id: Long) {
+        screenModelScope.launchIO { deleteSavedSearchById.await(id) }
+    }
+
+    // Selecting several titles to add to the library at once
+    fun toggleSelectionMode() {
+        mutableState.update { it.copy(selectionMode = !it.selectionMode, selection = emptySet()) }
+    }
+
+    fun toggleSelection(anime: Anime) {
+        mutableState.update {
+            val next = if (anime.id in it.selection) it.selection - anime.id else it.selection + anime.id
+            it.copy(selectionMode = true, selection = next)
+        }
+    }
+
+    fun selectAll() {
+        mutableState.update { it.copy(selection = it.selection + it.items.map { anime -> anime.id }) }
+    }
+
+    fun reverseSelection() {
+        mutableState.update { it.copy(selection = it.items.map { anime -> anime.id }.toSet() - it.selection) }
+    }
+
+    /** After the selection was added: leaves selection mode and shows the titles as in the library */
+    fun finishSelection() {
+        val ids = state.value.selection
+        mutableState.update { it.copy(selectionMode = false, selection = emptySet()) }
+        screenModelScope.launchIO {
+            // The adding runs on its own; give it a moment before reading the titles back
+            kotlinx.coroutines.delay(500)
+            val updated = ids.mapNotNull { repository.getAnime(it) }.associateBy { it.id }
+            mutableState.update { state -> state.copy(items = state.items.map { updated[it.id] ?: it }) }
+        }
+    }
+    // KMK <--
 
     fun setListing(listing: Listing) {
         if (listing == state.value.listing && state.value.items.isNotEmpty()) return
@@ -245,7 +347,11 @@ class AnimeSourceScreenModel(
     sealed interface Listing {
         data object Popular : Listing
         data object Latest : Listing
-        data class Search(val query: String) : Listing
+        data class Search(
+            val query: String,
+            // KMK: the saved search it came from
+            val savedSearchId: Long? = null,
+        ) : Listing
     }
 
     @Immutable
@@ -257,5 +363,11 @@ class AnimeSourceScreenModel(
         val isLoading: Boolean = false,
         val error: String? = null,
         val filters: AnimeFilterList = AnimeFilterList(),
+        // KMK -->
+        val savedSearches: ImmutableList<SavedSearch> = persistentListOf(),
+        val incognito: Boolean = false,
+        val selectionMode: Boolean = false,
+        val selection: Set<Long> = emptySet(),
+        // KMK <--
     )
 }

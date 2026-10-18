@@ -1476,7 +1476,8 @@ class PlayerViewModel @JvmOverloads constructor(
     private val eventChannel = Channel<Event>()
     val eventFlow = eventChannel.receiveAsFlow()
 
-    val incognitoMode: Boolean get() = basePreferences.incognitoMode().get()
+    // KMK: the anime source's own incognito counts too
+    val incognitoMode: Boolean get() = eu.kanade.tachiyomi.ui.anime.AnimeIncognito.isOn(anime?.source)
 
     /**
      * The position in the current video. Used to restore from process kill.

@@ -539,4 +539,11 @@
     <string name="import_covers_done">Imported %1$d of %2$d missing covers</string>
     <string name="removing_entries">Removing %1$d entries…</string>
     <string name="removed_entries">Removed %1$d entries</string>
+    <string name="pref_episode_swipe_start">Episode on swipe to left</string>
+    <string name="pref_episode_swipe_end">Episode on swipe to right</string>
+    <string name="anime_action_mark_seen">Mark as seen</string>
+    <string name="anime_action_mark_unseen">Mark as unseen</string>
+    <string name="anime_remove_selected_confirm">Remove %1$d anime from your library?</string>
+    <string name="anime_incognito_on">Incognito on for this source: no watch history or progress is saved</string>
+    <string name="anime_incognito_off">Incognito off for this source</string>
 </resources>

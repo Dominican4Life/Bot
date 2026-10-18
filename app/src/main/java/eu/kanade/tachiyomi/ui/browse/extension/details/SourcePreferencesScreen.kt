@@ -27,6 +27,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.preference.DialogPreference
 import androidx.preference.EditTextPreference
 import androidx.preference.PreferenceFragmentCompat
+import androidx.preference.PreferenceGroup
 import androidx.preference.PreferenceScreen
 import androidx.preference.forEach
 import androidx.preference.getOnBindEditTextListener
@@ -227,10 +228,11 @@ class SourcePreferencesFragment : PreferenceFragmentCompat() {
         return sourceScreen
     }
 
-    // KMK: shared by manga and anime source settings
-    private fun PreferenceScreen.tidyUp() {
+    // KMK: shared by manga and anime source settings; also goes into categories
+    private fun PreferenceGroup.tidyUp() {
         run {
             forEach { pref ->
+                if (pref is PreferenceGroup) pref.tidyUp()
                 pref.isIconSpaceReserved = false
                 pref.isSingleLineTitle = false
                 if (pref is DialogPreference && pref.dialogTitle.isNullOrEmpty()) {

@@ -57,6 +57,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
@@ -83,6 +84,8 @@ import eu.kanade.presentation.manga.components.ChapterDownloadAction
 import eu.kanade.presentation.manga.components.ExpandableMangaDescription
 import eu.kanade.presentation.manga.components.MangaActionRow
 import eu.kanade.presentation.manga.components.MangaChapterListItem
+import eu.kanade.presentation.manga.components.getSwipeAction
+import eu.kanade.presentation.manga.components.swipeActionThreshold
 import eu.kanade.presentation.manga.components.MangaInfoBox
 import eu.kanade.presentation.manga.components.MangaToolbar
 import eu.kanade.presentation.manga.components.OutlinedButtonWithArrow
@@ -196,6 +199,8 @@ class AnimeScreen(private val animeId: Long) : Screen() {
             onMerge = { navigator.push(AnimeGlobalSearchScreen(anime.title, mergeIntoId = anime.id)) },
             onMergeSettings = { dialog = AnimeDialog.MergeSettings },
             onSearch = { query -> navigator.push(AnimeSourceScreen(anime.source, query)) },
+            // KMK: holding a title, author or tag searches every anime source
+            onGlobalSearch = { query -> navigator.push(AnimeGlobalSearchScreen(query)) },
             onSourceClick = { navigator.push(AnimeSourceScreen(anime.source)) },
             onOpenAnime = { navigator.push(AnimeScreen(it.id)) },
             onPlay = playEpisode,
@@ -281,6 +286,7 @@ private class AnimeActions(
     val onMerge: () -> Unit,
     val onMergeSettings: () -> Unit,
     val onSearch: (String) -> Unit,
+    val onGlobalSearch: (String) -> Unit,
     val onSourceClick: () -> Unit,
     val onOpenAnime: (Anime) -> Unit,
     val onPlay: (Episode) -> Unit,
@@ -544,6 +550,9 @@ private fun AnimeInfo(
 ) {
     val context = LocalContext.current
     val displayManga = remember(anime) { anime.asDisplayManga() }
+    // KMK: shows the incognito mark next to the source while it's on
+    val sourceIncognito by remember(anime.source) { AnimeIncognito.subscribe(anime.source) }
+        .collectAsState(initial = AnimeIncognito.isOn(anime.source))
     val coverRatio = remember { mutableFloatStateOf(1f) }
     Column {
         MangaInfoBox(
@@ -552,9 +561,9 @@ private fun AnimeInfo(
             manga = displayManga,
             sourceName = state.sourceName ?: anime.source.toString(),
             isStubSource = state.sourceMissing,
-            isSourceIncognito = false,
+            isSourceIncognito = sourceIncognito,
             onCoverClick = {},
-            doSearch = { query, _ -> actions.onSearch(query) },
+            doSearch = { query, global -> if (global) actions.onGlobalSearch(query) else actions.onSearch(query) },
             librarySearch = { actions.onSearch(it) },
             onSourceClick = actions.onSourceClick,
             onCoverLoaded = {},
@@ -589,7 +598,7 @@ private fun AnimeInfo(
             },
             onEditNotes = actions.onEditNotes,
             searchMetadataChips = null,
-            doSearch = { query, _ -> actions.onSearch(query) },
+            doSearch = { query, global -> if (global) actions.onGlobalSearch(query) else actions.onSearch(query) },
         )
         if (state.error != null) {
             Text(
@@ -892,8 +901,23 @@ private fun EpisodeItem(
     val libraryPreferences = remember { Injekt.get<LibraryPreferences>() }
     val relativeTime by uiPreferences.relativeTime().collectAsState()
     val dateFormat by uiPreferences.dateFormat().collectAsState()
-    val swipeStart by libraryPreferences.swipeToStartAction().collectAsState()
-    val swipeEnd by libraryPreferences.swipeToEndAction().collectAsState()
+    // KMK: the episodes' own swipe settings. As for manga chapters, "swipe to right" reveals the start side
+    val swipeStart by libraryPreferences.episodeSwipeToEndAction().collectAsState()
+    val swipeEnd by libraryPreferences.episodeSwipeToStartAction().collectAsState()
+    val onSwipe: (LibraryPreferences.ChapterSwipeAction) -> Unit = { action ->
+        when (action) {
+            LibraryPreferences.ChapterSwipeAction.ToggleRead -> onToggleSeen()
+            LibraryPreferences.ChapterSwipeAction.ToggleBookmark -> onToggleBookmark()
+            LibraryPreferences.ChapterSwipeAction.Download -> onDownload(
+                when (downloadState) {
+                    Download.State.NOT_DOWNLOADED, Download.State.ERROR -> ChapterDownloadAction.START_NOW
+                    Download.State.QUEUE, Download.State.DOWNLOADING -> ChapterDownloadAction.CANCEL
+                    Download.State.DOWNLOADED -> ChapterDownloadAction.DELETE
+                },
+            )
+            LibraryPreferences.ChapterSwipeAction.Disabled -> Unit
+        }
+    }
     val date = remember(episode.dateUpload, relativeTime, dateFormat) {
         episode.dateUpload.takeIf { it > 0L }?.let {
             LocalDate.ofInstant(Instant.ofEpochMilli(it), ZoneId.systemDefault())
@@ -944,6 +968,9 @@ private fun EpisodeItem(
             onDownload = onDownload,
             onPlay = onPlay,
             onLongClick = onToggleSeen,
+            swipeStartAction = swipeStart,
+            swipeEndAction = swipeEnd,
+            onSwipe = onSwipe,
         )
         return
     }
@@ -964,20 +991,7 @@ private fun EpisodeItem(
         onLongClick = onToggleSeen,
         onClick = onPlay,
         onDownloadClick = onDownload,
-        onChapterSwipe = { action ->
-            when (action) {
-                LibraryPreferences.ChapterSwipeAction.ToggleRead -> onToggleSeen()
-                LibraryPreferences.ChapterSwipeAction.ToggleBookmark -> onToggleBookmark()
-                LibraryPreferences.ChapterSwipeAction.Download -> onDownload(
-                    when (downloadState) {
-                        Download.State.NOT_DOWNLOADED, Download.State.ERROR -> ChapterDownloadAction.START_NOW
-                        Download.State.QUEUE, Download.State.DOWNLOADING -> ChapterDownloadAction.CANCEL
-                        Download.State.DOWNLOADED -> ChapterDownloadAction.DELETE
-                    },
-                )
-                else -> {}
-            }
-        },
+        onChapterSwipe = onSwipe,
     )
 }
 
@@ -998,84 +1012,104 @@ private fun RichEpisodeItem(
     onDownload: (ChapterDownloadAction) -> Unit,
     onPlay: () -> Unit,
     onLongClick: () -> Unit,
+    // KMK: swipe left / right, the same as plain episode rows
+    swipeStartAction: LibraryPreferences.ChapterSwipeAction,
+    swipeEndAction: LibraryPreferences.ChapterSwipeAction,
+    onSwipe: (LibraryPreferences.ChapterSwipeAction) -> Unit,
 ) {
     val alpha = if (seen) tachiyomi.presentation.core.components.material.DISABLED_ALPHA else 1f
     var expanded by remember { mutableStateOf(false) }
     val thumbWidth = (androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp * 0.4f).coerceAtMost(250f).dp
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .combinedClickable(onClick = onPlay, onLongClick = onLongClick)
-            .padding(start = 16.dp, top = 10.dp, end = 8.dp, bottom = 10.dp),
+    val swipeBackground = MaterialTheme.colorScheme.primaryContainer
+    val startAction = remember(swipeStartAction, seen, bookmark, downloadState) {
+        getSwipeAction(swipeStartAction, seen, bookmark, downloadState, swipeBackground) { onSwipe(swipeStartAction) }
+    }
+    val endAction = remember(swipeEndAction, seen, bookmark, downloadState) {
+        getSwipeAction(swipeEndAction, seen, bookmark, downloadState, swipeBackground) { onSwipe(swipeEndAction) }
+    }
+    me.saket.swipe.SwipeableActionsBox(
+        modifier = Modifier.clipToBounds(),
+        startActions = listOfNotNull(startAction),
+        endActions = listOfNotNull(endAction),
+        swipeThreshold = swipeActionThreshold,
+        backgroundUntilSwipeThreshold = MaterialTheme.colorScheme.surfaceContainerLowest,
     ) {
-        Row(verticalAlignment = Alignment.Top) {
-            if (preview != null) {
-                coil3.compose.AsyncImage(
-                    model = preview,
-                    contentDescription = null,
-                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                    alpha = alpha,
-                    modifier = Modifier
-                        .width(thumbWidth)
-                        .aspectRatio(16f / 9f)
-                        .clip(MaterialTheme.shapes.small)
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                )
-                Spacer(Modifier.width(10.dp))
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha),
-                )
-                if (!summary.isNullOrBlank()) {
-                    Text(
-                        text = summary,
-                        style = MaterialTheme.typography.labelSmall,
-                        maxLines = if (expanded) Int.MAX_VALUE else 3,
-                        overflow = TextOverflow.Ellipsis,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha * 0.85f),
-                        modifier = Modifier
-                            .padding(top = 2.dp)
-                            .clickable { expanded = !expanded },
-                    )
-                }
-            }
-        }
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 4.dp),
+                .background(MaterialTheme.colorScheme.surface)
+                .combinedClickable(onClick = onPlay, onLongClick = onLongClick)
+                .padding(start = 16.dp, top = 10.dp, end = 8.dp, bottom = 10.dp),
         ) {
-            if (bookmark) {
-                Icon(
-                    imageVector = Icons.Filled.Bookmark,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier
-                        .size(14.dp)
-                        .padding(end = 2.dp),
+            Row(verticalAlignment = Alignment.Top) {
+                if (preview != null) {
+                    coil3.compose.AsyncImage(
+                        model = preview,
+                        contentDescription = null,
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        alpha = alpha,
+                        modifier = Modifier
+                            .width(thumbWidth)
+                            .aspectRatio(16f / 9f)
+                            .clip(MaterialTheme.shapes.small)
+                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                    )
+                    Spacer(Modifier.width(10.dp))
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha),
+                    )
+                    if (!summary.isNullOrBlank()) {
+                        Text(
+                            text = summary,
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = if (expanded) Int.MAX_VALUE else 3,
+                            overflow = TextOverflow.Ellipsis,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha * 0.85f),
+                            modifier = Modifier
+                                .padding(top = 2.dp)
+                                .clickable { expanded = !expanded },
+                        )
+                    }
+                }
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp),
+            ) {
+                if (bookmark) {
+                    Icon(
+                        imageVector = Icons.Filled.Bookmark,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .size(14.dp)
+                            .padding(end = 2.dp),
+                    )
+                }
+                Text(
+                    text = info.orEmpty(),
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha),
+                    modifier = Modifier.weight(1f),
+                )
+                eu.kanade.presentation.manga.components.ChapterDownloadIndicator(
+                    enabled = true,
+                    downloadStateProvider = { downloadState },
+                    downloadProgressProvider = { downloadProgress },
+                    onClick = onDownload,
                 )
             }
-            Text(
-                text = info.orEmpty(),
-                style = MaterialTheme.typography.bodySmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha),
-                modifier = Modifier.weight(1f),
-            )
-            eu.kanade.presentation.manga.components.ChapterDownloadIndicator(
-                enabled = true,
-                downloadStateProvider = { downloadState },
-                downloadProgressProvider = { downloadProgress },
-                onClick = onDownload,
-            )
         }
     }
 }

@@ -62,6 +62,7 @@ import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.domain.source.service.SourcePreferences
+import eu.kanade.presentation.anime.AnimeBulkCategoryDialog
 import eu.kanade.presentation.anime.AnimeEpisodePanel
 import eu.kanade.presentation.anime.AnimePlayerPanel
 import eu.kanade.presentation.anime.asMangaCover
@@ -72,6 +73,9 @@ import eu.kanade.presentation.browse.components.BrowseSourceToolbar
 import eu.kanade.presentation.browse.components.BrowseTabChip
 import eu.kanade.presentation.browse.components.InLibraryBadge
 import eu.kanade.presentation.browse.components.PreviewPanelButtons
+import eu.kanade.presentation.browse.components.SavedSearchCreateDialog
+import eu.kanade.presentation.browse.components.SavedSearchDeleteDialog
+import eu.kanade.presentation.components.BulkSelectionToolbar
 import eu.kanade.presentation.components.wideSpan
 import eu.kanade.presentation.library.components.CommonMangaItemDefaults
 import eu.kanade.presentation.library.components.MangaComfortableGridItem
@@ -90,10 +94,13 @@ import eu.kanade.tachiyomi.ui.browse.source.browse.SourceFilterContent
 import eu.kanade.tachiyomi.ui.player.PlayerActivity
 import eu.kanade.tachiyomi.ui.player.settings.PlayerPreferences
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
-import kotlinx.collections.immutable.persistentListOf
+import eu.kanade.tachiyomi.util.system.toast
+import kotlinx.collections.immutable.toImmutableList
 import tachiyomi.domain.library.model.LibraryDisplayMode
 import tachiyomi.domain.library.service.LibraryPreferences
+import tachiyomi.domain.source.model.EXHSavedSearch
 import tachiyomi.i18n.MR
+import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
@@ -131,6 +138,20 @@ class AnimeSourceScreen(
         var showSettings by rememberSaveable { mutableStateOf(false) }
         BackHandler(enabled = showFilters) { showFilters = false }
         BackHandler(enabled = showSettings) { showSettings = false }
+        // KMK -->
+        var showSaveSearch by remember { mutableStateOf(false) }
+        var deleteSearch by remember { mutableStateOf<EXHSavedSearch?>(null) }
+        var showBulkCategories by remember { mutableStateOf(false) }
+        BackHandler(enabled = state.selectionMode) { screenModel.toggleSelectionMode() }
+        val openSavedSearch: (Long) -> Unit = { id ->
+            state.savedSearches.firstOrNull { it.id == id }?.let { saved ->
+                searchQuery = saved.query
+                showFilters = false
+                showSettings = false
+                screenModel.loadSavedSearch(saved)
+            }
+        }
+        // KMK <--
 
         LaunchedEffect(Unit) {
             when {
@@ -176,43 +197,63 @@ class AnimeSourceScreen(
                             .background(MaterialTheme.colorScheme.surface)
                             .pointerInput(Unit) {},
                     ) {
-                        BrowseSourceToolbar(
-                            searchQuery = searchQuery,
-                            onSearchQueryChange = { searchQuery = it },
-                            source = null,
-                            iconSourceId = sourceId,
-                            subtitleOverride = source?.lang?.let {
-                                eu.kanade.tachiyomi.util.system.LocaleHelper.getLocalizedDisplayName(it)
-                            },
-                            displayMode = displayMode,
-                            onDisplayModeChange = { displayModePref.set(it) },
-                            navigateUp = {
-                                if (searchQuery != null) {
-                                    searchQuery = null
-                                    // KMK: back to the tab catalog, for a source that has them
-                                    if (!screenModel.showHomeTab()) {
-                                        screenModel.setListing(AnimeSourceScreenModel.Listing.Popular)
+                        // KMK: picking several titles to add at once
+                        if (state.selectionMode) {
+                            BulkSelectionToolbar(
+                                selectedCount = state.selection.size,
+                                isRunning = false,
+                                onClickClearSelection = screenModel::toggleSelectionMode,
+                                onChangeCategoryClick = { showBulkCategories = true },
+                                onSelectAll = screenModel::selectAll,
+                                onReverseSelection = screenModel::reverseSelection,
+                            )
+                        } else {
+                            BrowseSourceToolbar(
+                                searchQuery = searchQuery,
+                                onSearchQueryChange = { searchQuery = it },
+                                source = null,
+                                iconSourceId = sourceId,
+                                subtitleOverride = source?.lang?.let {
+                                    eu.kanade.tachiyomi.util.system.LocaleHelper.getLocalizedDisplayName(it)
+                                },
+                                displayMode = displayMode,
+                                onDisplayModeChange = { displayModePref.set(it) },
+                                navigateUp = {
+                                    if (searchQuery != null) {
+                                        searchQuery = null
+                                        // KMK: back to the tab catalog, for a source that has them
+                                        if (!screenModel.showHomeTab()) {
+                                            screenModel.setListing(AnimeSourceScreenModel.Listing.Popular)
+                                        }
+                                    } else {
+                                        navigator.pop()
                                     }
-                                } else {
-                                    navigator.pop()
-                                }
-                            },
-                            onWebViewClick = {
-                                (source as? AnimeHttpSource)?.let { openWebView(it.baseUrl, it.name) }
-                                    ?: (source as? eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource)
-                                        ?.let { openWebView(it.baseUrl, it.name) }
-                            },
-                            onHelpClick = {},
-                            onToggleIncognito = {},
-                            onSearch = { screenModel.search(it) },
-                            toggleSelectionMode = {},
-                            isRunning = false,
-                            columns = columnCount,
-                            onColumnsChange = columnsPref::set,
-                            titleOverride = source?.name ?: sourceId.toString(),
-                            showBulkSelection = false,
-                            showIncognito = false,
-                        )
+                                },
+                                onWebViewClick = {
+                                    (source as? AnimeHttpSource)?.let { openWebView(it.baseUrl, it.name) }
+                                        ?: (source as? eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource)
+                                            ?.let { openWebView(it.baseUrl, it.name) }
+                                },
+                                onHelpClick = {},
+                                onToggleIncognito = {
+                                    context.toast(
+                                        if (state.incognito) {
+                                            KMR.strings.anime_incognito_off
+                                        } else {
+                                            KMR.strings.anime_incognito_on
+                                        },
+                                    )
+                                    screenModel.toggleIncognito()
+                                },
+                                incognito = state.incognito,
+                                onSearch = { screenModel.search(it) },
+                                toggleSelectionMode = screenModel::toggleSelectionMode,
+                                isRunning = false,
+                                columns = columnCount,
+                                onColumnsChange = columnsPref::set,
+                                titleOverride = source?.name ?: sourceId.toString(),
+                            )
+                        }
                         ListingChips(
                             state = state,
                             supportsLatest = source?.supportsLatest == true,
@@ -260,6 +301,7 @@ class AnimeSourceScreen(
                                 searchQuery = null
                                 screenModel.showCatalog(id)
                             },
+                            onSavedSearch = openSavedSearch,
                         )
                         HorizontalDivider()
                     }
@@ -307,11 +349,15 @@ class AnimeSourceScreen(
                             displayMode = displayMode,
                             columns = if (columnCount > 0) GridCells.Fixed(columnCount) else GridCells.Adaptive(128.dp),
                             contentPadding = gridPadding,
-                            selectedId = preview.anime?.id,
+                            isSelected = { anime ->
+                                if (state.selectionMode) anime.id in state.selection else anime.id == preview.anime?.id
+                            },
                             onLoadMore = screenModel::loadNextPage,
                             onRetry = screenModel::retry,
                             onClick = { anime ->
-                                if (previewPanels != SourcePreferences.PREVIEW_PANELS_NONE &&
+                                if (state.selectionMode) {
+                                    screenModel.toggleSelection(anime)
+                                } else if (previewPanels != SourcePreferences.PREVIEW_PANELS_NONE &&
                                     preview.anime?.id != anime.id
                                 ) {
                                     // First tap: highlight and preview. Second tap on the same cover: open it.
@@ -326,7 +372,11 @@ class AnimeSourceScreen(
                             },
                             onLongClick = { anime ->
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                screenModel.toggleFavorite(anime)
+                                if (state.selectionMode) {
+                                    screenModel.toggleSelection(anime)
+                                } else {
+                                    screenModel.toggleFavorite(anime)
+                                }
                             },
                         )
                     }
@@ -408,12 +458,18 @@ class AnimeSourceScreen(
                                     mangaFilters = state.filters.toMangaFilterList()
                                 },
                                 startExpanded = false,
-                                savedSearches = persistentListOf(),
-                                onSave = {},
-                                onSavedSearch = {},
-                                onSavedSearchPress = {},
-                                onSavedSearchPressDesc = "",
-                                shouldShowSavingButton = false,
+                                // KMK: saved searches, as for manga sources
+                                savedSearches = state.savedSearches
+                                    .map { EXHSavedSearch(it.id, it.name, it.query, null) }
+                                    .toImmutableList(),
+                                onSave = {
+                                    mangaFilters.writeBackToAnime()
+                                    showSaveSearch = true
+                                },
+                                onSavedSearch = { openSavedSearch(it.id) },
+                                onSavedSearchPress = { deleteSearch = it },
+                                onSavedSearchPressDesc = stringResource(KMR.strings.saved_searches_delete),
+                                shouldShowSavingButton = true,
                                 openMangaDexRandom = null,
                                 openMangaDexFollows = null,
                             )
@@ -436,6 +492,30 @@ class AnimeSourceScreen(
                 }
             }
 
+            // KMK -->
+            if (showSaveSearch) {
+                SavedSearchCreateDialog(
+                    onDismissRequest = { showSaveSearch = false },
+                    currentSavedSearches = state.savedSearches.map { it.name }.toImmutableList(),
+                    saveSearch = screenModel::saveSearch,
+                )
+            }
+            deleteSearch?.let { search ->
+                SavedSearchDeleteDialog(
+                    onDismissRequest = { deleteSearch = null },
+                    name = search.name,
+                    deleteSavedSearch = { screenModel.deleteSavedSearch(search.id) },
+                )
+            }
+            if (showBulkCategories) {
+                AnimeBulkCategoryDialog(
+                    animeIds = state.selection.toList(),
+                    addToLibrary = true,
+                    onDismissRequest = { showBulkCategories = false },
+                    onDone = screenModel::finishSelection,
+                )
+            }
+            // KMK <--
         }
     }
 }
@@ -458,6 +538,8 @@ private fun ListingChips(
     onRightChange: (Boolean) -> Unit,
     tabs: SumizuriTabs? = null,
     onCatalog: (String) -> Unit = {},
+    // KMK: the source's saved searches, as tabs after Filter / Settings
+    onSavedSearch: (Long) -> Unit = {},
 ) {
     val selectedCatalog = (state.listing as? AnimeSourceScreenModel.Listing.Search)
         ?.takeIf { it.query.isBlank() }
@@ -509,7 +591,11 @@ private fun ListingChips(
             }
             BrowseTabChip(
                 selected = filterOpen ||
-                    (!settingsOpen && state.listing is AnimeSourceScreenModel.Listing.Search && selectedCatalog == null),
+                    (
+                        !settingsOpen && selectedCatalog == null &&
+                            (state.listing as? AnimeSourceScreenModel.Listing.Search)?.savedSearchId == null &&
+                            state.listing is AnimeSourceScreenModel.Listing.Search
+                        ),
                 label = stringResource(MR.strings.action_filter),
                 icon = Icons.Outlined.FilterList,
                 onClick = onFilter,
@@ -520,6 +606,18 @@ private fun ListingChips(
                     label = stringResource(MR.strings.action_settings),
                     icon = Icons.Outlined.Settings,
                     onClick = onSettings,
+                )
+            }
+            state.savedSearches.forEach { saved ->
+                BrowseTabChip(
+                    selected = !panelOpen &&
+                        (state.listing as? AnimeSourceScreenModel.Listing.Search)?.savedSearchId == saved.id,
+                    label = saved.name,
+                    icon = null,
+                    onClick = {
+                        onClosePanels()
+                        onSavedSearch(saved.id)
+                    },
                 )
             }
         }
@@ -543,7 +641,7 @@ private fun AnimeBrowseContent(
     displayMode: LibraryDisplayMode,
     columns: GridCells,
     contentPadding: PaddingValues,
-    selectedId: Long?,
+    isSelected: (Anime) -> Boolean,
     onLoadMore: () -> Unit,
     onRetry: () -> Unit,
     onClick: (Anime) -> Unit,
@@ -560,7 +658,7 @@ private fun AnimeBrowseContent(
                     onClick = { onClick(anime) },
                     onLongClick = { onLongClick(anime) },
                     badge = { InLibraryBadge(enabled = anime.favorite) },
-                    isSelected = anime.id == selectedId,
+                    isSelected = isSelected(anime),
                     coverAlpha = if (anime.favorite) CommonMangaItemDefaults.BrowseFavoriteCoverAlpha else 1f,
                 )
             }
@@ -603,7 +701,7 @@ private fun AnimeBrowseContent(
                     title = anime.title.takeIf { displayMode == LibraryDisplayMode.CompactGrid },
                     onClick = { onClick(anime) },
                     onLongClick = { onLongClick(anime) },
-                    isSelected = anime.id == selectedId,
+                    isSelected = isSelected(anime),
                     coverAlpha = coverAlpha,
                     coverBadgeStart = { InLibraryBadge(enabled = anime.favorite) },
                 )
@@ -612,7 +710,7 @@ private fun AnimeBrowseContent(
                     title = anime.title,
                     onClick = { onClick(anime) },
                     onLongClick = { onLongClick(anime) },
-                    isSelected = anime.id == selectedId,
+                    isSelected = isSelected(anime),
                     coverAlpha = coverAlpha,
                     coverBadgeStart = { InLibraryBadge(enabled = anime.favorite) },
                     usePanoramaCover = usePanorama,

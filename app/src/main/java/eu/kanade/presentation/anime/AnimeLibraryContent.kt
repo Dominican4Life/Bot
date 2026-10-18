@@ -1,9 +1,12 @@
 package eu.kanade.presentation.anime
 
 import android.content.res.Configuration
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.items
@@ -18,6 +21,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
@@ -73,9 +77,34 @@ fun AnimeLibraryContent(
     }
     var page by rememberSaveable { mutableIntStateOf(0) }
     val current = pages.getOrNull(page.coerceIn(0, (pages.size - 1).coerceAtLeast(0)))
-    var categoryDialogFor by remember { mutableStateOf<Long?>(null) }
-    categoryDialogFor?.let { id -> AnimeCategoryDialog(animeId = id, onDismissRequest = { categoryDialogFor = null }) }
-    val onLongClickAnime: (Anime) -> Unit = { categoryDialogFor = it.id }
+    // KMK: long-press selects, like the manga library; tapping then adds or removes from the selection
+    var selected by remember { mutableStateOf(emptySet<Long>()) }
+    var showCategories by remember { mutableStateOf(false) }
+    var showRemove by remember { mutableStateOf(false) }
+    val toggle: (Anime) -> Unit = { anime ->
+        selected = if (anime.id in selected) selected - anime.id else selected + anime.id
+    }
+    val onLongClickAnime: (Anime) -> Unit = toggle
+    val onClick: (Anime) -> Unit = { anime -> if (selected.isEmpty()) onClickAnime(anime) else toggle(anime) }
+    BackHandler(enabled = selected.isNotEmpty()) { selected = emptySet() }
+    if (showCategories) {
+        AnimeBulkCategoryDialog(
+            animeIds = selected.toList(),
+            addToLibrary = false,
+            onDismissRequest = { showCategories = false },
+            onDone = { selected = emptySet() },
+        )
+    }
+    if (showRemove) {
+        AnimeRemoveDialog(
+            count = selected.size,
+            onDismissRequest = { showRemove = false },
+            onConfirm = {
+                removeAnimeFromLibrary(selected)
+                selected = emptySet()
+            },
+        )
+    }
 
     val filtered = remember(current, searchQuery) {
         val inPage = current?.third.orEmpty()
@@ -116,47 +145,73 @@ fun AnimeLibraryContent(
     }
     // Same items and display mode as the manga library
     val displayMode by remember { libraryPreferences.displayMode() }.collectAsState()
-    Column {
-        tabRow()
-        FastScrollLazyVerticalGrid(
-            columns = when {
-                displayMode == LibraryDisplayMode.List -> GridCells.Fixed(1)
-                columns > 0 -> GridCells.Fixed(columns)
-                else -> GridCells.Adaptive(128.dp)
-            },
-            contentPadding = PaddingValues(
-                start = 8.dp,
-                end = 8.dp,
-                top = topPadding + 8.dp,
-                bottom = contentPadding.calculateBottomPadding() + 8.dp,
-            ),
-            verticalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridVerticalSpacer),
-            horizontalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridHorizontalSpacer),
-        ) {
-            items(filtered, key = { it.id }) { anime ->
-                when (displayMode) {
-                    LibraryDisplayMode.List -> MangaListItem(
-                        coverData = anime.asMangaCover(),
-                        title = anime.title,
-                        onClick = { onClickAnime(anime) },
-                        onLongClick = { onLongClickAnime(anime) },
-                        badge = {},
-                    )
-                    LibraryDisplayMode.CompactGrid, LibraryDisplayMode.CoverOnlyGrid -> MangaCompactGridItem(
-                        coverData = anime.asMangaCover(),
-                        title = anime.title.takeIf { displayMode == LibraryDisplayMode.CompactGrid },
-                        onClick = { onClickAnime(anime) },
-                        onLongClick = { onLongClickAnime(anime) },
-                    )
-                    else -> MangaComfortableGridItem(
-                        coverData = anime.asMangaCover(),
-                        title = anime.title,
-                        onClick = { onClickAnime(anime) },
-                        onLongClick = { onLongClickAnime(anime) },
-                        usePanoramaCover = displayMode == LibraryDisplayMode.ComfortableGridPanorama,
-                    )
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column {
+            tabRow()
+            FastScrollLazyVerticalGrid(
+                columns = when {
+                    displayMode == LibraryDisplayMode.List -> GridCells.Fixed(1)
+                    columns > 0 -> GridCells.Fixed(columns)
+                    else -> GridCells.Adaptive(128.dp)
+                },
+                contentPadding = PaddingValues(
+                    start = 8.dp,
+                    end = 8.dp,
+                    top = topPadding + 8.dp,
+                    bottom = contentPadding.calculateBottomPadding() + 8.dp,
+                ),
+                verticalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridVerticalSpacer),
+                horizontalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridHorizontalSpacer),
+            ) {
+                items(filtered, key = { it.id }) { anime ->
+                    when (displayMode) {
+                        LibraryDisplayMode.List -> MangaListItem(
+                            coverData = anime.asMangaCover(),
+                            title = anime.title,
+                            onClick = { onClick(anime) },
+                            onLongClick = { onLongClickAnime(anime) },
+                            badge = {},
+                            isSelected = anime.id in selected,
+                        )
+                        LibraryDisplayMode.CompactGrid, LibraryDisplayMode.CoverOnlyGrid -> MangaCompactGridItem(
+                            coverData = anime.asMangaCover(),
+                            title = anime.title.takeIf { displayMode == LibraryDisplayMode.CompactGrid },
+                            onClick = { onClick(anime) },
+                            onLongClick = { onLongClickAnime(anime) },
+                            isSelected = anime.id in selected,
+                        )
+                        else -> MangaComfortableGridItem(
+                            coverData = anime.asMangaCover(),
+                            title = anime.title,
+                            onClick = { onClick(anime) },
+                            onLongClick = { onLongClickAnime(anime) },
+                            usePanoramaCover = displayMode == LibraryDisplayMode.ComfortableGridPanorama,
+                            isSelected = anime.id in selected,
+                        )
+                    }
                 }
             }
+        }
+        if (selected.isNotEmpty()) {
+            AnimeSelectionBar(
+                count = selected.size,
+                onClear = { selected = emptySet() },
+                onSelectAll = { selected = selected + filtered.map { it.id } },
+                onInvert = { selected = filtered.map { it.id }.toSet() - selected },
+                onSetCategories = { showCategories = true },
+                onMarkSeen = {
+                    markAnimeSeen(selected, true)
+                    selected = emptySet()
+                },
+                onMarkUnseen = {
+                    markAnimeSeen(selected, false)
+                    selected = emptySet()
+                },
+                onRemove = { showRemove = true },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = contentPadding.calculateBottomPadding()),
+            )
         }
     }
 }

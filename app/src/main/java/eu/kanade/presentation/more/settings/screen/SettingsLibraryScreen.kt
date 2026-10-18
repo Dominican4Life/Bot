@@ -276,6 +276,16 @@ object SettingsLibraryScreen : SearchableSettings {
         )
     }
 
+    // KMK -->
+    @Composable
+    private fun episodeSwipeEntries() = persistentMapOf(
+        LibraryPreferences.ChapterSwipeAction.Disabled to stringResource(MR.strings.disabled),
+        LibraryPreferences.ChapterSwipeAction.ToggleBookmark to stringResource(MR.strings.action_bookmark),
+        LibraryPreferences.ChapterSwipeAction.ToggleRead to stringResource(KMR.strings.anime_action_mark_seen),
+        LibraryPreferences.ChapterSwipeAction.Download to stringResource(MR.strings.action_download),
+    )
+    // KMK <--
+
     @Composable
     private fun getBehaviorGroup(
         libraryPreferences: LibraryPreferences,
@@ -311,6 +321,18 @@ object SettingsLibraryScreen : SearchableSettings {
                     ),
                     title = stringResource(MR.strings.pref_chapter_swipe_end),
                 ),
+                // KMK -->
+                Preference.PreferenceItem.ListPreference(
+                    preference = libraryPreferences.episodeSwipeToStartAction(),
+                    entries = episodeSwipeEntries(),
+                    title = stringResource(KMR.strings.pref_episode_swipe_start),
+                ),
+                Preference.PreferenceItem.ListPreference(
+                    preference = libraryPreferences.episodeSwipeToEndAction(),
+                    entries = episodeSwipeEntries(),
+                    title = stringResource(KMR.strings.pref_episode_swipe_end),
+                ),
+                // KMK <--
                 Preference.PreferenceItem.MultiSelectListPreference(
                     preference = libraryPreferences.markDuplicateReadChapterAsRead(),
                     entries = persistentMapOf(
