@@ -372,6 +372,15 @@ class BackupRestorer(
                     }
                 }
             }
+            // Seasons find their parent once every anime is in
+            backupAnime.filter { it.parentUrl != null }.forEach {
+                ensureActive()
+                try {
+                    helper.restoreSeasonLink(it)
+                } catch (e: Exception) {
+                    errors.add(Date() to "${it.title} [anime season]: ${e.message}")
+                }
+            }
         }
 
     /** Sources made in the Code editor; a source already here is only replaced by a newer copy */

@@ -843,6 +843,11 @@ private fun AnimeInfo(
             status = anime.status,
             interval = 0,
         )
+        // KMK: next episode airing time (AniList)
+        eu.kanade.presentation.anime.AnimeAiringInfo(
+            animeId = anime.id,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        )
         ExpandableMangaDescription(
             defaultExpandState = isTablet,
             description = anime.description,

@@ -234,6 +234,9 @@ data object LibraryTab : Tab {
                             MigrationStart.open(emptyList())
                         }
                     },
+                    onClickComingUp = {
+                        navigator.push(eu.kanade.tachiyomi.ui.anime.AnimeComingUpScreen())
+                    }.takeIf { showAnime },
                     // KMK <--
                 )
             },

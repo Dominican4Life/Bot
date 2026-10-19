@@ -56,7 +56,12 @@ data class AnikkuBackupAnime(
     @ProtoNumber(110) val notes: String = "",
     @ProtoNumber(111) val initialized: Boolean = false,
     @ProtoNumber(500) val backgroundUrl: String? = null,
-    // 502–506 are seasons (parentId, id, flags, number, order): not used here
+    // Seasons: parentId / id only link entries inside the backup
+    @ProtoNumber(502) val parentId: Long? = null,
+    @ProtoNumber(503) val id: Long? = null,
+    @ProtoNumber(504) val seasonFlags: Long = 0,
+    @ProtoNumber(505) val seasonNumber: Double = -1.0,
+    @ProtoNumber(506) val seasonSourceOrder: Long = 0,
     // FetchType ordinal (0 = Seasons, 1 = Episodes)
     @ProtoNumber(507) val fetchType: Int = 1,
     @ProtoNumber(602) val customStatus: Int = 0,

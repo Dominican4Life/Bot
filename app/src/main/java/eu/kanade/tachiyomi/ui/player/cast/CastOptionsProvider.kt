@@ -2,7 +2,6 @@ package eu.kanade.tachiyomi.ui.player.cast
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.content.pm.PackageManager
 import com.google.android.gms.cast.CastMediaControlIntent
 import com.google.android.gms.cast.MediaMetadata
 import com.google.android.gms.cast.MediaStatus
@@ -17,18 +16,13 @@ import com.google.android.gms.cast.framework.media.NotificationAction
 import com.google.android.gms.cast.framework.media.NotificationActionsProvider
 import com.google.android.gms.cast.framework.media.NotificationOptions
 import com.google.android.gms.common.images.WebImage
-import eu.kanade.tachiyomi.R
 
 open class CastOptionsProvider : OptionsProvider {
 
-    private fun getReceiverApplicationId(context: Context): String {
-        return try {
-            val packageInfo = context.packageManager.getPackageInfo(context.packageName, PackageManager.GET_META_DATA)
-            packageInfo.applicationInfo?.metaData?.getString(context.getString(R.string.app_cast_id))
-                ?: CastMediaControlIntent.DEFAULT_MEDIA_RECEIVER_APPLICATION_ID
-        } catch (e: PackageManager.NameNotFoundException) {
-            CastMediaControlIntent.DEFAULT_MEDIA_RECEIVER_APPLICATION_ID
-        }
+    // KMK: Anikku looked this up in a never-set meta-data entry, which always fell back to the
+    // default receiver; use it directly
+    private fun getReceiverApplicationId(): String {
+        return CastMediaControlIntent.DEFAULT_MEDIA_RECEIVER_APPLICATION_ID
     }
 
     @SuppressLint("VisibleForTests")
@@ -104,7 +98,7 @@ open class CastOptionsProvider : OptionsProvider {
             .build()
 
         return CastOptions.Builder()
-            .setReceiverApplicationId(getReceiverApplicationId(context))
+            .setReceiverApplicationId(getReceiverApplicationId())
             .setCastMediaOptions(mediaOptions)
             .build()
     }

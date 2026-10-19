@@ -3,7 +3,6 @@ package eu.kanade.tachiyomi.data.backup
 import eu.kanade.tachiyomi.data.anime.track.AnimeTrackStatus
 import eu.kanade.tachiyomi.data.backup.models.AnikkuBackup
 import eu.kanade.tachiyomi.data.backup.models.AnikkuBackupAnime
-import eu.kanade.tachiyomi.data.backup.models.AnikkuBackupCategory
 import eu.kanade.tachiyomi.data.backup.models.AnikkuBackupSourcePreferences
 import eu.kanade.tachiyomi.data.backup.models.AnikkuBackupTracking
 import eu.kanade.tachiyomi.data.backup.models.BackupAnime
@@ -17,7 +16,7 @@ import kotlinx.serialization.protobuf.ProtoBuf
 
 /**
  * KMK: Reads the anime out of an Anikku backup (anime at field 501) or an older Aniyomi backup (anime at 3),
- * and turns them into our [BackupAnime] so the normal anime restore takes them. Seasons are ignored.
+ * and turns them into our [BackupAnime] so the normal anime restore takes them, seasons linked to their parent.
  */
 object AnikkuBackupConverter {
 
@@ -41,13 +40,24 @@ object AnikkuBackupConverter {
         val valid = anime.filter { it.url.isNotBlank() && it.source != 0L }
         if (valid.isEmpty() && categories.none { it.name.isNotBlank() }) return null
         val orderToName = categories.associate { it.order to it.name }
+        // Seasons name their parent by its id inside the backup
+        val byBackupId = valid.filter { it.id != null }.associateBy { it.id!! }
         val sourcePreferences = try {
             parser.decodeFromByteArray(AnikkuBackupSourcePreferences.serializer(), bytes).backupSourcePreferences
         } catch (_: Exception) {
             emptyList()
         }
         return Result(
-            anime = valid.map { it.toBackupAnime(orderToName) },
+            anime = valid.map { anime ->
+                val parent = anime.parentId?.let { byBackupId[it] }?.takeIf { it !== anime }
+                anime.toBackupAnime(orderToName).apply {
+                    parentSource = parent?.source
+                    parentUrl = parent?.url
+                    seasonFlags = anime.seasonFlags
+                    seasonNumber = anime.seasonNumber
+                    seasonSourceOrder = anime.seasonSourceOrder
+                }
+            },
             categories = categories.filter { it.name.isNotBlank() }
                 .map { BackupAnimeCategory(name = it.name, order = it.order) },
             sourcePreferences = sourcePreferences,

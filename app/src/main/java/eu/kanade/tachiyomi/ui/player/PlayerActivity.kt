@@ -79,6 +79,9 @@ import eu.kanade.tachiyomi.animesource.model.ChapterType
 import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SerializableHoster.Companion.serialize
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.data.torrentServer.service.TorrentServerService
+import eu.kanade.tachiyomi.torrentServer.TorrentServerApi
+import eu.kanade.tachiyomi.torrentServer.TorrentServerUtils
 import eu.kanade.tachiyomi.ui.base.activity.BaseActivity
 import eu.kanade.tachiyomi.ui.main.MainActivity
 import eu.kanade.tachiyomi.ui.player.controls.PlayerControls
@@ -93,6 +96,7 @@ import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
 import `is`.xyz.mpv.MPV
 import `is`.xyz.mpv.MPVNode
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
@@ -138,6 +142,20 @@ class PlayerActivity : BaseActivity() {
     // ANK -->
     private val mpvConfig: MpvConfig = Injekt.get()
     // ANK <--
+
+    // Cast -->
+    /**
+     * Chromecast support, or null when it's turned off in the player settings or Google Play
+     * services can't be used on this device (then the cast button stays hidden too).
+     */
+    internal val castManager: CastManager? by lazy {
+        if (playerPreferences.enableCast().get() && CastManager.isCastApiAvailable(this)) {
+            CastManager(this, Injekt.get())
+        } else {
+            null
+        }
+    }
+    // <-- Cast
 
     private var audioFocusRequest: AudioFocusRequestCompat? = null
     private var restoreAudioFocus: () -> Unit = {}
@@ -364,6 +382,9 @@ class PlayerActivity : BaseActivity() {
                     )
                     PlayerControls(
                         viewModel = viewModel,
+                        // Cast -->
+                        castManager = castManager,
+                        // <-- Cast
                         // ANZ -->
                         onBackPress = { backPressed() },
                         // ANZ <--
@@ -414,6 +435,10 @@ class PlayerActivity : BaseActivity() {
         mpvConfig.onPlayerDestroyed()
         // ANK <--
 
+        // Cast -->
+        castManager?.cleanup()
+        // <-- Cast
+
         // ANZ -->
         pipReceiver?.let {
             runCatching { unregisterReceiver(it) }
@@ -427,6 +452,11 @@ class PlayerActivity : BaseActivity() {
 
     override fun onPause() {
         viewModel.saveCurrentEpisodeWatchingProgress()
+
+        // Cast -->
+        // Maintain active Cast session
+        castManager?.maintainCastSessionBackground()
+        // <-- Cast
 
         if (isInPictureInPictureMode) {
             super.onPause()
@@ -548,6 +578,19 @@ class PlayerActivity : BaseActivity() {
             }
         }
 
+        // Cast -->
+        castManager?.apply {
+            // Register session listener cast
+            registerSessionListener()
+
+            // Update current status of cast
+            if (castState.value == CastManager.CastState.CONNECTED) {
+                updateCastState(CastManager.CastState.CONNECTED)
+            }
+            // Synchronize initial status with viewmodel
+            viewModel.isCasting.value = castState.value == CastManager.CastState.CONNECTED
+        }
+        // <-- Cast
     }
 
     private fun UniFile.writeText(text: String) {
@@ -643,6 +686,14 @@ class PlayerActivity : BaseActivity() {
         // Resuming means the PiP window was expanded back to full screen, not dismissed.
         wasInPictureInPictureMode = false
         // ANZ <--
+
+        // Cast -->
+        // Reconnect cast if it was active
+        castManager?.apply {
+            reconnect()
+            registerSessionListener()
+        }
+        // <-- Cast
 
         if (!player.isExiting) {
             super.onResume()
@@ -1154,9 +1205,73 @@ class PlayerActivity : BaseActivity() {
             }
         }
 
-        // KMK: torrents and the extension http server aren't merged yet
-        loadFile(parseVideoUrl(video.videoUrl)!!, video.mpvArgs)
+        // ANK -->
+        if (isTorrentVideo(video.videoUrl)) {
+            PlayerDebugLog.add("player", "Starting the torrent server")
+            lifecycleScope.launchIO {
+                try {
+                    TorrentServerService.start()
+                    if (!TorrentServerService.wait(10)) {
+                        error("The torrent server didn't start")
+                    }
+                    torrentLinkHandler(video.videoUrl, video.videoTitle, video.mpvArgs)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    logcat(LogPriority.ERROR, e) { "Error loading torrent" }
+                    PlayerDebugLog.add("player", "Torrent error: ${e.message}")
+                    withUIContext { toast(e.message ?: e.javaClass.simpleName) }
+                }
+            }
+        } else {
+            loadFile(parseVideoUrl(video.videoUrl)!!, video.mpvArgs)
+        }
+        // ANK <--
     }
+
+    // ANK -->
+    private fun isTorrentVideo(videoUrl: String): Boolean {
+        return videoUrl.startsWith("magnet") ||
+            videoUrl.endsWith(".torrent") ||
+            videoUrl.startsWith(TorrentServerUtils.hostUrl)
+    }
+
+    /**
+     * Adds a magnet link or .torrent file to the local torrent server and plays its stream.
+     * Runs on an IO thread: the torrent server is reached over (local) http.
+     */
+    private fun torrentLinkHandler(
+        videoUrl: String,
+        quality: String,
+        mpvArgs: List<Pair<String, String>> = emptyList(),
+    ) {
+        var index = 0
+
+        if (videoUrl.startsWith("content://")) {
+            val videoInputStream = applicationContext.contentResolver.openInputStream(videoUrl.toUri())
+                ?: error("Couldn't open $videoUrl")
+            val torrent = videoInputStream.use {
+                TorrentServerApi.uploadTorrent(it, quality, "", "", false)
+            }
+            val torrentUrl = TorrentServerUtils.getTorrentPlayLink(torrent, 0)
+            PlayerDebugLog.add("player", "Torrent stream: $torrentUrl")
+            loadFile(torrentUrl, mpvArgs)
+            return
+        }
+
+        // check if link is from magnet, in that check if index is present
+        if (videoUrl.startsWith("magnet")) {
+            if (videoUrl.contains("index=")) {
+                index = videoUrl.substringAfter("index=").substringBefore("&").toIntOrNull() ?: 0
+            }
+        }
+
+        val currentTorrent = TorrentServerApi.addTorrent(videoUrl, quality, "", "", false)
+        val videoTorrentUrl = TorrentServerUtils.getTorrentPlayLink(currentTorrent, index)
+        PlayerDebugLog.add("player", "Torrent stream: $videoTorrentUrl")
+        loadFile(videoTorrentUrl, mpvArgs)
+    }
+    // ANK <--
 
     // ANK -->
     /**

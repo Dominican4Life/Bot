@@ -32,6 +32,12 @@ data class BackupAnime(
     @ProtoNumber(21) var excludedScanlators: List<String> = emptyList(),
     // KMK: edited info (anime_custom_info); a local custom cover file is not backed up
     @ProtoNumber(22) var customInfo: BackupAnimeCustomInfo? = null,
+    // KMK: seasons (migration 56). The parent is found by its source + url when restoring.
+    @ProtoNumber(23) var parentSource: Long? = null,
+    @ProtoNumber(24) var parentUrl: String? = null,
+    @ProtoNumber(25) var seasonFlags: Long = 0,
+    @ProtoNumber(26) var seasonNumber: Double = -1.0,
+    @ProtoNumber(27) var seasonSourceOrder: Long = 0,
 )
 
 /** KMK: one tracker entry of an anime (anime_sync) */

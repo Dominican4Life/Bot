@@ -31,7 +31,11 @@ class AnimeBackupHelper(
     private val trackRepository: AnimeTrackRepository = Injekt.get(),
 ) {
 
-    suspend fun createAnime(): List<BackupAnime> = createAnime(repository.getFavoritesRaw(), includeHistory = true)
+    // KMK: the library plus the seasons of its anime (favorite or not), each once
+    suspend fun createAnime(): List<BackupAnime> = createAnime(
+        (repository.getFavoritesRaw() + repository.getSeasonsOfFavoritesRaw()).distinctBy { it.id },
+        includeHistory = true,
+    )
 
     /** KMK: [animes] with their episodes, and their watch history when [includeHistory] (device sync picks these) */
     suspend fun createAnime(animes: List<Anime>, includeHistory: Boolean): List<BackupAnime> {
@@ -53,7 +57,12 @@ class AnimeBackupHelper(
             }
             .executeAsList()
             .toMap()
+        // KMK: seasons point at their parent by source + url, ids differ between devices
+        val parents = animes.mapNotNull { it.parentId }.distinct()
+            .mapNotNull { id -> repository.getAnime(id)?.let { id to it } }
+            .toMap()
         return animes.map { anime ->
+            val parent = anime.parentId?.let { parents[it] }
             val episodes = repository.getEpisodes(anime.id)
             BackupAnime(
                 source = anime.source,
@@ -112,6 +121,11 @@ class AnimeBackupHelper(
                 notes = AnimeExtraPrefs.notes(anime.id).get(),
                 excludedScanlators = AnimeExtraPrefs.excludedScanlators(anime.id).get().toList(),
                 customInfo = customInfo[anime.id]?.takeIf { it != BackupAnimeCustomInfo() },
+                parentSource = parent?.source,
+                parentUrl = parent?.url,
+                seasonFlags = anime.seasonFlags,
+                seasonNumber = anime.seasonNumber,
+                seasonSourceOrder = anime.seasonSourceOrder,
             )
         }
     }
@@ -162,6 +176,9 @@ class AnimeBackupHelper(
                 lastUpdate = 0L,
                 fetchType = FetchType.entries.getOrElse(backup.fetchType) { FetchType.Episodes },
                 episodeFlags = backup.episodeFlags,
+                seasonFlags = backup.seasonFlags,
+                seasonNumber = backup.seasonNumber,
+                seasonSourceOrder = backup.seasonSourceOrder,
             ),
         )
         repository.restoreEpisodes(
@@ -190,6 +207,23 @@ class AnimeBackupHelper(
         )
         if (backup.categories.isNotEmpty()) repository.restoreCategories(anime.id, backup.categories)
         restoreExtras(anime.id, backup)
+    }
+
+    /**
+     * KMK: Links a restored season to its parent. Run after every anime of the backup is restored, so the
+     * parent is there whichever order they came in.
+     */
+    suspend fun restoreSeasonLink(backup: BackupAnime) {
+        val parentSource = backup.parentSource ?: return
+        val parentUrl = backup.parentUrl ?: return
+        val season = repository.getAnimeByUrl(backup.url, backup.source) ?: return
+        repository.restoreSeasonLink(
+            season = season,
+            parentSource = parentSource,
+            parentUrl = parentUrl,
+            seasonNumber = backup.seasonNumber,
+            seasonSourceOrder = backup.seasonSourceOrder,
+        )
     }
 
     /** KMK: tracks, notes, hidden scanlators and edited info, under the anime's id on this device */

@@ -7,6 +7,7 @@ import com.google.android.gms.cast.MediaMetadata
 import com.google.android.gms.cast.MediaTrack
 import com.google.android.gms.common.images.WebImage
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.data.torrentServer.service.TorrentServerService
 import eu.kanade.tachiyomi.torrentServer.TorrentServerApi
 import eu.kanade.tachiyomi.torrentServer.TorrentServerUtils
 import eu.kanade.tachiyomi.ui.player.PlayerActivity
@@ -36,11 +37,17 @@ class CastMediaBuilder(
 
         videoUrl = when {
             // If it is a local uri, convert it to URL accessible via http
-            videoUrl.startsWith("content://") -> getLocalServerUrl(videoUrl)
+            // KMK: downloaded episodes can be file:// too
+            videoUrl.startsWith("content://") || videoUrl.startsWith("file://") -> getLocalServerUrl(videoUrl)
             videoUrl.startsWith(
                 "magnet",
             ) ||
-                videoUrl.endsWith(".torrent") -> torrentLinkHandler(videoUrl, video.videoTitle)
+                videoUrl.endsWith(".torrent") -> {
+                // KMK: the player normally started it already, but make sure before adding the torrent
+                TorrentServerService.start()
+                TorrentServerService.wait(10)
+                torrentLinkHandler(videoUrl, video.videoTitle)
+            }
             else -> videoUrl
         }
 
@@ -56,7 +63,7 @@ class CastMediaBuilder(
             .addMetadata(video)
             .addTracks(video)
             // ANK -->
-            .setStreamDuration((viewModel.duration ?: 0).toLong() * 1000)
+            .setStreamDuration((viewModel.duration.value ?: 0).toLong() * 1000)
             // ANK <--
             .build()
     }

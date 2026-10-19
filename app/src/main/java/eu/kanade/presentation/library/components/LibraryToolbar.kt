@@ -57,6 +57,7 @@ fun LibraryToolbar(
     onClickSwitchType: (() -> Unit)? = null,
     onClickRefreshMissingCovers: (() -> Unit)? = null,
     onClickMigrate: (() -> Unit)? = null,
+    onClickComingUp: (() -> Unit)? = null,
     // KMK <--
 ) = when {
     selectedCount > 0 -> LibrarySelectionToolbar(
@@ -86,6 +87,7 @@ fun LibraryToolbar(
         onClickSwitchType = onClickSwitchType,
         onClickRefreshMissingCovers = onClickRefreshMissingCovers,
         onClickMigrate = onClickMigrate,
+        onClickComingUp = onClickComingUp,
         // KMK <--
     )
 }
@@ -112,6 +114,7 @@ private fun LibraryRegularToolbar(
     onClickSwitchType: (() -> Unit)?,
     onClickRefreshMissingCovers: (() -> Unit)?,
     onClickMigrate: (() -> Unit)?,
+    onClickComingUp: (() -> Unit)?,
     // KMK <--
 ) {
     val context = LocalContext.current
@@ -205,6 +208,15 @@ private fun LibraryRegularToolbar(
                             AppBar.OverflowAction(
                                 title = stringResource(MR.strings.label_migration),
                                 onClick = onClickMigrate,
+                            ),
+                        )
+                    }
+                    // Anime only: next airing episodes (AniList)
+                    if (onClickComingUp != null) {
+                        add(
+                            AppBar.OverflowAction(
+                                title = stringResource(KMR.strings.anime_coming_up),
+                                onClick = onClickComingUp,
                             ),
                         )
                     }

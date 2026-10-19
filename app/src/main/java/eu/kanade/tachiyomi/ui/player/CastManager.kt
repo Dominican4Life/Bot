@@ -100,7 +100,7 @@ class CastManager(
     private var mediaRouterCallback: androidx.mediarouter.media.MediaRouter.Callback? = null
 
     private val isCastApiAvailable: Boolean
-        get() = GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(context) == ConnectionResult.SUCCESS
+        get() = isCastApiAvailable(context)
 
     private val mediaQueue = LinkedList<MediaQueueItem>()
     private var isLoadingMedia = false
@@ -126,6 +126,23 @@ class CastManager(
     init {
         initializeCast()
     }
+
+    // KMK -->
+    companion object {
+        /**
+         * Whether Google Play services (which Chromecast needs) can be used on this device.
+         * Devices without them (or with an unusable version) don't get a cast button.
+         */
+        fun isCastApiAvailable(context: android.content.Context): Boolean {
+            return try {
+                GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(context) == ConnectionResult.SUCCESS
+            } catch (e: Exception) {
+                logcat(LogPriority.WARN, e)
+                false
+            }
+        }
+    }
+    // KMK <--
 
     private fun initializeCast() {
         if (!isCastApiAvailable) return
@@ -256,7 +273,7 @@ class CastManager(
 
                 val mediaInfo = mediaBuilder!!.buildMediaInfo(video) // Now the `Video` object passes directly
                 // ANK -->
-                val currentLocalPosition = (viewModel?.pos ?: 0).toLong()
+                val currentLocalPosition = (viewModel?.pos?.value ?: 0).toLong()
                 // ANK <--
 
                 // Update queue before and after loading new medium
@@ -614,8 +631,7 @@ class CastManager(
     }
 
     fun endSession() {
-        val mSessionManager = castContext!!.sessionManager
-        mSessionManager.endCurrentSession(true)
+        castContext?.sessionManager?.endCurrentSession(true)
         reset()
         _castState.value = CastState.DISCONNECTED
     }
