@@ -1,0 +1,43 @@
+import kotlin.Boolean;
+
+-- KMK: anime tracking (AniList, MyAnimeList…), kept apart from manga_sync
+CREATE TABLE anime_sync(
+    _id INTEGER NOT NULL PRIMARY KEY,
+    anime_id INTEGER NOT NULL,
+    sync_id INTEGER NOT NULL,
+    remote_id INTEGER NOT NULL,
+    library_id INTEGER,
+    title TEXT NOT NULL,
+    last_episode_seen REAL NOT NULL,
+    total_episodes INTEGER NOT NULL,
+    status INTEGER NOT NULL,
+    score REAL NOT NULL,
+    remote_url TEXT NOT NULL,
+    start_date INTEGER NOT NULL,
+    finish_date INTEGER NOT NULL,
+    private INTEGER AS Boolean DEFAULT 0 NOT NULL,
+    UNIQUE (anime_id, sync_id) ON CONFLICT REPLACE,
+    FOREIGN KEY(anime_id) REFERENCES animes (_id)
+    ON DELETE CASCADE
+);
+
+CREATE INDEX kmk_anime_sync_anime_id_index ON anime_sync(anime_id);
+
+getByAnimeId:
+SELECT * FROM anime_sync WHERE anime_id = :animeId;
+
+getAll:
+SELECT * FROM anime_sync;
+
+upsert:
+INSERT INTO anime_sync(
+    anime_id, sync_id, remote_id, library_id, title, last_episode_seen, total_episodes, status, score,
+    remote_url, start_date, finish_date, private
+)
+VALUES (
+    :animeId, :syncId, :remoteId, :libraryId, :title, :lastEpisodeSeen, :totalEpisodes, :status, :score,
+    :remoteUrl, :startDate, :finishDate, :private
+);
+
+delete:
+DELETE FROM anime_sync WHERE anime_id = :animeId AND sync_id = :syncId;

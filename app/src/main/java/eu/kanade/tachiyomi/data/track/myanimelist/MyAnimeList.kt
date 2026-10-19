@@ -39,6 +39,9 @@ class MyAnimeList(id: Long) : BaseTracker(id, "MyAnimeList"), DeletableTracker {
     private val interceptor by lazy { MyAnimeListInterceptor(this) }
     private val api by lazy { MyAnimeListApi(id, client, interceptor) }
 
+    // KMK: signed-in client for anime tracking (MyAnimeListAnime)
+    val animeClient by lazy { client.newBuilder().addInterceptor(interceptor).build() }
+
     override val supportsReadingDates: Boolean = true
 
     override fun getLogo() = R.drawable.brand_myanimelist

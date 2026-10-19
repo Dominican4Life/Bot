@@ -52,7 +52,13 @@ class AnimeSourceScreenModel(
     private var loadJob: Job? = null
 
     init {
-        mutableState.update { it.copy(filters = source?.getFilterList() ?: AnimeFilterList()) }
+        mutableState.update {
+            it.copy(
+                filters = source?.getFilterList() ?: AnimeFilterList(),
+                // KMK: the Filter tab is kept until the app closes
+                filterListing = keptFilterTabs[sourceId]?.first,
+            )
+        }
         // KMK: a source whose tab catalogs replace Popular and Latest opens on one of them
         if (!showHomeTab()) loadNextPage()
         // KMK -->
@@ -98,8 +104,7 @@ class AnimeSourceScreenModel(
                 mirror.writeBackToAnime()
             }.onFailure { logcat(LogPriority.ERROR, it) }
         }
-        mutableState.update { it.copy(filters = filters) }
-        setListingForce(Listing.Search(saved.query.orEmpty(), savedSearchId = saved.id))
+        switchTo(Listing.Search(saved.query.orEmpty(), savedSearchId = saved.id), filters)
     }
 
     fun deleteSavedSearch(id: Long) {
@@ -141,20 +146,93 @@ class AnimeSourceScreenModel(
 
     fun setListing(listing: Listing) {
         if (listing == state.value.listing && state.value.items.isNotEmpty()) return
-        loadJob?.cancel()
-        mutableState.update {
-            it.copy(listing = listing, items = emptyList(), page = 0, hasNextPage = true, error = null, isLoading = false)
-        }
-        loadNextPage()
+        // KMK: Popular and Latest use the source's plain filters
+        switchTo(listing, source?.getFilterList() ?: AnimeFilterList())
     }
 
+    /** A typed search or the Filter panel's Filter button: the Filter tab, loaded fresh */
     fun search(query: String) {
-        setListingForce(Listing.Search(query.trim()))
+        // KMK -->
+        val listing = Listing.Search(query.trim())
+        val filters = state.value.filters
+        tabCache.remove(cacheKey(listing))
+        keptFilterTabs[sourceId] = listing to filters
+        mutableState.update { it.copy(filterListing = listing) }
+        switchTo(listing, filters, force = true)
+        // KMK <--
     }
 
     fun applyFilters() {
-        setListingForce(Listing.Search((state.value.listing as? Listing.Search)?.query.orEmpty()))
+        search((state.value.listing as? Listing.Search)?.query.orEmpty())
     }
+
+    // KMK -->
+    /** Saves the shown tab's list, then shows [listing]: from its kept list when there is one, else loads it */
+    private fun switchTo(listing: Listing, filters: AnimeFilterList, force: Boolean = false) {
+        val current = state.value
+        if (current.items.isNotEmpty()) {
+            tabCache[cacheKey(current.listing)] =
+                TabEntry(current.listing, current.filters, current.items, current.page, current.hasNextPage)
+        }
+        val kept = tabCache[cacheKey(listing)].takeUnless { force }
+        loadJob?.cancel()
+        if (kept != null) {
+            mutableState.update {
+                it.copy(
+                    listing = kept.listing,
+                    filters = kept.filters,
+                    items = kept.items,
+                    page = kept.page,
+                    hasNextPage = kept.hasNextPage,
+                    error = null,
+                    isLoading = false,
+                )
+            }
+            return
+        }
+        mutableState.update { it.copy(filters = filters) }
+        setListingForce(listing)
+    }
+
+    private fun cacheKey(listing: Listing): String = "$sourceId:" + tabKey(listing)
+
+    /** Tapping the selected tab: forget its kept list and load it again from page 1 */
+    fun reloadListing() {
+        val listing = state.value.listing
+        tabCache.remove(cacheKey(listing))
+        setListingForce(listing)
+    }
+
+    /** The Filter button or a swipe: back to the last filter / typed search's results, if there is one */
+    fun showFilterTab(): Boolean {
+        val listing = state.value.filterListing ?: return false
+        if (state.value.listing == listing) return true
+        val filters = keptFilterTabs[sourceId]?.second ?: state.value.filters
+        switchTo(listing, filters)
+        return true
+    }
+
+    /** True when the Filter panel has something selected (anything not at its default) */
+    fun filtersChanged(): Boolean = runCatching {
+        val default = source?.getFilterList() ?: return@runCatching false
+        filterSerializer.serialize(state.value.filters.toMangaFilterList()) !=
+            filterSerializer.serialize(default.toMangaFilterList())
+    }.getOrDefault(false)
+
+    /**
+     * Clear in the Filter panel: empties the panel and forgets the Filter tab (its results and its place in the
+     * swipe order). When it's the tab being shown, Browse goes back to its first tab.
+     */
+    fun clearFilterTab() {
+        val filterListing = state.value.filterListing
+        filterListing?.let { tabCache.remove(cacheKey(it)) }
+        keptFilterTabs.remove(sourceId)
+        val showing = state.value.listing.let { it is Listing.Search && tabKey(it) == FILTER_TAB }
+        mutableState.update { it.copy(filterListing = null) }
+        resetFilters()
+        if (showing && !showHomeTab()) setListing(Listing.Popular)
+    }
+    // KMK <--
 
     fun resetFilters() {
         mutableState.update { it.copy(filters = source?.getFilterList() ?: AnimeFilterList()) }
@@ -168,8 +246,7 @@ class AnimeSourceScreenModel(
         val filters = source.getFilterList()
         if (runCatching { tabs.selectCatalog(filters, id) }.getOrNull() != true) return
         runCatching { tabs.rememberTab(id) }
-        mutableState.update { it.copy(filters = filters) }
-        setListingForce(Listing.Search(""))
+        switchTo(Listing.Search("", catalogId = id), filters)
     }
 
     /** For a source with tab catalogs: opens the one used last (or the first). False when it has none */
@@ -351,6 +428,8 @@ class AnimeSourceScreenModel(
             val query: String,
             // KMK: the saved search it came from
             val savedSearchId: Long? = null,
+            // KMK: the JS / JSON source's tab catalog it lists
+            val catalogId: String? = null,
         ) : Listing
     }
 
@@ -368,6 +447,38 @@ class AnimeSourceScreenModel(
         val incognito: Boolean = false,
         val selectionMode: Boolean = false,
         val selection: Set<Long> = emptySet(),
+        /** The Filter tab: the last filter / typed search, until Clear */
+        val filterListing: Listing.Search? = null,
         // KMK <--
     )
+
+    // KMK -->
+    /** A tab's list as it was left */
+    private class TabEntry(
+        val listing: Listing,
+        val filters: AnimeFilterList,
+        val items: List<Anime>,
+        val page: Int,
+        val hasNextPage: Boolean,
+    )
+
+    companion object {
+        const val FILTER_TAB = "filter"
+
+        /** Which tab a list belongs to: popular, latest, filter, catalog:<id> or saved:<id> */
+        fun tabKey(listing: Listing): String = when (listing) {
+            Listing.Popular -> "popular"
+            Listing.Latest -> "latest"
+            is Listing.Search -> when {
+                listing.savedSearchId != null -> "saved:${listing.savedSearchId}"
+                listing.catalogId != null -> "catalog:${listing.catalogId}"
+                else -> FILTER_TAB
+            }
+        }
+
+        // Kept until the app closes, like the manga Browse tabs
+        private val tabCache = java.util.concurrent.ConcurrentHashMap<String, TabEntry>()
+        private val keptFilterTabs = java.util.concurrent.ConcurrentHashMap<Long, Pair<Listing.Search, AnimeFilterList>>()
+    }
+    // KMK <--
 }

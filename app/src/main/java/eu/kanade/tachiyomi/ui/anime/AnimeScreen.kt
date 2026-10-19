@@ -554,6 +554,19 @@ private fun AnimeInfo(
     val sourceIncognito by remember(anime.source) { AnimeIncognito.subscribe(anime.source) }
         .collectAsState(initial = AnimeIncognito.isOn(anime.source))
     val coverRatio = remember { mutableFloatStateOf(1f) }
+    // KMK: anime tracking
+    var showTracking by remember { mutableStateOf(false) }
+    val trackCount by remember(anime.id) {
+        uy.kohesive.injekt.Injekt.get<eu.kanade.tachiyomi.data.anime.track.AnimeTrackRepository>()
+            .subscribeTracks(anime.id)
+    }.collectAsState(initial = emptyList())
+    if (showTracking) {
+        AnimeTrackSheet(
+            anime = anime,
+            lastSeenEpisode = state.allEpisodes.filter { it.seen }.maxOfOrNull { it.episodeNumber } ?: 0.0,
+            onDismissRequest = { showTracking = false },
+        )
+    }
     Column {
         MangaInfoBox(
             isTabletUi = isTablet,
@@ -572,13 +585,13 @@ private fun AnimeInfo(
         )
         MangaActionRow(
             favorite = anime.favorite,
-            trackingCount = 0,
+            trackingCount = trackCount.size,
             nextUpdate = null,
             isUserIntervalMode = false,
             onAddToLibraryClicked = actions.onToggleFavorite,
             onWebViewClicked = actions.onWebView,
             onWebViewLongClicked = null,
-            onTrackingClicked = { context.toast(KMR.strings.anime_tracking_coming) },
+            onTrackingClicked = { showTracking = true },
             onEditIntervalClicked = null,
             onEditCategory = actions.onEditCategories.takeIf { anime.favorite },
             onMergeClicked = null,

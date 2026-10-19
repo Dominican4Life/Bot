@@ -220,6 +220,15 @@ class AnimeRepository(
         handler.await(inTransaction = true) {
             episodes.forEach { episodesQueries.setSeen(seen, it.id) }
         }
+        // KMK: anime tracking
+        if (seen) {
+            episodes.groupBy { it.animeId }.forEach { (animeId, list) ->
+                eu.kanade.tachiyomi.data.anime.track.AnimeTracking.onEpisodeSeen(
+                    animeId,
+                    list.maxOf { it.episodeNumber },
+                )
+            }
+        }
     }
 
     /** "Clear anime": drops the saved episode list so the next refresh fetches it fresh */
@@ -249,6 +258,12 @@ class AnimeRepository(
                 totalSeconds = totalSeconds,
                 id = id,
             )
+        }
+        // KMK: anime tracking
+        if (seen == true) {
+            handler.awaitOneOrNull { episodesQueries.getById(id, ::mapEpisode) }?.let {
+                eu.kanade.tachiyomi.data.anime.track.AnimeTracking.onEpisodeSeen(it.animeId, it.episodeNumber)
+            }
         }
     }
 

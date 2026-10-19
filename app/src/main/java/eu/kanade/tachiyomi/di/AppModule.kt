@@ -168,6 +168,7 @@ class AppModule(val app: Application) : InjektModule {
         addSingletonFactory { eu.kanade.tachiyomi.animeextension.AnimeExtensionManager(app) }
         addSingletonFactory { eu.kanade.tachiyomi.animeextension.AnimeSourceManager(get()) }
         addSingletonFactory { eu.kanade.tachiyomi.data.anime.AnimeRepository(get()) }
+        addSingletonFactory { eu.kanade.tachiyomi.data.anime.track.AnimeTrackRepository(get()) }
         // Anime player (from AniZen)
         addSingletonFactory { eu.kanade.tachiyomi.ui.player.settings.PlayerPreferences(get()) }
         addSingletonFactory { eu.kanade.tachiyomi.ui.player.settings.GesturePreferences(get()) }

@@ -4,6 +4,7 @@ import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -47,6 +48,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.neverEqualPolicy
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -259,17 +261,23 @@ class AnimeSourceScreen(
                             supportsLatest = source?.supportsLatest == true,
                             onPopular = {
                                 searchQuery = null
-                                screenModel.resetFilters()
                                 screenModel.setListing(AnimeSourceScreenModel.Listing.Popular)
                             },
                             onLatest = {
                                 searchQuery = null
-                                screenModel.resetFilters()
                                 screenModel.setListing(AnimeSourceScreenModel.Listing.Latest)
                             },
+                            // KMK: tapping the tab that's already shown loads it again from page 1
+                            onReload = screenModel::reloadListing,
                             filterOpen = showFilters,
                             onFilter = {
                                 showSettings = false
+                                if (!showFilters) {
+                                    // Back to the Filter tab's results (if any) behind the panel
+                                    if (screenModel.showFilterTab()) {
+                                        searchQuery = state.filterListing?.query?.takeIf { it.isNotBlank() }
+                                    }
+                                }
                                 showFilters = !showFilters
                             },
                             settingsOpen = showSettings,
@@ -329,56 +337,125 @@ class AnimeSourceScreen(
                         mutableStateOf<eu.kanade.tachiyomi.data.anime.Episode?>(null)
                     }
                     var playToken by remember(preview.anime?.id) { mutableIntStateOf(0) }
-                    when {
-                        source == null -> EmptyScreen(
-                            message = stringResource(MR.strings.source_not_installed, sourceId.toString()),
-                            modifier = Modifier.padding(paddingValues),
-                        )
-                        state.items.isEmpty() && state.isLoading -> LoadingScreen(Modifier.padding(paddingValues))
-                        state.items.isEmpty() && state.error != null -> ErrorWithRetry(
-                            message = state.error!!,
-                            onRetry = screenModel::retry,
-                            contentPadding = paddingValues,
-                        )
-                        state.items.isEmpty() && !state.hasNextPage -> EmptyScreen(
-                            message = stringResource(MR.strings.no_results_found),
-                            modifier = Modifier.padding(paddingValues),
-                        )
-                        else -> AnimeBrowseContent(
-                            state = state,
-                            displayMode = displayMode,
-                            columns = if (columnCount > 0) GridCells.Fixed(columnCount) else GridCells.Adaptive(128.dp),
-                            contentPadding = gridPadding,
-                            isSelected = { anime ->
-                                if (state.selectionMode) anime.id in state.selection else anime.id == preview.anime?.id
-                            },
-                            onLoadMore = screenModel::loadNextPage,
-                            onRetry = screenModel::retry,
-                            onClick = { anime ->
-                                if (state.selectionMode) {
-                                    screenModel.toggleSelection(anime)
-                                } else if (previewPanels != SourcePreferences.PREVIEW_PANELS_NONE &&
-                                    preview.anime?.id != anime.id
-                                ) {
-                                    // First tap: highlight and preview. Second tap on the same cover: open it.
-                                    screenModel.selectPreview(
-                                        anime,
-                                        showEpisodes = SourcePreferences.previewLeftOn(previewPanels),
-                                        showPlayer = SourcePreferences.previewRightOn(previewPanels),
-                                    )
-                                } else {
-                                    navigator.push(AnimeScreen(anime.id))
-                                }
-                            },
-                            onLongClick = { anime ->
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                if (state.selectionMode) {
-                                    screenModel.toggleSelection(anime)
-                                } else {
-                                    screenModel.toggleFavorite(anime)
-                                }
-                            },
-                        )
+                    // KMK: swipe left / right over the covers for the next / previous tab of the row (Popular,
+                    // Latest, the Filter tab, a JS source's tabs, saved searches), as in manga Browse
+                    val tabsSource = source as? SumizuriTabs
+                    val listingKey = AnimeSourceScreenModel.tabKey(state.listing)
+                    val swipeTabs = buildList<Pair<String, () -> Unit>> {
+                        if (tabsSource?.hasCatalogTabs != true) {
+                            add(
+                                "popular" to {
+                                    searchQuery = null
+                                    screenModel.setListing(AnimeSourceScreenModel.Listing.Popular)
+                                },
+                            )
+                            if (source?.supportsLatest == true) {
+                                add(
+                                    "latest" to {
+                                        searchQuery = null
+                                        screenModel.setListing(AnimeSourceScreenModel.Listing.Latest)
+                                    },
+                                )
+                            }
+                        }
+                        if (state.filterListing != null) {
+                            add(
+                                AnimeSourceScreenModel.FILTER_TAB to {
+                                    if (screenModel.showFilterTab()) {
+                                        searchQuery = state.filterListing?.query?.takeIf { it.isNotBlank() }
+                                    }
+                                },
+                            )
+                        }
+                        tabsSource?.catalogTabs.orEmpty().forEach { catalog ->
+                            add(
+                                "catalog:${catalog.id}" to {
+                                    searchQuery = null
+                                    screenModel.showCatalog(catalog.id)
+                                },
+                            )
+                        }
+                        state.savedSearches.forEach { saved ->
+                            add("saved:${saved.id}" to { openSavedSearch(saved.id) })
+                        }
+                    }
+                    val currentTab = swipeTabs.indexOfFirst { it.first == listingKey }
+                    val latestSwipeTabs by rememberUpdatedState(swipeTabs)
+                    val swipeModifier = if (currentTab >= 0 && !showFilters && !showSettings && !state.selectionMode) {
+                        Modifier.pointerInput(currentTab, swipeTabs.size) {
+                            var total = 0f
+                            detectHorizontalDragGestures(
+                                onDragStart = { total = 0f },
+                                onDragEnd = {
+                                    val threshold = 96.dp.toPx()
+                                    val target = when {
+                                        total <= -threshold -> currentTab + 1
+                                        total >= threshold -> currentTab - 1
+                                        else -> -1
+                                    }
+                                    latestSwipeTabs.getOrNull(target)?.second?.invoke()
+                                },
+                                onHorizontalDrag = { change, dragAmount ->
+                                    change.consume()
+                                    total += dragAmount
+                                },
+                            )
+                        }
+                    } else {
+                        Modifier
+                    }
+                    Box(modifier = Modifier.fillMaxSize().then(swipeModifier)) {
+                        when {
+                            source == null -> EmptyScreen(
+                                message = stringResource(MR.strings.source_not_installed, sourceId.toString()),
+                                modifier = Modifier.padding(paddingValues),
+                            )
+                            state.items.isEmpty() && state.isLoading -> LoadingScreen(Modifier.padding(paddingValues))
+                            state.items.isEmpty() && state.error != null -> ErrorWithRetry(
+                                message = state.error!!,
+                                onRetry = screenModel::retry,
+                                contentPadding = paddingValues,
+                            )
+                            state.items.isEmpty() && !state.hasNextPage -> EmptyScreen(
+                                message = stringResource(MR.strings.no_results_found),
+                                modifier = Modifier.padding(paddingValues),
+                            )
+                            else -> AnimeBrowseContent(
+                                state = state,
+                                displayMode = displayMode,
+                                columns = if (columnCount > 0) GridCells.Fixed(columnCount) else GridCells.Adaptive(128.dp),
+                                contentPadding = gridPadding,
+                                isSelected = { anime ->
+                                    if (state.selectionMode) anime.id in state.selection else anime.id == preview.anime?.id
+                                },
+                                onLoadMore = screenModel::loadNextPage,
+                                onRetry = screenModel::retry,
+                                onClick = { anime ->
+                                    if (state.selectionMode) {
+                                        screenModel.toggleSelection(anime)
+                                    } else if (previewPanels != SourcePreferences.PREVIEW_PANELS_NONE &&
+                                        preview.anime?.id != anime.id
+                                    ) {
+                                        // First tap: highlight and preview. Second tap on the same cover: open it.
+                                        screenModel.selectPreview(
+                                            anime,
+                                            showEpisodes = SourcePreferences.previewLeftOn(previewPanels),
+                                            showPlayer = SourcePreferences.previewRightOn(previewPanels),
+                                        )
+                                    } else {
+                                        navigator.push(AnimeScreen(anime.id))
+                                    }
+                                },
+                                onLongClick = { anime ->
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    if (state.selectionMode) {
+                                        screenModel.toggleSelection(anime)
+                                    } else {
+                                        screenModel.toggleFavorite(anime)
+                                    }
+                                },
+                            )
+                        }
                     }
 
                     // The panel starts below the toolbar and the Popular / Latest / Filter row
@@ -445,8 +522,10 @@ class AnimeSourceScreen(
                             SourceFilterContent(
                                 onDismissRequest = { showFilters = false },
                                 filters = mangaFilters,
+                                // KMK: Clear empties the panel and forgets the Filter tab
                                 onReset = {
-                                    screenModel.resetFilters()
+                                    screenModel.clearFilterTab()
+                                    searchQuery = null
                                 },
                                 onFilter = {
                                     mangaFilters.writeBackToAnime()
@@ -472,6 +551,9 @@ class AnimeSourceScreen(
                                 shouldShowSavingButton = true,
                                 openMangaDexRandom = null,
                                 openMangaDexFollows = null,
+                                clearHighlighted = remember(mangaFilters, state.filters, showFilters) {
+                                    screenModel.filtersChanged()
+                                },
                             )
                         }
                         BrowseOverlayPanel(
@@ -527,6 +609,7 @@ private fun ListingChips(
     supportsLatest: Boolean,
     onPopular: () -> Unit,
     onLatest: () -> Unit,
+    onReload: () -> Unit,
     filterOpen: Boolean,
     onFilter: () -> Unit,
     settingsOpen: Boolean,
@@ -541,10 +624,17 @@ private fun ListingChips(
     // KMK: the source's saved searches, as tabs after Filter / Settings
     onSavedSearch: (Long) -> Unit = {},
 ) {
-    val selectedCatalog = (state.listing as? AnimeSourceScreenModel.Listing.Search)
-        ?.takeIf { it.query.isBlank() }
-        ?.let { tabs?.let { t -> runCatching { t.selectedCatalog(state.filters) }.getOrNull() } }
+    // KMK: which tab the shown list belongs to; tapping that tab again reloads it
+    val shownTab = AnimeSourceScreenModel.tabKey(state.listing)
     val panelOpen = filterOpen || settingsOpen
+    fun tab(key: String, open: () -> Unit): () -> Unit = {
+        if (!panelOpen && shownTab == key) {
+            onReload()
+        } else {
+            onClosePanels()
+            open()
+        }
+    }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Row(
             modifier = Modifier
@@ -557,45 +647,32 @@ private fun ListingChips(
             // KMK: tab catalogs replace Popular and Latest
             if (tabs?.hasCatalogTabs != true) {
                 BrowseTabChip(
-                    selected = !panelOpen && state.listing == AnimeSourceScreenModel.Listing.Popular,
+                    selected = !panelOpen && shownTab == "popular",
                     label = tabs?.popularName ?: stringResource(MR.strings.popular),
                     icon = Icons.Outlined.FavoriteBorder,
                     filledIcon = Icons.Outlined.Favorite,
-                    onClick = {
-                        onClosePanels()
-                        onPopular()
-                    },
+                    onClick = tab("popular", onPopular),
                 )
                 if (supportsLatest) {
                     BrowseTabChip(
-                        selected = !panelOpen && state.listing == AnimeSourceScreenModel.Listing.Latest,
+                        selected = !panelOpen && shownTab == "latest",
                         label = tabs?.latestName ?: stringResource(MR.strings.latest),
                         icon = Icons.Outlined.NewReleases,
-                        onClick = {
-                            onClosePanels()
-                            onLatest()
-                        },
+                        onClick = tab("latest", onLatest),
                     )
                 }
             }
             tabs?.catalogTabs.orEmpty().forEach { catalog ->
                 BrowseTabChip(
-                    selected = !panelOpen && selectedCatalog == catalog.id,
+                    selected = !panelOpen && shownTab == "catalog:${catalog.id}",
                     label = catalog.name,
                     icon = null,
-                    onClick = {
-                        onClosePanels()
-                        onCatalog(catalog.id)
-                    },
+                    onClick = tab("catalog:${catalog.id}") { onCatalog(catalog.id) },
                 )
             }
+            // The Filter tab: its panel, and the last filter / typed search's results until Clear
             BrowseTabChip(
-                selected = filterOpen ||
-                    (
-                        !settingsOpen && selectedCatalog == null &&
-                            (state.listing as? AnimeSourceScreenModel.Listing.Search)?.savedSearchId == null &&
-                            state.listing is AnimeSourceScreenModel.Listing.Search
-                        ),
+                selected = filterOpen || (!settingsOpen && shownTab == AnimeSourceScreenModel.FILTER_TAB),
                 label = stringResource(MR.strings.action_filter),
                 icon = Icons.Outlined.FilterList,
                 onClick = onFilter,
@@ -610,14 +687,10 @@ private fun ListingChips(
             }
             state.savedSearches.forEach { saved ->
                 BrowseTabChip(
-                    selected = !panelOpen &&
-                        (state.listing as? AnimeSourceScreenModel.Listing.Search)?.savedSearchId == saved.id,
+                    selected = !panelOpen && shownTab == "saved:${saved.id}",
                     label = saved.name,
                     icon = null,
-                    onClick = {
-                        onClosePanels()
-                        onSavedSearch(saved.id)
-                    },
+                    onClick = tab("saved:${saved.id}") { onSavedSearch(saved.id) },
                 )
             }
         }
