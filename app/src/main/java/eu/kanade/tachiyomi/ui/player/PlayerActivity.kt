@@ -1243,6 +1243,12 @@ class PlayerActivity : BaseActivity() {
             .mapValues { it.value.firstOrNull() ?: "" }
             .toMutableMap()
 
+        // KMK: mpv sends its own User-Agent too, so a source's one goes in mpv's user-agent option instead.
+        // Cloudflare-protected streams need the exact user agent their cf_clearance cookie was made for.
+        headers.keys.firstOrNull { it.equals("User-Agent", ignoreCase = true) }?.let { key ->
+            headers.remove(key)?.takeIf { it.isNotBlank() }?.let { mpv.setOptionString("user-agent", it) }
+        }
+
         val httpHeaderString = headers.map {
             it.key + ": " + it.value.replace(",", "\\,")
         }.joinToString(",")
