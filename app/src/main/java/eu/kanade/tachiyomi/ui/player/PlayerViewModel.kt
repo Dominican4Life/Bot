@@ -71,6 +71,9 @@ import eu.kanade.tachiyomi.ui.player.settings.GesturePreferences
 import eu.kanade.tachiyomi.ui.player.settings.PlayerPreferences
 import eu.kanade.tachiyomi.ui.player.settings.SubtitlePreferences
 import eu.kanade.tachiyomi.ui.player.utils.AniSkipApi
+import eu.kanade.tachiyomi.ui.player.utils.Anime4KManager
+import eu.kanade.tachiyomi.torrentServer.TorrentServerUtils
+import eu.kanade.tachiyomi.util.system.connectivityManager
 import eu.kanade.tachiyomi.ui.player.utils.ChapterUtils
 import eu.kanade.tachiyomi.ui.player.utils.ChapterUtils.Companion.getStringRes
 import eu.kanade.tachiyomi.ui.reader.SaveImageNotifier
@@ -96,12 +99,14 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
@@ -502,6 +507,15 @@ class PlayerViewModel @JvmOverloads constructor(
         // ANZ -->
         mpv.setPropertyInt("user-data/current-anime/intro-length", getAnimeSkipIntroLength())
         // ANZ <--
+
+        // KMK: Anime4K changed by the user (filters panel) replaces what adaptive shader scaling lowered
+        merge(
+            decoderPreferences.enableAnime4K().changes().drop(1),
+            decoderPreferences.anime4kMode().changes().drop(1),
+            decoderPreferences.anime4kQuality().changes().drop(1),
+        )
+            .onEach { onAnime4KSettingsChanged() }
+            .launchIn(viewModelScope)
     }
 
     /**
@@ -733,10 +747,15 @@ class PlayerViewModel @JvmOverloads constructor(
         _externalSubtitleTracks.update { _ -> externalSubs }
         _externalAudioTracks.update { _ -> externalAudio }
 
-        val preferredSubtitle = trackSelect.getPreferredTrackIndex(
-            tracks = embeddedSubs.map { VideoTrack.Internal(it) } + externalSubs,
-            subtitle = true,
-        )
+        // KMK: with auto subtitles off, nothing is picked until the user chooses a track
+        val preferredSubtitle = if (subtitlePreferences.disableAutoSubtitles().get()) {
+            null
+        } else {
+            trackSelect.getPreferredTrackIndex(
+                tracks = embeddedSubs.map { VideoTrack.Internal(it) } + externalSubs,
+                subtitle = true,
+            )
+        }
         if (preferredSubtitle == null) {
             hasLoadedSubs.update { _ -> true }
         } else {
@@ -1692,6 +1711,10 @@ class PlayerViewModel @JvmOverloads constructor(
                 // ANZ -->
                 val isDifferentAnime = this.anime?.id != animeId
                 // ANZ <--
+                // KMK -->
+                pendingStart = null
+                if (isDifferentAnime) preloaded = null
+                // KMK <--
                 // KMK: extensions load in the background after app start
                 var foundSource = sourceManager.get(anime.source)
                 var tries = 0
@@ -1878,7 +1901,14 @@ class PlayerViewModel @JvmOverloads constructor(
     /**
      * Set the video list for hosters.
      */
-    fun loadHosters(source: AnimeSource, hosterList: List<Hoster>, hosterIndex: Int, videoIndex: Int) {
+    fun loadHosters(
+        source: AnimeSource,
+        hosterList: List<Hoster>,
+        hosterIndex: Int,
+        videoIndex: Int,
+        // KMK: picks the video by title in that hoster (fresh links can come in another order), else videoIndex
+        preferredVideoTitle: String? = null,
+    ) {
         val hasFoundPreferredVideo = AtomicBoolean(false)
         // ANK --> Don't carry a postponed selection over from the previous episode
         hasPendingVideoFallback.set(false)
@@ -1915,6 +1945,8 @@ class PlayerViewModel @JvmOverloads constructor(
                 ""
             }
             // ANZ <--
+            // KMK: on a metered network the automatic pick goes for 720p or lower
+            val capQuality = hosterIndex == -1 && shouldCapQualityForNetwork()
 
             try {
                 coroutineScope {
@@ -1926,9 +1958,15 @@ class PlayerViewModel @JvmOverloads constructor(
 
                             if (hosterState is HosterState.Ready) {
                                 if (hosterIdx == hosterIndex) {
-                                    hosterState.videoList.getOrNull(videoIndex)?.let {
+                                    // KMK -->
+                                    val wantedIndex = preferredVideoTitle
+                                        ?.let { title -> hosterState.videoList.indexOfFirst { it.videoTitle == title } }
+                                        ?.takeIf { it >= 0 }
+                                        ?: videoIndex
+                                    // KMK <--
+                                    hosterState.videoList.getOrNull(wantedIndex)?.let {
                                         hasFoundPreferredVideo.set(true)
-                                        val success = loadVideo(source, it, hosterIndex, videoIndex)
+                                        val success = loadVideo(source, it, hosterIndex, wantedIndex)
                                         if (!success) {
                                             hasFoundPreferredVideo.set(false)
                                         }
@@ -1939,7 +1977,9 @@ class PlayerViewModel @JvmOverloads constructor(
                                 if (hosterIndex == -1) {
                                     if (defaultSelector.isNotBlank()) {
                                         val ranked = DefaultStreamSelector.findRankedInHosters(defaultSelector, listOf(hosterState))
-                                        ranked.firstOrNull()?.let { (_, vIdx) ->
+                                        ranked.firstOrNull()?.let { (_, rankedIdx) ->
+                                            // KMK
+                                            val vIdx = if (capQuality) capQualityIndex(hosterState, rankedIdx) else rankedIdx
                                             hosterState.videoList.getOrNull(vIdx)?.let { video ->
                                                 if (hasFoundPreferredVideo.compareAndSet(false, true)) {
                                                     val success = loadVideo(source, video, hosterIdx, vIdx)
@@ -1950,7 +1990,13 @@ class PlayerViewModel @JvmOverloads constructor(
                                             }
                                         }
                                     } else {
-                                        val prefIndex = hosterState.videoList.indexOfFirst { it.preferred }
+                                        val preferredIndex = hosterState.videoList.indexOfFirst { it.preferred }
+                                        // KMK
+                                        val prefIndex = if (capQuality && preferredIndex != -1) {
+                                            capQualityIndex(hosterState, preferredIndex)
+                                        } else {
+                                            preferredIndex
+                                        }
                                         if (prefIndex != -1) {
                                             if (hasFoundPreferredVideo.compareAndSet(false, true)) {
                                                 if (selectedHosterVideoIndex.value == Pair(-1, -1)) {
@@ -1980,10 +2026,16 @@ class PlayerViewModel @JvmOverloads constructor(
 
                     if (hasFoundPreferredVideo.compareAndSet(false, true)) {
                         // ANZ -->
-                        val (hosterIdx, videoIdx) = HosterLoader.selectBestVideo(hosterState.value, defaultSelector)
+                        val (hosterIdx, bestIdx) = HosterLoader.selectBestVideo(hosterState.value, defaultSelector)
                         // ANZ <--
                         if (hosterIdx == -1) {
                             throw ExceptionWithStringResource("No available videos", AMR.strings.no_available_videos)
+                        }
+                        // KMK
+                        val videoIdx = if (capQuality) {
+                            capQualityIndex(hosterState.value[hosterIdx] as HosterState.Ready, bestIdx)
+                        } else {
+                            bestIdx
                         }
 
                         val video = (hosterState.value[hosterIdx] as HosterState.Ready).videoList[videoIdx]
@@ -2061,6 +2113,26 @@ class PlayerViewModel @JvmOverloads constructor(
 
     private suspend fun loadVideo(source: AnimeSource?, video: Video, hosterIndex: Int, videoIndex: Int): Boolean {
         val selectedHosterState = (_hosterState.value[hosterIndex] as? HosterState.Ready) ?: return false
+        // KMK -->
+        // Buffer handoff: switching quality/server in the middle of an episode keeps the position and pause state
+        val isHandoff = isMidEpisodeSwitch()
+        val handoffPaused = when {
+            // Self-healing resumes playback (mpv pauses itself at a stream's early end)
+            playAfterNextLoad.getAndSet(false) -> false
+            // Only once the old stream had started; while it's still loading the usual state applies
+            isHandoff && !isLoadingEpisode.value -> paused.value
+            else -> null
+        }
+        if (isHandoff) {
+            currentEpisode.value?.id?.let { epId ->
+                // The live position, else one already waiting (self-healing), else the last second played
+                val startAt = livePositionMs()
+                    ?: pendingStart?.takeIf { it.first == epId }?.second
+                    ?: lastPlayedPositionMs()
+                if (startAt != null) pendingStart = epId to startAt
+            }
+        }
+        // KMK <--
         updateIsLoadingEpisode(true)
 
         val oldSelectedIndex = _selectedHosterVideoIndex.value
@@ -2072,7 +2144,8 @@ class PlayerViewModel @JvmOverloads constructor(
         )
 
         // Pause until everything has loaded
-        updatePausedState()
+        // KMK: a handoff restores the state the old stream was in
+        if (handoffPaused != null) _pausedState.update { _ -> handoffPaused } else updatePausedState()
         pause()
 
         val resolvedVideo = if (selectedHosterState.videoState[videoIndex] != Video.State.READY) {
@@ -2118,7 +2191,10 @@ class PlayerViewModel @JvmOverloads constructor(
 
         _currentVideo.update { _ -> resolvedVideo }
         if (hasLoadedTracks.value) {
+            // KMK: a handoff keeps the decoder the user picked
+            val manualDecoder = _manualDecoder.value
             clearTracks()
+            if (isHandoff) _manualDecoder.update { manualDecoder }
         }
 
         qualityIndex = Pair(hosterIndex, videoIndex)
@@ -2127,7 +2203,14 @@ class PlayerViewModel @JvmOverloads constructor(
         hasPendingVideoFallback.set(false)
         // ANK <--
 
-        eventChannel.send(Event.SetVideo(resolvedVideo))
+        // KMK -->
+        val episodeId = currentEpisode.value?.id
+        val startAt = pendingStart?.takeIf { it.first == episodeId }?.second
+        pendingStart = null
+        loadedVideoEpisodeId = episodeId
+        if (startAt != null) PlayerDebugLog.add("player", "Starting at ${startAt / 1000} s")
+        eventChannel.send(Event.SetVideo(resolvedVideo, startAt))
+        // KMK <--
         return true
     }
 
@@ -2205,6 +2288,8 @@ class PlayerViewModel @JvmOverloads constructor(
         val chosenEpisode = currentPlaylist.value.firstOrNull { ep -> ep.id == episodeId } ?: return null
 
         _currentEpisode.update { _ -> chosenEpisode }
+        // KMK: nothing carried over from the previous episode
+        pendingStart = null
         // KMK: the player moved on, so seen episodes waiting for "delete after seen" can go
         deletePendingSeen(keepId = chosenEpisode.id)
         updateEpisode(chosenEpisode)
@@ -2218,11 +2303,13 @@ class PlayerViewModel @JvmOverloads constructor(
                 val currentEpisode =
                     currentEpisode.value
                         ?: throw ExceptionWithStringResource("No episode loaded", AMR.strings.no_episode_loaded)
-                currentHosterList = EpisodeLoader.getHosters(
-                    currentEpisode.toDomainEpisode()!!,
-                    anime,
-                    source,
-                )
+                // KMK: the links preloaded near the end of the previous episode, when still fresh
+                currentHosterList = takePreloadedHosters(currentEpisode)
+                    ?: EpisodeLoader.getHosters(
+                        currentEpisode.toDomainEpisode()!!,
+                        anime,
+                        source,
+                    )
 
                 this@PlayerViewModel.episodeId = currentEpisode.id!!
             } catch (e: Exception) {
@@ -2236,6 +2323,336 @@ class PlayerViewModel @JvmOverloads constructor(
             )
         }
     }
+
+    // KMK -->
+    // ===== Smart playback: preloading, self-healing links, buffer handoff, network awareness, adaptive shaders =====
+
+    /** Position (episode id to ms) the next video starts at instead of the saved progress */
+    @Volatile
+    private var pendingStart: Pair<Long, Long>? = null
+
+    /** The episode the last video sent to the player belongs to */
+    @Volatile
+    private var loadedVideoEpisodeId: Long? = null
+
+    /** Set by self-healing so the repaired stream plays even though mpv paused at the failure */
+    private val playAfterNextLoad = AtomicBoolean(false)
+
+    /** The episode [episodePosition] was last updated for */
+    @Volatile
+    private var positionEpisodeId: Long? = null
+
+    /** Whether the active network is metered (mobile data, hotspot, metered Wi-Fi) */
+    fun isNetworkMetered(): Boolean = try {
+        context.connectivityManager.isActiveNetworkMetered
+    } catch (e: Exception) {
+        false
+    }
+
+    /**
+     * Whether the episode's videos can be fetched again from its source. Not for videos inside manga chapters or
+     * device files (their hidden sources have nothing to refetch), nor downloaded episodes (played from the file).
+     */
+    private fun canRefetchFromSource(): Boolean {
+        val anime = anime ?: return false
+        if (anime.source == eu.kanade.tachiyomi.sumizuri.ReaderVideos.SOURCE_ID ||
+            anime.source == eu.kanade.tachiyomi.devicefiles.DeviceFilesIds.ANIME
+        ) {
+            return false
+        }
+        return isEpisodeOnline() == true
+    }
+
+    private fun livePositionMs(): Long? =
+        mpv.getPropertyDouble("time-pos")?.takeIf { it > 0.0 }?.let { (it * 1000).toLong() }
+
+    private fun lastPlayedPositionMs(): Long? {
+        val episodeId = currentEpisode.value?.id ?: return null
+        return episodePosition?.takeIf { positionEpisodeId == episodeId && it > 0 }
+    }
+
+    /** A quality/server switch while this episode's video is loaded (buffer handoff) */
+    private fun isMidEpisodeSwitch(): Boolean {
+        if (!playerPreferences.intelligentBufferHandoff().get()) return false
+        val episodeId = currentEpisode.value?.id ?: return false
+        return currentVideo.value != null && loadedVideoEpisodeId == episodeId
+    }
+
+    // --- Network-aware quality ---
+
+    private fun shouldCapQualityForNetwork(): Boolean =
+        playerPreferences.networkAwareThrottling().get() && isEpisodeOnline() == true && isNetworkMetered()
+
+    private fun videoHeight(video: Video): Int? {
+        video.resolution?.takeIf { it > 0 }?.let { return it }
+        RESOLUTION_REGEX.find(video.videoTitle)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+        return if (UHD_REGEX.containsMatchIn(video.videoTitle)) 2160 else null
+    }
+
+    /** The video to use instead of [videoIndex] on a metered network: the best one up to 720p, else the lowest */
+    private fun capQualityIndex(state: HosterState.Ready, videoIndex: Int): Int {
+        val chosen = state.videoList.getOrNull(videoIndex) ?: return videoIndex
+        val chosenHeight = videoHeight(chosen) ?: return videoIndex
+        if (chosenHeight <= METERED_MAX_HEIGHT) return videoIndex
+        val candidates = state.videoList.indices
+            .filter { state.videoState.getOrNull(it).let { s -> s == Video.State.READY || s == Video.State.QUEUE } }
+            .mapNotNull { idx -> videoHeight(state.videoList[idx])?.let { idx to it } }
+        val pick = candidates.filter { it.second <= METERED_MAX_HEIGHT }.maxByOrNull { it.second }
+            ?: candidates.filter { it.second < chosenHeight }.minByOrNull { it.second }
+            ?: return videoIndex
+        PlayerDebugLog.add(
+            "network",
+            "Metered network: '${chosen.videoTitle}' -> '${state.videoList[pick.first].videoTitle}'",
+        )
+        return pick.first
+    }
+
+    // --- Preloading the next episode ---
+
+    private class PreloadedEpisode(val episodeId: Long, val hosters: List<Hoster>, val fetchedAt: Long)
+
+    @Volatile
+    private var preloaded: PreloadedEpisode? = null
+    private var preloadJob: Job? = null
+
+    /** The episode whose next episode was already preloaded (or skipped) */
+    private var preloadHandledFor: Long? = null
+
+    /** Near the end of the episode, fetches the next episode's hosters and videos so it starts right away */
+    private fun maybePreloadNextEpisode(positionSec: Long, durationSec: Int) {
+        if (durationSec <= 0) return
+        if (positionSec < durationSec * 0.8 && durationSec - positionSec > 120) return
+        val currentId = currentEpisode.value?.id ?: return
+        if (preloadHandledFor == currentId) return
+
+        when (playerPreferences.preloadMode().get()) {
+            PreloadMode.Off -> return
+            PreloadMode.WifiOnly -> if (isNetworkMetered()) return
+            PreloadMode.Always -> {}
+        }
+        // Network-aware: don't compete with the current video while it buffers
+        if (playerPreferences.networkAwareThrottling().get() && pausedForCache.value == true) return
+
+        preloadHandledFor = currentId
+        if (!canRefetchFromSource()) return
+        val anime = anime ?: return
+        val source = currentSource.value ?: return
+        val nextId = getAdjacentEpisodeId(previous = false).takeIf { it != -1L } ?: return
+        preloaded?.let { if (it.episodeId == nextId && it.isFresh()) return }
+        val nextEpisode = currentPlaylist.value.firstOrNull { it.id == nextId }?.toDomainEpisode() ?: return
+        if (EpisodeLoader.isDownload(nextEpisode, anime)) return
+
+        preloadJob?.cancel()
+        preloadJob = viewModelScope.launchIO {
+            PlayerDebugLog.add("preload", "Fetching the videos of '${nextEpisode.name}'")
+            try {
+                val hosters = EpisodeLoader.getHosters(nextEpisode, anime, source, allowDownloaded = false)
+                val withVideos = coroutineScope {
+                    hosters.map { hoster ->
+                        async {
+                            if (hoster.lazy || hoster.videoList != null) return@async hoster
+                            when (val state = EpisodeLoader.loadHosterVideos(source, hoster)) {
+                                is HosterState.Ready -> hoster.copy(videoList = state.videoList)
+                                else -> hoster
+                            }
+                        }
+                    }.awaitAll()
+                }
+                if (withVideos.isNotEmpty()) {
+                    preloaded = PreloadedEpisode(nextId, withVideos, System.currentTimeMillis())
+                    PlayerDebugLog.add("preload", "Next episode ready (${withVideos.size} hosters)")
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                PlayerDebugLog.add("preload", "Failed: ${e.message}")
+            }
+        }
+    }
+
+    private fun PreloadedEpisode.isFresh(): Boolean = System.currentTimeMillis() - fetchedAt < PRELOAD_MAX_AGE_MS
+
+    /** The preloaded hosters of [episode] when they're recent and the episode wasn't downloaded meanwhile */
+    private fun takePreloadedHosters(episode: Episode): List<Hoster>? {
+        val cached = preloaded ?: return null
+        if (cached.episodeId != episode.id) return null
+        preloaded = null
+        if (!cached.isFresh()) return null
+        val anime = anime ?: return null
+        val domainEpisode = episode.toDomainEpisode() ?: return null
+        if (EpisodeLoader.isDownload(domainEpisode, anime)) return null
+        PlayerDebugLog.add("preload", "Using the preloaded videos")
+        return cached.hosters
+    }
+
+    // --- Self-healing links ---
+
+    private var selfHealEpisodeId: Long? = null
+    private var selfHealCount = 0
+    private var lastSelfHealAtMs = 0L
+
+    /** Videos (hoster + title) that already got fresh links in this episode */
+    private val selfHealedVideos = mutableSetOf<String>()
+
+    /**
+     * Called when a stream fails to load or stops early. Fetches fresh links from the source and resumes the same
+     * video where it was; if that video fails again, moves on to the next video/hoster. At most [MAX_SELF_HEALS]
+     * refetches per episode.
+     *
+     * @return true when the failure is being handled here
+     */
+    @Synchronized
+    fun trySelfHeal(reason: String): Boolean {
+        if (!playerPreferences.selfHealingLinks().get()) return false
+        val episode = currentEpisode.value ?: return false
+        val episodeId = episode.id ?: return false
+        val video = currentVideo.value ?: return false
+        if (loadedVideoEpisodeId != episodeId) return false
+        // Files, torrents and videos in manga chapters have no link to refresh
+        val url = video.videoUrl
+        if (!url.startsWith("http") || url.startsWith(TorrentServerUtils.hostUrl)) return false
+        if (!canRefetchFromSource()) return false
+        val anime = anime ?: return false
+        val source = currentSource.value ?: return false
+        val domainEpisode = episode.toDomainEpisode() ?: return false
+
+        if (selfHealEpisodeId != episodeId) {
+            selfHealEpisodeId = episodeId
+            selfHealCount = 0
+            selfHealedVideos.clear()
+        }
+
+        val (hosterIdx, _) = selectedHosterVideoIndex.value
+        val hosterName = hosterList.value.getOrNull(hosterIdx)?.hosterName.orEmpty()
+        val key = "$hosterName\n${video.videoTitle}"
+        val resumeAt = livePositionMs() ?: lastPlayedPositionMs()
+        resumeAt?.let { pendingStart = episodeId to it }
+
+        if (key in selfHealedVideos) {
+            // A fresh link failed too: the video itself is broken, so try the next one
+            PlayerDebugLog.add("self-heal", "'${video.videoTitle}' failed again ($reason); trying the next video")
+            if (selectedHosterVideoIndex.value.first >= 0) setCurrentVideoError()
+            playAfterNextLoad.set(true)
+            return loadBestVideo()
+        }
+        if (selfHealCount >= MAX_SELF_HEALS) {
+            PlayerDebugLog.add("self-heal", "Giving up after $selfHealCount attempts ($reason)")
+            return false
+        }
+
+        selfHealCount++
+        selfHealedVideos += key
+        playAfterNextLoad.set(true)
+        lastSelfHealAtMs = resumeAt ?: 0L
+        PlayerDebugLog.add(
+            "self-heal",
+            "Attempt $selfHealCount: $reason. Getting fresh links for '${video.videoTitle}' ($hosterName), " +
+                "resuming at ${(resumeAt ?: 0L) / 1000} s",
+        )
+        viewModelScope.launchIO {
+            eventChannel.send(Event.ShowToast(KMR.strings.player_link_refreshing))
+            try {
+                val hosters = EpisodeLoader.getHosters(domainEpisode, anime, source, allowDownloaded = false)
+                if (currentEpisode.value?.id != episodeId) return@launchIO
+                check(hosters.isNotEmpty()) { "The source returned no hosters" }
+                currentHosterList = hosters
+                val newHosterIdx = hosters.indexOfFirst { it.hosterName == hosterName }
+                PlayerDebugLog.add("self-heal", "Got ${hosters.size} hosters")
+                loadHosters(
+                    source = source,
+                    hosterList = hosters,
+                    hosterIndex = newHosterIdx,
+                    videoIndex = if (newHosterIdx == -1) -1 else selectedHosterVideoIndex.value.second,
+                    preferredVideoTitle = video.videoTitle.takeIf { newHosterIdx != -1 },
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                PlayerDebugLog.add("self-heal", "Couldn't get fresh links: ${e.message}")
+                if (currentEpisode.value?.id != episodeId) return@launchIO
+                if (selectedHosterVideoIndex.value.first >= 0) setCurrentVideoError()
+                if (!loadBestVideo()) {
+                    eventChannel.send(
+                        Event.SetVideoLoadError(
+                            ExceptionWithStringResource("No available videos", AMR.strings.no_available_videos),
+                        ),
+                    )
+                }
+            }
+        }
+        return true
+    }
+
+    // --- Adaptive shader scaling ---
+
+    private val anime4kManager: Anime4KManager by lazy { Injekt.get() }
+
+    /** Anime4K quality lowered for this session by adaptive shader scaling, never saved */
+    private var anime4kSessionCap: Anime4KManager.Quality? = null
+    private var anime4kSessionOff = false
+
+    @Volatile
+    private var anime4kActive = false
+    private val frameDropSamples = ArrayDeque<Pair<Long, Long>>()
+    private var frameDropGraceUntil = 0L
+    private var anime4kLoweredToastShown = false
+
+    /** Applies Anime4K as set, capped by the performance profile and this session's lowering */
+    fun applyVideoShaders() {
+        anime4kActive = applyAnime4K(
+            mpv = mpv,
+            prefs = decoderPreferences,
+            manager = anime4kManager,
+            sessionQualityCap = anime4kSessionCap,
+            sessionOff = anime4kSessionOff,
+        )
+        synchronized(frameDropSamples) { frameDropSamples.clear() }
+        // Compiling the shaders drops a few frames by itself
+        frameDropGraceUntil = android.os.SystemClock.elapsedRealtime() + FRAME_DROP_GRACE_MS
+    }
+
+    /** mpv's dropped-frame counter changed: lowers Anime4K when frames drop quickly */
+    fun onFrameDropCount(count: Long) {
+        if (!anime4kActive || !decoderPreferences.adaptiveShaderScaling().get()) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        val dropped = synchronized(frameDropSamples) {
+            if (now < frameDropGraceUntil || paused.value == true || isLoadingEpisode.value ||
+                frameDropSamples.lastOrNull()?.let { it.second > count } == true // counter reset by a new file
+            ) {
+                frameDropSamples.clear()
+                return
+            }
+            frameDropSamples.addLast(now to count)
+            while (frameDropSamples.first().first < now - FRAME_DROP_WINDOW_MS) frameDropSamples.removeFirst()
+            count - frameDropSamples.first().second
+        }
+        if (dropped <= FRAME_DROP_LIMIT) return
+
+        val current = decoderPreferences.effectiveAnime4K(anime4kSessionCap, anime4kSessionOff)?.second ?: return
+        if (current.ordinal > 0) {
+            anime4kSessionCap = Anime4KManager.Quality.entries[current.ordinal - 1]
+        } else {
+            anime4kSessionOff = true
+        }
+        PlayerDebugLog.add(
+            "anime4k",
+            "$dropped frames dropped in ${FRAME_DROP_WINDOW_MS / 1000} s: " +
+                if (anime4kSessionOff) "turning Anime4K off" else "lowering Anime4K to $anime4kSessionCap",
+        )
+        applyVideoShaders()
+        if (!anime4kLoweredToastShown) {
+            anime4kLoweredToastShown = true
+            viewModelScope.launch { eventChannel.send(Event.ShowToast(KMR.strings.player_anime4k_lowered)) }
+        }
+    }
+
+    /** The user changed Anime4K: their choice replaces this session's lowering */
+    private fun onAnime4KSettingsChanged() {
+        anime4kSessionCap = null
+        anime4kSessionOff = false
+        applyVideoShaders()
+    }
+    // KMK <--
 
     /**
      * Called every time a second is reached in the player. Used to mark the flag of episode being
@@ -2262,6 +2679,15 @@ class PlayerViewModel @JvmOverloads constructor(
         currentEp.total_seconds = totalSeconds
 
         episodePosition = seconds
+        // KMK -->
+        positionEpisodeId = currentEp.id
+        if (selfHealCount > 0 && seconds > lastSelfHealAtMs + SELF_HEAL_RESET_MS) {
+            // Played fine for a while since the last repair, so a later failure gets the full set of retries
+            selfHealCount = 0
+            selfHealedVideos.clear()
+        }
+        maybePreloadNextEpisode(position, dur)
+        // KMK <--
 
         // ANK -->
         if (!incognitoMode) {
@@ -2735,7 +3161,8 @@ class PlayerViewModel @JvmOverloads constructor(
         data class ShowToast(val stringResource: StringResource) : Event()
         data class ShowToastString(val string: String) : Event()
         data class ChangeEpisode(val episodeId: Long, val autoPlay: Boolean) : Event()
-        data class SetVideo(val video: Video?) : Event()
+        // KMK: position (ms) to start at instead of the saved progress
+        data class SetVideo(val video: Video?, val position: Long? = null) : Event()
         data class SetStatusBar(val show: Boolean) : Event()
         data class SetBrightness(val brightness: Float) : Event()
         // ANZ -->
@@ -2984,6 +3411,28 @@ class PlayerViewModel @JvmOverloads constructor(
     }
     // ANZ <--
 
+    // KMK -->
+    private companion object {
+        private val RESOLUTION_REGEX = Regex("""(?i)\b(\d{3,4})p\b""")
+        private val UHD_REGEX = Regex("""(?i)\b(4k|uhd)\b""")
+
+        /** Highest resolution picked by default on metered networks */
+        private const val METERED_MAX_HEIGHT = 720
+
+        /** Preloaded links older than this are fetched again, as they may have expired */
+        private const val PRELOAD_MAX_AGE_MS = 10 * 60 * 1000L
+
+        /** Fresh-link attempts per episode */
+        private const val MAX_SELF_HEALS = 2
+
+        /** Playing this long after a repair gives a later failure the full set of attempts again */
+        private const val SELF_HEAL_RESET_MS = 2 * 60 * 1000L
+
+        private const val FRAME_DROP_WINDOW_MS = 10_000L
+        private const val FRAME_DROP_LIMIT = 20
+        private const val FRAME_DROP_GRACE_MS = 5_000L
+    }
+    // KMK <--
 }
 
 private val FONT_EXTENSION_REGEX = Regex($$""".*\.[ot]tf$""")

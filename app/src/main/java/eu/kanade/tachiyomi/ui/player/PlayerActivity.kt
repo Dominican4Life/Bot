@@ -97,6 +97,7 @@ import eu.kanade.tachiyomi.util.system.toast
 import `is`.xyz.mpv.MPV
 import `is`.xyz.mpv.MPVNode
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
@@ -138,6 +139,9 @@ class PlayerActivity : BaseActivity() {
     private val audioPreferences: AudioPreferences = Injekt.get()
     private val advancedPlayerPreferences: AdvancedPlayerPreferences = Injekt.get()
     private val subtitlePreferences: SubtitlePreferences = Injekt.get()
+    // KMK -->
+    private val decoderPreferences: eu.kanade.tachiyomi.ui.player.settings.DecoderPreferences = Injekt.get()
+    // KMK <--
 
     // ANK -->
     private val mpvConfig: MpvConfig = Injekt.get()
@@ -313,7 +317,8 @@ class PlayerActivity : BaseActivity() {
                         changeEpisode(event.episodeId, event.autoPlay)
                     }
                     is PlayerViewModel.Event.SetVideo -> {
-                        setVideo(event.video)
+                        // KMK: a position when the stream must resume somewhere else than the saved progress
+                        setVideo(event.video, event.position)
                     }
                     is PlayerViewModel.Event.SetStatusBar -> {
                         if (event.show) {
@@ -351,6 +356,16 @@ class PlayerActivity : BaseActivity() {
                     }
                     // ANK <--
                 }
+            }
+            .launchIn(lifecycleScope)
+
+        // KMK: a performance profile picked while playing applies right away
+        decoderPreferences.performanceProfile().changes()
+            .drop(1)
+            .onEach {
+                PlayerDebugLog.add("player", "Performance profile: $it")
+                player.applyVideoProfile()
+                viewModel.applyVideoShaders()
             }
             .launchIn(lifecycleScope)
 
@@ -624,6 +639,8 @@ class PlayerActivity : BaseActivity() {
         mpv.setOptionString("sub-use-margins", showBlackBars)
         mpv.addLogObserver(playerObserver)
         mpv.addObserver(playerObserver)
+        // KMK: Anime4K as set (and as the performance profile allows) from the start
+        viewModel.applyVideoShaders()
     }
 
     private fun setupPlayerAudio() {
@@ -729,6 +746,8 @@ class PlayerActivity : BaseActivity() {
         if (player.isExiting) return
         when (property) {
             "vo-delayed-frame-count" -> PlayerStats.delayedFrames.value = value
+            // KMK
+            "frame-drop-count" -> viewModel.onFrameDropCount(value)
         }
     }
 
@@ -759,6 +778,14 @@ class PlayerActivity : BaseActivity() {
                     // A short clip played to its end, or a file on the device, isn't a broken stream
                     val playedToEnd = duration > 0 && duration - pos <= 2
                     val isLocalFile = viewModel.currentVideo.value?.videoUrl?.startsWith("file") == true
+                    // KMK: a stream that stops well before its end usually lost its link (expired or blocked);
+                    // self-healing links fetch a fresh one and resume (it skips files, torrents and chapter videos)
+                    val stoppedEarly = duration > 0 && duration - pos > 30
+                    if (!isLocalFile && (pos < 15 && !playedToEnd || stoppedEarly) &&
+                        viewModel.trySelfHeal("The stream stopped at $pos s of $duration s")
+                    ) {
+                        return
+                    }
                     if (pos < 15 && !playedToEnd && !isLocalFile) {
                         showPlaybackProblem("The video ended right after it started ($pos s of $duration s).")
                         return
@@ -836,6 +863,12 @@ class PlayerActivity : BaseActivity() {
                 }
 
                 logcat(LogPriority.ERROR) { errorMessage }
+                // KMK -->
+                // A network/HTTP failure (often an expired link): fetch fresh links and resume instead of giving up
+                val isNetworkFailure = !httpError.isNullOrEmpty() ||
+                    errorMessage.contains("loading failed", ignoreCase = true)
+                if (isNetworkFailure && viewModel.trySelfHeal(errorMessage)) return
+                // KMK <--
                 showToast(errorMessage)
                 // KMK -->
                 showPlaybackProblem(errorMessage)
@@ -1210,6 +1243,7 @@ class PlayerActivity : BaseActivity() {
         viewModel.setIsStopped(false)
         // KMK -->
         PlayerDebugLog.add("player", "Loading video '${video.videoTitle}': ${video.videoUrl}")
+        applyStreamCache(video)
         // KMK <--
         setHttpOptions(video)
 
@@ -1225,9 +1259,11 @@ class PlayerActivity : BaseActivity() {
                 mpv.command("set", "start", "${resumePosition / 1000F}")
             }
         } else {
-            viewModel.pos.value?.let {
-                mpv.command("set", "start", "$it")
-            }
+            // KMK: a requested position first
+            position?.let { mpv.command("set", "start", "${it / 1000F}") }
+                ?: viewModel.pos.value?.let {
+                    mpv.command("set", "start", "$it")
+                }
         }
 
         // ANK -->
@@ -1253,6 +1289,33 @@ class PlayerActivity : BaseActivity() {
         }
         // ANK <--
     }
+
+    // KMK -->
+    /**
+     * Demuxer cache for the next video: sized by the performance profile, a little larger with buffer handoff, and
+     * smaller on metered networks with network-aware playback. Options set in mpv.conf win.
+     */
+    private fun applyStreamCache(video: Video) {
+        val isLocal = listOf("file", "content", "data").any { video.videoUrl.startsWith(it) }
+        val baseMegs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) 64 else 32
+        var megs = (baseMegs * decoderPreferences.effectiveVideoSettings().cacheScale).toInt().coerceAtLeast(16)
+        // mpv's default
+        var readAheadSecs = 1
+        if (!isLocal) {
+            if (playerPreferences.intelligentBufferHandoff().get()) {
+                megs = megs * 3 / 2
+                readAheadSecs = 20
+            }
+            if (playerPreferences.networkAwareThrottling().get() && viewModel.isNetworkMetered()) {
+                megs = (megs / 2).coerceIn(16, 32)
+                readAheadSecs = 1
+            }
+        }
+        player.setSafePropertyString("demuxer-max-bytes", "${megs * 1024 * 1024}")
+        player.setSafePropertyString("demuxer-readahead-secs", "$readAheadSecs")
+        PlayerDebugLog.add("player", "Cache: $megs MiB, read-ahead $readAheadSecs s")
+    }
+    // KMK <--
 
     // ANK -->
     private fun isTorrentVideo(videoUrl: String): Boolean {

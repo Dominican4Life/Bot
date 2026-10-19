@@ -100,7 +100,16 @@ fun applyTheme(mpv: MPV?, theme: VideoFilterTheme, prefs: DecoderPreferences) {
     mpv?.setPropertyInt("deband-grain", 48)
 }
 
-fun applyAnime4K(mpv: MPV?, prefs: DecoderPreferences, manager: Anime4KManager, isInit: Boolean = false) {
+// KMK: returns whether Anime4K shaders are now active. The performance profile can cap or turn off Anime4K, and
+// [sessionQualityCap]/[sessionOff] lower it for this session only (adaptive shader scaling); prefs aren't changed.
+fun applyAnime4K(
+    mpv: MPV?,
+    prefs: DecoderPreferences,
+    manager: Anime4KManager,
+    isInit: Boolean = false,
+    sessionQualityCap: Anime4KManager.Quality? = null,
+    sessionOff: Boolean = false,
+): Boolean {
     val enabled = prefs.enableAnime4K().get()
 
     // DEFENSIVE: Anime4K is incompatible with gpu-next in current builds
@@ -108,38 +117,22 @@ fun applyAnime4K(mpv: MPV?, prefs: DecoderPreferences, manager: Anime4KManager, 
     if (enabled && gpuNext) {
         logcat("Anime4K", LogPriority.WARN) { "Anime4K is incompatible with gpu-next. Skipping." }
         if (!isInit) mpv?.setPropertyString("glsl-shaders", "")
-        return
+        return false
     }
 
-    val mode = try {
-        Anime4KManager.Mode.valueOf(prefs.anime4kMode().get())
-    } catch (e: Exception) {
-        Anime4KManager.Mode.OFF
-    }
-    val quality = try {
-        Anime4KManager.Quality.valueOf(prefs.anime4kQuality().get())
-    } catch (e: Exception) {
-        Anime4KManager.Quality.BALANCED
-    }
+    val effective = prefs.effectiveAnime4K(sessionQualityCap, sessionOff)
 
     // Ensure initialization happened
     manager.initialize()
 
-    val chain = if (enabled) manager.getShaderChain(mode, quality) else ""
-    logcat("Anime4K", LogPriority.DEBUG) { "Applying Anime4K chain (enabled=$enabled): $chain" }
+    val chain = effective?.let { (mode, quality) -> manager.getShaderChain(mode, quality) }.orEmpty()
+    logcat("Anime4K", LogPriority.DEBUG) { "Applying Anime4K chain (enabled=$enabled, $effective): $chain" }
 
-    if (chain.isNotEmpty()) {
-        if (isInit) {
-            mpv?.setOptionString("glsl-shaders", chain)
-        } else {
-            mpv?.setPropertyString("glsl-shaders", chain)
-        }
+    if (isInit) {
+        mpv?.setOptionString("glsl-shaders", chain)
     } else {
-        if (isInit) {
-            mpv?.setOptionString("glsl-shaders", "")
-        } else {
-            mpv?.setPropertyString("glsl-shaders", "")
-        }
+        mpv?.setPropertyString("glsl-shaders", chain)
     }
+    return chain.isNotEmpty()
 }
 // ANZ <--

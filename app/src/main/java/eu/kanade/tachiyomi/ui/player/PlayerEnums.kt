@@ -42,6 +42,7 @@ import eu.kanade.tachiyomi.ui.player.settings.DecoderPreferences
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.ank.AMR
+import tachiyomi.i18n.kmk.KMR
 
 /**
  * Results of the set as cover feature.
@@ -77,11 +78,12 @@ enum class VideoAspect(val titleRes: StringResource) {
     Stretch(AMR.strings.video_stretch_screen),
 }
 
+// KMK: what each profile sets is in PlayerProfiles.kt; Automatic keeps the user's own settings
 enum class PlayerEfficiency(val titleRes: StringResource) {
-    Automatic(AMR.strings.pref_performance_profile_automatic),
-    MaxPerformance(AMR.strings.pref_performance_profile_high),
-    Balanced(AMR.strings.pref_performance_profile_mid),
-    PowerSaver(AMR.strings.pref_performance_profile_low_power),
+    Automatic(KMR.strings.player_profile_custom),
+    MaxPerformance(KMR.strings.player_profile_best_quality),
+    Balanced(KMR.strings.player_profile_balanced),
+    PowerSaver(KMR.strings.player_profile_battery_saver),
 }
 
 enum class PreloadState {

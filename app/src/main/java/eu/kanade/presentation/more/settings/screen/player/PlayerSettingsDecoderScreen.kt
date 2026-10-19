@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.ui.player.Debanding
 import eu.kanade.tachiyomi.ui.player.settings.DecoderPreferences
 import kotlinx.collections.immutable.toImmutableMap
 import tachiyomi.i18n.ank.AMR
+import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
@@ -87,7 +88,7 @@ object PlayerSettingsDecoderScreen : SearchableSettings {
             Preference.PreferenceItem.SwitchPreference(
                 preference = adaptiveScaling,
                 title = stringResource(AMR.strings.pref_ai_performance_intelligence),
-                subtitle = stringResource(AMR.strings.pref_ai_performance_intelligence_summary),
+                subtitle = stringResource(KMR.strings.pref_adaptive_shader_scaling_details), // KMK
             ),
             Preference.PreferenceItem.SwitchPreference(
                 preference = yuv420p,

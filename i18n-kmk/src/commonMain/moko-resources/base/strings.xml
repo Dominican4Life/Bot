@@ -674,4 +674,18 @@
     <!-- Player settings -->
     <string name="action_search_player_settings">Search player settings</string>
     <string name="cast_play_services_unavailable">Casting needs Google Play services, which aren\'t available on this device</string>
+    <!-- KMK: player smart playback (r56) -->
+    <string name="player_link_refreshing">The video link stopped working. Getting a fresh one…</string>
+    <string name="player_anime4k_lowered">Anime4K lowered to keep playback smooth</string>
+    <string name="pref_player_performance_profile">Performance profile</string>
+    <string name="pref_player_performance_profile_summary">Sets decoding, scaling, smooth motion, the Anime4K level and the cache size while playing. Custom uses your own settings</string>
+    <string name="player_profile_custom">Custom (your settings)</string>
+    <string name="player_profile_best_quality">Best quality</string>
+    <string name="player_profile_balanced">Balanced</string>
+    <string name="player_profile_battery_saver">Battery saver</string>
+    <string name="pref_network_aware_playback">Network-aware playback</string>
+    <string name="pref_network_aware_playback_summary">On mobile or metered networks, picks 720p or lower by default, uses a smaller cache and holds preloading while the video buffers</string>
+    <string name="pref_self_healing_links_details">When a video link fails, gets fresh links from the source and resumes where you were, then moves on to the next video</string>
+    <string name="pref_buffer_handoff_details">Keeps your position and pause state when you switch quality or server, and buffers a little further ahead</string>
+    <string name="pref_adaptive_shader_scaling_details">When frames start dropping, steps Anime4K down a level and then off until the player is closed. Your settings aren\'t changed</string>
 </resources>

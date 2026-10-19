@@ -61,6 +61,12 @@ class AniyomiMPVView(context: Context, attributes: AttributeSet?) : BaseMPVView(
         mpv?.setOptionString(name, value)
     }
 
+    // KMK: same, for changes while playing (cache sizes per video)
+    fun setSafePropertyString(name: String, value: String) {
+        if (name in mpvOptionNames) return
+        mpv?.setPropertyString(name, value)
+    }
+
     val duration: Int?
         get() = mpv?.getPropertyInt("duration")
 
@@ -94,35 +100,8 @@ class AniyomiMPVView(context: Context, attributes: AttributeSet?) : BaseMPVView(
         setVo(if (decoderPreferences.gpuNext().get()) "gpu-next" else "gpu")
         mpv?.setPropertyBoolean("pause", true)
         setSafeOptionString("profile", "fast")
-        mpv?.setOptionString("hwdec", if (decoderPreferences.tryHWDecoding().get()) "auto" else "no")
-
-        val isHighQuality = decoderPreferences.highQualityScaling().get()
-        val scaler = if (isHighQuality) "spline36" else "bilinear"
-        setSafeOptionString("scale", scaler)
-        setSafeOptionString("cscale", scaler)
-        setSafeOptionString("dscale", scaler)
-        setSafeOptionString("dither", if (isHighQuality) "fruit" else "no")
-
-        // ANZ -->
-        val isSmoothMotion = decoderPreferences.smoothMotion().get()
-        if (isSmoothMotion) {
-            val detectedRefreshRate = context.getDisplayRefreshRate()
-            val fpsLimit = decoderPreferences.interpolationFPSLimit().get()
-            val targetFps = if (fpsLimit > 0) fpsLimit.toDouble() else detectedRefreshRate.toDouble()
-
-            mpv?.setOptionString("video-sync", "display-resample")
-            mpv?.setOptionString("interpolation", "yes")
-            mpv?.setOptionString("correct-pts", "yes")
-            mpv?.setOptionString("tscale", decoderPreferences.interpolationMode().get().value)
-            mpv?.setOptionString("display-fps", targetFps.toString())
-            mpv?.setOptionString("override-display-fps", targetFps.toString())
-            mpv?.setOptionString("gpu-dumb-mode", "no")
-        } else {
-            mpv?.setOptionString("video-sync", "audio")
-            mpv?.setOptionString("interpolation", "no")
-            mpv?.setOptionString("gpu-dumb-mode", "auto")
-        }
-        // ANZ <--
+        // KMK: decoder, scaling and smooth motion follow the performance profile
+        applyVideoProfile()
 
         if (decoderPreferences.useYUV420P().get()) {
             mpv?.setOptionString("vf", "format=yuv420p")
@@ -188,7 +167,7 @@ class AniyomiMPVView(context: Context, attributes: AttributeSet?) : BaseMPVView(
         // ANZ <--
 
         // ANZ -->
-        if (decoderPreferences.smoothMotion().get()) {
+        if (decoderPreferences.effectiveVideoSettings().smoothMotion) { // KMK: profile
             val detectedRefreshRate = context.getDisplayRefreshRate()
             val fpsLimit = decoderPreferences.interpolationFPSLimit().get()
             val targetFps = if (fpsLimit > 0) fpsLimit.toDouble() else detectedRefreshRate.toDouble()
@@ -199,6 +178,42 @@ class AniyomiMPVView(context: Context, attributes: AttributeSet?) : BaseMPVView(
         }
         // ANZ <--
     }
+
+    // KMK -->
+    /**
+     * Sets the decoder, scalers and smooth motion from the performance profile (or the user's own settings when it's
+     * Custom). Called at start and again when the profile changes while playing.
+     */
+    fun applyVideoProfile() {
+        val settings = decoderPreferences.effectiveVideoSettings()
+        mpv?.setOptionString("hwdec", if (settings.hardwareDecoding) "auto" else "no")
+
+        val isHighQuality = settings.highQualityScaling
+        val scaler = if (isHighQuality) "spline36" else "bilinear"
+        setSafeOptionString("scale", scaler)
+        setSafeOptionString("cscale", scaler)
+        setSafeOptionString("dscale", scaler)
+        setSafeOptionString("dither", if (isHighQuality) "fruit" else "no")
+
+        if (settings.smoothMotion) {
+            val detectedRefreshRate = context.getDisplayRefreshRate()
+            val fpsLimit = decoderPreferences.interpolationFPSLimit().get()
+            val targetFps = if (fpsLimit > 0) fpsLimit.toDouble() else detectedRefreshRate.toDouble()
+
+            mpv?.setOptionString("video-sync", "display-resample")
+            mpv?.setOptionString("interpolation", "yes")
+            mpv?.setOptionString("correct-pts", "yes")
+            mpv?.setOptionString("tscale", decoderPreferences.interpolationMode().get().value)
+            mpv?.setOptionString("display-fps", targetFps.toString())
+            mpv?.setOptionString("override-display-fps", targetFps.toString())
+            mpv?.setOptionString("gpu-dumb-mode", "no")
+        } else {
+            mpv?.setOptionString("video-sync", "audio")
+            mpv?.setOptionString("interpolation", "no")
+            mpv?.setOptionString("gpu-dumb-mode", "auto")
+        }
+    }
+    // KMK <--
 
     fun onKey(event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_MULTIPLE || KeyEvent.isModifierKey(event.keyCode)) {
@@ -252,6 +267,8 @@ class AniyomiMPVView(context: Context, attributes: AttributeSet?) : BaseMPVView(
         "override-display-fps" to MPV.mpvFormat.MPV_FORMAT_DOUBLE,
         "estimated-display-fps" to MPV.mpvFormat.MPV_FORMAT_DOUBLE,
         "vo-delayed-frame-count" to MPV.mpvFormat.MPV_FORMAT_INT64,
+        // KMK: frames the video output dropped, for adaptive shader scaling
+        "frame-drop-count" to MPV.mpvFormat.MPV_FORMAT_INT64,
         "mistime" to MPV.mpvFormat.MPV_FORMAT_DOUBLE,
         "gpu-dumb-mode" to MPV.mpvFormat.MPV_FORMAT_FLAG,
         "current-vo" to MPV.mpvFormat.MPV_FORMAT_STRING,

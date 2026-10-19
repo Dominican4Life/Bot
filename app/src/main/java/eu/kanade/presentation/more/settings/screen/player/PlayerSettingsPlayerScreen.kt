@@ -131,8 +131,10 @@ object PlayerSettingsPlayerScreen : SearchableSettings {
             preferenceItems = persistentListOf(
                 Preference.PreferenceItem.ListPreference(
                     preference = performanceProfile,
-                    title = stringResource(AMR.strings.pref_performance_profile),
-                    subtitle = stringResource(AMR.strings.pref_performance_profile_summary),
+                    // KMK -->
+                    title = stringResource(KMR.strings.pref_player_performance_profile),
+                    subtitle = stringResource(KMR.strings.pref_player_performance_profile_summary),
+                    // KMK <--
                     entries = eu.kanade.tachiyomi.ui.player.PlayerEfficiency.entries.associateWith {
                         stringResource(it.titleRes)
                     }.toPersistentMap(),
@@ -147,18 +149,20 @@ object PlayerSettingsPlayerScreen : SearchableSettings {
                 ),
                 Preference.PreferenceItem.SwitchPreference(
                     preference = networkAwareThrottling,
-                    title = stringResource(AMR.strings.pref_network_aware_throttling),
-                    subtitle = stringResource(AMR.strings.pref_network_aware_throttling_summary),
+                    // KMK -->
+                    title = stringResource(KMR.strings.pref_network_aware_playback),
+                    subtitle = stringResource(KMR.strings.pref_network_aware_playback_summary),
+                    // KMK <--
                 ),
                 Preference.PreferenceItem.SwitchPreference(
                     preference = selfHealingLinks,
                     title = stringResource(AMR.strings.pref_self_healing_links),
-                    subtitle = stringResource(AMR.strings.pref_self_healing_links_summary),
+                    subtitle = stringResource(KMR.strings.pref_self_healing_links_details), // KMK
                 ),
                 Preference.PreferenceItem.SwitchPreference(
                     preference = intelligentBufferHandoff,
                     title = stringResource(AMR.strings.pref_intelligent_buffer_handoff),
-                    subtitle = stringResource(AMR.strings.pref_intelligent_buffer_handoff_summary),
+                    subtitle = stringResource(KMR.strings.pref_buffer_handoff_details), // KMK
                 ),
             ),
         )
