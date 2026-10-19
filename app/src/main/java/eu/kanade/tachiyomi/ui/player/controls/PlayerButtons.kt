@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AspectRatio
+import androidx.compose.material.icons.filled.CastConnected
 import androidx.compose.material.icons.filled.FitScreen
 import androidx.compose.material.icons.filled.ZoomOutMap
 import androidx.compose.material3.Icon
@@ -50,6 +51,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import eu.kanade.tachiyomi.ui.player.CastManager
 import eu.kanade.tachiyomi.ui.player.Panels
 import eu.kanade.tachiyomi.ui.player.PlayerActivity
 import eu.kanade.tachiyomi.ui.player.PlayerButton
@@ -124,8 +126,24 @@ fun RenderPlayerButton(
                     .size(width = 48.dp, height = 24.dp),
             )
         }
-        // KMK: casting isn't merged yet
-        PlayerButton.Cast -> {}
+        // Cast -->
+        PlayerButton.Cast -> {
+            // Null when casting is turned off or Google Play services aren't available
+            val castManager = (LocalContext.current as? PlayerActivity)?.castManager
+            if (castManager != null) {
+                val castState by castManager.castState.collectAsState()
+                ControlsButton(
+                    icon = if (castState == CastManager.CastState.CONNECTED) {
+                        Icons.Filled.CastConnected
+                    } else {
+                        button.getIcon()
+                    },
+                    onClick = onCastClick,
+                    horizontalSpacing = MaterialTheme.padding.mediumSmall,
+                )
+            }
+        }
+        // <-- Cast
         // KMK: the episode list, as a panel beside the video
         PlayerButton.Episodes -> {
             ControlsButton(

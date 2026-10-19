@@ -12,7 +12,10 @@ import androidx.compose.ui.platform.LocalContext
 import eu.kanade.domain.base.BasePreferences
 import eu.kanade.presentation.more.settings.Preference
 import eu.kanade.presentation.more.settings.screen.SearchableSettings
+import eu.kanade.tachiyomi.data.torrentServer.service.TorrentServerService
+import eu.kanade.tachiyomi.torrentServer.TorrentServerPreferences
 import eu.kanade.tachiyomi.ui.player.AMNIS
+import eu.kanade.tachiyomi.ui.player.CastManager
 import eu.kanade.tachiyomi.ui.player.JUST_PLAYER
 import eu.kanade.tachiyomi.ui.player.MPV_KT
 import eu.kanade.tachiyomi.ui.player.MPV_KT_PREVIEW
@@ -32,6 +35,8 @@ import eu.kanade.tachiyomi.ui.player.X_PLAYER
 import eu.kanade.tachiyomi.ui.player.settings.DecoderPreferences
 import eu.kanade.tachiyomi.ui.player.settings.PlayerPreferences
 import eu.kanade.tachiyomi.ui.player.utils.DefaultStreamPreferenceStore
+import eu.kanade.tachiyomi.util.LocalHttpServerHolder
+import eu.kanade.tachiyomi.util.LocalHttpServerService
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
@@ -100,6 +105,10 @@ object PlayerSettingsPlayerScreen : SearchableSettings {
                 playerPreferences = playerPreferences,
                 basePreferences = basePreferences,
             ),
+            // ANK -->
+            getCastGroup(playerPreferences = playerPreferences),
+            getTorrentServerGroup(torrentServerPreferences = remember { Injekt.get<TorrentServerPreferences>() }),
+            // ANK <--
         )
     }
 
@@ -467,6 +476,87 @@ object PlayerSettingsPlayerScreen : SearchableSettings {
         )
     }
 }
+
+// ANK -->
+// Chromecast: the switch, and the port of the local server that serves downloaded episodes to it
+@Composable
+private fun getCastGroup(playerPreferences: PlayerPreferences): Preference.PreferenceGroup {
+    val context = LocalContext.current
+    val castAvailable = remember { CastManager.isCastApiAvailable(context) }
+    val localHttpServerHolder = remember { Injekt.get<LocalHttpServerHolder>() }
+    return Preference.PreferenceGroup(
+        title = stringResource(AMR.strings.pref_category_cast),
+        preferenceItems = persistentListOf(
+            Preference.PreferenceItem.SwitchPreference(
+                preference = playerPreferences.enableCast(),
+                title = stringResource(AMR.strings.pref_enable_cast),
+                // Chromecast needs Google Play services
+                subtitle = if (castAvailable) null else "Google Play services aren't available on this device",
+                enabled = castAvailable,
+            ),
+            Preference.PreferenceItem.EditTextPreference(
+                preference = localHttpServerHolder.port(),
+                title = stringResource(AMR.strings.pref_cast_server_port),
+                enabled = castAvailable,
+                onValueChanged = {
+                    val valid = (it.toIntOrNull() ?: 0) in 1024..65535
+                    if (valid) LocalHttpServerService.stop()
+                    valid
+                },
+            ),
+        ),
+    )
+}
+
+// Torrent streams (magnet links and .torrent videos) play through a local TorrServer
+@Composable
+private fun getTorrentServerGroup(
+    torrentServerPreferences: TorrentServerPreferences,
+): Preference.PreferenceGroup {
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val trackersPref = torrentServerPreferences.trackers()
+    val trackers by trackersPref.collectAsState()
+
+    return Preference.PreferenceGroup(
+        title = stringResource(AMR.strings.pref_category_torrentserver),
+        preferenceItems = persistentListOf(
+            Preference.PreferenceItem.EditTextPreference(
+                preference = torrentServerPreferences.port(),
+                title = stringResource(AMR.strings.pref_torrentserver_port),
+                onValueChanged = {
+                    val valid = (it.toIntOrNull() ?: 0) in 1024..65535
+                    if (valid) {
+                        TorrentServerService.stop()
+                        context.toast(MR.strings.requires_app_restart)
+                    }
+                    valid
+                },
+            ),
+            Preference.PreferenceItem.MPVConfPreference(
+                preference = trackersPref,
+                scope = scope,
+                context = context,
+                title = stringResource(AMR.strings.pref_torrent_trackers),
+                onValueChanged = {
+                    TorrentServerService.stop()
+                    context.toast(MR.strings.requires_app_restart)
+                    true
+                },
+            ),
+            Preference.PreferenceItem.TextPreference(
+                title = stringResource(AMR.strings.pref_reset_torrent_trackers_string),
+                enabled = trackers != trackersPref.defaultValue(),
+                onClick = {
+                    trackersPref.delete()
+                    TorrentServerService.stop()
+                    context.toast(MR.strings.requires_app_restart)
+                },
+            ),
+        ),
+    )
+}
+// ANK <--
 
 val externalPlayers = listOf(
     MPV_PLAYER,

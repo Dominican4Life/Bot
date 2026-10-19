@@ -588,7 +588,7 @@ class PlayerActivity : BaseActivity() {
                 updateCastState(CastManager.CastState.CONNECTED)
             }
             // Synchronize initial status with viewmodel
-            viewModel.isCasting.value = castState.value == CastManager.CastState.CONNECTED
+            this@PlayerActivity.viewModel.isCasting.value = castState.value == CastManager.CastState.CONNECTED
         }
         // <-- Cast
     }

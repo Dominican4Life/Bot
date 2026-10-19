@@ -70,10 +70,12 @@ import androidx.constraintlayout.compose.ConstraintLayout
 import androidx.constraintlayout.compose.Dimension
 import eu.kanade.presentation.theme.playerRippleConfiguration
 import eu.kanade.tachiyomi.ui.player.Dialogs
+import eu.kanade.tachiyomi.ui.player.CastManager
 import eu.kanade.tachiyomi.ui.player.Panels
 import eu.kanade.tachiyomi.ui.player.PlayerActivity
 import eu.kanade.tachiyomi.ui.player.PlayerUpdates
 import eu.kanade.tachiyomi.ui.player.PlayerViewModel
+import eu.kanade.tachiyomi.ui.player.cast.components.CastSheet
 import eu.kanade.tachiyomi.ui.player.Sheets
 import eu.kanade.tachiyomi.ui.player.VideoTrack
 import eu.kanade.tachiyomi.ui.player.controls.components.BrightnessOverlay
@@ -112,9 +114,16 @@ val LocalPlayerButtonsClickEvent = staticCompositionLocalOf { {} }
 @Composable
 fun PlayerControls(
     viewModel: PlayerViewModel,
+    // Cast -->
+    castManager: CastManager?,
+    // <-- Cast
     onBackPress: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Cast -->
+    var showCastSheet by remember { mutableStateOf(false) }
+    val onCastClick: () -> Unit = { showCastSheet = true }
+    // <-- Cast
 
     val spacing = MaterialTheme.padding
     val playerPreferences = remember { Injekt.get<PlayerPreferences>() }
@@ -624,7 +633,7 @@ fun PlayerControls(
                         buttons = topRightButtonsList,
                         viewModel = viewModel,
                         onBackPress = onBackPress,
-                        onCastClick = {},
+                        onCastClick = onCastClick,
                     )
                 }
 
@@ -652,7 +661,7 @@ fun PlayerControls(
                                 button = button,
                                 viewModel = viewModel,
                                 onBackPress = onBackPress,
-                                onCastClick = {},
+                                onCastClick = onCastClick,
                             )
                         }
                     }
@@ -682,7 +691,7 @@ fun PlayerControls(
                         buttons = bottomRightButtonsList,
                         viewModel = viewModel,
                         onBackPress = onBackPress,
-                        onCastClick = {},
+                        onCastClick = onCastClick,
                     )
                 }
                 // Bottom left controls
@@ -711,7 +720,7 @@ fun PlayerControls(
                         buttons = bottomLeftButtonsList,
                         viewModel = viewModel,
                         onBackPress = onBackPress,
-                        onCastClick = {},
+                        onCastClick = onCastClick,
                     )
                 }
 
@@ -910,6 +919,16 @@ fun PlayerControls(
             brightness = currentBrightness,
         )
     }
+
+    // Cast -->
+    if (showCastSheet && castManager != null) {
+        CastSheet(
+            castManager = castManager,
+            viewModel = viewModel,
+            onDismissRequest = { showCastSheet = false },
+        )
+    }
+    // <-- Cast
 }
 
 fun <T> playerControlsExitAnimationSpec(): FiniteAnimationSpec<T> = tween(
