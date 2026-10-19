@@ -843,7 +843,10 @@ class SimklAnime(override val tracker: Simkl) : AnimeTrackService {
         val mediaType = mediaType(track.remoteUrl)
         if (mediaType == "shows") {
             // Watched episodes: clear season 1, then add episodes 1..n again
-            post("sync/history/remove", entry(mediaType, track.remoteId) { putJsonArray("seasons") { addJsonObject { put("number", 1) } } })
+            post(
+                "sync/history/remove",
+                entry(mediaType, track.remoteId) { putJsonArray("seasons") { addJsonObject { put("number", 1) } } },
+            )
             val seen = track.lastEpisodeSeen.toInt()
             if (seen > 0) {
                 post(

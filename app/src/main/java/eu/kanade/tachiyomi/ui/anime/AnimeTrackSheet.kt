@@ -287,7 +287,10 @@ private fun TrackerRow(
             if (track != null) {
                 if (track.remoteUrl.isNotBlank()) {
                     IconButton(onClick = { onCopy(track) }) {
-                        Icon(Icons.Outlined.ContentCopy, contentDescription = stringResource(KMR.strings.anime_track_copy_link))
+                        Icon(
+                            Icons.Outlined.ContentCopy,
+                            contentDescription = stringResource(KMR.strings.anime_track_copy_link),
+                        )
                     }
                 }
                 IconButton(onClick = { onOpen(track) }) {
