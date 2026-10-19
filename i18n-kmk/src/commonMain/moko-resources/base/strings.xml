@@ -280,6 +280,13 @@
     <string name="anime_episodes_count">%1$d episodes</string>
     <string name="anime_episode_number">Episode %1$s</string>
     <string name="anime_seasons">Seasons</string>
+    <string name="anime_seasons_count">%1$d seasons</string>
+    <string name="anime_no_seasons">No seasons found</string>
+    <string name="anime_season_sort_by_number">By season number</string>
+    <string name="anime_season_layout_row">Row</string>
+    <string name="anime_season_layout_grid">Grid</string>
+    <string name="anime_season_show_titles">Show season titles</string>
+    <string name="anime_season_number">Season %1$s</string>
     <string name="anime_no_episodes">No episodes found</string>
     <string name="anime_choose_video">Choose video</string>
     <string name="anime_loading_videos">Loading videos…</string>
@@ -654,4 +661,14 @@
     <string name="pref_anime_download_ahead_info">Only for anime in your library, once an episode counts as watched.</string>
     <string name="pref_anime_download_new">Download new episodes</string>
     <string name="pref_anime_download_new_categories_details">Anime in excluded categories won\'t be downloaded even if they\'re also in included categories.</string>
+    <!-- KMK: next episode airing times (AniList) -->
+    <string name="anime_library_sort_next_airing">Next airing</string>
+    <string name="anime_airing_in">Episode %1$d airs in %2$s</string>
+    <string name="anime_airing_now">Episode %1$d is airing now</string>
+    <string name="anime_airing_duration_days">%1$dd %2$dh</string>
+    <string name="anime_airing_duration_hours">%1$dh %2$dm</string>
+    <string name="anime_airing_duration_minutes">%1$dm</string>
+    <string name="anime_coming_up">Coming up</string>
+    <string name="anime_coming_up_episode">Episode %1$d · %2$s</string>
+    <string name="anime_coming_up_empty">No airing times found. Anime need an AniList or MyAnimeList track to show here.</string>
 </resources>

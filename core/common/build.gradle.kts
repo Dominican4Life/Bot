@@ -49,6 +49,7 @@ dependencies {
 
     // KMK: anime torrent server client
     implementation(libs.injekt)
+    implementation(aniyomilibs.torrentserver)
 
     // Sort
     implementation(libs.natural.comparator)

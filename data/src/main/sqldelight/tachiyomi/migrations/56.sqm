@@ -1,0 +1,7 @@
+-- KMK: anime seasons are saved like Anikku's: each season is an anime row linked to its parent
+ALTER TABLE animes ADD COLUMN parent_id INTEGER;
+ALTER TABLE animes ADD COLUMN season_flags INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE animes ADD COLUMN season_number REAL NOT NULL DEFAULT -1;
+ALTER TABLE animes ADD COLUMN season_source_order INTEGER NOT NULL DEFAULT 0;
+
+CREATE INDEX IF NOT EXISTS kmk_animes_parent_id_index ON animes(parent_id);

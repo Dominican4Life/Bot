@@ -151,6 +151,7 @@ android {
                 "libc++_shared",
                 "libffmpegkit",
                 "libffmpegkit_abidetect",
+                "libgojni",
                 "libmpv",
                 "libplayer",
                 "libpostproc",
@@ -231,6 +232,11 @@ dependencies {
     implementation(aniyomilibs.compose.constraintlayout)
     implementation(aniyomilibs.mediasession)
     implementation(aniyomilibs.truetypeparser)
+    // Torrent streams (magnet links / .torrent videos) through a local TorrServer
+    implementation(aniyomilibs.torrentserver)
+    // Chromecast, and the local http server that serves downloaded episodes to it
+    implementation(aniyomilibs.bundles.cast)
+    implementation(aniyomilibs.nanohttpd)
     // KMK <--
     // SY -->
     implementation(projects.i18nSy)

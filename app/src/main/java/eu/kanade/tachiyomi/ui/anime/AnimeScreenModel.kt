@@ -8,14 +8,24 @@ import eu.kanade.presentation.manga.components.ChapterDownloadAction
 import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
 import eu.kanade.tachiyomi.animesource.AnimeSource
 import eu.kanade.tachiyomi.animesource.model.FetchType
+import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.data.anime.Anime
 import eu.kanade.tachiyomi.data.anime.AnimeEpisodeDefaults
+import eu.kanade.tachiyomi.data.anime.AnimeLibraryStats
+import eu.kanade.tachiyomi.data.anime.AnimeSeasonFlags
 import eu.kanade.tachiyomi.data.anime.AnimeRepository
 import eu.kanade.tachiyomi.data.anime.AnimeVideoFetcher
 import eu.kanade.tachiyomi.data.anime.Episode
+import eu.kanade.tachiyomi.data.anime.seasonCompletedFilter
+import eu.kanade.tachiyomi.data.anime.seasonDownloadedFilter
+import eu.kanade.tachiyomi.data.anime.seasonFilterActive
+import eu.kanade.tachiyomi.data.anime.seasonSortDescending
+import eu.kanade.tachiyomi.data.anime.seasonSortMode
+import eu.kanade.tachiyomi.data.anime.seasonStartedFilter
+import eu.kanade.tachiyomi.data.anime.seasonUnseenFilter
 import eu.kanade.tachiyomi.data.anime.download.AnimeDownloadManager
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.ui.player.settings.PlayerPreferences
@@ -86,6 +96,42 @@ class AnimeScreenModel(
         return sorted
     }
 
+    // KMK --> seasons, filtered and sorted with the parent's season settings
+    private fun filterAndSortSeasons(
+        parent: Anime,
+        seasons: List<Anime>,
+        stats: Map<Long, AnimeLibraryStats>,
+    ): List<Anime> {
+        fun TriState.keep(value: Boolean) = when (this) {
+            TriState.DISABLED -> true
+            TriState.ENABLED_IS -> value
+            TriState.ENABLED_NOT -> !value
+        }
+        val shown = seasons.filter { season ->
+            val st = stats[season.id]
+            parent.seasonDownloadedFilter.keep(downloadManager.downloadedCount(season) > 0) &&
+                // A season never opened (no saved episodes) counts as unseen
+                parent.seasonUnseenFilter.keep(st == null || st.total == 0L || st.unseen > 0) &&
+                parent.seasonStartedFilter.keep(st?.started == true) &&
+                parent.seasonCompletedFilter.keep(season.status.toInt() == SAnime.COMPLETED)
+        }
+        val sorted = when (parent.seasonSortMode) {
+            AnimeSeasonFlags.SORT_NUMBER -> shown.sortedWith(
+                compareBy<Anime> { if (it.seasonNumber < 0) Double.MAX_VALUE else it.seasonNumber }
+                    .thenBy { it.seasonSourceOrder },
+            )
+            AnimeSeasonFlags.SORT_ALPHABET -> shown.sortedBy { it.title.lowercase() }
+            else -> shown.sortedBy { it.seasonSourceOrder }
+        }
+        return if (parent.seasonSortDescending) sorted.reversed() else sorted
+    }
+
+    private data class SeasonData(val seasons: List<Anime>, val stats: Map<Long, AnimeLibraryStats>)
+
+    /** Season folders already read for the Downloaded filter */
+    private val seasonDownloadsRead = java.util.Collections.synchronizedSet(HashSet<Long>())
+    // KMK <--
+
     private var refreshJob: Job? = null
     private var seedColorUrl: String? = null
     private var videoJob: Job? = null
@@ -143,6 +189,29 @@ class AnimeScreenModel(
                     )
                 }
             }
+        }
+        // KMK: seasons saved in the database (linked by parent_id), shown with this anime's season settings
+        screenModelScope.launchIO {
+            val seasonData = repository.subscribeSeasons(animeId).flatMapLatest { seasons ->
+                if (seasons.isEmpty()) {
+                    flowOf(SeasonData(seasons, emptyMap()))
+                } else {
+                    seasons.filter { seasonDownloadsRead.add(it.id) }.forEach(downloadManager::refresh)
+                    combine(repository.subscribeLibraryStats(), downloadManager.changes) { stats, _ ->
+                        SeasonData(seasons, stats)
+                    }
+                }
+            }
+            combine(repository.subscribeAnime(animeId), seasonData) { anime, data -> anime to data }
+                .collect { (anime, data) ->
+                    mutableState.update { state ->
+                        state.copy(
+                            allSeasons = data.seasons,
+                            seasons = anime?.let { filterAndSortSeasons(it, data.seasons, data.stats) }
+                                ?: data.seasons,
+                        )
+                    }
+                }
         }
         // KMK: download progress and finished downloads update the rows and the Downloaded filter
         screenModelScope.launchIO {
@@ -221,12 +290,7 @@ class AnimeScreenModel(
                     runCatching { repository.refreshFromSource(member, memberSource) }
                         .onFailure { e -> logcat(LogPriority.WARN, e) { "Couldn't refresh ${member.title}" } }
                 }
-                val updated = repository.getAnime(animeId) ?: anime
-                if (updated.fetchType == FetchType.Seasons) {
-                    val seasons = source.getAnimeSeasonUpdate(updated.toSAnime(), emptyList(), false, true).seasons
-                        .map { repository.networkToLocal(it, source.id) }
-                    mutableState.update { it.copy(seasons = seasons) }
-                }
+                // KMK: seasons are saved by refreshFromSource and come back through subscribeSeasons
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
                 logcat(LogPriority.ERROR, e)
@@ -265,6 +329,25 @@ class AnimeScreenModel(
             }
         }
     }
+
+    // KMK --> season settings, saved in this anime's season_flags
+
+    private fun updateSeasonFlags(transform: (Long) -> Long) {
+        val anime = state.value.anime ?: return
+        screenModelScope.launchIO { repository.setSeasonFlags(anime, transform(anime.seasonFlags)) }
+    }
+
+    fun setSeasonFilter(include: Long, exclude: Long, state: TriState) =
+        updateSeasonFlags { AnimeSeasonFlags.withFilter(it, include, exclude, state) }
+
+    fun setSeasonSort(mode: Long) = updateSeasonFlags { AnimeSeasonFlags.withSort(it, mode) }
+
+    fun setSeasonLayout(layout: Long) = updateSeasonFlags { AnimeSeasonFlags.withLayout(it, layout) }
+
+    fun setSeasonTitles(show: Boolean) = updateSeasonFlags { AnimeSeasonFlags.withTitles(it, show) }
+
+    fun resetSeasonSettings() = updateSeasonFlags { 0L }
+    // KMK <--
 
     /** Sets one tri-state filter (only these / hide these / off), like the manga chapter filters */
     fun setEpisodeFilter(include: Long, exclude: Long, state: TriState) {
@@ -637,7 +720,10 @@ class AnimeScreenModel(
     data class State(
         val anime: Anime? = null,
         val episodes: List<Episode> = emptyList(),
+        /** Seasons after the season filters and sort */
         val seasons: List<Anime> = emptyList(),
+        /** Every season linked to this anime */
+        val allSeasons: List<Anime> = emptyList(),
         val sourceName: String? = null,
         val sourceMissing: Boolean = false,
         val isLoaded: Boolean = false,
@@ -664,7 +750,15 @@ class AnimeScreenModel(
         fun downloadProgress(episode: Episode): Int = activeDownloads[episode.id]?.progress ?: 0
 
         val filterActive: Boolean
-            get() = ((anime?.episodeFlags ?: 0L) and Anime.ALL_FILTERS) != 0L || excludedScanlators.isNotEmpty()
+            get() = if (hasSeasons) {
+                anime?.seasonFilterActive == true
+            } else {
+                ((anime?.episodeFlags ?: 0L) and Anime.ALL_FILTERS) != 0L || excludedScanlators.isNotEmpty()
+            }
+
+        /** KMK: this page lists seasons instead of episodes */
+        val hasSeasons: Boolean
+            get() = allSeasons.isNotEmpty() || anime?.fetchType == FetchType.Seasons
 
         /** The episode the Start/Resume button plays: the first unwatched one, oldest first */
         val nextEpisode: Episode?

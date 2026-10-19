@@ -7,6 +7,7 @@ constraint-layout = "1.1.1"
 media = "1.7.1"
 seeker = "1.2.2"
 truetypeparser = "2.1.4"
+nanohttpd-version = "2.3.1"
 
 [libraries]
 # mpv needs ffmpeg's native libraries (libavcodec etc.), which ship in ffmpeg-kit
@@ -17,3 +18,13 @@ compose-constraintlayout = { module = "androidx.constraintlayout:constraintlayou
 mediasession = { module = "androidx.media:media", version.ref = "media" }
 seeker = { module = "io.github.2307vivek:seeker", version.ref = "seeker" }
 truetypeparser = { module = "io.github.yubyf:truetypeparser-light", version.ref = "truetypeparser" }
+# Local http server that lets a Chromecast play downloaded (content://) episodes
+nanohttpd = { module = "org.nanohttpd:nanohttpd", version.ref = "nanohttpd-version" }
+# TorrServer (Go, via gomobile) that streams magnet links / .torrent videos over local http
+torrentserver = "com.github.Diegopyl1209:torrentserver-aniyomi:c18f58e51b"
+# Chromecast
+media-router = "androidx.mediarouter:mediarouter:1.8.1"
+cast-play-services = "com.google.android.gms:play-services-cast-framework:22.3.1"
+
+[bundles]
+cast = ["media-router", "cast-play-services"]

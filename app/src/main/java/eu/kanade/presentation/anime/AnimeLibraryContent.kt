@@ -103,6 +103,20 @@ fun AnimeLibraryContent(
         }
     }
 
+    // KMK: next airing episodes from AniList, only while sorting by them (one batched request per 50 tracked anime)
+    val airing by androidx.compose.runtime.produceState(
+        initialValue = emptyMap<Long, eu.kanade.tachiyomi.data.anime.AnimeAiring>(),
+        favorites,
+        sortMode,
+    ) {
+        if (sortMode == AnimeLibrarySort.NEXT_AIRING) {
+            val animes = favorites ?: return@produceState
+            value = runCatching {
+                eu.kanade.tachiyomi.data.anime.AnimeAiringRepository.forLibrary(animes)
+            }.getOrDefault(value)
+        }
+    }
+
     val list = favorites ?: return
     // KMK: category tabs, like the manga library. "Default" holds the anime in no category.
     val categories by remember { repository.subscribeCategories() }.collectAsState(initial = emptyList())
@@ -148,14 +162,19 @@ fun AnimeLibraryContent(
         )
     }
 
-    val filtered = remember(current, searchQuery, stats, downloaded, tracks, filters, sortMode, sortAscending, randomSeed) {
+    val filtered = remember(
+        current, searchQuery, stats, downloaded, tracks, filters, sortMode, sortAscending, randomSeed, airing,
+    ) {
         val inPage = current?.third.orEmpty()
         val searched = if (searchQuery.isNullOrBlank()) {
             inPage
         } else {
             inPage.filter { it.title.contains(searchQuery, ignoreCase = true) }
         }
-        searched.filterAndSortAnime(stats, downloaded, tracks, filters, sortMode, sortAscending, randomSeed)
+        searched.filterAndSortAnime(
+            stats, downloaded, tracks, filters, sortMode, sortAscending, randomSeed,
+            airing = airing,
+        )
     }
     val continueWatching: (Anime) -> Unit = { anime ->
         scope.launch {

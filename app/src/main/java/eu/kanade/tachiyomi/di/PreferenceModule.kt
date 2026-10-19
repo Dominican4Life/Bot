@@ -86,6 +86,8 @@ class PreferenceModule(val app: Application) : InjektModule {
         addSingletonFactory { ConnectionsPreferences(get()) }
         // KMK: anime torrent server
         addSingletonFactory { eu.kanade.tachiyomi.torrentServer.TorrentServerPreferences(get()) }
+        // KMK: Chromecast's local server for downloaded episodes
+        addSingletonFactory { eu.kanade.tachiyomi.util.LocalHttpServerHolder(get()) }
         // <-- AM (CONNECTIONS)
 
         addSingletonFactory {

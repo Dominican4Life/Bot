@@ -25,6 +25,7 @@ import eu.kanade.presentation.components.PanoramaIcons
 import eu.kanade.presentation.components.TabbedDialog
 import eu.kanade.presentation.components.TabbedDialogPaddings
 import eu.kanade.tachiyomi.data.anime.Anime
+import eu.kanade.tachiyomi.data.anime.AnimeAiring
 import eu.kanade.tachiyomi.data.anime.AnimeLibraryStats
 import eu.kanade.tachiyomi.data.anime.track.AnimeTrack
 import eu.kanade.tachiyomi.data.anime.track.AnimeTracking
@@ -64,6 +65,9 @@ enum class AnimeLibrarySort {
     EPISODE_FETCH_DATE,
     DATE_ADDED,
     TRACKER_SCORE,
+
+    // KMK: when the next episode airs (AniList); anime with no known airing time go last
+    NEXT_AIRING,
     RANDOM,
 }
 
@@ -97,6 +101,8 @@ fun List<Anime>.filterAndSortAnime(
     sort: AnimeLibrarySort,
     ascending: Boolean,
     randomSeed: Long,
+    // KMK: next airing episodes, for [AnimeLibrarySort.NEXT_AIRING]
+    airing: Map<Long, AnimeAiring> = emptyMap(),
 ): List<Anime> {
     fun TriState.keep(value: Boolean) = when (this) {
         TriState.DISABLED -> true
@@ -119,6 +125,13 @@ fun List<Anime>.filterAndSortAnime(
         return filtered.shuffled(java.util.Random(randomSeed))
     }
     val byTitle = compareBy<Anime, String>(String.CASE_INSENSITIVE_ORDER) { it.title }
+    if (sort == AnimeLibrarySort.NEXT_AIRING) {
+        // Unknown airing times always go last, whichever the direction
+        val (known, unknown) = filtered.partition { airing[it.id] != null }
+        val byAiring = compareBy<Anime> { airing[it.id]?.airingAt ?: Long.MAX_VALUE }
+        val ordered = if (ascending) byAiring else byAiring.reversed()
+        return known.sortedWith(ordered.then(byTitle)) + unknown.sortedWith(byTitle)
+    }
     val primary: Comparator<Anime> = when (sort) {
         AnimeLibrarySort.ALPHABETICAL -> byTitle
         AnimeLibrarySort.LAST_SEEN -> compareBy { stats[it.id]?.lastSeen ?: 0L }
@@ -131,7 +144,7 @@ fun List<Anime>.filterAndSortAnime(
         AnimeLibrarySort.TRACKER_SCORE -> compareBy { anime ->
             tracks[anime.id].orEmpty().map { it.score }.filter { it > 0 }.takeIf { it.isNotEmpty() }?.average() ?: 0.0
         }
-        AnimeLibrarySort.RANDOM -> byTitle
+        AnimeLibrarySort.NEXT_AIRING, AnimeLibrarySort.RANDOM -> byTitle
     }
     val ordered = if (ascending) primary else primary.reversed()
     return filtered.sortedWith(ordered.then(byTitle))
@@ -223,6 +236,7 @@ private val sortOptions = listOf(
     KMR.strings.anime_library_sort_episode_fetch to AnimeLibrarySort.EPISODE_FETCH_DATE,
     MR.strings.action_sort_date_added to AnimeLibrarySort.DATE_ADDED,
     MR.strings.action_sort_tracker_score to AnimeLibrarySort.TRACKER_SCORE,
+    KMR.strings.anime_library_sort_next_airing to AnimeLibrarySort.NEXT_AIRING,
     MR.strings.action_sort_random to AnimeLibrarySort.RANDOM,
 )
 

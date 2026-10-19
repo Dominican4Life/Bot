@@ -37,11 +37,32 @@ class BackupDecoder(
                 else -> source
             }.use { it.readByteArray() }
 
-            try {
+            // KMK -->
+            val ours = try {
                 parser.decodeFromByteArray(Backup.serializer(), backupString)
             } catch (_: SerializationException) {
-                throw IOException(context.stringResource(MR.strings.invalid_backup_file_unknown))
+                null
+            } catch (_: IllegalArgumentException) {
+                null
             }
+            if (ours != null && ours.backupAnime.isNotEmpty()) return@use ours
+            // Anikku (anime at 501) or older Aniyomi (anime at 3) backups: take their anime too
+            val anikku = AnikkuBackupConverter.convert(parser, backupString)
+            when {
+                anikku == null -> ours
+                    ?: throw IOException(context.stringResource(MR.strings.invalid_backup_file_unknown))
+                ours == null -> Backup(
+                    backupManga = emptyList(),
+                    backupSourcePreferences = anikku.sourcePreferences,
+                    backupAnime = anikku.anime,
+                    backupAnimeCategories = anikku.categories,
+                )
+                else -> ours.copy(
+                    backupAnime = anikku.anime,
+                    backupAnimeCategories = ours.backupAnimeCategories.ifEmpty { anikku.categories },
+                )
+            }
+            // KMK <--
         }
     }
 

@@ -444,16 +444,102 @@ class AnimeRepository(
             }
             syncEpisodes(fresh, episodes)
         } else {
+            // KMK: an anime made of seasons saves them as anime linked to it, like Anikku
+            val seasons = source.getAnimeSeasonUpdate(
+                fresh.toSAnime(),
+                emptyList(),
+                fetchDetails = false,
+                fetchSeasons = true,
+            ).seasons
+            logcat(LogPriority.INFO, tag = "anime") { "${anime.title}: ${seasons.size} seasons" }
+            syncSeasons(fresh, seasons, source.id)
             0
         }
         detailsError?.let { throw it }
         return count
     }
 
+    // Seasons (KMK)
+
+    fun subscribeSeasons(parentId: Long): Flow<List<Anime>> =
+        handler.subscribeToList { animesQueries.getSeasonsByParentId(parentId, ::mapAnime) }
+
+    suspend fun getSeasons(parentId: Long): List<Anime> =
+        handler.awaitList { animesQueries.getSeasonsByParentId(parentId, ::mapAnime) }
+
+    /**
+     * Saves the seasons from the source as anime linked to [parent], with their number and order. Seasons the source
+     * no longer has are unlinked (their rows and watch history stay), except ones in the library.
+     * Returns the seasons in the source's order.
+     */
+    suspend fun syncSeasons(parent: Anime, sourceSeasons: List<SAnime>, sourceId: Long): List<Anime> {
+        val existing = getSeasons(parent.id)
+        // An empty answer is more likely a site hiccup than every season gone: keep what's saved
+        if (sourceSeasons.isEmpty()) return existing
+        val linked = ArrayList<Anime>()
+        sourceSeasons.distinctBy { it.url }.filter { it.url != parent.url }.forEach { sSeason ->
+            val local = networkToLocal(sSeason, sourceId)
+            if (local.id == parent.id) return@forEach
+            val order = linked.size.toLong()
+            val number = AnimeSeasonRecognition.parse(parent.title, sSeason.title, sSeason.season_number)
+            linked += local.copy(parentId = parent.id, seasonNumber = number, seasonSourceOrder = order)
+        }
+        val keptIds = linked.mapTo(HashSet()) { it.id }
+        val removed = existing.filter { it.id !in keptIds && !it.favorite }.map { it.id }
+        val changed = linked.filter { season ->
+            val old = existing.firstOrNull { it.id == season.id }
+            old == null || old.seasonNumber != season.seasonNumber || old.seasonSourceOrder != season.seasonSourceOrder
+        }
+        if (changed.isEmpty() && removed.isEmpty()) return linked
+        handler.await(inTransaction = true) {
+            changed.forEach { season ->
+                animesQueries.setSeasonInfo(
+                    parentId = parent.id,
+                    seasonNumber = season.seasonNumber,
+                    seasonSourceOrder = season.seasonSourceOrder,
+                    id = season.id,
+                )
+            }
+            if (removed.isNotEmpty()) animesQueries.removeParent(removed)
+        }
+        return linked
+    }
+
+    suspend fun setSeasonFlags(anime: Anime, flags: Long) {
+        handler.await { animesQueries.setSeasonFlags(flags, anime.id) }
+    }
+
+    /** Backup restore: links [season] to the anime at [parentUrl] of [parentSource] (restore parents first) */
+    suspend fun restoreSeasonLink(
+        season: Anime,
+        parentSource: Long,
+        parentUrl: String,
+        seasonNumber: Double,
+        seasonSourceOrder: Long,
+    ) {
+        val parent = getAnimeByUrl(parentUrl, parentSource) ?: return
+        if (parent.id == season.id) return
+        handler.await {
+            animesQueries.setSeasonInfo(
+                parentId = parent.id,
+                seasonNumber = seasonNumber,
+                seasonSourceOrder = seasonSourceOrder,
+                id = season.id,
+            )
+        }
+    }
+
     suspend fun getFavorites(): List<Anime> = handler.awaitList { animesQueries.getFavorites(::mapAnime) }
 
-    /** The library as the sources gave it, without Edit info (for backups; the edits are backed up apart) */
-    suspend fun getFavoritesRaw(): List<Anime> = handler.awaitList { animesQueries.getFavorites(::mapAnimeRaw) }
+    /**
+     * The library as the sources gave it, without Edit info (for backups; the edits are backed up apart).
+     * KMK: includes seasons marked as favorite, which the library itself leaves out when their parent is in it.
+     */
+    suspend fun getFavoritesRaw(): List<Anime> = handler.awaitList { animesQueries.getAllFavorites(::mapAnimeRaw) }
+
+    /** KMK: the seasons of every anime in the library, favorite or not, without Edit info (for backups) */
+    suspend fun getSeasonsOfFavoritesRaw(): List<Anime> =
+        handler.awaitList { animesQueries.getSeasonsOfFavorites(::mapAnimeRaw) }
 
     suspend fun getAnimeByUrl(url: String, sourceId: Long): Anime? =
         handler.awaitOneOrNull { animesQueries.getByUrlAndSource(url, sourceId, ::mapAnime) }
@@ -571,6 +657,8 @@ class AnimeRepository(
         handler.await {
             animesQueries.setFavorite(backup.favorite || existing?.favorite == true, backup.dateAdded, id)
             animesQueries.setEpisodeFlags(backup.episodeFlags, id)
+            // KMK: how this anime's seasons are shown
+            animesQueries.setSeasonFlags(backup.seasonFlags, id)
         }
         return getAnime(id)!!
     }
@@ -630,6 +718,11 @@ class AnimeRepository(
         lastUpdate: Long,
         fetchType: Long,
         episodeFlags: Long,
+        // KMK: seasons (migration 56)
+        parentId: Long?,
+        seasonFlags: Long,
+        seasonNumber: Double,
+        seasonSourceOrder: Long,
     ) = Anime(
         id = id,
         source = source,
@@ -648,10 +741,13 @@ class AnimeRepository(
         lastUpdate = lastUpdate,
         fetchType = FetchType.entries.getOrElse(fetchType.toInt()) { FetchType.Episodes },
         episodeFlags = episodeFlags,
+        parentId = parentId,
+        seasonFlags = seasonFlags,
+        seasonNumber = seasonNumber,
+        seasonSourceOrder = seasonSourceOrder,
     )
 
     private fun mapAnime(
-
         id: Long,
         source: Long,
         url: String,
@@ -669,7 +765,15 @@ class AnimeRepository(
         lastUpdate: Long,
         fetchType: Long,
         episodeFlags: Long,
-    ) = mapAnimeRaw(id, source, url, artist, author, description, genre, title, status, thumbnailUrl, backgroundUrl, favorite, initialized, dateAdded, lastUpdate, fetchType, episodeFlags).withCustomInfo()
+        parentId: Long?,
+        seasonFlags: Long,
+        seasonNumber: Double,
+        seasonSourceOrder: Long,
+    ) = mapAnimeRaw(
+        id, source, url, artist, author, description, genre, title, status, thumbnailUrl, backgroundUrl, favorite,
+        initialized, dateAdded, lastUpdate, fetchType, episodeFlags, parentId, seasonFlags, seasonNumber,
+        seasonSourceOrder,
+    ).withCustomInfo()
 
     private fun mapEpisode(
         id: Long,

@@ -26,6 +26,16 @@ data class Anime(
     val lastUpdate: Long,
     val fetchType: FetchType,
     val episodeFlags: Long,
+    // KMK --> seasons, saved like Anikku's (migration 56)
+    /** The anime this one is a season of, or null */
+    val parentId: Long? = null,
+    /** Sort, filters and display of this anime's seasons (see [AnimeSeasonFlags]) */
+    val seasonFlags: Long = 0L,
+    /** Season number from the source or read from the title, -1 when unknown */
+    val seasonNumber: Double = -1.0,
+    /** Position in the source's season list */
+    val seasonSourceOrder: Long = 0L,
+    // KMK <--
 ) {
     fun toSAnime(): SAnime = SAnime.create().also {
         it.url = url
@@ -38,8 +48,14 @@ data class Anime(
         it.thumbnail_url = thumbnailUrl
         it.background_url = backgroundUrl
         it.fetch_type = fetchType
+        it.season_number = seasonNumber
         it.initialized = initialized
     }
+
+    // KMK --> seasons
+    val isSeason: Boolean
+        get() = parentId != null
+    // KMK <--
 
     /** Newest episodes first unless the user flipped it */
     val sortAscending: Boolean

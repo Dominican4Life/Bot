@@ -25,6 +25,7 @@
 -keep,allowoptimization class eu.kanade.tachiyomi.network.OkHttpExtensionsKt { public protected *; }
 -keep,allowoptimization class eu.kanade.tachiyomi.network.RequestsKt { public protected *; }
 -keep,allowoptimization class eu.kanade.tachiyomi.AppInfo { public protected *; }
+-keep,allowoptimization class eu.kanade.tachiyomi.torrentutils.** { public protected *; }
 
 # Debug functions
 -keep,allowoptimization class exh.debug.DebugFunctions { public *; }
@@ -325,3 +326,15 @@
 -keep class com.dokar.quickjs.** { *; }
 -keep interface com.dokar.quickjs.** { *; }
 -keep class kotlin.UByteArray { *; }
+
+# KMK --> torrent streams: TorrServer is a gomobile library, its native code calls back into these
+-keep class torrServer.** { *; }
+-keep class go.** { *; }
+-dontwarn torrServer.**
+-dontwarn go.**
+# KMK <--
+
+# KMK --> Chromecast: the options provider is only named in the manifest meta-data
+-keep class eu.kanade.tachiyomi.ui.player.cast.CastOptionsProvider { *; }
+-keep class eu.kanade.tachiyomi.ui.player.cast.CustomCastProvider { <init>(android.content.Context); }
+# KMK <--

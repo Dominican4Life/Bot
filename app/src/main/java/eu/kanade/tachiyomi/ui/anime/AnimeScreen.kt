@@ -70,7 +70,6 @@ import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.presentation.anime.AnimeCategoryDialog
-import eu.kanade.presentation.anime.AnimeGridItem
 import eu.kanade.presentation.anime.asDisplayManga
 import eu.kanade.presentation.anime.asMangaCover
 import eu.kanade.presentation.anime.rememberHasAnimeCategories
@@ -96,6 +95,9 @@ import eu.kanade.presentation.util.isTabletUi
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.data.anime.Anime
+import eu.kanade.tachiyomi.data.anime.AnimeSeasonFlags
+import eu.kanade.tachiyomi.data.anime.seasonLayout
+import eu.kanade.tachiyomi.data.anime.seasonShowTitles
 import eu.kanade.tachiyomi.data.anime.Episode
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.ui.anime.source.AnimeSourceScreen
@@ -238,7 +240,8 @@ class AnimeScreen(private val animeId: Long) : Screen() {
                 }
             },
             onEditCategories = { dialog = AnimeDialog.Categories },
-            onFilter = { dialog = AnimeDialog.Settings },
+            // KMK: an anime made of seasons opens the season settings instead
+            onFilter = { dialog = if (state.hasSeasons) AnimeDialog.SeasonSettings else AnimeDialog.Settings },
             onWebView = openWebView,
             onShare = animeUrl?.let { url ->
                 {
@@ -321,6 +324,15 @@ class AnimeScreen(private val animeId: Long) : Screen() {
                     onDisplayNumberChanged = screenModel::setDisplayNumber,
                     onReset = screenModel::resetEpisodeSettings,
                     onSetAsDefault = { dialog = AnimeDialog.SetDefault },
+                )
+                AnimeDialog.SeasonSettings -> AnimeSeasonSettingsDialog(
+                    anime = anime,
+                    onDismissRequest = { dialog = null },
+                    onFilterChanged = screenModel::setSeasonFilter,
+                    onSortChanged = screenModel::setSeasonSort,
+                    onLayoutChanged = screenModel::setSeasonLayout,
+                    onShowTitlesChanged = screenModel::setSeasonTitles,
+                    onReset = screenModel::resetSeasonSettings,
                 )
                 AnimeDialog.Scanlators -> ScanlatorFilterDialog(
                     availableScanlators = state.scanlators.toImmutableSet(),
@@ -446,7 +458,18 @@ class AnimeScreen(private val animeId: Long) : Screen() {
     }
 }
 
-private enum class AnimeDialog { Settings, Scanlators, Notes, Clear, MergeSettings, Categories, EditInfo, Cover, SetDefault }
+private enum class AnimeDialog {
+    Settings,
+    SeasonSettings,
+    Scanlators,
+    Notes,
+    Clear,
+    MergeSettings,
+    Categories,
+    EditInfo,
+    Cover,
+    SetDefault,
+}
 
 /** Everything the details page can do, passed down to both layouts */
 private class AnimeActions(
@@ -862,6 +885,8 @@ private fun AnimeScreenSmall(
 ) {
     val listState = rememberLazyListState()
     val related = rememberRelatedSettings()
+    // KMK: covers per line of the season grid
+    val seasonColumns = (androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp / 120).coerceIn(2, 8)
     Scaffold(
         topBar = {
             val isFirstItemVisible by remember { derivedStateOf { listState.firstVisibleItemIndex == 0 } }
@@ -911,7 +936,7 @@ private fun AnimeScreenSmall(
                         )
                     }
                     relatedItems(state, related, uppercaseTitle = false, dividerAbove = true, actions)
-                    episodeItems(state, anime, source, actions)
+                    episodeItems(state, anime, source, actions, seasonColumns)
                 }
             }
         }
@@ -928,6 +953,8 @@ private fun AnimeScreenLarge(
     val listState = rememberLazyListState()
     val layoutDirection = LocalLayoutDirection.current
     val related = rememberRelatedSettings()
+    // KMK: covers per line of the season grid (the list takes about half the width)
+    val seasonColumns = (androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp / 2 / 120).coerceIn(2, 8)
     Scaffold(
         topBar = {
             AnimeToolbar(
@@ -988,7 +1015,7 @@ private fun AnimeScreenLarge(
                         ) {
                             // Same spot as the manga page: related titles above the episode list
                             relatedItems(state, related, uppercaseTitle = true, dividerAbove = false, actions)
-                            episodeItems(state, anime, source, actions)
+                            episodeItems(state, anime, source, actions, seasonColumns)
                         }
                     }
                 },
@@ -1076,28 +1103,11 @@ private fun LazyListScope.episodeItems(
     anime: Anime,
     source: eu.kanade.tachiyomi.animesource.AnimeSource?,
     actions: AnimeActions,
+    seasonColumns: Int,
 ) {
-    if (state.seasons.isNotEmpty()) {
-        item(key = "seasons") {
-            Column {
-                Text(
-                    text = stringResource(KMR.strings.anime_seasons),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(16.dp),
-                )
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    contentPadding = PaddingValues(horizontal = 16.dp),
-                ) {
-                    items(state.seasons, key = { it.id }) { season ->
-                        Box(Modifier.width(120.dp)) {
-                            AnimeGridItem(anime = season, source = source, onClick = { actions.onOpenAnime(season) })
-                        }
-                    }
-                }
-            }
-        }
+    // KMK: seasons saved in the database, shown as a row, grid or list (season settings)
+    if (state.hasSeasons) {
+        seasonItems(state, anime, source, actions, seasonColumns)
         return
     }
     item(key = "episodes_header") {
@@ -1131,6 +1141,67 @@ private fun LazyListScope.episodeItems(
             selected = episode.id in actions.selection,
             onLongClick = { actions.onEpisodeLongClick(episode) },
         )
+    }
+}
+
+private fun LazyListScope.seasonItems(
+    state: AnimeScreenModel.State,
+    anime: Anime,
+    source: eu.kanade.tachiyomi.animesource.AnimeSource?,
+    actions: AnimeActions,
+    columns: Int,
+) {
+    val showTitles = anime.seasonShowTitles
+    item(key = "seasons_header") {
+        // Like the episode header: tap it to open the season settings
+        Text(
+            text = when {
+                state.allSeasons.isEmpty() && state.isRefreshing -> stringResource(KMR.strings.anime_seasons)
+                state.seasons.isEmpty() -> stringResource(KMR.strings.anime_no_seasons)
+                else -> stringResource(KMR.strings.anime_seasons_count, state.seasons.size)
+            },
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = actions.onFilter)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+        )
+    }
+    if (state.seasons.isEmpty()) return
+    when (anime.seasonLayout) {
+        AnimeSeasonFlags.LAYOUT_GRID -> {
+            val lines = state.seasons.chunked(columns)
+            items(lines, key = { "season-line-${it.first().id}" }, contentType = { "season_line" }) { line ->
+                AnimeSeasonGridLine(
+                    seasons = line,
+                    columns = columns,
+                    source = source,
+                    showTitles = showTitles,
+                    onClick = actions.onOpenAnime,
+                )
+            }
+        }
+        AnimeSeasonFlags.LAYOUT_LIST -> {
+            items(state.seasons, key = { "season-${it.id}" }, contentType = { "season" }) { season ->
+                AnimeSeasonListItem(
+                    season = season,
+                    source = source,
+                    showTitle = showTitles,
+                    onClick = { actions.onOpenAnime(season) },
+                )
+            }
+        }
+        else -> {
+            item(key = "seasons_row") {
+                AnimeSeasonRow(
+                    seasons = state.seasons,
+                    source = source,
+                    showTitles = showTitles,
+                    onClick = actions.onOpenAnime,
+                )
+            }
+        }
     }
 }
 
