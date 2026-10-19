@@ -1435,7 +1435,8 @@ class PlayerActivity : BaseActivity() {
     }
 
     private fun setHttpOptions(video: Video) {
-        if (viewModel.isEpisodeOnline() != true) return
+        // KMK: videos in manga chapters play through a hidden (non-HTTP) source but carry their page's headers
+        if (viewModel.isEpisodeOnline() != true && video.headers == null) return
         val sourceHeaders = (viewModel.currentSource.value as? AnimeHttpSource)?.headers
             // KMK: Code editor sources send their headers too
             ?: (viewModel.currentSource.value as? eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource)?.headers
