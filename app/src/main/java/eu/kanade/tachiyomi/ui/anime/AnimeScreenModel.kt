@@ -574,12 +574,14 @@ class AnimeScreenModel(
 
     /** The episode sent to an outside player, waiting for the player to return */
     private var externalEpisode: Episode? = null
+    private var externalStartedAt = 0L
 
     private fun isIncognito(episode: Episode): Boolean =
         eu.kanade.tachiyomi.ui.anime.AnimeIncognito.isOn(state.value.animeOf(episode)?.source)
 
     fun onExternalPlayerStarted(episode: Episode) {
         externalEpisode = episode
+        externalStartedAt = System.currentTimeMillis()
         if (isIncognito(episode)) return
         screenModelScope.launchIO { repository.upsertHistory(episode.id, System.currentTimeMillis()) }
     }
@@ -588,8 +590,15 @@ class AnimeScreenModel(
     fun onExternalPlayerResult(data: android.content.Intent?) {
         val episode = externalEpisode ?: return
         externalEpisode = null
-        val result = ExternalPlayer.parseResult(data) ?: return
         if (isIncognito(episode)) return
+        // Time spent in the outside player counts as watch time (Stats), at most the episode's length
+        val elapsed = System.currentTimeMillis() - externalStartedAt
+        val result = ExternalPlayer.parseResult(data)
+        val maxWatch = result?.durationMs?.takeIf { it > 0 } ?: episode.totalSeconds.takeIf { it > 0 } ?: MAX_EXTERNAL_WATCH
+        screenModelScope.launchIO {
+            eu.kanade.tachiyomi.data.anime.AnimeWatchTime.add(episode.id, elapsed.coerceIn(0L, maxWatch))
+        }
+        if (result == null) return
         screenModelScope.launchIO {
             val current = repository.getEpisode(episode.id) ?: episode
             val duration = result.durationMs.takeIf { it > 0 } ?: current.totalSeconds
@@ -674,6 +683,9 @@ class AnimeScreenModel(
     }
 
     private companion object {
+        /** Cap for watch time from an outside player that doesn't say how long the episode is (3 hours) */
+        const val MAX_EXTERNAL_WATCH = 3L * 60 * 60 * 1000
+
         /** Anime whose bare episode list was already refreshed in this run */
         val refreshedThisRun: MutableSet<Long> = java.util.Collections.synchronizedSet(HashSet())
     }

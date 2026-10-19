@@ -109,6 +109,7 @@ object SettingsDownloadScreen : SearchableSettings {
             ),
             getDownloadAheadGroup(downloadPreferences = downloadPreferences),
             // KMK -->
+            getAnimeDownloadGroup(),
             getDownloadCacheRenewInterval(downloadPreferences = downloadPreferences),
             // KMK <--
         )

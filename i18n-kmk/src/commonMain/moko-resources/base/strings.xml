@@ -613,7 +613,7 @@
     <string name="anime_play_externally">Play in external player</string>
     <string name="anime_download_internally">Download</string>
     <string name="anime_download_externally">Download with another app</string>
-    <string name="anime_download_queued">Added to the download queue</string>
+    <string name="anime_download_added">Added to the download queue</string>
     <string name="anime_no_downloader">No download app found</string>
     <string name="anime_stream_failed">Couldn\'t load this stream. Pick another one.</string>
     <!-- KMK: anime Updates selection and anime Stats -->

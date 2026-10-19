@@ -69,6 +69,9 @@ object SettingsLibraryScreen : SearchableSettings {
             getBadgesGroup(LocalNavigator.currentOrThrow),
             // KMK <--
             getGlobalUpdateGroup(allCategories, libraryPreferences),
+            // KMK -->
+            getAnimeLibraryUpdateGroup(),
+            // KMK <--
             getBehaviorGroup(libraryPreferences),
             // SY -->
             getSortingCategory(LocalNavigator.currentOrThrow, libraryPreferences),
@@ -214,7 +217,11 @@ object SettingsLibraryScreen : SearchableSettings {
                     enabled = autoUpdateInterval > 0,
                     onValueChanged = {
                         // Post to event looper to allow the preference to be updated.
-                        ContextCompat.getMainExecutor(context).execute { LibraryUpdateJob.setupTask(context) }
+                        ContextCompat.getMainExecutor(context).execute {
+                            LibraryUpdateJob.setupTask(context)
+                            // KMK: the anime update's own schedule shares these restrictions
+                            eu.kanade.tachiyomi.data.anime.AnimeLibraryUpdateJob.setupTask(context)
+                        }
                         true
                     },
                 ),

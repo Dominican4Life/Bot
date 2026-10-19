@@ -200,7 +200,7 @@ class AnimeLibraryUpdateJob(
     }
 
     /** Returns a check for whether an anime's new episodes should be downloaded */
-    private suspend fun newEpisodesDownloadCheck(): suspend (Anime) -> Boolean {
+    private suspend fun newEpisodesDownloadCheck(): (Anime) -> Boolean {
         if (!AnimePrefs.downloadNewEpisodes().get()) return { false }
         val included = AnimePrefs.downloadNewCategories().get()
         val excluded = AnimePrefs.downloadNewCategoriesExclude().get()

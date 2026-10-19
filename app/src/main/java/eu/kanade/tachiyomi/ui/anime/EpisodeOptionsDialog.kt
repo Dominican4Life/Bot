@@ -203,7 +203,7 @@ fun EpisodeOptionsDialog(
                         }
                         OptionRow(Icons.Outlined.Download, stringResource(KMR.strings.anime_download_internally)) {
                             onDownload()
-                            context.toast(KMR.strings.anime_download_queued)
+                            context.toast(KMR.strings.anime_download_added)
                             onDismissRequest()
                         }
                         OptionRow(Icons.Outlined.SystemUpdateAlt, stringResource(KMR.strings.anime_download_externally)) {

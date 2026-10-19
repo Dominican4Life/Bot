@@ -1443,6 +1443,7 @@ class PlayerViewModel @JvmOverloads constructor(
     }
 
     override fun onCleared() {
+        flushWatchTime() // KMK
         if (currentEpisode.value != null) {
             saveWatchingProgress(currentEpisode.value!!)
         }
@@ -2222,9 +2223,37 @@ class PlayerViewModel @JvmOverloads constructor(
             }
             // ANK <--
 
+            // KMK: watch time for Stats (normal playback only; seeks are skipped). Saved every 15 s.
+            currentEp.id?.let { epId ->
+                if (epId != watchTimeEpisodeId) {
+                    flushWatchTime()
+                    watchTimeEpisodeId = epId
+                } else if (watchTimeLastPos >= 0) {
+                    val delta = seconds - watchTimeLastPos
+                    if (delta in 1L..5_000L) watchTimePending += delta
+                    if (watchTimePending >= 15_000L) flushWatchTime()
+                }
+                watchTimeLastPos = seconds
+            }
+
             saveWatchingProgress(currentEp)
         }
     }
+
+    // KMK -->
+    private var watchTimeEpisodeId = -1L
+    private var watchTimeLastPos = -1L
+    private var watchTimePending = 0L
+
+    private fun flushWatchTime() {
+        val epId = watchTimeEpisodeId
+        val millis = watchTimePending
+        watchTimePending = 0L
+        watchTimeLastPos = -1L
+        if (epId < 0 || millis <= 0) return
+        viewModelScope.launchNonCancellable { eu.kanade.tachiyomi.data.anime.AnimeWatchTime.add(epId, millis) }
+    }
+    // KMK <--
 
     private fun updateEpisodeProgressOnComplete(currentEp: Episode) {
         currentEp.seen = true

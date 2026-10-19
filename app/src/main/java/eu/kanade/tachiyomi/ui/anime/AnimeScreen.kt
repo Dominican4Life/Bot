@@ -35,6 +35,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
@@ -63,7 +64,6 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.core.net.toUri
 import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
@@ -161,6 +161,36 @@ class AnimeScreen(private val animeId: Long) : Screen() {
             Scaffold { LoadingScreen(Modifier.padding(it)) }
             return
         }
+
+        // KMK --> outside player: started for a result, so the watched position comes back
+        val externalPlayerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult(),
+        ) { result -> screenModel.onExternalPlayerResult(result.data) }
+        val playExternally: (Episode, Video) -> Unit = { episode, video ->
+            val owner = state.animeOf(episode) ?: anime
+            val intents = ExternalPlayer.intents(
+                context = context,
+                video = video,
+                title = "${owner.title} - ${episode.name}",
+                startPositionMs = ExternalPlayer.startPosition(episode),
+                sourceHeaders = screenModel.sourceHeaders(episode),
+            )
+            val launched = intents.any { intent ->
+                try {
+                    externalPlayerLauncher.launch(intent)
+                    true
+                } catch (_: ActivityNotFoundException) {
+                    false
+                }
+            }
+            if (launched) {
+                screenModel.onExternalPlayerStarted(episode)
+            } else {
+                context.toast(KMR.strings.anime_no_player)
+            }
+        }
+        var optionsEpisode by remember { mutableStateOf<Episode?>(null) }
+        // KMK <--
 
         val playEpisode: (Episode) -> Unit = { episode ->
             // Built-in player unless the outside player is chosen in settings
@@ -269,6 +299,10 @@ class AnimeScreen(private val animeId: Long) : Screen() {
                 selection = emptySet()
             },
             selectedEpisodes = selectedEpisodes,
+            onEpisodeOptions = { episode ->
+                selection = emptySet()
+                optionsEpisode = episode
+            },
             onEditInfo = { dialog = AnimeDialog.EditInfo },
             onCoverClick = { dialog = AnimeDialog.Cover },
             onMigrate = { mihon.feature.migration.anime.AnimeMigrationStart.open(listOf(animeId)) },
@@ -373,8 +407,41 @@ class AnimeScreen(private val animeId: Long) : Screen() {
             VideoDialogs(
                 state = state,
                 screenModel = screenModel,
-                context = context,
+                onPlayExternal = playExternally,
+                onEpisodeOptions = { episode ->
+                    screenModel.dismissVideoDialog()
+                    optionsEpisode = episode
+                },
             )
+
+            // KMK: episode options (streams by server, play / copy / download one)
+            optionsEpisode?.let { episode ->
+                val episodeSource = screenModel.sourceOf(episode)
+                if (episodeSource == null) {
+                    optionsEpisode = null
+                } else {
+                    EpisodeOptionsDialog(
+                        anime = state.animeOf(episode) ?: anime,
+                        episode = episode,
+                        source = episodeSource,
+                        onDismissRequest = { optionsEpisode = null },
+                        onPlay = { hosters, hosterIndex, videoIndex ->
+                            context.startActivity(
+                                PlayerActivity.newIntent(
+                                    context,
+                                    episode.animeId,
+                                    episode.id,
+                                    hosters,
+                                    hosterIndex,
+                                    videoIndex,
+                                ),
+                            )
+                        },
+                        onPlayExternal = { video -> playExternally(episode, video) },
+                        onDownload = { screenModel.downloadEpisode(episode) },
+                    )
+                }
+            }
         }
     }
 }
@@ -417,14 +484,19 @@ private class AnimeActions(
     val onSelectionDownload: () -> Unit,
     val onSelectionDelete: () -> Unit,
     val selectedEpisodes: List<Episode>,
+    val onEpisodeOptions: (Episode) -> Unit,
     val onEditInfo: () -> Unit,
     val onCoverClick: () -> Unit,
     val onMigrate: (() -> Unit)?,
 )
 
 @Composable
-private fun VideoDialogs(state: AnimeScreenModel.State, screenModel: AnimeScreenModel, context: Context) {
-    val anime = state.anime
+private fun VideoDialogs(
+    state: AnimeScreenModel.State,
+    screenModel: AnimeScreenModel,
+    onPlayExternal: (Episode, Video) -> Unit,
+    onEpisodeOptions: (Episode) -> Unit,
+) {
     when (val dialog = state.videoDialog) {
         null -> {}
         is AnimeScreenModel.VideoDialog.Loading -> AlertDialog(
@@ -446,7 +518,12 @@ private fun VideoDialogs(state: AnimeScreenModel.State, screenModel: AnimeScreen
         )
         is AnimeScreenModel.VideoDialog.Pick -> AlertDialog(
             onDismissRequest = screenModel::dismissVideoDialog,
-            confirmButton = {},
+            confirmButton = {
+                // KMK: servers, qualities, copy link and download
+                TextButton(onClick = { onEpisodeOptions(dialog.episode) }) {
+                    Text(stringResource(KMR.strings.anime_episode_options))
+                }
+            },
             dismissButton = {
                 TextButton(onClick = screenModel::dismissVideoDialog) {
                     Text(stringResource(MR.strings.action_cancel))
@@ -465,7 +542,7 @@ private fun VideoDialogs(state: AnimeScreenModel.State, screenModel: AnimeScreen
                                 .clip(RoundedCornerShape(8.dp))
                                 .clickable {
                                     screenModel.resolveAndPlay(dialog.episode, video) { resolved ->
-                                        openExternalPlayer(context, resolved, anime?.title, dialog.episode)
+                                        onPlayExternal(dialog.episode, resolved)
                                     }
                                 }
                                 .padding(horizontal = 8.dp, vertical = 12.dp),
@@ -804,7 +881,11 @@ private fun AnimeScreenSmall(
         },
         bottomBar = { EpisodeSelectionBar(actions) },
         floatingActionButton = {
-            if (actions.selection.isEmpty()) StartFab(state, listState.shouldExpandFAB(), actions.onPlay)
+            if (actions.selection.isEmpty()) {
+                StartFab(state, listState.shouldExpandFAB(), actions.onPlay)
+            } else {
+                EpisodeOptionsFab(actions)
+            }
         },
     ) { contentPadding ->
         val topPadding = contentPadding.calculateTopPadding()
@@ -859,7 +940,11 @@ private fun AnimeScreenLarge(
         },
         bottomBar = { EpisodeSelectionBar(actions) },
         floatingActionButton = {
-            if (actions.selection.isEmpty()) StartFab(state, listState.shouldExpandFAB(), actions.onPlay)
+            if (actions.selection.isEmpty()) {
+                StartFab(state, listState.shouldExpandFAB(), actions.onPlay)
+            } else {
+                EpisodeOptionsFab(actions)
+            }
         },
     ) { contentPadding ->
         PullRefresh(
@@ -1380,32 +1465,20 @@ private fun formatTime(millis: Long): String {
     return if (hours > 0) "%d:%02d:%02d".format(hours, minutes, seconds) else "%d:%02d".format(minutes, seconds)
 }
 
-/** Plays a video in an outside player app until the built-in player arrives. Passes headers the way MX/mpv/VLC read them. */
-private fun openExternalPlayer(context: Context, video: Video, animeTitle: String?, episode: Episode) {
-    val headers = video.headers
-    val intent = Intent(Intent.ACTION_VIEW).apply {
-        setDataAndType(video.videoUrl.toUri(), "video/*")
-        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        val title = listOfNotNull(animeTitle, episode.name).joinToString(" - ")
-        putExtra("title", title)
-        putExtra(Intent.EXTRA_TITLE, title)
-        if (headers != null && headers.size > 0) {
-            val pairs = ArrayList<String>()
-            headers.forEach { (name, value) ->
-                pairs += name
-                pairs += value
-            }
-            putExtra("headers", pairs.toTypedArray())
-        }
-    }
-    try {
-        context.startActivity(intent)
-    } catch (_: ActivityNotFoundException) {
-        context.toast(KMR.strings.anime_no_player)
-    }
-}
-
 // KMK --> episode selection, Edit info, cover, Set as default, duplicates
+
+/** KMK: with exactly one episode selected, opens its episode options (streams, copy link, download...) */
+@Composable
+private fun EpisodeOptionsFab(actions: AnimeActions) {
+    val episode = actions.selectedEpisodes.singleOrNull()
+    SmallExtendedFloatingActionButton(
+        text = { Text(stringResource(KMR.strings.anime_episode_options)) },
+        icon = { Icon(imageVector = Icons.Outlined.Tune, contentDescription = null) },
+        onClick = { episode?.let(actions.onEpisodeOptions) },
+        expanded = true,
+        modifier = Modifier.animateFloatingActionButton(visible = episode != null, alignment = Alignment.BottomEnd),
+    )
+}
 
 @Composable
 private fun EpisodeSelectionBar(actions: AnimeActions) {
