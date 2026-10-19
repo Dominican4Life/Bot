@@ -337,7 +337,6 @@
     <string name="anime_filter_unseen">Unseen</string>
     <string name="anime_sort_by_episode_number">By episode number</string>
     <string name="anime_show_episode_number">Episode number</string>
-    <string name="anime_episode_number">Episode %1$s</string>
     <string name="anime_clear_episodes">Remove the saved episode list? It will be fetched again from the source.</string>
     <string name="anime_downloads_coming">Anime downloads are coming in the next update</string>
     <string name="anime_preview_tap_to_play">Tap to preview %1$s</string>
