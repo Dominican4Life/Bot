@@ -99,7 +99,7 @@ fun AnimeTrackSheet(
     var removing by remember { mutableStateOf<Pair<AnimeTrackService, AnimeTrack>?>(null) }
 
     fun failed(service: AnimeTrackService, e: Throwable) {
-        logcat(LogPriority.WARN, e) { "Anime tracking: ${service.name}" }
+        service.logcat(LogPriority.WARN, e) { "Anime tracking: ${service.name}" }
         context.toast("${service.name}: ${e.message ?: e.javaClass.simpleName}")
     }
 
@@ -121,7 +121,7 @@ fun AnimeTrackSheet(
             try {
                 service.find(anime.id, track.remoteId)?.let { repository.upsert(it.copy(title = it.title.ifBlank { track.title })) }
             } catch (e: Throwable) {
-                logcat(LogPriority.WARN, e) { "Anime tracking: refresh ${service.name}" }
+                service.logcat(LogPriority.WARN, e) { "Anime tracking: refresh ${service.name}" }
             }
         }
     }
@@ -437,7 +437,7 @@ private fun TrackSearchDialog(
             try {
                 results = service.search(query)
             } catch (e: Throwable) {
-                logcat(LogPriority.WARN, e) { "Anime tracking: search ${service.name}" }
+                service.logcat(LogPriority.WARN, e) { "Anime tracking: search ${service.name}" }
                 error = e.message ?: e.javaClass.simpleName
                 results = emptyList()
             }
