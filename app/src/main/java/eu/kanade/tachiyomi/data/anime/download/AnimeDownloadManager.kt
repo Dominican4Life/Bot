@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.animesource.AnimeSource
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.data.anime.Anime
+import eu.kanade.tachiyomi.data.anime.AnimePrefs
 import eu.kanade.tachiyomi.data.anime.AnimeRepository
 import eu.kanade.tachiyomi.data.anime.AnimeVideoFetcher
 import eu.kanade.tachiyomi.data.anime.Episode
@@ -21,6 +22,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,6 +31,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
 import okhttp3.Headers
 import okhttp3.Request
@@ -39,6 +43,8 @@ import tachiyomi.domain.storage.service.StorageManager
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.File
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -46,8 +52,9 @@ import kotlin.coroutines.resumeWithException
  * KMK: Downloads anime episodes to `<downloads>/anime/<source>/<anime>/<episode>.mkv|mp4`.
  *
  * Plain video files are streamed with the source's own HTTP client (so its cookies and Cloudflare
- * handling apply); HLS/DASH streams are saved with ffmpeg without re-encoding. One episode at a time,
- * run by [AnimeDownloadJob] so it keeps going in the background. The queue survives app restarts.
+ * handling apply); HLS/DASH streams are saved with ffmpeg without re-encoding. Up to
+ * [AnimePrefs.concurrentDownloads] episodes at a time, run by [AnimeDownloadJob] so it keeps going in the
+ * background. The queue survives app restarts.
  */
 class AnimeDownloadManager(
     private val context: Context,
@@ -75,7 +82,11 @@ class AnimeDownloadManager(
     val changes: StateFlow<Int> = _changes.asStateFlow()
 
     /** Episode file names on disk, per anime id (filled the first time an anime is looked at) */
-    private val fileCache = mutableMapOf<Long, Set<String>>()
+    private val fileCache = ConcurrentHashMap<Long, Set<String>>()
+
+    /** Taking the next queued item and creating folders happen one download at a time */
+    private val claimLock = Mutex()
+    private val dirLock = Mutex()
 
     init {
         // Bring back what was still queued when the app closed
@@ -135,16 +146,31 @@ class AnimeDownloadManager(
     private val failures = mutableListOf<Item>()
 
     /** Episodes that failed during the last run */
-    fun lastFailures(): List<Item> = failures.toList()
+    fun lastFailures(): List<Item> = synchronized(failures) { failures.toList() }
 
-    /** Called by [AnimeDownloadJob]: works through the queue until it is empty */
+    /**
+     * Called by [AnimeDownloadJob]: works through the queue until it is empty, with as many downloads at once as
+     * set in the anime download settings.
+     */
     suspend fun runQueue(onProgress: (Item, Int, Int) -> Unit) {
-        failures.clear()
+        synchronized(failures) { failures.clear() }
+        val workers = AnimePrefs.concurrentDownloads().get().coerceIn(1, MAX_CONCURRENT)
+        coroutineScope {
+            repeat(workers) { launch { runWorker(onProgress) } }
+        }
+    }
+
+    /** Takes the next queued episode, marking it as downloading so no other worker takes it */
+    private suspend fun claimNext(): Item? = claimLock.withLock {
+        _queue.value.firstOrNull { it.state.value == Download.State.QUEUE }
+            ?.also { it.state.value = Download.State.DOWNLOADING }
+    }
+
+    private suspend fun runWorker(onProgress: (Item, Int, Int) -> Unit) {
         while (true) {
             currentCoroutineContext().ensureActive()
-            val next = _queue.value.firstOrNull { it.state.value == Download.State.QUEUE } ?: break
+            val next = claimNext() ?: break
             val remaining = _queue.value.count { it.state.value == Download.State.QUEUE }
-            next.state.value = Download.State.DOWNLOADING
             onProgress(next, 0, remaining)
             try {
                 download(next) { percent ->
@@ -163,7 +189,7 @@ class AnimeDownloadManager(
                 logcat(LogPriority.ERROR, e) { "Anime download failed: ${next.episode.name}" }
                 next.error = e.message ?: e.javaClass.simpleName
                 next.state.value = Download.State.ERROR
-                failures += next
+                synchronized(failures) { failures += next }
                 saveQueue()
             }
             _changes.update { it + 1 }
@@ -256,7 +282,8 @@ class AnimeDownloadManager(
         val videos = AnimeVideoFetcher.fetchVideos(source, item.episode.toSEpisode())
         if (videos.isEmpty()) error("No videos found")
 
-        val dir = animeDir(item.anime, create = true) ?: error("Can't open the downloads folder")
+        // Two downloads of the same anime must not both create its folder
+        val dir = dirLock.withLock { animeDir(item.anime, create = true) } ?: error("Can't open the downloads folder")
         val base = episodeBaseName(item.episode)
         var lastError: Throwable? = null
         // Best video first; fall back to the next one when a server fails
@@ -351,7 +378,7 @@ class AnimeDownloadManager(
         val duration = probeDuration(video.videoUrl, headerBlock)
         // ffmpeg writes to app storage first, then the file is copied into the downloads folder
         val workDir = File(context.cacheDir, "anime_download").apply { mkdirs() }
-        val out = File(workDir, "${System.currentTimeMillis()}.mkv")
+        val out = File(workDir, "${UUID.randomUUID()}.mkv")
         val args = buildList {
             if (headerBlock.isNotEmpty()) {
                 add("-headers")
@@ -413,6 +440,7 @@ class AnimeDownloadManager(
         const val ANIME_DIR = "anime"
         private const val TMP = ".tmp"
         private const val MAX_TRIES = 3
+        const val MAX_CONCURRENT = 5
         private const val DEFAULT_BUFFER = 64 * 1024
     }
 }

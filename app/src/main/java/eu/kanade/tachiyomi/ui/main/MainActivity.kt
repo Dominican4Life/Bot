@@ -527,6 +527,8 @@ class MainActivity : BaseActivity() {
                     if (!LibraryUpdateJob.isPeriodicUpdateScheduled(context)) {
                         LibraryUpdateJob.setupTask(context)
                     }
+                    // KMK: the anime update's own schedule (cancelled when it runs with the manga update)
+                    eu.kanade.tachiyomi.data.anime.AnimeLibraryUpdateJob.setupTask(context)
                     // KMK: the Suggestions feature was removed; stop its old background refresh
                     androidx.work.WorkManager.getInstance(context).apply {
                         cancelUniqueWork("Suggestions")

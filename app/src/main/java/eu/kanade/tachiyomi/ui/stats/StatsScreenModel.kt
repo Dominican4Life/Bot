@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
+import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.domain.history.interactor.GetTotalReadDuration
 import tachiyomi.domain.library.model.LibraryManga
 import tachiyomi.domain.library.service.LibraryPreferences
@@ -48,7 +49,17 @@ class StatsScreenModel(
     val allRead = _allRead.asStateFlow()
     // SY <--
 
+    // KMK -->
+    private val _animeStats = MutableStateFlow<AnimeStatsData?>(null)
+    val animeStats = _animeStats.asStateFlow()
+    // KMK <--
+
     init {
+        // KMK -->
+        screenModelScope.launchIO {
+            _animeStats.value = runCatching { AnimeStats.load() }.getOrNull()
+        }
+        // KMK <--
         // SY -->
         _allRead.onEach { allRead ->
             mutableState.update { StatsScreenState.Loading }

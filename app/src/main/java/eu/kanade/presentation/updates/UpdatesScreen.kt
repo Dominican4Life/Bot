@@ -24,8 +24,10 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -39,6 +41,7 @@ import cafe.adriel.voyager.navigator.LocalNavigator
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.domain.ui.model.PanoramaStyle
 import eu.kanade.presentation.anime.AnimeUpdateRow
+import eu.kanade.presentation.anime.AnimeUpdatesActionBar
 import eu.kanade.presentation.anime.rememberPlayAnimeEpisode
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarActions
@@ -58,10 +61,14 @@ import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
 import eu.kanade.tachiyomi.data.anime.AnimeLibraryUpdateJob
 import eu.kanade.tachiyomi.data.anime.AnimeRepository
 import eu.kanade.tachiyomi.data.anime.AnimeUpdateItem
+import eu.kanade.tachiyomi.data.anime.download.AnimeDownloadManager
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.ui.anime.AnimeScreen
+import eu.kanade.tachiyomi.ui.home.HomeScreen
+import eu.kanade.tachiyomi.ui.updates.AnimeUpdatesActions
 import eu.kanade.tachiyomi.ui.updates.UpdatesItem
 import eu.kanade.tachiyomi.ui.updates.UpdatesScreenModel
+import eu.kanade.tachiyomi.ui.updates.rememberAnimeUpdateDownloads
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.delay
@@ -145,6 +152,50 @@ fun UpdateScreen(
         }
         started
     }
+
+    // Anime episodes picked with a long-press, apart from the manga selection (one or the other at a time)
+    val animeScope = rememberCoroutineScope()
+    val animeDownloadManager = remember { Injekt.get<AnimeDownloadManager>() }
+    val animeQueue by animeDownloadManager.queue.collectAsState()
+    val animeDownloads = rememberAnimeUpdateDownloads(animeUpdates)
+    val animeSelected = remember { mutableStateListOf<Long>() }
+    val animeSelectionMode = animeSelected.isNotEmpty()
+    val visibleAnime = if (showsAnime) animeUpdates else emptyList()
+    val selectedAnime = remember(animeUpdates, animeSelected.toList()) {
+        val ids = animeSelected.toHashSet()
+        animeUpdates.filter { it.episodeId in ids }
+    }
+    val toggleAnime: (AnimeUpdateItem) -> Unit = { item ->
+        if (state.selectionMode) onSelectAll(false)
+        if (!animeSelected.remove(item.episodeId)) animeSelected.add(item.episodeId)
+    }
+    val clearAnimeSelection: () -> Unit = { animeSelected.clear() }
+    LaunchedEffect(animeUpdates, showsAnime) {
+        val ids = visibleAnime.mapTo(HashSet()) { it.episodeId }
+        animeSelected.retainAll { it in ids }
+    }
+    LaunchedEffect(state.selectionMode) {
+        if (state.selectionMode) animeSelected.clear()
+    }
+    LaunchedEffect(animeSelectionMode) {
+        if (!state.selectionMode) HomeScreen.showBottomNav(!animeSelectionMode)
+    }
+    BackHandler(enabled = animeSelectionMode, onBack = clearAnimeSelection)
+    val runAnimeAction: (suspend (List<AnimeUpdateItem>) -> Unit) -> Unit = { action ->
+        val items = selectedAnime
+        animeSelected.clear()
+        animeScope.launchIO { action(items) }
+    }
+    val onAnimeDownload: (AnimeUpdateItem, ChapterDownloadAction) -> Unit = { item, action ->
+        animeScope.launchIO {
+            when (action) {
+                ChapterDownloadAction.START -> AnimeUpdatesActions.download(listOf(item))
+                ChapterDownloadAction.START_NOW -> AnimeUpdatesActions.download(listOf(item), startNow = true)
+                ChapterDownloadAction.CANCEL -> AnimeUpdatesActions.cancel(listOf(item))
+                ChapterDownloadAction.DELETE -> AnimeUpdatesActions.deleteDownloads(listOf(item))
+            }
+        }
+    }
     // KMK <--
 
     Scaffold(
@@ -158,27 +209,59 @@ fun UpdateScreen(
                     // KMK -->
                     displayAction = mediaDisplayAction(displayMode, onDisplayClicked),
                     // KMK <--
-                    actionModeCounter = state.selected.size,
-                    onSelectAll = { onSelectAll(true) },
-                    onInvertSelection = { onInvertSelection() },
-                    onCancelActionMode = { onSelectAll(false) },
+                    // KMK -->
+                    actionModeCounter = if (animeSelectionMode) animeSelected.size else state.selected.size,
+                    onSelectAll = {
+                        if (animeSelectionMode) {
+                            val ids = animeSelected.toHashSet()
+                            animeSelected.addAll(visibleAnime.map { it.episodeId }.filter { it !in ids })
+                        } else {
+                            onSelectAll(true)
+                        }
+                    },
+                    onInvertSelection = {
+                        if (animeSelectionMode) {
+                            val ids = animeSelected.toHashSet()
+                            val inverted = visibleAnime.map { it.episodeId }.filter { it !in ids }
+                            animeSelected.clear()
+                            animeSelected.addAll(inverted)
+                        } else {
+                            onInvertSelection()
+                        }
+                    },
+                    onCancelActionMode = { if (animeSelectionMode) clearAnimeSelection() else onSelectAll(false) },
+                    // KMK <--
                     scrollBehavior = scrollBehavior,
                 )
                 // KMK -->
-                if (!state.selectionMode) {
+                if (!state.selectionMode && !animeSelectionMode) {
                     MediaTabRow(selected = mediaTab, onSelect = onMediaTabChange)
                 }
             }
             // KMK <--
         },
         bottomBar = {
-            UpdatesBottomBar(
-                selected = state.selected,
-                onDownloadChapter = onDownloadChapter,
-                onMultiBookmarkClicked = onMultiBookmarkClicked,
-                onMultiMarkAsReadClicked = onMultiMarkAsReadClicked,
-                onMultiDeleteClicked = onMultiDeleteClicked,
-            )
+            // KMK -->
+            Column {
+                // KMK <--
+                UpdatesBottomBar(
+                    selected = state.selected,
+                    onDownloadChapter = onDownloadChapter,
+                    onMultiBookmarkClicked = onMultiBookmarkClicked,
+                    onMultiMarkAsReadClicked = onMultiMarkAsReadClicked,
+                    onMultiDeleteClicked = onMultiDeleteClicked,
+                )
+                // KMK -->
+                AnimeUpdatesActionBar(
+                    selected = selectedAnime,
+                    downloaded = animeDownloads.downloaded,
+                    onMarkSeen = { seen -> runAnimeAction { AnimeUpdatesActions.setSeen(it, seen) } },
+                    onBookmark = { bookmark -> runAnimeAction { AnimeUpdatesActions.setBookmark(it, bookmark) } },
+                    onDownload = { runAnimeAction { AnimeUpdatesActions.download(it) } },
+                    onDelete = { runAnimeAction { AnimeUpdatesActions.deleteDownloads(it) } },
+                )
+            }
+            // KMK <--
         },
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
     ) { contentPadding ->
@@ -213,7 +296,7 @@ fun UpdateScreen(
                             isRefreshing = false
                         }
                     },
-                    enabled = !state.selectionMode,
+                    enabled = !state.selectionMode && /* KMK */ !animeSelectionMode,
                     indicatorPadding = contentPadding,
                 ) {
                     // KMK --> the library's grids
@@ -226,8 +309,9 @@ fun UpdateScreen(
                             selectionMode = state.selectionMode,
                             onUpdateSelected = onUpdateSelected,
                             onClickCover = onClickCover,
-                            onClickAnime = { playEpisode(it.animeId, it.episodeId) },
-                            onLongClickAnime = { navigator?.push(AnimeScreen(it.animeId)) },
+                            onClickAnime = { if (animeSelectionMode) toggleAnime(it) else playEpisode(it.animeId, it.episodeId) },
+                            onLongClickAnime = toggleAnime,
+                            isAnimeSelected = { it.episodeId in animeSelected },
                         )
                         return@PullRefresh
                     }
@@ -268,6 +352,12 @@ fun UpdateScreen(
                                             animeRepository.updateEpisode(id = item.episodeId, seen = !item.seen)
                                         }
                                     },
+                                    selected = item.episodeId in animeSelected,
+                                    selectionMode = animeSelectionMode,
+                                    onSelect = { toggleAnime(item) },
+                                    downloaded = item.episodeId in animeDownloads.downloaded,
+                                    queued = animeQueue.firstOrNull { it.episode.id == item.episodeId },
+                                    onDownload = { onAnimeDownload(item, it) },
                                 )
                             },
                             // KMK <--
@@ -322,6 +412,7 @@ private fun UpdatesGrid(
     onClickCover: (UpdatesItem) -> Unit,
     onClickAnime: (AnimeUpdateItem) -> Unit,
     onLongClickAnime: (AnimeUpdateItem) -> Unit,
+    isAnimeSelected: (AnimeUpdateItem) -> Boolean = { false },
 ) {
     val cells = remember(uiModels) {
         val seen = HashSet<String>()
@@ -403,6 +494,7 @@ private fun UpdatesGrid(
                         displayMode = displayMode,
                         cover = animeCover(item.animeId, item.source, true, item.thumbnailUrl),
                         title = item.title,
+                        isSelected = isAnimeSelected(item),
                         coverAlpha = if (item.seen) 0.5f else 1f,
                         onClick = { onClickAnime(item) },
                         onLongClick = { onLongClickAnime(item) },

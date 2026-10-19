@@ -1,25 +1,37 @@
 package eu.kanade.presentation.anime
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.ZeroCornerSize
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.outlined.BookmarkAdd
+import androidx.compose.material.icons.outlined.BookmarkRemove
 import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.DoneAll
+import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.PlayArrow
-import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.RemoveDone
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.AlertDialog
@@ -27,47 +39,45 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
+import eu.kanade.presentation.manga.components.ChapterDownloadAction
+import eu.kanade.presentation.manga.components.ChapterDownloadIndicator
 import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
 import eu.kanade.tachiyomi.data.anime.AnimeHistoryItem
-import eu.kanade.tachiyomi.data.anime.AnimeLibraryUpdateJob
-import eu.kanade.tachiyomi.data.anime.AnimeRepository
 import eu.kanade.tachiyomi.data.anime.AnimeUpdateItem
+import eu.kanade.tachiyomi.data.anime.download.AnimeDownloadManager
+import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.ui.anime.AnimeScreen
 import eu.kanade.tachiyomi.ui.player.PlayerActivity
 import eu.kanade.tachiyomi.ui.player.settings.PlayerPreferences
-import eu.kanade.tachiyomi.util.system.toast
-import kotlinx.coroutines.launch
-import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
-import tachiyomi.presentation.core.components.FastScrollLazyColumn
 import tachiyomi.presentation.core.i18n.stringResource
-import tachiyomi.presentation.core.screens.EmptyScreen
 import tachiyomi.presentation.core.util.secondaryItemAlpha
+import tachiyomi.presentation.core.util.selectedBackground
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.text.DateFormat
 import java.util.Calendar
 import java.util.Date
-import java.util.concurrent.TimeUnit
 
 /** KMK: Plays an episode in the built-in player, or opens the anime when the outside player is chosen. */
 @Composable
@@ -140,7 +150,7 @@ internal fun AnimeHistoryRow(
     }
 }
 
-/** KMK: One new episode of the Updates tab */
+/** KMK: One new episode of the Updates tab; long-press selects it, and while selecting a tap does too */
 @Composable
 internal fun AnimeUpdateRow(
     item: AnimeUpdateItem,
@@ -148,12 +158,28 @@ internal fun AnimeUpdateRow(
     onClick: () -> Unit,
     onClickCover: () -> Unit,
     onToggleSeen: () -> Unit,
+    selected: Boolean = false,
+    selectionMode: Boolean = false,
+    onSelect: (() -> Unit)? = null,
+    downloaded: Boolean = false,
+    queued: AnimeDownloadManager.Item? = null,
+    onDownload: ((ChapterDownloadAction) -> Unit)? = null,
 ) {
+    val haptic = LocalHapticFeedback.current
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .selectedBackground(selected)
+            .combinedClickable(
+                onClick = { if (selectionMode && onSelect != null) onSelect() else onClick() },
+                onLongClick = onSelect?.let { select ->
+                    {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        select()
+                    }
+                },
+            )
             .padding(start = 16.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
     ) {
         AnimeCoverImage(
@@ -162,7 +188,7 @@ internal fun AnimeUpdateRow(
             modifier = Modifier
                 .size(48.dp)
                 .clip(RoundedCornerShape(6.dp))
-                .clickable(onClick = onClickCover),
+                .clickable(onClick = { if (selectionMode && onSelect != null) onSelect() else onClickCover() }),
         )
         Column(
             modifier = Modifier
@@ -177,6 +203,15 @@ internal fun AnimeUpdateRow(
                     Canvas(Modifier.size(6.dp)) { drawCircle(color = dotColor) }
                     Spacer(Modifier.width(6.dp))
                 }
+                if (item.bookmark) {
+                    Icon(
+                        imageVector = Icons.Filled.Bookmark,
+                        contentDescription = stringResource(KMR.strings.anime_library_filter_bookmarked),
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(14.dp),
+                    )
+                    Spacer(Modifier.width(4.dp))
+                }
                 Text(
                     text = item.episodeName,
                     style = MaterialTheme.typography.bodySmall,
@@ -185,14 +220,132 @@ internal fun AnimeUpdateRow(
                 )
             }
         }
-        IconButton(onClick = onToggleSeen) {
+        IconButton(onClick = onToggleSeen, enabled = !selectionMode) {
             Icon(
                 imageVector = if (item.seen) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
                 contentDescription = stringResource(
-                    if (item.seen) MR.strings.action_mark_as_unread else MR.strings.action_mark_as_read,
+                    if (item.seen) KMR.strings.anime_action_mark_unseen else KMR.strings.anime_action_mark_seen,
                 ),
             )
         }
+        if (onDownload != null) {
+            AnimeEpisodeDownloadIndicator(
+                enabled = !selectionMode,
+                downloaded = downloaded,
+                queued = queued,
+                onClick = onDownload,
+                modifier = Modifier.padding(start = 4.dp),
+            )
+        }
+    }
+}
+
+/** KMK: The manga download button for an episode, fed by [AnimeDownloadManager]'s queue */
+@Composable
+internal fun AnimeEpisodeDownloadIndicator(
+    enabled: Boolean,
+    downloaded: Boolean,
+    queued: AnimeDownloadManager.Item?,
+    onClick: (ChapterDownloadAction) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (queued != null) {
+        val state by queued.state.collectAsState()
+        val progress by queued.progress.collectAsState()
+        ChapterDownloadIndicator(
+            enabled = enabled,
+            downloadStateProvider = { if (downloaded && state == Download.State.NOT_DOWNLOADED) Download.State.DOWNLOADED else state },
+            downloadProgressProvider = { progress },
+            onClick = onClick,
+            modifier = modifier,
+        )
+    } else {
+        ChapterDownloadIndicator(
+            enabled = enabled,
+            downloadStateProvider = { if (downloaded) Download.State.DOWNLOADED else Download.State.NOT_DOWNLOADED },
+            downloadProgressProvider = { 0 },
+            onClick = onClick,
+            modifier = modifier,
+        )
+    }
+}
+
+/** KMK: The actions for the anime episodes picked in the Updates tab, like the manga ones */
+@Composable
+internal fun AnimeUpdatesActionBar(
+    selected: List<AnimeUpdateItem>,
+    downloaded: Set<Long>,
+    onMarkSeen: (Boolean) -> Unit,
+    onBookmark: (Boolean) -> Unit,
+    onDownload: () -> Unit,
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    AnimatedVisibility(
+        visible = selected.isNotEmpty(),
+        enter = expandVertically(expandFrom = Alignment.Bottom),
+        exit = shrinkVertically(shrinkTowards = Alignment.Bottom),
+    ) {
+        Surface(
+            modifier = modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.large.copy(bottomEnd = ZeroCornerSize, bottomStart = ZeroCornerSize),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Bottom))
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
+            ) {
+                if (selected.any { !it.bookmark }) {
+                    ActionBarButton(Icons.Outlined.BookmarkAdd, stringResource(KMR.strings.anime_action_bookmark_episode)) {
+                        onBookmark(true)
+                    }
+                } else {
+                    ActionBarButton(Icons.Outlined.BookmarkRemove, stringResource(KMR.strings.anime_action_remove_bookmark_episode)) {
+                        onBookmark(false)
+                    }
+                }
+                if (selected.any { !it.seen }) {
+                    ActionBarButton(Icons.Outlined.DoneAll, stringResource(KMR.strings.anime_action_mark_seen)) {
+                        onMarkSeen(true)
+                    }
+                }
+                if (selected.any { it.seen || it.lastSecondSeen > 0L }) {
+                    ActionBarButton(Icons.Outlined.RemoveDone, stringResource(KMR.strings.anime_action_mark_unseen)) {
+                        onMarkSeen(false)
+                    }
+                }
+                if (selected.any { it.episodeId !in downloaded }) {
+                    ActionBarButton(Icons.Outlined.Download, stringResource(MR.strings.action_download), onDownload)
+                }
+                if (selected.any { it.episodeId in downloaded }) {
+                    ActionBarButton(Icons.Outlined.Delete, stringResource(MR.strings.action_delete), onDelete)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RowScope.ActionBarButton(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .weight(1f)
+            .clip(MaterialTheme.shapes.large)
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
+    ) {
+        Icon(imageVector = icon, contentDescription = label)
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 4.dp),
+        )
     }
 }
 

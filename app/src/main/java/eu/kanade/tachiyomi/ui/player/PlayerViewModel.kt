@@ -131,7 +131,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.cancellation.CancellationException
 import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
 import eu.kanade.tachiyomi.data.anime.Anime
+import eu.kanade.tachiyomi.data.anime.AnimePrefs
 import eu.kanade.tachiyomi.data.anime.AnimeRepository
+import eu.kanade.tachiyomi.data.anime.download.AnimeDownloadManager
 import eu.kanade.tachiyomi.ui.player.compat.Episode
 import eu.kanade.tachiyomi.ui.player.compat.skipIntroDisable
 import eu.kanade.tachiyomi.ui.player.compat.skipIntroLength
@@ -1657,6 +1659,8 @@ class PlayerViewModel @JvmOverloads constructor(
                 val episode = currentPlaylist.value.first { it.id == episodeId }
 
                 _currentEpisode.update { _ -> episode }
+                // KMK: a new episode was opened in the running player
+                deletePendingSeen(keepId = episode.id)
                 _currentSource.update { _ -> source }
 
                 updateEpisode(episode)
@@ -2149,6 +2153,8 @@ class PlayerViewModel @JvmOverloads constructor(
         val chosenEpisode = currentPlaylist.value.firstOrNull { ep -> ep.id == episodeId } ?: return null
 
         _currentEpisode.update { _ -> chosenEpisode }
+        // KMK: the player moved on, so seen episodes waiting for "delete after seen" can go
+        deletePendingSeen(keepId = chosenEpisode.id)
         updateEpisode(chosenEpisode)
         // ANZ -->
         _hasPreviousEpisode.update { _ -> getCurrentEpisodeIndex() != 0 }
@@ -2222,7 +2228,72 @@ class PlayerViewModel @JvmOverloads constructor(
 
     private fun updateEpisodeProgressOnComplete(currentEp: Episode) {
         currentEp.seen = true
+        // KMK -->
+        // Runs every second past the threshold: act once per episode
+        if (currentEp.id == null || currentEp.id == completeHandledFor) return
+        completeHandledFor = currentEp.id
+        queueDeleteAfterSeen(currentEp)
+        downloadAhead(currentEp)
+        // KMK <--
     }
+
+    // KMK -->
+    private val animeDownloads: AnimeDownloadManager by lazy { Injekt.get() }
+
+    /** The episode [updateEpisodeProgressOnComplete] last acted on */
+    private var completeHandledFor: Long? = null
+
+    /**
+     * Seen episodes (id to their anime) to delete once the player has moved on from them: the file may be the one
+     * playing, so it's deleted when another episode loads or the player closes.
+     */
+    private val pendingDeletes = mutableMapOf<Long, Anime>()
+
+    private fun queueDeleteAfterSeen(episode: Episode) {
+        if (!AnimePrefs.deleteAfterSeen().get()) return
+        if (episode.bookmark && AnimePrefs.deleteKeepBookmarked().get()) return
+        val anime = anime ?: return
+        val id = episode.id ?: return
+        synchronized(pendingDeletes) { pendingDeletes[id] = anime }
+    }
+
+    /** Deletes the downloads of the pending seen episodes, except [keepId] (the one now playing) */
+    private fun deletePendingSeen(keepId: Long?) {
+        val pending = synchronized(pendingDeletes) {
+            val ready = pendingDeletes.filterKeys { it != keepId }
+            ready.keys.forEach { pendingDeletes.remove(it) }
+            ready
+        }
+        if (pending.isEmpty()) return
+        val playingId = currentEpisode.value?.id
+        viewModelScope.launchNonCancellable {
+            val keepBookmarked = AnimePrefs.deleteKeepBookmarked().get()
+            pending.entries.groupBy({ it.value }, { it.key }).forEach { (anime, ids) ->
+                val episodes = ids.mapNotNull { animeRepository.getEpisode(it) }
+                    // Still seen (the playing one may not be saved yet) and not bookmarked meanwhile
+                    .filter { (it.seen || it.id == playingId) && !(keepBookmarked && it.bookmark) }
+                if (episodes.isNotEmpty()) animeDownloads.delete(anime, episodes)
+            }
+        }
+    }
+
+    /** Download ahead: queues the next unseen episodes of a library anime once this one counts as watched */
+    private fun downloadAhead(episode: Episode) {
+        val amount = AnimePrefs.downloadAhead().get()
+        if (amount <= 0) return
+        val anime = anime ?: return
+        if (!anime.favorite) return
+        val playlist = currentPlaylist.value
+        val index = playlist.indexOfFirst { it.id == episode.id }
+        if (index < 0) return
+        val next = playlist.drop(index + 1)
+            .filter { !it.seen }
+            .take(amount)
+            .mapNotNull { it.toDomainEpisode() }
+        if (next.isEmpty()) return
+        viewModelScope.launchIO { animeDownloads.enqueue(anime, next) }
+    }
+    // KMK <--
 
     fun saveCurrentEpisodeWatchingProgress() {
         currentEpisode.value?.let { saveWatchingProgress(it) }
@@ -2398,8 +2469,8 @@ class PlayerViewModel @JvmOverloads constructor(
         class Error(val error: Throwable) : SaveImageResult()
     }
 
-    /** KMK: downloads aren't merged yet */
-    fun deletePendingEpisodes() {}
+    /** KMK: the player is closing: deletes the seen episodes waiting for "delete after seen" */
+    fun deletePendingEpisodes() = deletePendingSeen(keepId = null)
 
     /**
      * Returns the skipIntroLength used by this anime or the default one.

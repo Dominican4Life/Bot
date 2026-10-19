@@ -157,7 +157,8 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
 
         // KMK -->
         // Anime in the library are checked alongside manga
-        eu.kanade.tachiyomi.data.anime.AnimeLibraryUpdateJob.startNow(context)
+        // (scheduled manga updates only take the anime along when the anime update has no schedule of its own)
+        eu.kanade.tachiyomi.data.anime.AnimeLibraryUpdateJob.startWithManga(context, tags.contains(WORK_NAME_AUTO))
         libraryUpdateStatus.start()
 
         deleteLibraryUpdateErrors.cleanUnrelevantMangaErrors()

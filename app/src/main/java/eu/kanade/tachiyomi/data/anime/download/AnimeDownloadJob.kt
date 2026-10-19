@@ -12,6 +12,7 @@ import androidx.work.ForegroundInfo
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkerParameters
+import eu.kanade.tachiyomi.data.anime.AnimePrefs
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.ui.main.MainActivity
@@ -42,11 +43,15 @@ class AnimeDownloadJob(context: Context, params: WorkerParameters) : CoroutineWo
         setForegroundSafely()
         try {
             var lastUpdate = 0L
+            val lock = Any()
             manager.runQueue { item, percent, remaining ->
-                val now = System.currentTimeMillis()
-                // Don't flood the notification shade
-                if (now - lastUpdate < 700 && percent in 1..99) return@runQueue
-                lastUpdate = now
+                // Several downloads can report at once
+                synchronized(lock) {
+                    val now = System.currentTimeMillis()
+                    // Don't flood the notification shade
+                    if (now - lastUpdate < 700 && percent in 1..99) return@runQueue
+                    lastUpdate = now
+                }
                 applicationContext.notify(
                     Notifications.ID_ANIME_DOWNLOAD_PROGRESS,
                     progressNotification(
@@ -99,12 +104,23 @@ class AnimeDownloadJob(context: Context, params: WorkerParameters) : CoroutineWo
     companion object {
         private const val WORK_NAME = "AnimeDownloader"
 
-        fun start(context: Context) {
+        fun start(context: Context) = enqueue(context, ExistingWorkPolicy.APPEND_OR_REPLACE)
+
+        /**
+         * Starts the queue again with the current network setting (call after "Only on Wi-Fi" changes). A running
+         * download is stopped and stays queued.
+         */
+        fun restart(context: Context) = enqueue(context, ExistingWorkPolicy.REPLACE)
+
+        private fun enqueue(context: Context, policy: ExistingWorkPolicy) {
+            // "Only on Wi-Fi": WorkManager holds the queue (and stops a running download) while the network is
+            // metered, then carries on by itself once it isn't
+            val network = if (AnimePrefs.downloadOnlyOverWifi().get()) NetworkType.UNMETERED else NetworkType.CONNECTED
             val request = OneTimeWorkRequestBuilder<AnimeDownloadJob>()
                 .addTag(WORK_NAME)
-                .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                .setConstraints(Constraints.Builder().setRequiredNetworkType(network).build())
                 .build()
-            context.workManager.enqueueUniqueWork(WORK_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request)
+            context.workManager.enqueueUniqueWork(WORK_NAME, policy, request)
         }
     }
 }

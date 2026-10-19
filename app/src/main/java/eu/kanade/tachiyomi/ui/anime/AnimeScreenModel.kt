@@ -18,6 +18,7 @@ import eu.kanade.tachiyomi.data.anime.AnimeVideoFetcher
 import eu.kanade.tachiyomi.data.anime.Episode
 import eu.kanade.tachiyomi.data.anime.download.AnimeDownloadManager
 import eu.kanade.tachiyomi.data.download.model.Download
+import eu.kanade.tachiyomi.ui.player.settings.PlayerPreferences
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -491,7 +492,7 @@ class AnimeScreenModel(
 
     /** Loads the videos of an episode, then shows the picker (or plays right away if there's only one). */
     fun loadVideos(episode: Episode) {
-        val source = source ?: return
+        val source = sourceOf(episode) ?: return
         videoJob?.cancel()
         mutableState.update { it.copy(videoDialog = VideoDialog.Loading(episode)) }
         videoJob = screenModelScope.launchIO {
@@ -518,7 +519,7 @@ class AnimeScreenModel(
 
     /** Finishes a video that still needs its link worked out, then hands it to [onReady]. */
     fun resolveAndPlay(episode: Episode, video: Video, onReady: (Video) -> Unit) {
-        val source = source
+        val source = sourceOf(episode)
         videoJob?.cancel()
         mutableState.update { it.copy(videoDialog = VideoDialog.Loading(episode)) }
         videoJob = screenModelScope.launchIO {
@@ -532,9 +533,8 @@ class AnimeScreenModel(
                 if (resolved.videoUrl.isBlank() || resolved.videoUrl == "null") {
                     mutableState.update { it.copy(videoDialog = VideoDialog.Empty(episode)) }
                 } else {
-                    markSeen(episode)
-                    repository.upsertHistory(episode.id, System.currentTimeMillis())
-                    onReady(resolved)
+                    // KMK: progress, history and "seen" are saved when the outside player returns
+                    withUIContext { onReady(resolved) }
                 }
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
@@ -553,6 +553,64 @@ class AnimeScreenModel(
 
     private suspend fun fetchVideos(source: AnimeSource, episode: SEpisode): List<Video> =
         AnimeVideoFetcher.fetchVideos(source, episode)
+
+    // KMK --> episode options and the outside player
+
+    /** The source an episode comes from (another one when this page is merged) */
+    fun sourceOf(episode: Episode): AnimeSource? {
+        val owner = state.value.animeOf(episode)
+        if (owner == null || owner.id == animeId) return source
+        return sourceManager.get(owner.source) ?: source
+    }
+
+    /** Headers the source sends with its requests, for players and downloaders */
+    fun sourceHeaders(episode: Episode): okhttp3.Headers? = (sourceOf(episode) as? AnimeHttpSource)?.headers
+
+    /** "Download" in the episode options: queues the episode for the built-in downloader */
+    fun downloadEpisode(episode: Episode) {
+        val anime = state.value.animeOf(episode) ?: return
+        downloadManager.enqueue(anime, listOf(episode))
+    }
+
+    /** The episode sent to an outside player, waiting for the player to return */
+    private var externalEpisode: Episode? = null
+
+    private fun isIncognito(episode: Episode): Boolean =
+        eu.kanade.tachiyomi.ui.anime.AnimeIncognito.isOn(state.value.animeOf(episode)?.source)
+
+    fun onExternalPlayerStarted(episode: Episode) {
+        externalEpisode = episode
+        if (isIncognito(episode)) return
+        screenModelScope.launchIO { repository.upsertHistory(episode.id, System.currentTimeMillis()) }
+    }
+
+    /** Saves how far the episode got in the outside player; marking it seen also updates trackers */
+    fun onExternalPlayerResult(data: android.content.Intent?) {
+        val episode = externalEpisode ?: return
+        externalEpisode = null
+        val result = ExternalPlayer.parseResult(data) ?: return
+        if (isIncognito(episode)) return
+        screenModelScope.launchIO {
+            val current = repository.getEpisode(episode.id) ?: episode
+            val duration = result.durationMs.takeIf { it > 0 } ?: current.totalSeconds
+            val position = if (result.completed && duration > 0) duration else result.positionMs
+            if (!result.completed && position <= 0L && result.durationMs <= 0L) {
+                // The player sent nothing useful back: keep the saved progress
+                repository.upsertHistory(episode.id, System.currentTimeMillis())
+                return@launchIO
+            }
+            val progress = Injekt.get<PlayerPreferences>().progressPreference().get()
+            val seen = result.completed || (duration > 0 && position >= duration * progress)
+            repository.updateEpisode(
+                id = episode.id,
+                seen = true.takeIf { seen && !current.seen },
+                lastSecondSeen = position,
+                totalSeconds = duration.takeIf { it > 0 },
+            )
+            repository.upsertHistory(episode.id, System.currentTimeMillis())
+        }
+    }
+    // KMK <--
 
     sealed interface VideoDialog {
         val episode: Episode

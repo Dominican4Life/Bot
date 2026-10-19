@@ -606,4 +606,53 @@
     <string name="anime_set_default_library">Also apply to every anime in my library</string>
     <string name="anime_duplicate_title">Already in your library</string>
     <string name="anime_duplicate_text">You have an anime with the same title. Tap one to open it, or add this one anyway.</string>
+    <!-- Episode options (pick a stream, then play, copy or download it) -->
+    <string name="anime_episode_options">Episode options</string>
+    <string name="anime_episode_options_hint">Tap the stream to pick another server or quality</string>
+    <string name="anime_play_internally">Play</string>
+    <string name="anime_play_externally">Play in external player</string>
+    <string name="anime_download_internally">Download</string>
+    <string name="anime_download_externally">Download with another app</string>
+    <string name="anime_download_queued">Added to the download queue</string>
+    <string name="anime_no_downloader">No download app found</string>
+    <string name="anime_stream_failed">Couldn\'t load this stream. Pick another one.</string>
+    <!-- KMK: anime Updates selection and anime Stats -->
+    <string name="anime_action_bookmark_episode">Bookmark episode</string>
+    <string name="anime_action_remove_bookmark_episode">Remove bookmark</string>
+    <string name="anime_stats_section">Anime</string>
+    <string name="anime_stats_titles">Anime titles</string>
+    <string name="anime_stats_watch_time">Watch time</string>
+    <string name="anime_stats_sources">Sources used</string>
+    <string name="anime_stats_episodes">Episodes</string>
+    <string name="anime_stats_total_episodes">Total episodes</string>
+    <string name="anime_stats_seen_episodes">Seen episodes</string>
+    <string name="anime_stats_trackers">Anime tracking</string>
+    <string name="anime_stats_tracked">Tracked anime</string>
+    <string name="anime_stats_trackers_used">Trackers used</string>
+    <!-- KMK: anime library update and download settings -->
+    <string name="pref_anime_group">Anime</string>
+    <string name="pref_anime_update_interval">Automatic anime updates</string>
+    <string name="anime_update_with_manga">With the manga update</string>
+    <string name="anime_update_schedule_info">Anime updates use the same device restrictions as manga updates. A manual manga library refresh also checks anime.</string>
+    <string name="pref_anime_update_skip">Skip anime</string>
+    <string name="anime_update_skip_completed">With \"Completed\" status</string>
+    <string name="anime_update_skip_has_unseen">With unseen episodes</string>
+    <string name="anime_update_skip_not_started">Not started yet</string>
+    <string name="anime_update_skip_smart">Not expecting a new episode yet (smart update)</string>
+    <string name="pref_anime_categories">Anime categories</string>
+    <string name="pref_anime_update_categories_details">Anime in excluded categories won\'t be updated even if they\'re also in included categories.</string>
+    <string name="anime_update_progress_title">%1$d / %2$d · %3$s</string>
+    <string name="anime_update_summary_line">%1$s: %2$d new</string>
+    <string name="anime_update_failed_count">%1$d anime couldn\'t be updated</string>
+    <string name="pref_anime_download_wifi">Download only on Wi-Fi</string>
+    <string name="pref_anime_download_wifi_summary">Episode downloads wait while on mobile or metered data</string>
+    <string name="pref_anime_download_concurrent">Episodes downloaded at once</string>
+    <string name="pref_anime_delete_after_seen">Delete episodes after watching</string>
+    <string name="pref_anime_delete_after_seen_summary">Deletes the download of an episode watched in the player once the player moves to another episode or closes</string>
+    <string name="pref_anime_delete_keep_bookmarked">Keep bookmarked episodes</string>
+    <string name="pref_anime_download_ahead">Download ahead while watching</string>
+    <string name="anime_download_ahead_next">Next %1$d unseen episodes</string>
+    <string name="pref_anime_download_ahead_info">Only for anime in your library, once an episode counts as watched.</string>
+    <string name="pref_anime_download_new">Download new episodes</string>
+    <string name="pref_anime_download_new_categories_details">Anime in excluded categories won\'t be downloaded even if they\'re also in included categories.</string>
 </resources>
