@@ -17,7 +17,7 @@ class CastSubtitlePreferences(
     fun backgroundColor() = preferenceStore.getInt("pref_cast_subtitle_background", Color.Transparent.toArgb())
     fun shadowRadius() = preferenceStore.getFloat("pref_cast_subtitle_shadow", 2f)
     private fun fontFamily() = preferenceStore.getString("pref_cast_subtitle_font_family", "SANS_SERIF")
-    private fun borderStyle() = preferenceStore.getString("pref_cast_subtitle_border_style", "NONE")
+    fun borderStyle() = preferenceStore.getString("pref_cast_subtitle_border_style", "NONE")
 
     private fun fontFamilyToString(fontFamily: FontFamily): String {
         return when (fontFamily) {

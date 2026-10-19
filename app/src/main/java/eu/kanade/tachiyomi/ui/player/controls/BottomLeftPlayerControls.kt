@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import eu.kanade.tachiyomi.ui.player.CastManager
 import eu.kanade.tachiyomi.ui.player.PlayerButton
 import eu.kanade.tachiyomi.ui.player.PlayerViewModel
 
@@ -29,6 +30,7 @@ import eu.kanade.tachiyomi.ui.player.PlayerViewModel
 fun BottomLeftPlayerControls(
     buttons: List<PlayerButton>,
     viewModel: PlayerViewModel,
+    castManager: CastManager,
     onBackPress: () -> Unit,
     onCastClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -41,6 +43,7 @@ fun BottomLeftPlayerControls(
             RenderPlayerButton(
                 button = button,
                 viewModel = viewModel,
+                castManager = castManager,
                 onBackPress = onBackPress,
                 onCastClick = onCastClick,
             )

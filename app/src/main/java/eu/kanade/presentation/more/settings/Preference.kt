@@ -162,6 +162,21 @@ sealed class Preference {
         ) : PreferenceItem<String, Boolean>() {
             override val icon: ImageVector? = null
         }
+
+        /**
+         * An edit text preference whose dialog takes several lines (e.g. one tracker URL per line).
+         * The subtitle shows the first two lines of the value unless one is given.
+         */
+        data class MultiLineEditTextPreference(
+            val preference: PreferenceData<String>,
+            override val title: String,
+            override val subtitle: String? = null,
+            override val enabled: Boolean = true,
+            override val onValueChanged: suspend (value: String) -> Boolean = { true },
+            val canBeBlank: Boolean = false,
+        ) : PreferenceItem<String, Boolean>() {
+            override val icon: ImageVector? = null
+        }
         // KMK <--
 
         data class EditTextPreference(
@@ -208,9 +223,10 @@ sealed class Preference {
 
         data class InfoPreference(
             override val title: String,
+            // KMK: lets an info line hide with the switch it explains
+            override val enabled: Boolean = true,
         ) : PreferenceItem<String, Unit>() {
             override val subtitle: String? = null
-            override val enabled: Boolean = true
             override val icon: ImageVector? = null
             override val onValueChanged: suspend (value: String) -> Unit = {}
         }

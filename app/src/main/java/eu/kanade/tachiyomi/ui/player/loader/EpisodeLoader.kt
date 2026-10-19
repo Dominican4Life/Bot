@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.ui.player.loader
 import eu.kanade.tachiyomi.animesource.AnimeSource
 import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.Hoster.Companion.toHosterList
+import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
@@ -44,17 +45,8 @@ class EpisodeLoader {
         ): List<Hoster> {
             // KMK: a downloaded episode plays from its file
             if (allowDownloaded) {
-                val file = withIOContext {
-                    Injekt.get<AnimeDownloadManager>().findEpisodeFile(anime, episode)
-                }
-                if (file != null) {
-                    val video = Video(
-                        videoUrl = file.uri.toString(),
-                        videoTitle = "Downloaded",
-                        initialized = true,
-                    )
-                    return listOf(Hoster(hosterName = "Downloaded", videoList = listOf(video)))
-                }
+                val downloaded = withIOContext { getHostersOnDownloaded(episode, anime) }
+                if (downloaded.isNotEmpty()) return downloaded
             }
             return when (source) {
                 is AnimeHttpSource -> getHostersOnHttp(episode, source)
@@ -68,6 +60,48 @@ class EpisodeLoader {
         /** KMK: whether the episode has a downloaded file */
         fun isDownload(episode: Episode, anime: Anime): Boolean =
             Injekt.get<AnimeDownloadManager>().isDownloaded(anime, episode)
+
+        /**
+         * ANZ: returns the hoster when the [episode] is downloaded, with any subtitle files saved
+         * next to it (KMK: our downloads are `<episode>.<ext>` files in the anime's folder).
+         *
+         * @param episode the episode being parsed.
+         * @param anime the anime of the episode.
+         */
+        private fun getHostersOnDownloaded(episode: Episode, anime: Anime): List<Hoster> {
+            return try {
+                val file = Injekt.get<AnimeDownloadManager>().findEpisodeFile(anime, episode)
+                    ?: return emptyList()
+                val baseName = file.name.orEmpty().substringBeforeLast('.')
+                val subtitleTracks = file.parentFile?.listFiles().orEmpty()
+                    .filter {
+                        val name = it.name.orEmpty()
+                        val lower = name.lowercase()
+                        it.uri != file.uri &&
+                            name.startsWith("$baseName.") &&
+                            SUBTITLE_EXTENSIONS.any { ext -> lower.endsWith(ext) }
+                    }
+                    .map {
+                        val name = it.name.orEmpty()
+                        // "<episode>.<lang>.srt" -> "<lang>", otherwise the file name
+                        val label = name.removePrefix("$baseName.").substringBeforeLast('.')
+                            .ifBlank { name.substringBeforeLast('.') }
+                        Track(it.uri.toString(), label)
+                    }
+                val video = Video(
+                    videoUrl = file.uri.toString(),
+                    videoTitle = "Downloaded",
+                    subtitleTracks = subtitleTracks,
+                    initialized = true,
+                )
+                listOf(Hoster(hosterName = "Downloaded", videoList = listOf(video)))
+            } catch (e: Throwable) {
+                if (e is CancellationException) throw e
+                emptyList()
+            }
+        }
+
+        private val SUBTITLE_EXTENSIONS = listOf(".srt", ".ass", ".ssa", ".vtt")
 
         private fun checkHasHosters(source: AnimeHttpSource): Boolean {
             var current: Class<in AnimeHttpSource> = source.javaClass

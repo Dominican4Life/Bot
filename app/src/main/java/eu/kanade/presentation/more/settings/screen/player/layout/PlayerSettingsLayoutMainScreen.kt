@@ -4,7 +4,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -31,7 +30,6 @@ import eu.kanade.tachiyomi.ui.player.LayoutRegion
 import eu.kanade.tachiyomi.ui.player.PlayerButton
 import eu.kanade.tachiyomi.ui.player.parseButtons
 import eu.kanade.tachiyomi.ui.player.settings.PlayerPreferences
-import tachiyomi.i18n.MR
 import tachiyomi.i18n.ank.AMR
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.components.material.padding

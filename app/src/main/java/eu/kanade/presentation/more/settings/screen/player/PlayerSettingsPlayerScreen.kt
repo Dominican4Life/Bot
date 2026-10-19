@@ -6,24 +6,24 @@ import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import com.google.android.gms.common.ConnectionResult
+import com.google.android.gms.common.GoogleApiAvailability
 import eu.kanade.domain.base.BasePreferences
 import eu.kanade.presentation.more.settings.Preference
 import eu.kanade.presentation.more.settings.screen.SearchableSettings
 import eu.kanade.tachiyomi.data.torrentServer.service.TorrentServerService
 import eu.kanade.tachiyomi.torrentServer.TorrentServerPreferences
 import eu.kanade.tachiyomi.ui.player.AMNIS
-import eu.kanade.tachiyomi.ui.player.CastManager
 import eu.kanade.tachiyomi.ui.player.JUST_PLAYER
+import eu.kanade.tachiyomi.ui.player.MPV_EX
 import eu.kanade.tachiyomi.ui.player.MPV_KT
 import eu.kanade.tachiyomi.ui.player.MPV_KT_PREVIEW
 import eu.kanade.tachiyomi.ui.player.MPV_PLAYER
 import eu.kanade.tachiyomi.ui.player.MPV_REMOTE
 import eu.kanade.tachiyomi.ui.player.MPV_REX
 import eu.kanade.tachiyomi.ui.player.MPV_RX
-import eu.kanade.tachiyomi.ui.player.MPV_EX
 import eu.kanade.tachiyomi.ui.player.MX_PLAYER
 import eu.kanade.tachiyomi.ui.player.MX_PLAYER_FREE
 import eu.kanade.tachiyomi.ui.player.MX_PLAYER_PRO
@@ -44,6 +44,7 @@ import kotlinx.collections.immutable.toPersistentMap
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.ank.AMR
+import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
@@ -84,6 +85,8 @@ object PlayerSettingsPlayerScreen : SearchableSettings {
                 preference = playerPreferences.preserveWatchingPosition(),
                 title = stringResource(AMR.strings.pref_preserve_watching_position),
             ),
+            // ANK
+            getCastGroup(playerPreferences = playerPreferences),
             Preference.PreferenceItem.ListPreference(
                 preference = playerPreferences.defaultPlayerOrientationType(),
                 title = stringResource(AMR.strings.pref_category_player_orientation),
@@ -106,8 +109,8 @@ object PlayerSettingsPlayerScreen : SearchableSettings {
                 basePreferences = basePreferences,
             ),
             // ANK -->
-            getCastGroup(playerPreferences = playerPreferences),
             getTorrentServerGroup(torrentServerPreferences = remember { Injekt.get<TorrentServerPreferences>() }),
+            getCastServerGroup(),
             // ANK <--
         )
     }
@@ -384,6 +387,7 @@ object PlayerSettingsPlayerScreen : SearchableSettings {
                 ),
                 Preference.PreferenceItem.InfoPreference(
                     title = stringResource(AMR.strings.pref_category_player_aniskip_info),
+                    enabled = isIntroSkipEnabled,
                 ),
             ),
         )
@@ -478,22 +482,47 @@ object PlayerSettingsPlayerScreen : SearchableSettings {
 }
 
 // ANK -->
-// Chromecast: the switch, and the port of the local server that serves downloaded episodes to it
+// Chromecast needs Google Play services
+@Suppress("SwallowedException", "TooGenericExceptionCaught")
+private fun isPlayServicesAvailable(context: android.content.Context): Boolean = try {
+    GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(context) == ConnectionResult.SUCCESS
+} catch (e: Exception) {
+    false
+}
+
+// Chromecast on/off switch
 @Composable
 private fun getCastGroup(playerPreferences: PlayerPreferences): Preference.PreferenceGroup {
     val context = LocalContext.current
-    val castAvailable = remember { CastManager.isCastApiAvailable(context) }
-    val localHttpServerHolder = remember { Injekt.get<LocalHttpServerHolder>() }
+    val castAvailable = remember { isPlayServicesAvailable(context) }
     return Preference.PreferenceGroup(
         title = stringResource(AMR.strings.pref_category_cast),
         preferenceItems = persistentListOf(
-            Preference.PreferenceItem.SwitchPreference(
-                preference = playerPreferences.enableCast(),
-                title = stringResource(AMR.strings.pref_enable_cast),
-                // Chromecast needs Google Play services
-                subtitle = if (castAvailable) null else "Google Play services aren't available on this device",
-                enabled = castAvailable,
-            ),
+            // Chromecast needs Google Play services: say so instead of a switch that can't work
+            if (castAvailable) {
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = playerPreferences.enableCast(),
+                    title = stringResource(AMR.strings.pref_enable_cast),
+                )
+            } else {
+                Preference.PreferenceItem.InfoPreference(
+                    title = stringResource(KMR.strings.cast_play_services_unavailable),
+                )
+            },
+        ),
+    )
+}
+
+// The port of the local server that serves downloaded episodes to the Chromecast
+@Composable
+private fun getCastServerGroup(): Preference.PreferenceGroup {
+    val context = LocalContext.current
+    val castAvailable = remember { isPlayServicesAvailable(context) }
+    val localHttpServerHolder = remember { Injekt.get<LocalHttpServerHolder>() }
+    return Preference.PreferenceGroup(
+        title = stringResource(AMR.strings.pref_category_castserver),
+        enabled = castAvailable,
+        preferenceItems = persistentListOf(
             Preference.PreferenceItem.EditTextPreference(
                 preference = localHttpServerHolder.port(),
                 title = stringResource(AMR.strings.pref_cast_server_port),
@@ -513,7 +542,6 @@ private fun getCastGroup(playerPreferences: PlayerPreferences): Preference.Prefe
 private fun getTorrentServerGroup(
     torrentServerPreferences: TorrentServerPreferences,
 ): Preference.PreferenceGroup {
-    val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val trackersPref = torrentServerPreferences.trackers()
     val trackers by trackersPref.collectAsState()
@@ -533,10 +561,8 @@ private fun getTorrentServerGroup(
                     valid
                 },
             ),
-            Preference.PreferenceItem.MPVConfPreference(
+            Preference.PreferenceItem.MultiLineEditTextPreference(
                 preference = trackersPref,
-                scope = scope,
-                context = context,
                 title = stringResource(AMR.strings.pref_torrent_trackers),
                 onValueChanged = {
                     TorrentServerService.stop()
@@ -546,7 +572,7 @@ private fun getTorrentServerGroup(
             ),
             Preference.PreferenceItem.TextPreference(
                 title = stringResource(AMR.strings.pref_reset_torrent_trackers_string),
-                enabled = trackers != trackersPref.defaultValue(),
+                enabled = remember(trackers) { trackers != trackersPref.defaultValue() },
                 onClick = {
                     trackersPref.delete()
                     TorrentServerService.stop()

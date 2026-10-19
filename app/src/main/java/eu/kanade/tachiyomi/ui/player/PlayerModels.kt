@@ -128,7 +128,13 @@ sealed interface VideoTrack {
     val selection: Int
         get() = when (this) {
             is External -> mainSelection
-            is Internal -> data.mainSelection?.toInt() ?: -1
+            is Internal -> data.mainSelection?.toInt() ?: if (data.selected == true) 0 else -1
+        }
+
+    val isSelected: Boolean
+        get() = when (this) {
+            is External -> mainSelection > -1
+            is Internal -> (data.selected == true) || (data.mainSelection != null && data.mainSelection > -1)
         }
 
     val trackId: Int?

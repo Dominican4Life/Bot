@@ -142,6 +142,20 @@ import kotlin.random.Random
             .build()
     }
 
+    // ANZ -->
+    /**
+     * Client for the embedded torrent server. TorrServer only starts producing a response
+     * once the torrent swarm connects, so header waits and mid-stream stalls can legitimately
+     * take minutes. Reads are given 10 minutes and there is no overall call deadline.
+     */
+    val torrentClient: OkHttpClient by lazy {
+        client.newBuilder()
+            .readTimeout(10, TimeUnit.MINUTES)
+            .callTimeout(0, TimeUnit.MILLISECONDS)
+            .build()
+    }
+    // ANZ <--
+
     // KMK -->
     /**
      * Timeout in unit of seconds.

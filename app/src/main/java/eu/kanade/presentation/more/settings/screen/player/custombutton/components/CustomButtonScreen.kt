@@ -18,7 +18,6 @@ import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.FloatingActionAddButton
 import eu.kanade.presentation.more.settings.screen.player.custombutton.CustomButtonScreenState
 import tachiyomi.domain.custombuttons.model.CustomButton
-import tachiyomi.i18n.MR
 import tachiyomi.i18n.ank.AMR
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.components.material.padding

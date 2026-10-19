@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import eu.kanade.tachiyomi.ui.player.CastManager
 import eu.kanade.tachiyomi.ui.player.PlayerButton
 import eu.kanade.tachiyomi.ui.player.PlayerViewModel
 
@@ -29,6 +30,7 @@ import eu.kanade.tachiyomi.ui.player.PlayerViewModel
 fun TopRightPlayerControls(
     buttons: List<PlayerButton>,
     viewModel: PlayerViewModel,
+    castManager: CastManager,
     onBackPress: () -> Unit,
     onCastClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -42,6 +44,7 @@ fun TopRightPlayerControls(
             RenderPlayerButton(
                 button = button,
                 viewModel = viewModel,
+                castManager = castManager,
                 onBackPress = onBackPress,
                 onCastClick = onCastClick,
             )

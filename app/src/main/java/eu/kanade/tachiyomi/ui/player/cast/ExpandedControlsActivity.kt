@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.player.cast
 
+import android.annotation.SuppressLint
 import android.os.Bundle
 import android.view.Menu
 import androidx.activity.ComponentActivity
@@ -27,6 +28,7 @@ class ExpandedControlsActivity : ComponentActivity() {
     private val castManager by lazy { CastManager(this, preferences) }
     private val castContext by lazy { CastContext.getSharedInstance(this) }
 
+    @SuppressLint("NewApi")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 

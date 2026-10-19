@@ -2,11 +2,14 @@ package eu.kanade.tachiyomi.util
 
 import android.annotation.SuppressLint
 import android.content.ContentResolver
-import androidx.core.net.toUri
+import android.net.Uri
 import fi.iki.elonen.NanoHTTPD
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+import java.net.HttpURLConnection
+import java.net.URL
 import java.net.URLConnection
+import java.net.URLEncoder
 
 class LocalHttpServer(
     port: String,
@@ -15,6 +18,156 @@ class LocalHttpServer(
 
     @SuppressLint("Recycle")
     override fun serve(session: IHTTPSession): Response {
+        val path = session.uri ?: "/"
+        // KMK -->
+        // The Cast receiver fetches HLS/DASH with XHR, which needs CORS headers (and preflights)
+        if (session.method == Method.OPTIONS) {
+            return newFixedLengthResponse(Response.Status.OK, "text/plain", "").withCors().apply {
+                addHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+                addHeader("Access-Control-Allow-Headers", "*")
+            }
+        }
+        // KMK <--
+        return when {
+            path.startsWith("/proxy") -> serveProxy(session)
+            else -> serveContentUri(session)
+        } /* KMK --> */.withCors() /* KMK <-- */
+    }
+
+    // KMK -->
+    private fun Response.withCors(): Response = apply {
+        addHeader("Access-Control-Allow-Origin", "*")
+        addHeader("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges")
+    }
+    // KMK <--
+
+    /**
+     * Proxy endpoint for Chromecast.
+     * The Cast default receiver cannot send custom HTTP headers, so video sources
+     * requiring Referer/User-Agent/cookies fail with a network error.
+     * This proxies the request through the phone with the correct headers.
+     *
+     * Usage: GET /proxy?url=<encoded_url>&headers=<encoded_headers>
+     * Headers format: key1=value1&key2=value2 (URL-encoded)
+     */
+    private fun serveProxy(session: IHTTPSession): Response {
+        val params = session.parameters
+        val targetUrl = params["url"]?.get(0) ?: return newFixedLengthResponse(
+            Response.Status.BAD_REQUEST, "text/plain", "Missing url parameter",
+        )
+
+        return try {
+            val connection = URL(targetUrl).openConnection() as HttpURLConnection
+            connection.connectTimeout = 15_000
+            connection.readTimeout = 30_000
+            connection.instanceFollowRedirects = true
+
+            // Parse and apply forwarded headers
+            val headersParam = params["headers"]?.get(0)
+            if (!headersParam.isNullOrBlank()) {
+                // KMK: NanoHTTPD already decoded the query; decoding again turns '+' in cookies into spaces
+                headersParam.split("\n").forEach { line ->
+                    val parts = line.split(":", limit = 2)
+                    if (parts.size == 2) {
+                        connection.setRequestProperty(parts[0].trim(), parts[1].trim())
+                    }
+                }
+            }
+
+            // Forward Range header from the Cast receiver
+            val rangeHeader = session.headers["range"]
+            if (rangeHeader != null) {
+                connection.setRequestProperty("Range", rangeHeader)
+            }
+
+            val responseCode = connection.responseCode
+            val contentType = connection.contentType ?: "application/octet-stream"
+            val inputStream = if (responseCode in 200..399) {
+                connection.inputStream
+            } else {
+                connection.errorStream
+            }
+
+            if (inputStream == null) {
+                return newFixedLengthResponse(
+                    Response.Status.INTERNAL_ERROR, "text/plain", "No response from upstream",
+                )
+            }
+
+            // KMK -->
+            // HLS playlists list their segments (and keys, other renditions) by URL. Point those at
+            // this proxy too, or the receiver fetches them directly, without the headers.
+            if (responseCode in 200..299 && isPlaylist(targetUrl, contentType)) {
+                val playlist = inputStream.bufferedReader().use { it.readText() }
+                val rewritten = rewritePlaylist(playlist, connection.url.toString(), headersParam.orEmpty())
+                return newFixedLengthResponse(Response.Status.OK, "application/vnd.apple.mpegurl", rewritten)
+            }
+            // KMK <--
+
+            val contentLength = connection.contentLengthLong
+
+            val status = when (responseCode) {
+                206 -> Response.Status.PARTIAL_CONTENT
+                in 200..299 -> Response.Status.OK
+                else -> Response.Status.lookup(responseCode) ?: Response.Status.INTERNAL_ERROR
+            }
+
+            val response = if (contentLength > 0) {
+                newFixedLengthResponse(status, contentType, inputStream, contentLength)
+            } else {
+                newChunkedResponse(status, contentType, inputStream)
+            }
+
+            // Forward relevant upstream response headers
+            connection.getHeaderField("Content-Range")?.let {
+                response.addHeader("Content-Range", it)
+            }
+            connection.getHeaderField("Accept-Ranges")?.let {
+                response.addHeader("Accept-Ranges", it)
+            }
+
+            response
+        } catch (e: Exception) {
+            logcat(LogPriority.ERROR, e) { "Proxy error for $targetUrl" }
+            newFixedLengthResponse(
+                Response.Status.INTERNAL_ERROR, "text/plain", "Proxy error: ${e.message}",
+            )
+        }
+    }
+
+    // KMK -->
+    private fun isPlaylist(url: String, contentType: String): Boolean {
+        return contentType.contains("mpegurl", ignoreCase = true) ||
+            url.substringBefore('?').endsWith(".m3u8", ignoreCase = true)
+    }
+
+    private val uriAttribute = Regex("URI=\"([^\"]*)\"")
+
+    private fun rewritePlaylist(playlist: String, baseUrl: String, headers: String): String {
+        val encodedHeaders = URLEncoder.encode(headers, "UTF-8")
+        fun proxied(uri: String): String {
+            val absolute = try {
+                URL(URL(baseUrl), uri).toString()
+            } catch (_: Exception) {
+                return uri
+            }
+            // A root-relative link resolves against this server, whatever ip/port the receiver used
+            return "/proxy?url=${URLEncoder.encode(absolute, "UTF-8")}&headers=$encodedHeaders"
+        }
+        return playlist.lineSequence().joinToString("\n") { rawLine ->
+            val line = rawLine.trim()
+            when {
+                line.isEmpty() -> rawLine
+                line.startsWith("#") -> uriAttribute.replace(rawLine) { match ->
+                    "URI=\"${proxied(match.groupValues[1])}\""
+                }
+                else -> proxied(line)
+            }
+        }
+    }
+    // KMK <--
+
+    private fun serveContentUri(session: IHTTPSession): Response {
         val params = session.parameters
         val uriParam = params["uri"]?.get(0) ?: return newFixedLengthResponse(
             Response.Status.BAD_REQUEST,
@@ -23,14 +176,15 @@ class LocalHttpServer(
         )
 
         val uri = try {
-            uriParam.toUri()
+            Uri.parse(uriParam)
         } catch (e: Exception) {
             return newFixedLengthResponse(Response.Status.BAD_REQUEST, "text/plain", "Invalid URI")
         }
 
-        val mimeType = URLConnection.guessContentTypeFromName(uri.toString()) ?: "application/octet-stream"
+        val mimeType = contentResolver.getType(uri)
+            ?: URLConnection.guessContentTypeFromName(uri.toString())
+            ?: "application/octet-stream"
 
-        // Open the file like an inputstream and obtain its size
         val assetFileDescriptor = try {
             contentResolver.openAssetFileDescriptor(uri, "r")
         } catch (e: Exception) {
@@ -39,32 +193,26 @@ class LocalHttpServer(
 
         val fileLength = assetFileDescriptor?.length ?: -1L
 
-        // Verify if the "Range" header is included
         val rangeHeader = session.headers["range"]
         if (rangeHeader != null && fileLength > 0) {
             try {
-                // Expect format "bytes=start-end"
                 val range = rangeHeader.replace("bytes=", "").split("-")
                 val start = range.getOrNull(0)?.toLongOrNull() ?: 0L
-                // If the end is not specified, we use the file size - 1
                 val end = range.getOrNull(1)?.toLongOrNull() ?: (fileLength - 1)
                 val length = end - start + 1
 
                 val inputStream = contentResolver.openInputStream(uri)
                 inputStream?.skip(start)
 
-                // Reply with partial content
                 val response = newFixedLengthResponse(Response.Status.PARTIAL_CONTENT, mimeType, inputStream, length)
                 response.addHeader("Content-Range", "bytes $start-$end/$fileLength")
                 response.addHeader("Accept-Ranges", "bytes")
                 return response
             } catch (e: Exception) {
-                // In case of error, the full file is sent
                 logcat(LogPriority.ERROR, e) { "Error processing Range header" }
             }
         }
 
-        // Without Range Header, send the full file
         val inputStream = contentResolver.openInputStream(uri)
         return if (inputStream != null) {
             val response = newChunkedResponse(Response.Status.OK, mimeType, inputStream)

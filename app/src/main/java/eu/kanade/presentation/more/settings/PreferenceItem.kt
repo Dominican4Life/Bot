@@ -225,6 +225,26 @@ internal fun PreferenceItem(
                     formatSubtitle = false,
                 )
             }
+            is Preference.PreferenceItem.MultiLineEditTextPreference -> {
+                val values by item.preference.collectAsState()
+                PlayerEditTextPreferenceWidget(
+                    title = item.title,
+                    subtitle = item.subtitle ?: values.lines().take(2).joinToString(
+                        separator = "\n",
+                        postfix = if (values.lines().size > 2) "\n..." else "",
+                    ),
+                    icon = item.icon,
+                    value = values,
+                    onConfirm = {
+                        val accepted = item.onValueChanged(it)
+                        if (accepted) item.preference.set(it)
+                        accepted
+                    },
+                    singleLine = false,
+                    canBeBlank = item.canBeBlank,
+                    formatSubtitle = false,
+                )
+            }
             // KMK <--
             is Preference.PreferenceItem.InfoPreference -> {
                 InfoWidget(text = item.title)

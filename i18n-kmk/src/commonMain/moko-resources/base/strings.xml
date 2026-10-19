@@ -671,4 +671,7 @@
     <string name="anime_coming_up">Coming up</string>
     <string name="anime_coming_up_episode">Episode %1$d · %2$s</string>
     <string name="anime_coming_up_empty">No airing times found. Anime need an AniList or MyAnimeList track to show here.</string>
+    <!-- Player settings -->
+    <string name="action_search_player_settings">Search player settings</string>
+    <string name="cast_play_services_unavailable">Casting needs Google Play services, which aren\'t available on this device</string>
 </resources>

@@ -23,6 +23,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import eu.kanade.tachiyomi.ui.player.CastManager
 import eu.kanade.tachiyomi.ui.player.PlayerButton
 import eu.kanade.tachiyomi.ui.player.PlayerViewModel
 import tachiyomi.presentation.core.components.material.padding
@@ -31,6 +32,7 @@ import tachiyomi.presentation.core.components.material.padding
 fun BottomRightPlayerControls(
     buttons: List<PlayerButton>,
     viewModel: PlayerViewModel,
+    castManager: CastManager,
     onBackPress: () -> Unit,
     onCastClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -44,6 +46,7 @@ fun BottomRightPlayerControls(
             RenderPlayerButton(
                 button = button,
                 viewModel = viewModel,
+                castManager = castManager,
                 onBackPress = onBackPress,
                 onCastClick = onCastClick,
             )

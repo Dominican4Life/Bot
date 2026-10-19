@@ -31,7 +31,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AspectRatio
-import androidx.compose.material.icons.filled.CastConnected
 import androidx.compose.material.icons.filled.FitScreen
 import androidx.compose.material.icons.filled.ZoomOutMap
 import androidx.compose.material3.Icon
@@ -52,6 +51,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.kanade.tachiyomi.ui.player.CastManager
+import eu.kanade.tachiyomi.ui.player.cast.components.CastButton
 import eu.kanade.tachiyomi.ui.player.Panels
 import eu.kanade.tachiyomi.ui.player.PlayerActivity
 import eu.kanade.tachiyomi.ui.player.PlayerButton
@@ -72,10 +72,12 @@ import tachiyomi.presentation.core.util.collectAsState
 fun RenderPlayerButton(
     button: PlayerButton,
     viewModel: PlayerViewModel,
+    castManager: CastManager,
     onBackPress: () -> Unit,
     onCastClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val castState by castManager.castState.collectAsState()
     val autoPlayEnabled by viewModel.playerPreferences.autoplayEnabled().collectAsState()
     val isEpisodeOnline by viewModel.isEpisodeOnline.collectAsState()
     val aspectRatio by viewModel.playerPreferences.aspectState().collectAsState()
@@ -126,24 +128,17 @@ fun RenderPlayerButton(
                     .size(width = 48.dp, height = 24.dp),
             )
         }
-        // Cast -->
+        // ANZ -->
         PlayerButton.Cast -> {
-            // Null when casting is turned off or Google Play services aren't available
-            val castManager = (LocalContext.current as? PlayerActivity)?.castManager
-            if (castManager != null) {
-                val castState by castManager.castState.collectAsState()
-                ControlsButton(
-                    icon = if (castState == CastManager.CastState.CONNECTED) {
-                        Icons.Filled.CastConnected
-                    } else {
-                        button.getIcon()
-                    },
+            if (viewModel.playerPreferences.enableCast().get()) {
+                CastButton(
+                    castState = castState,
                     onClick = onCastClick,
-                    horizontalSpacing = MaterialTheme.padding.mediumSmall,
+                    modifier = Modifier.padding(horizontal = MaterialTheme.padding.mediumSmall),
                 )
             }
         }
-        // <-- Cast
+        // ANZ <--
         // KMK: the episode list, as a panel beside the video
         PlayerButton.Episodes -> {
             ControlsButton(

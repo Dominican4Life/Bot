@@ -3,7 +3,6 @@ package eu.kanade.tachiyomi.ui.player
 import android.annotation.SuppressLint
 import android.widget.Toast
 import androidx.activity.ComponentActivity
-import androidx.activity.viewModels
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontFamily
@@ -71,12 +70,13 @@ class CastManager(
     private val context = activity.applicationContext
     private val viewModel by lazy {
         when (activity) {
-            // ANK -->
-            is PlayerActivity -> activity.viewModels<PlayerViewModel>().value
-            // ANK <--
+            // ANZ -->
+            is PlayerActivity -> activity.viewModel
+            // ANZ <--
             else -> null
         }
     }
+    private val player by lazy { (activity as? PlayerActivity)?.player }
     private val playerPreferences: PlayerPreferences by lazy {
         viewModel?.playerPreferences ?: PlayerPreferences(preferenceStore)
     }
@@ -101,6 +101,23 @@ class CastManager(
 
     private val isCastApiAvailable: Boolean
         get() = isCastApiAvailable(context)
+
+    // KMK -->
+    companion object {
+        /**
+         * Whether Google Play services (which Chromecast needs) can be used on this device.
+         * Devices without them (or with an unusable version) don't get a cast button.
+         */
+        fun isCastApiAvailable(context: android.content.Context): Boolean {
+            return try {
+                GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(context) == ConnectionResult.SUCCESS
+            } catch (e: Exception) {
+                logcat(LogPriority.WARN, e)
+                false
+            }
+        }
+    }
+    // KMK <--
 
     private val mediaQueue = LinkedList<MediaQueueItem>()
     private var isLoadingMedia = false
@@ -127,31 +144,33 @@ class CastManager(
         initializeCast()
     }
 
-    // KMK -->
-    companion object {
-        /**
-         * Whether Google Play services (which Chromecast needs) can be used on this device.
-         * Devices without them (or with an unusable version) don't get a cast button.
-         */
-        fun isCastApiAvailable(context: android.content.Context): Boolean {
-            return try {
-                GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(context) == ConnectionResult.SUCCESS
-            } catch (e: Exception) {
-                logcat(LogPriority.WARN, e)
-                false
-            }
+    private fun initializeCast(onComplete: ((CastContext?) -> Unit)? = null) {
+        if (!playerPreferences.enableCast().get() || !isCastApiAvailable) {
+            onComplete?.invoke(null)
+            return
         }
-    }
-    // KMK <--
-
-    private fun initializeCast() {
-        if (!isCastApiAvailable) return
+        if (castContext != null) {
+            onComplete?.invoke(castContext)
+            return
+        }
         try {
-            castContext = CastContext.getSharedInstance(context.applicationContext)
-            sessionListener = CastSessionListener(this)
-            registerSessionListener()
+            CastContext.getSharedInstance(context.applicationContext, java.util.concurrent.Executors.newSingleThreadExecutor())
+                .addOnCompleteListener { task ->
+                    activity.lifecycleScope.launch {
+                        if (task.isSuccessful) {
+                            castContext = task.result
+                            sessionListener = CastSessionListener(this@CastManager)
+                            registerSessionListener()
+                            onComplete?.invoke(castContext)
+                        } else {
+                            logcat(LogPriority.ERROR) { "Failed to initialize CastContext: ${task.exception?.message}" }
+                            onComplete?.invoke(null)
+                        }
+                    }
+                }
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, e)
+            onComplete?.invoke(null)
         }
     }
 
@@ -216,11 +235,7 @@ class CastManager(
 
     fun updateCastState(state: CastState) {
         _castState.value = state
-        if (state == CastState.CONNECTED) {
-            // ANK -->
-            viewModel?.pause()
-            // ANK <--
-        }
+        if (state == CastState.CONNECTED) player?.paused = true
         activity.invalidateOptionsMenu()
     }
 
@@ -271,26 +286,20 @@ class CastManager(
                 val hosterState = viewModel!!.hosterState.value.getOrNull(selectedHosterIndex) as? HosterState.Ready
                 val video = hosterState?.videoList?.getOrNull(selectedVideoIndex) ?: return@launch
 
-                val mediaInfo = mediaBuilder!!.buildMediaInfo(video) // Now the `Video` object passes directly
-                // ANK -->
-                val currentLocalPosition = (viewModel?.pos?.value ?: 0).toLong()
-                // ANK <--
+                val mediaInfo = mediaBuilder!!.buildMediaInfo(video) // Ahora pasa el objeto `Video` directamente
+                val currentLocalPosition = (player?.timePos ?: 0).toLong()
 
-                // Update queue before and after loading new medium
                 updateQueueItems()
                 if (remoteMediaClient.mediaQueue.itemCount > 0) {
-                    // Optimization: Pre-construct queue item
                     val queueItem = MediaQueueItem.Builder(mediaInfo)
                         .setAutoplay(autoplayEnabled)
                         .build()
 
-                    // Add to local queue
                     mediaQueue.add(queueItem)
                     remoteMediaClient.queueAppendItem(queueItem, null)
                     updateQueueItems()
                     showAddedToQueueToast()
                 } else {
-                    // First load: optimize metadata
                     remoteMediaClient.load(
                         MediaLoadRequestData.Builder()
                             .setMediaInfo(mediaInfo)
@@ -302,7 +311,6 @@ class CastManager(
                 }
                 _castState.value = CastState.CONNECTED
             } catch (e: Exception) {
-                // _castState.value = CastState.DISCONNECTED
                 logcat(LogPriority.ERROR) { "Error loading media: ${e.message}" }
                 showLoadErrorToast()
             } finally {
@@ -374,49 +382,52 @@ class CastManager(
     }
 
     fun reconnect() {
-        if (!isCastApiAvailable) return
-        try {
-            castContext = CastContext.getSharedInstance(context.applicationContext)
-            castSession = castContext?.sessionManager?.currentCastSession
-            if (castSession?.isConnected == true) {
-                updateCastState(CastState.CONNECTED)
-                startTrackingCastProgress()
-                updateQueueItems()
-                updateCurrentMedia()
+        if (!playerPreferences.enableCast().get() || !isCastApiAvailable) return
+        initializeCast { ctx ->
+            if (ctx == null) return@initializeCast
+            try {
+                castSession = ctx.sessionManager.currentCastSession
+                if (castSession?.isConnected == true) {
+                    updateCastState(CastState.CONNECTED)
+                    startTrackingCastProgress()
+                    updateQueueItems()
+                    updateCurrentMedia()
 
-                castSession?.remoteMediaClient?.registerCallback(
-                    object : RemoteMediaClient.Callback() {
-                        override fun onStatusUpdated() {
-                            updateCurrentMedia()
-                            updateQueueItems()
-                        }
+                    castSession?.remoteMediaClient?.registerCallback(
+                        object : RemoteMediaClient.Callback() {
+                            override fun onStatusUpdated() {
+                                updateCurrentMedia()
+                                updateQueueItems()
+                            }
 
-                        override fun onQueueStatusUpdated() {
-                            updateQueueItems()
-                        }
+                            override fun onQueueStatusUpdated() {
+                                updateQueueItems()
+                            }
 
-                        override fun onPreloadStatusUpdated() {
-                            updateQueueItems()
-                        }
-                    },
-                )
+                            override fun onPreloadStatusUpdated() {
+                                updateQueueItems()
+                            }
+                        },
+                    )
+                }
+            } catch (e: Exception) {
+                logcat(LogPriority.ERROR, e)
             }
-        } catch (e: Exception) {
-            logcat(LogPriority.ERROR, e)
         }
     }
 
     fun startDeviceDiscovery() {
-        if (!isCastApiAvailable) return
+        if (!playerPreferences.enableCast().get() || !isCastApiAvailable) return
         discoveryRetryJob?.cancel()
 
-        try {
-            castContext?.let { castContext ->
+        initializeCast { ctx ->
+            if (ctx == null) return@initializeCast
+            try {
                 if (_castState.value != CastState.CONNECTED) {
                     _castState.value = CastState.CONNECTING
                 }
 
-                val currentSession = castContext.sessionManager.currentCastSession
+                val currentSession = ctx.sessionManager.currentCastSession
                 val selector = androidx.mediarouter.media.MediaRouteSelector.Builder()
                     .addControlCategory(androidx.mediarouter.media.MediaControlIntent.CATEGORY_LIVE_VIDEO)
                     .addControlCategory(androidx.mediarouter.media.MediaControlIntent.CATEGORY_REMOTE_PLAYBACK)
@@ -468,11 +479,11 @@ class CastManager(
                 }
 
                 updateDevicesList(currentSession)
-            }
-        } catch (e: Exception) {
-            logcat(LogPriority.ERROR) { "Error in startDeviceDiscovery: ${e.message}" }
-            if (_castState.value != CastState.CONNECTED) {
-                _castState.value = CastState.DISCONNECTED
+            } catch (e: Exception) {
+                logcat(LogPriority.ERROR) { "Error in startDeviceDiscovery: ${e.message}" }
+                if (_castState.value != CastState.CONNECTED) {
+                    _castState.value = CastState.DISCONNECTED
+                }
             }
         }
     }
@@ -518,12 +529,12 @@ class CastManager(
                     mediaRouter.selectRoute(route)
 
                     var attempts = 0
-                    while (attempts < 5) {
+                    while (attempts < 3) {
                         if (castSession?.isConnected == true) {
                             _castState.value = CastState.CONNECTED
                             return@launch
                         }
-                        delay(15000)
+                        delay(5000)
                         attempts++
                     }
 
@@ -631,7 +642,8 @@ class CastManager(
     }
 
     fun endSession() {
-        castContext?.sessionManager?.endCurrentSession(true)
+        val mSessionManager = castContext?.sessionManager ?: return
+        mSessionManager.endCurrentSession(true)
         reset()
         _castState.value = CastState.DISCONNECTED
     }
@@ -713,6 +725,7 @@ class CastManager(
                             BorderStyle.DROP_SHADOW -> TextTrackStyle.EDGE_TYPE_DROP_SHADOW
                             BorderStyle.RAISED -> TextTrackStyle.EDGE_TYPE_RAISED
                             BorderStyle.DEPRESSED -> TextTrackStyle.EDGE_TYPE_DEPRESSED
+                            else -> TextTrackStyle.EDGE_TYPE_NONE
                         }
                     }
                 }

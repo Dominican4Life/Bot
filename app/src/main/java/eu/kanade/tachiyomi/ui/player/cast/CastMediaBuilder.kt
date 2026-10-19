@@ -1,13 +1,18 @@
 package eu.kanade.tachiyomi.ui.player.cast
 
 import android.content.Intent
-import androidx.core.net.toUri
+import android.net.Uri
 import com.google.android.gms.cast.MediaInfo
 import com.google.android.gms.cast.MediaMetadata
 import com.google.android.gms.cast.MediaTrack
 import com.google.android.gms.common.images.WebImage
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.data.torrentServer.service.TorrentServerService
+import eu.kanade.tachiyomi.network.NetworkHelper
+import eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource
+import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import eu.kanade.tachiyomi.torrentServer.TorrentServerApi
 import eu.kanade.tachiyomi.torrentServer.TorrentServerUtils
 import eu.kanade.tachiyomi.ui.player.PlayerActivity
@@ -28,7 +33,12 @@ class CastMediaBuilder(
     private val activity: PlayerActivity,
 ) {
 
+    private val player by lazy { activity.player }
     private val prefserver: LocalHttpServerHolder by injectLazy()
+
+    // KMK -->
+    private val network: NetworkHelper by injectLazy()
+    // KMK <--
     private val port = prefserver.port().get()
 
     suspend fun buildMediaInfo(video: Video): MediaInfo = withContext(Dispatchers.IO) {
@@ -36,7 +46,6 @@ class CastMediaBuilder(
         logcat(LogPriority.DEBUG) { "Video URL: $videoUrl" }
 
         videoUrl = when {
-            // If it is a local uri, convert it to URL accessible via http
             // KMK: downloaded episodes can be file:// too
             videoUrl.startsWith("content://") || videoUrl.startsWith("file://") -> getLocalServerUrl(videoUrl)
             videoUrl.startsWith(
@@ -48,12 +57,25 @@ class CastMediaBuilder(
                 TorrentServerService.wait(10)
                 torrentLinkHandler(videoUrl, video.videoTitle)
             }
-            else -> videoUrl
+            else -> {
+                // The Cast default receiver cannot send custom HTTP headers.
+                // If the video source requires headers (Referer, UA, cookies, etc.),
+                // proxy the stream through the local HTTP server.
+                // KMK: like the player, fall back to the source's headers (code editor sources too)
+                // and add the app's cookies (Cloudflare clearance, logins)
+                val headers = castHeaders(video, videoUrl)
+                if (headers != null && headers.size > 0) {
+                    getProxyUrl(videoUrl, headers)
+                } else {
+                    videoUrl
+                }
+            }
         }
 
         val contentType = when {
-            videoUrl.contains(".m3u8") -> "application/x-mpegURL"
-            videoUrl.contains(".mpd") -> "application/dash+xml"
+            video.videoUrl.contains(".m3u8", ignoreCase = true) -> "application/x-mpegURL"
+            video.videoUrl.contains(".mpd", ignoreCase = true) -> "application/dash+xml"
+            video.videoUrl.contains(".mkv", ignoreCase = true) -> "video/x-matroska"
             else -> "video/mp4"
         }
 
@@ -62,9 +84,7 @@ class CastMediaBuilder(
             .setStreamType(MediaInfo.STREAM_TYPE_BUFFERED)
             .addMetadata(video)
             .addTracks(video)
-            // ANK -->
-            .setStreamDuration((viewModel.duration.value ?: 0).toLong() * 1000)
-            // ANK <--
+            .setStreamDuration((player.duration ?: 0).toLong() * 1000)
             .build()
     }
 
@@ -72,7 +92,7 @@ class CastMediaBuilder(
         var index = 0
 
         if (videoUrl.startsWith("content://")) {
-            val videoInputStream = activity.applicationContext.contentResolver.openInputStream(videoUrl.toUri())
+            val videoInputStream = activity.applicationContext.contentResolver.openInputStream(Uri.parse(videoUrl))
                 ?: throw IllegalStateException("Unable to open InputStream for content: $videoUrl")
             val torrent = TorrentServerApi.uploadTorrent(videoInputStream, quality, "", "", false)
             return TorrentServerUtils.getTorrentPlayLink(torrent, 0)
@@ -81,7 +101,7 @@ class CastMediaBuilder(
         if (videoUrl.startsWith("magnet") && videoUrl.contains("index=")) {
             index = try {
                 videoUrl.substringAfter("index=").toInt()
-            } catch (_: NumberFormatException) {
+            } catch (e: NumberFormatException) {
                 0
             }
         }
@@ -95,8 +115,8 @@ class CastMediaBuilder(
         val metadata = MediaMetadata(MediaMetadata.MEDIA_TYPE_MOVIE).apply {
             putString(MediaMetadata.KEY_TITLE, viewModel.currentAnime.value?.title ?: "")
             putString(MediaMetadata.KEY_SUBTITLE, viewModel.currentEpisode.value?.name ?: "")
-            viewModel.currentAnime.value?.thumbnailUrl?.let {
-                addImage(WebImage(it.toUri()))
+            viewModel.currentAnime.value?.thumbnailUrl?.let { url ->
+                addImage(WebImage(Uri.parse(url)))
             }
         }
         return setMetadata(metadata)
@@ -131,21 +151,78 @@ class CastMediaBuilder(
         return "http://$ip:$port/file?uri=$encodedUri"
     }
 
+    // KMK -->
+    private fun castHeaders(video: Video, videoUrl: String): Headers? {
+        // The embedded torrent server needs nothing extra
+        if (eu.kanade.tachiyomi.torrentServer.TorrentServerUtils.isTorrentServerUrl(videoUrl)) return null
+        val source = viewModel.currentSource.value
+        val sourceHeaders = (source as? AnimeHttpSource)?.headers
+            ?: (source as? SumizuriAnimeSource)?.headers
+        val base = video.headers ?: sourceHeaders
+        val builder = base?.newBuilder() ?: Headers.Builder()
+        if (base?.get("Cookie") == null) {
+            val cookies = videoUrl.toHttpUrlOrNull()
+                ?.let { network.cookieJar.loadForRequest(it) }
+                .orEmpty()
+            if (cookies.isNotEmpty()) {
+                builder.set("Cookie", cookies.joinToString("; ") { "${it.name}=${it.value}" })
+            }
+        }
+        return builder.build().takeIf { it.size > 0 }
+    }
+    // KMK <--
+
+    private fun getProxyUrl(videoUrl: String, headers: Headers): String {
+        val context = activity.applicationContext
+        context.startService(Intent(context, LocalHttpServerService::class.java))
+        val ip = getLocalIpAddress()
+        val encodedUrl = URLEncoder.encode(videoUrl, "UTF-8")
+        // Serialize headers as newline-separated "Key: Value" pairs
+        val headerString = headers.toMultimap()
+            .flatMap { (key, values) -> values.map { "$key: $it" } }
+            .joinToString("\n")
+        val encodedHeaders = URLEncoder.encode(headerString, "UTF-8")
+        return "http://$ip:$port/proxy?url=$encodedUrl&headers=$encodedHeaders"
+    }
+
     private fun getLocalIpAddress(): String {
         try {
-            val interfaces = NetworkInterface.getNetworkInterfaces()
-            while (interfaces.hasMoreElements()) {
-                val intf = interfaces.nextElement()
+            val interfaces = NetworkInterface.getNetworkInterfaces().toList()
+            val ipAddresses = mutableListOf<Pair<String, String>>()
+            for (intf in interfaces) {
+                val name = intf.name.lowercase()
                 val addresses = intf.inetAddresses
                 while (addresses.hasMoreElements()) {
                     val addr = addresses.nextElement()
                     if (!addr.isLoopbackAddress && addr is Inet4Address) {
-                        return addr.hostAddress ?: "127.0.0.1"
+                        val ip = addr.hostAddress
+                        if (ip != null) {
+                            ipAddresses.add(name to ip)
+                        }
                     }
                 }
             }
+
+            val wifiIp = ipAddresses.find { (name, _) ->
+                name.startsWith("wlan") || name.startsWith("ap") || name.startsWith("eth")
+            }?.second
+            if (wifiIp != null) return wifiIp
+
+            val nonMobileIp = ipAddresses.find { (name, _) ->
+                !name.startsWith("rmnet") &&
+                !name.startsWith("ccmni") &&
+                !name.startsWith("pdp") &&
+                !name.startsWith("tun") &&
+                !name.startsWith("tap") &&
+                !name.startsWith("p2p")
+            }?.second
+            if (nonMobileIp != null) return nonMobileIp
+
+            if (ipAddresses.isNotEmpty()) {
+                return ipAddresses.first().second
+            }
         } catch (ex: Exception) {
-            logcat(LogPriority.DEBUG, ex) { "Error getting local IP address" }
+            logcat(LogPriority.DEBUG) { "Error getting local IP address" }
         }
         return "127.0.0.1"
     }

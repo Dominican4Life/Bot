@@ -1,4 +1,5 @@
 package eu.kanade.tachiyomi.ui.player.cast.components
+import android.R
 import android.content.res.Configuration
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -41,8 +42,6 @@ import eu.kanade.presentation.theme.TachiyomiTheme
 import eu.kanade.tachiyomi.ui.player.CastManager
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
-import tachiyomi.core.common.i18n.stringResource
-import tachiyomi.i18n.MR
 import tachiyomi.i18n.ank.AMR
 import tachiyomi.presentation.core.components.material.TextButton
 import tachiyomi.presentation.core.i18n.stringResource
@@ -147,7 +146,7 @@ fun CastPlayerDialog(
             },
             confirmButton = {
                 TextButton(onClick = onDismiss) {
-                    Text(text = LocalContext.current.stringResource(MR.strings.action_ok))
+                    Text(text = LocalContext.current.getString(R.string.ok))
                 }
             },
             dismissButton = {

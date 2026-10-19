@@ -224,13 +224,8 @@ fun MoreSheet(
                                 if (wasInternalPage) {
                                     mpv?.command("script-binding", "stats/display-stats-toggle")
                                 }
-                                mpv?.command("script-message", "display-page-6")
                             } else {
                                 // If switching away FROM Page 6
-                                if (wasPageSix) {
-                                    mpv?.command("script-message", "hide-page-6")
-                                }
-
                                 if (isInternalPage) {
                                     // If switching TO an internal page (1-5)
                                     if (statisticsPage == 0 || wasPageSix) {

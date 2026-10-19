@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -50,7 +51,10 @@ fun CastQualityDialog(
                         .filterIsInstance<HosterState.Ready>()
                         .firstOrNull()
                     val videoList = hosterState?.videoList ?: emptyList()
-                    items(videoList.size) { index ->
+                    items(
+                        count = videoList.size,
+                        key = { "cast-quality-$it" }
+                    ) { index ->
                         val video = videoList[index]
                         val isSelected = index == viewModel.selectedHosterVideoIndex.value.second
                         QualityListItem(

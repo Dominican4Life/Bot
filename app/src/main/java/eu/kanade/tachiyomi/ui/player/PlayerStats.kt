@@ -32,6 +32,10 @@ object PlayerStats {
     
     val delayedFrames = MutableStateFlow(0L)
     val mistime = MutableStateFlow(0.0)
+    // ANZ -->
+    val currentVo = MutableStateFlow("")
+    val gpuDumbMode = MutableStateFlow(false)
+    // ANZ <--
 
     fun reset() {
         estimatedVfFps.value = 0.0
@@ -58,5 +62,9 @@ object PlayerStats {
         isAdaptiveDowngraded.value = false
         delayedFrames.value = 0L
         mistime.value = 0.0
+        // ANZ -->
+        currentVo.value = ""
+        gpuDumbMode.value = false
+        // ANZ <--
     }
 }

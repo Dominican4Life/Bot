@@ -153,13 +153,16 @@ fun PlayerSheets(
                 if (it == null) return@rememberLauncherForActivityResult
                 onAddAudio(it)
             }
+            // ANZ -->
             AudioTracksSheet(
                 tracks = audioTracks.toImmutableList(),
+                selectedAudio = selectedAudio,
                 onSelect = onSelectAudio,
                 onAddAudioTrack = { audioPicker.launch(arrayOf("*/*")) },
                 onOpenDelayPanel = { onOpenPanel(Panels.AudioDelay) },
                 onDismissRequest = onDismissRequest,
             )
+            // ANZ <--
         }
 
         Sheets.QualityTracks -> {

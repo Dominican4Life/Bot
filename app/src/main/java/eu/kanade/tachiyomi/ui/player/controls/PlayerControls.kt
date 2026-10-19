@@ -81,6 +81,7 @@ import eu.kanade.tachiyomi.ui.player.VideoTrack
 import eu.kanade.tachiyomi.ui.player.controls.components.BrightnessOverlay
 import eu.kanade.tachiyomi.ui.player.controls.components.BrightnessSlider
 import eu.kanade.tachiyomi.ui.player.controls.components.DoubleTapToSeekOvals
+import eu.kanade.tachiyomi.ui.player.controls.components.InterpolationStatsOverlay
 import eu.kanade.tachiyomi.ui.player.controls.components.FilledControlsButton
 import eu.kanade.tachiyomi.ui.player.controls.components.SeekbarWithTimers
 import eu.kanade.tachiyomi.ui.player.controls.components.TextPlayerUpdate
@@ -91,6 +92,7 @@ import eu.kanade.tachiyomi.ui.player.controls.components.videoTimerWidth
 import eu.kanade.tachiyomi.ui.player.execute
 import eu.kanade.tachiyomi.ui.player.executeLongPress
 import eu.kanade.tachiyomi.ui.player.parseButtons
+import eu.kanade.tachiyomi.ui.player.settings.AdvancedPlayerPreferences
 import eu.kanade.tachiyomi.ui.player.settings.AudioPreferences
 import eu.kanade.tachiyomi.ui.player.settings.GesturePreferences
 import eu.kanade.tachiyomi.ui.player.settings.PlayerPreferences
@@ -114,16 +116,12 @@ val LocalPlayerButtonsClickEvent = staticCompositionLocalOf { {} }
 @Composable
 fun PlayerControls(
     viewModel: PlayerViewModel,
-    // Cast -->
-    castManager: CastManager?,
-    // <-- Cast
+    castManager: CastManager,
     onBackPress: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // Cast -->
     var showCastSheet by remember { mutableStateOf(false) }
     val onCastClick: () -> Unit = { showCastSheet = true }
-    // <-- Cast
 
     val spacing = MaterialTheme.padding
     val playerPreferences = remember { Injekt.get<PlayerPreferences>() }
@@ -633,6 +631,7 @@ fun PlayerControls(
                         buttons = topRightButtonsList,
                         viewModel = viewModel,
                         onBackPress = onBackPress,
+                        castManager = castManager,
                         onCastClick = onCastClick,
                     )
                 }
@@ -661,6 +660,7 @@ fun PlayerControls(
                                 button = button,
                                 viewModel = viewModel,
                                 onBackPress = onBackPress,
+                                castManager = castManager,
                                 onCastClick = onCastClick,
                             )
                         }
@@ -691,6 +691,7 @@ fun PlayerControls(
                         buttons = bottomRightButtonsList,
                         viewModel = viewModel,
                         onBackPress = onBackPress,
+                        castManager = castManager,
                         onCastClick = onCastClick,
                     )
                 }
@@ -720,6 +721,7 @@ fun PlayerControls(
                         buttons = bottomLeftButtonsList,
                         viewModel = viewModel,
                         onBackPress = onBackPress,
+                        castManager = castManager,
                         onCastClick = onCastClick,
                     )
                 }
@@ -915,13 +917,21 @@ fun PlayerControls(
         }
         LaunchedEffect(Unit) { playerPreferences.addEpisodesButton() }
 
+        // ANZ -->
+        val advancedPlayerPreferences = remember { Injekt.get<AdvancedPlayerPreferences>() }
+        val statsPage by advancedPlayerPreferences.playerStatisticsPage().collectAsState()
+        if (statsPage == 6) {
+            InterpolationStatsOverlay()
+        }
+        // ANZ <--
+
         BrightnessOverlay(
             brightness = currentBrightness,
         )
     }
 
     // Cast -->
-    if (showCastSheet && castManager != null) {
+    if (showCastSheet) {
         CastSheet(
             castManager = castManager,
             viewModel = viewModel,

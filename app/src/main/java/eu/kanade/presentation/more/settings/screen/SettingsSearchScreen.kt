@@ -49,15 +49,25 @@ import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.components.UpIcon
 import eu.kanade.presentation.more.settings.Preference
+import eu.kanade.presentation.more.settings.screen.player.PlayerSettingsAdvancedScreen
+import eu.kanade.presentation.more.settings.screen.player.PlayerSettingsAudioScreen
+import eu.kanade.presentation.more.settings.screen.player.PlayerSettingsDecoderScreen
+import eu.kanade.presentation.more.settings.screen.player.PlayerSettingsGesturesScreen
+import eu.kanade.presentation.more.settings.screen.player.PlayerSettingsPlayerScreen
+import eu.kanade.presentation.more.settings.screen.player.PlayerSettingsSubtitleScreen
 import eu.kanade.presentation.util.Screen
 import tachiyomi.i18n.MR
+import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.EmptyScreen
 import tachiyomi.presentation.core.util.runOnEnterKeyPressed
 import cafe.adriel.voyager.core.screen.Screen as VoyagerScreen
 
-class SettingsSearchScreen : Screen() {
+class SettingsSearchScreen(
+    // KMK: search only the player settings (opened from the player settings screen)
+    val isPlayer: Boolean = false,
+) : Screen() {
 
     @Composable
     override fun Content() {
@@ -115,7 +125,15 @@ class SettingsSearchScreen : Screen() {
                                 decorator = {
                                     if (textFieldState.text.isEmpty()) {
                                         Text(
-                                            text = stringResource(MR.strings.action_search_settings),
+                                            text = stringResource(
+                                                // KMK -->
+                                                resource = if (isPlayer) {
+                                                    KMR.strings.action_search_player_settings
+                                                } else {
+                                                    MR.strings.action_search_settings
+                                                },
+                                                // KMK <--
+                                            ),
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             style = MaterialTheme.typography.bodyLarge,
                                         )
@@ -144,9 +162,15 @@ class SettingsSearchScreen : Screen() {
                 searchKey = textFieldState.text.toString(),
                 listState = listState,
                 contentPadding = contentPadding,
+                // KMK
+                isPlayer = isPlayer,
             ) { result ->
                 SearchableSettings.highlightKey = result.highlightKey
-                navigator.replace(result.route)
+                // KMK -->
+                if (navigator.lastItem.key != result.route.key) {
+                    navigator.replace(result.route)
+                }
+                // KMK <--
             }
         }
     }
@@ -158,13 +182,17 @@ private fun SearchResult(
     modifier: Modifier = Modifier,
     listState: LazyListState = rememberLazyListState(),
     contentPadding: PaddingValues = PaddingValues(),
+    // KMK
+    isPlayer: Boolean = false,
     onItemClick: (SearchResultItem) -> Unit,
 ) {
     if (searchKey.isEmpty()) return
 
     val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
 
-    val index = getIndex()
+    // KMK -->
+    val index = if (isPlayer) getPlayerIndex() else getIndex()
+    // KMK <--
     val result by produceState<List<SearchResultItem>?>(initialValue = null, searchKey) {
         value = index.asSequence()
             .flatMap { settingsData ->
@@ -270,6 +298,28 @@ private fun getIndex() = settingScreens
             contents = screen.getPreferences(),
         )
     }
+
+// KMK -->
+@Composable
+@NonRestartableComposable
+private fun getPlayerIndex() = playerSettingScreens
+    .map { screen ->
+        SettingsData(
+            title = stringResource(screen.getTitleRes()),
+            route = screen,
+            contents = screen.getPreferences(),
+        )
+    }
+
+private val playerSettingScreens = listOf(
+    PlayerSettingsPlayerScreen,
+    PlayerSettingsGesturesScreen,
+    PlayerSettingsDecoderScreen,
+    PlayerSettingsSubtitleScreen,
+    PlayerSettingsAudioScreen,
+    PlayerSettingsAdvancedScreen,
+)
+// KMK <--
 
 private fun getLocalizedBreadcrumb(path: String, node: String?, isLtr: Boolean): String {
     return if (node == null) {

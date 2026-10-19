@@ -460,7 +460,7 @@ private fun BorderStyleSelector(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         maxItemsInEachRow = 3,
     ) {
-        BorderStyle.entries.forEach { style ->
+        BorderStyle.values().forEach { style ->
             Surface(
                 onClick = { onStyleSelected(style) },
                 shape = MaterialTheme.shapes.small,
