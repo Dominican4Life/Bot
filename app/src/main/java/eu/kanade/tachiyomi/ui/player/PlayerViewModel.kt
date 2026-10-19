@@ -176,6 +176,7 @@ class PlayerViewModel @JvmOverloads constructor(
         it.setOptionString("icc-cache-dir", cachePath)
         it.setOptionString("keep-open", "yes")
         // ANZ -->
+        it.setOptionString("volume-max", (audioPreferences.volumeBoostCap().get() + 100).toString())
         // Start the engine at the remembered speed. This must happen here, as a pre-init option,
         // rather than as a property write after initialization: `playbackSpeed` snapshots the
         // "speed" property once when the flow is created, and the library's backing SharedFlow has
@@ -361,7 +362,10 @@ class PlayerViewModel @JvmOverloads constructor(
     val relativeTime: Boolean = uiPreferences.relativeTime().get()
     val dateFormat: java.time.format.DateTimeFormatter = UiPreferences.dateFormat(uiPreferences.dateFormat().get())
     // ANZ <--
-    private val volumeBoostCap by mpv.propFlow<Int>("volume-max").collectAsState(viewModelScope)
+    // ANZ: normalize mpv volume-max (100 + cap) to boost cap amount
+    private val volumeBoostCap by mpv.propFlow<Int>("volume-max")
+        .map { (it?.minus(100))?.coerceAtLeast(0) }
+        .collectAsState(viewModelScope, initialValue = audioPreferences.volumeBoostCap().get()) // ANZ
 
     val subtitleTracks = mpv.propFlow<MPVNode>("track-list")
         .map { node ->
@@ -460,6 +464,12 @@ class PlayerViewModel @JvmOverloads constructor(
             .filterNotNull()
             .onEach { onTrackListChanged(it) }
             .launchIn(viewModelScope)
+
+        // ANZ -->
+        mpv.propFlow<String>("aid")
+            .onEach { onAudioTrackSelectChange() }
+            .launchIn(viewModelScope)
+        // ANZ <--
 
         // ANZ -->
         viewModelScope.launchIO {
@@ -875,6 +885,20 @@ class PlayerViewModel @JvmOverloads constructor(
             }
         }
     }
+
+    // ANZ -->
+    fun onAudioTrackSelectChange() {
+        val id = mpv.getPropertyInt("aid")
+
+        _externalAudioTracks.update { audioTracks ->
+            audioTracks.map {
+                it.copy(
+                    mainSelection = if (it.id != null && it.id == id) 0 else -1,
+                )
+            }
+        }
+    }
+    // ANZ <--
 
     private fun selectSubById(id: Int) {
         val selectedSubs = Pair(mpv.getPropertyInt("sid"), mpv.getPropertyInt("secondary-sid"))
@@ -2511,8 +2535,28 @@ class PlayerViewModel @JvmOverloads constructor(
         val anime = currentAnime.value ?: return
 
         viewModelScope.launchNonCancellable {
-            // KMK: custom anime covers aren't merged yet
-            val result = SetAsCover.Error
+            // ANZ --> KMK: saved like the anime page's "custom cover" (AnimeScreenModel.setCustomCover)
+            val result = if (!anime.favorite) {
+                SetAsCover.AddToLibraryFirst
+            } else {
+                try {
+                    val context = Injekt.get<Application>()
+                    val dir = java.io.File(context.filesDir, "anime_covers").apply { mkdirs() }
+                    // A new name each time, so the image cache doesn't keep showing the old picture
+                    dir.listFiles { f -> f.name.startsWith("${anime.id}_") }?.forEach { it.delete() }
+                    val file = java.io.File(dir, "${anime.id}_${System.currentTimeMillis()}.jpg")
+                    imageStream().use { input -> file.outputStream().use { input.copyTo(it) } }
+                    val info = animeRepository.getCustomInfo(anime.id)
+                        ?: eu.kanade.tachiyomi.data.anime.AnimeCustomInfo(anime.id)
+                    animeRepository.setCustomInfo(info.copy(thumbnailUrl = "file://" + file.absolutePath))
+                    tachiyomi.domain.manga.model.MangaCover.coverRatioMap.remove(-anime.id)
+                    SetAsCover.Success
+                } catch (e: Exception) {
+                    logcat(LogPriority.ERROR, e) { "Couldn't set the anime cover" }
+                    SetAsCover.Error
+                }
+            }
+            // ANZ <--
             eventChannel.send(Event.SetCoverResult(result, ArtType.Cover))
         }
     }
