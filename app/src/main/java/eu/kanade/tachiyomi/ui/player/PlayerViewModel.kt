@@ -111,6 +111,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import logcat.LogPriority
 import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.core.common.preference.TriState
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.launchNonCancellable
 import tachiyomi.core.common.util.lang.withIOContext
@@ -1510,19 +1511,45 @@ class PlayerViewModel @JvmOverloads constructor(
         }
 
 
-    // KMK: only "skip seen" for now; episode filters come with the anime details filters
+    // ANK --> skip seen, and (ANZ) skip what the anime's episode filters hide
     private fun filterEpisodeList(
+        anime: Anime,
         episodes: List<DomainEpisode>,
         selectedEpisode: DomainEpisode,
     ): List<DomainEpisode> {
-        if (!playerPreferences.skipSeen().get()) return episodes
-        val filteredEpisodes = episodes.filterNot { it.seen }
+        val skipSeen = playerPreferences.skipSeen().get()
+        val skipFiltered = playerPreferences.skipFiltered().get()
+        if (!skipSeen && !skipFiltered) return episodes
+
+        // KMK: our anime keeps its filters as TriStates (ENABLED_IS = only these, ENABLED_NOT = hide these)
+        fun TriState.hides(matches: Boolean): Boolean = when (this) {
+            TriState.ENABLED_IS -> !matches
+            TriState.ENABLED_NOT -> matches
+            TriState.DISABLED -> false
+        }
+
+        val filteredEpisodes = episodes.filterNot {
+            when {
+                skipSeen && it.seen -> true
+                skipFiltered -> {
+                    anime.unseenFilter.hides(!it.seen) ||
+                        anime.bookmarkedFilter.hides(it.bookmark) ||
+                        anime.fillermarkedFilter.hides(it.fillermark) ||
+                        (
+                            anime.downloadedFilter != TriState.DISABLED &&
+                                anime.downloadedFilter.hides(animeDownloads.isDownloaded(anime, it))
+                            )
+                }
+                else -> false
+            }
+        }
         return if (filteredEpisodes.any { it.id == selectedEpisode.id }) {
             filteredEpisodes
         } else {
             (filteredEpisodes + selectedEpisode).sortedBy { it.sourceOrder }.reversed()
         }
     }
+    // ANK <--
 
     fun getCurrentEpisodeIndex(): Int {
         return currentPlaylist.value.indexOfFirst { currentEpisode.value?.id == it.id }
@@ -1742,7 +1769,7 @@ class PlayerViewModel @JvmOverloads constructor(
         val selected = episodes.firstOrNull { it.id == episodeId }
         // ANZ <--
 
-        return (if (selected != null) filterEpisodeList(episodes, selected) else episodes)
+        return (if (selected != null) filterEpisodeList(anime, episodes, selected) else episodes)
             .map { it.toDbEpisode() }
     }
 

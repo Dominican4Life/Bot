@@ -11,8 +11,6 @@ import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.data.torrentServer.service.TorrentServerService
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource
-import okhttp3.Headers
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import eu.kanade.tachiyomi.torrentServer.TorrentServerApi
 import eu.kanade.tachiyomi.torrentServer.TorrentServerUtils
 import eu.kanade.tachiyomi.ui.player.PlayerActivity
@@ -22,6 +20,8 @@ import eu.kanade.tachiyomi.util.LocalHttpServerService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import logcat.LogPriority
+import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.injectLazy
 import java.net.Inet4Address
@@ -47,7 +47,8 @@ class CastMediaBuilder(
 
         videoUrl = when {
             // KMK: downloaded episodes can be file:// too
-            videoUrl.startsWith("content://") || videoUrl.startsWith("file://") -> getLocalServerUrl(videoUrl)
+            (videoUrl.startsWith("content://") && !videoUrl.endsWith(".torrent")) ||
+                videoUrl.startsWith("file://") -> getLocalServerUrl(videoUrl)
             videoUrl.startsWith(
                 "magnet",
             ) ||
@@ -126,7 +127,8 @@ class CastMediaBuilder(
         val subtitleTracks = video.subtitleTracks.mapIndexed { trackIndex, sub ->
             logcat(LogPriority.DEBUG) { "Subtitle URL: ${sub.url}" }
             MediaTrack.Builder(trackIndex.toLong(), MediaTrack.TYPE_TEXT)
-                .setContentId(sub.url)
+                // KMK: downloaded subtitles are local files the receiver can't open directly
+                .setContentId(sub.url.toCastableTrackUrl())
                 .setSubtype(MediaTrack.SUBTYPE_SUBTITLES)
                 .setName(sub.lang)
                 .build()
@@ -134,7 +136,7 @@ class CastMediaBuilder(
 
         val audioTracks = video.audioTracks.mapIndexed { trackIndex, audio ->
             MediaTrack.Builder((subtitleTracks.size + trackIndex).toLong(), MediaTrack.TYPE_AUDIO)
-                .setContentId(audio.url)
+                .setContentId(audio.url.toCastableTrackUrl())
                 .setName(audio.lang)
                 .setContentType("application/x-mpegURL")
                 .build()
@@ -152,9 +154,13 @@ class CastMediaBuilder(
     }
 
     // KMK -->
+    private fun String.toCastableTrackUrl(): String {
+        return if (startsWith("content://") || startsWith("file://")) getLocalServerUrl(this) else this
+    }
+
     private fun castHeaders(video: Video, videoUrl: String): Headers? {
         // The embedded torrent server needs nothing extra
-        if (eu.kanade.tachiyomi.torrentServer.TorrentServerUtils.isTorrentServerUrl(videoUrl)) return null
+        if (TorrentServerUtils.isTorrentServerUrl(videoUrl)) return null
         val source = viewModel.currentSource.value
         val sourceHeaders = (source as? AnimeHttpSource)?.headers
             ?: (source as? SumizuriAnimeSource)?.headers
@@ -168,7 +174,11 @@ class CastMediaBuilder(
                 builder.set("Cookie", cookies.joinToString("; ") { "${it.name}=${it.value}" })
             }
         }
-        return builder.build().takeIf { it.size > 0 }
+        val headers = builder.build()
+        // A source's default User-Agent alone isn't worth routing the whole stream through the phone
+        val needsProxy = (video.headers?.size ?: 0) > 0 ||
+            headers.names().any { !it.equals("User-Agent", ignoreCase = true) }
+        return headers.takeIf { needsProxy }
     }
     // KMK <--
 

@@ -189,6 +189,10 @@ object HomeScreen : Screen() {
                                 it.Content()
                             }
                         }
+                        // KMK: Chromecast mini controller while casting
+                        eu.kanade.tachiyomi.ui.player.cast.HomeCastMiniController(
+                            modifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter),
+                        )
                     }
                 }
             }

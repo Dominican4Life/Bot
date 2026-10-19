@@ -144,17 +144,8 @@ class PlayerActivity : BaseActivity() {
     // ANK <--
 
     // Cast -->
-    /**
-     * Chromecast support, or null when it's turned off in the player settings or Google Play
-     * services can't be used on this device (then the cast button stays hidden too).
-     */
-    internal val castManager: CastManager? by lazy {
-        if (playerPreferences.enableCast().get() && CastManager.isCastApiAvailable(this)) {
-            CastManager(this, Injekt.get())
-        } else {
-            null
-        }
-    }
+    // ANZ: CastManager checks the enableCast preference and Google Play services itself
+    val castManager: CastManager by lazy { CastManager(this, Injekt.get()) }
     // <-- Cast
 
     private var audioFocusRequest: AudioFocusRequestCompat? = null
@@ -363,6 +354,10 @@ class PlayerActivity : BaseActivity() {
             }
             .launchIn(lifecycleScope)
 
+        // Cast -->
+        castManager
+        // <-- Cast
+
         setContent {
             TachiyomiTheme {
                 Box(modifier = Modifier.fillMaxSize()) {
@@ -436,7 +431,7 @@ class PlayerActivity : BaseActivity() {
         // ANK <--
 
         // Cast -->
-        castManager?.cleanup()
+        castManager.cleanup()
         // <-- Cast
 
         // ANZ -->
@@ -455,7 +450,7 @@ class PlayerActivity : BaseActivity() {
 
         // Cast -->
         // Maintain active Cast session
-        castManager?.maintainCastSessionBackground()
+        castManager.maintainCastSessionBackground()
         // <-- Cast
 
         if (isInPictureInPictureMode) {
@@ -579,7 +574,7 @@ class PlayerActivity : BaseActivity() {
         }
 
         // Cast -->
-        castManager?.apply {
+        castManager.apply {
             // Register session listener cast
             registerSessionListener()
 
@@ -689,7 +684,7 @@ class PlayerActivity : BaseActivity() {
 
         // Cast -->
         // Reconnect cast if it was active
-        castManager?.apply {
+        castManager.apply {
             reconnect()
             registerSessionListener()
         }
@@ -732,6 +727,9 @@ class PlayerActivity : BaseActivity() {
     @Suppress("unused")
     internal fun onObserverEvent(property: String, value: Long) {
         if (player.isExiting) return
+        when (property) {
+            "vo-delayed-frame-count" -> PlayerStats.delayedFrames.value = value
+        }
     }
 
     @Suppress("unused")
@@ -742,6 +740,10 @@ class PlayerActivity : BaseActivity() {
     internal fun onObserverEvent(property: String, value: Boolean) {
         if (player.isExiting) return
         when (property) {
+            "interpolation" -> PlayerStats.isInterpolating.value = value
+            // ANZ -->
+            "gpu-dumb-mode" -> PlayerStats.gpuDumbMode.value = value
+            // ANZ <--
             "pause" if value -> {
                 window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             }
@@ -770,6 +772,13 @@ class PlayerActivity : BaseActivity() {
 
     internal fun onObserverEvent(property: String, value: String) {
         if (player.isExiting) return
+        when (property) {
+            "video-sync" -> PlayerStats.videoSync.value = value
+            "tscale" -> PlayerStats.tscale.value = value
+            // ANZ -->
+            "current-vo" -> PlayerStats.currentVo.value = value
+            // ANZ <--
+        }
         when (property.substringBeforeLast("/")) {
             "user-data/aniyomi" -> viewModel.handleLuaInvocation(property, value)
         }
@@ -779,6 +788,9 @@ class PlayerActivity : BaseActivity() {
     internal fun onObserverEvent(property: String, value: Double) {
         if (player.isExiting) return
         when (property) {
+            "display-fps", "override-display-fps" -> PlayerStats.displayFps.value = value
+            "estimated-display-fps" -> PlayerStats.estimatedDisplayFps.value = value
+            "mistime" -> PlayerStats.mistime.value = value
             "video-params/aspect" -> {
                 if (isPipSupportedAndEnabled) createPipParams()
                 // ANZ -->
@@ -1028,6 +1040,19 @@ class PlayerActivity : BaseActivity() {
                     }
 
                     override fun onPause() {
+                        // Cast -->
+                        castManager.apply {
+                            // Release resources only if not in PIP
+                            if (!isInPictureInPictureMode) {
+                                unregisterSessionListener()
+                            }
+
+                            // If you are transmitting, keep an active session
+                            if (castState.value == CastManager.CastState.CONNECTED) {
+                                maintainCastSessionBackground()
+                            }
+                        }
+                        // <-- Cast
                         when (playAction) {
                             SingleActionGesture.None -> {}
                             SingleActionGesture.Seek -> {}
@@ -1351,9 +1376,9 @@ class PlayerActivity : BaseActivity() {
         val sourceHeaders = (viewModel.currentSource.value as? AnimeHttpSource)?.headers
             // KMK: Code editor sources send their headers too
             ?: (viewModel.currentSource.value as? eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource)?.headers
-            ?: return
 
-        val headers = (video.headers ?: sourceHeaders)
+        // ANZ: a video's own headers are used even when the source has none
+        val headers = (video.headers ?: sourceHeaders ?: return)
             .toMultimap()
             .mapValues { it.value.firstOrNull() ?: "" }
             .toMutableMap()

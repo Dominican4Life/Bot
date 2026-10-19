@@ -1,3 +1,5 @@
+package eu.kanade.tachiyomi.ui.player.cast.components
+
 import android.annotation.SuppressLint
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -6,7 +8,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
@@ -26,9 +27,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import eu.kanade.tachiyomi.ui.player.CastManager
 import eu.kanade.tachiyomi.ui.player.PlayerViewModel
-import eu.kanade.tachiyomi.ui.player.cast.components.CastPlayerDialog
-import eu.kanade.tachiyomi.ui.player.cast.components.CastQualityDialog
-import eu.kanade.tachiyomi.ui.player.cast.components.QueueItemRow
 import tachiyomi.i18n.ank.AMR
 import tachiyomi.presentation.core.i18n.stringResource
 

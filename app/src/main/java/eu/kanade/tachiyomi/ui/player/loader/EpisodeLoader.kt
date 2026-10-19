@@ -70,10 +70,10 @@ class EpisodeLoader {
          */
         private fun getHostersOnDownloaded(episode: Episode, anime: Anime): List<Hoster> {
             return try {
-                val file = Injekt.get<AnimeDownloadManager>().findEpisodeFile(anime, episode)
-                    ?: return emptyList()
+                val downloadManager = Injekt.get<AnimeDownloadManager>()
+                val file = downloadManager.findEpisodeFile(anime, episode) ?: return emptyList()
                 val baseName = file.name.orEmpty().substringBeforeLast('.')
-                val subtitleTracks = file.parentFile?.listFiles().orEmpty()
+                val subtitleTracks = downloadManager.animeDir(anime, create = false)?.listFiles().orEmpty()
                     .filter {
                         val name = it.name.orEmpty()
                         val lower = name.lowercase()
