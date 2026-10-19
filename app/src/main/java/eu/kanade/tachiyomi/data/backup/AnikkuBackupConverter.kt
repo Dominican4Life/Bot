@@ -126,8 +126,8 @@ object AnikkuBackupConverter {
             title = title,
             lastEpisodeSeen = lastEpisodeSeen.toDouble(),
             totalEpisodes = totalEpisodes.toLong(),
-            status = status(trackerId, status.toLong()),
-            score = score(trackerId, score.toDouble()),
+            status = mapStatus(trackerId, status.toLong()),
+            score = mapScore(trackerId, score.toDouble()),
             remoteUrl = trackingUrl,
             startDate = startedWatchingDate,
             finishDate = finishedWatchingDate,
@@ -136,7 +136,7 @@ object AnikkuBackupConverter {
     }
 
     /** Anikku keeps each tracker's own status numbers; ours are the shared [AnimeTrackStatus] */
-    private fun status(trackerId: Long, status: Long): Long = when (trackerId) {
+    private fun mapStatus(trackerId: Long, status: Long): Long = when (trackerId) {
         // MyAnimeList
         1L -> when (status) {
             11L -> AnimeTrackStatus.WATCHING
@@ -170,6 +170,6 @@ object AnikkuBackupConverter {
     }.takeIf { it in AnimeTrackStatus.all } ?: AnimeTrackStatus.WATCHING
 
     /** Ours is 0–10; Anikku keeps AniList's as 0–100 */
-    private fun score(trackerId: Long, score: Double): Double =
+    private fun mapScore(trackerId: Long, score: Double): Double =
         (if (trackerId == 2L) score / 10.0 else score).coerceIn(0.0, 10.0)
 }
