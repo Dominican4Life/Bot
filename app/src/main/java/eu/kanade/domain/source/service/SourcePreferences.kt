@@ -3,6 +3,7 @@ package eu.kanade.domain.source.service
 import eu.kanade.domain.source.interactor.SetMigrateSorting
 import eu.kanade.tachiyomi.ui.browse.source.globalsearch.SourceFilter
 import eu.kanade.tachiyomi.util.system.LocaleHelper
+import mihon.domain.migration.models.ANIME_MIGRATION_FLAGS
 import mihon.domain.migration.models.MigrationFlag
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
@@ -125,6 +126,26 @@ class SourcePreferences(
 
     // KMK -->
     fun migrationSmartSearchSingleEntry() = preferenceStore.getBoolean("migration_smart_search_single_entry", false)
+
+    // KMK: the anime Migrate window's own choices (the pause between titles and the sorting are shared with manga)
+    fun animeMigrationSources() = preferenceStore.getLongArray("anime_migration_sources", emptyList())
+
+    fun animeMigrationFlags() = preferenceStore.getObjectFromInt(
+        key = "anime_migration_flags",
+        defaultValue = ANIME_MIGRATION_FLAGS.toSet(),
+        serializer = { MigrationFlag.toBit(it) },
+        deserializer = { value: Int -> MigrationFlag.fromBit(value) },
+    )
+
+    fun animeMigrationDeepSearchMode() = preferenceStore.getBoolean("anime_migration_deep_search", false)
+
+    fun animeMigrationPrioritizeByEpisodes() =
+        preferenceStore.getBoolean("anime_migration_prioritize_by_episodes", false)
+
+    fun animeMigrationHideUnmatched() = preferenceStore.getBoolean("anime_migration_hide_unmatched", false)
+
+    fun animeMigrationHideWithoutUpdates() =
+        preferenceStore.getBoolean("anime_migration_hide_without_updates", false)
 
     fun globalSearchPinnedState() = preferenceStore.getEnum(
         Preference.appStateKey("global_search_pinned_toggle_state"),

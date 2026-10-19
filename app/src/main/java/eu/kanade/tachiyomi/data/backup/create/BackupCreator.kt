@@ -144,6 +144,14 @@ class BackupCreator(
                 } else {
                     emptyList()
                 },
+                backupAnimeCategories = if (options.libraryEntries || options.categories) {
+                    val keys = options.categoryKeys
+                    AnimeBackupHelper().createCategories().filter {
+                        keys == null || CategoryChoice.anime(it.name) in keys
+                    }
+                } else {
+                    emptyList()
+                },
                 // KMK <--
             )
 

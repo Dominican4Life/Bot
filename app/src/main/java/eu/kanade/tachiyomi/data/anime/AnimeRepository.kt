@@ -6,6 +6,7 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.data.DatabaseHandler
@@ -17,6 +18,94 @@ import java.time.Instant
 class AnimeRepository(
     private val handler: DatabaseHandler,
 ) {
+
+    // KMK: Edit info. What the user changed is laid over the source's values whenever an anime is read.
+    private val customInfo = java.util.concurrent.ConcurrentHashMap<Long, AnimeCustomInfo>()
+
+    init {
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+            .launch {
+                try {
+                    val all = handler.awaitList { anime_custom_infoQueries.getAll(::mapCustomInfo) }
+                    if (all.isEmpty()) return@launch
+                    all.forEach { customInfo[it.animeId] = it }
+                    // Read the anime again so open screens show the edits
+                    all.forEach { touchAnime(it.animeId) }
+                } catch (e: Throwable) {
+                    logcat(LogPriority.ERROR, e) { "Couldn't load anime Edit info" }
+                }
+            }
+    }
+
+    /** The user's edits for this anime, or null */
+    fun getCustomInfo(animeId: Long): AnimeCustomInfo? = customInfo[animeId]
+
+    suspend fun setCustomInfo(info: AnimeCustomInfo) {
+        if (info.isEmpty()) {
+            customInfo.remove(info.animeId)
+            handler.await { anime_custom_infoQueries.delete(info.animeId) }
+        } else {
+            customInfo[info.animeId] = info
+            handler.await {
+                anime_custom_infoQueries.upsert(
+                    animeId = info.animeId,
+                    title = info.title,
+                    author = info.author,
+                    artist = info.artist,
+                    description = info.description,
+                    genre = info.genre,
+                    status = info.status,
+                    thumbnailUrl = info.thumbnailUrl,
+                )
+            }
+        }
+        touchAnime(info.animeId)
+    }
+
+    /** Makes screens watching this anime read it again */
+    private suspend fun touchAnime(animeId: Long) {
+        handler.await { animesQueries.touch(animeId) }
+    }
+
+    private fun mapCustomInfo(
+        animeId: Long,
+        title: String?,
+        author: String?,
+        artist: String?,
+        description: String?,
+        genre: String?,
+        status: Long?,
+        thumbnailUrl: String?,
+    ) = AnimeCustomInfo(animeId, title, author, artist, description, genre, status, thumbnailUrl)
+
+    private fun Anime.withCustomInfo(): Anime {
+        val info = customInfo[id] ?: return this
+        return copy(
+            title = info.title?.takeIf { it.isNotBlank() } ?: title,
+            author = info.author ?: author,
+            artist = info.artist ?: artist,
+            description = info.description ?: description,
+            genre = info.genre?.let { it.toGenreList() } ?: genre,
+            status = info.status ?: status,
+            thumbnailUrl = info.thumbnailUrl?.takeIf { it.isNotBlank() } ?: thumbnailUrl,
+        )
+    }
+
+    /** Number values for the anime library's filters, sorts and badges, per anime id */
+    fun subscribeLibraryStats(): Flow<Map<Long, AnimeLibraryStats>> =
+        handler.subscribeToList { episodesQueries.animeLibraryStats() }.map { rows ->
+            rows.associate { row ->
+                row.animeId to AnimeLibraryStats(
+                    total = row.total,
+                    seen = (row.seenCount as Number?)?.toLong() ?: 0L,
+                    bookmarked = (row.bookmarkCount as Number?)?.toLong() ?: 0L,
+                    inProgress = (row.inProgressCount as Number?)?.toLong() ?: 0L,
+                    latestUpload = (row.latestUpload as Number?)?.toLong() ?: 0L,
+                    latestFetch = (row.latestFetch as Number?)?.toLong() ?: 0L,
+                    lastSeen = (row.lastSeen as Number?)?.toLong() ?: 0L,
+                )
+            }
+        }
 
     // Anime
 
@@ -59,7 +148,11 @@ class AnimeRepository(
                 initialized = false,
                 fetchType = sAnime.fetch_type.toLong(),
             )
-            animesQueries.selectLastInsertedRowId().executeAsOne()
+            val newId = animesQueries.selectLastInsertedRowId().executeAsOne()
+            // KMK: episode sort / filters / display chosen with "Set as default"
+            val defaults = AnimeEpisodeDefaults.flags().get()
+            if (defaults != 0L) animesQueries.setEpisodeFlags(flags = defaults, id = newId)
+            newId
         }
         return getAnime(id)!!
     }
@@ -359,6 +452,9 @@ class AnimeRepository(
 
     suspend fun getFavorites(): List<Anime> = handler.awaitList { animesQueries.getFavorites(::mapAnime) }
 
+    /** The library as the sources gave it, without Edit info (for backups; the edits are backed up apart) */
+    suspend fun getFavoritesRaw(): List<Anime> = handler.awaitList { animesQueries.getFavorites(::mapAnimeRaw) }
+
     suspend fun getAnimeByUrl(url: String, sourceId: Long): Anime? =
         handler.awaitOneOrNull { animesQueries.getByUrlAndSource(url, sourceId, ::mapAnime) }
 
@@ -516,7 +612,7 @@ class AnimeRepository(
         }
     }
 
-    private fun mapAnime(
+    private fun mapAnimeRaw(
         id: Long,
         source: Long,
         url: String,
@@ -553,6 +649,27 @@ class AnimeRepository(
         fetchType = FetchType.entries.getOrElse(fetchType.toInt()) { FetchType.Episodes },
         episodeFlags = episodeFlags,
     )
+
+    private fun mapAnime(
+
+        id: Long,
+        source: Long,
+        url: String,
+        artist: String?,
+        author: String?,
+        description: String?,
+        genre: String?,
+        title: String,
+        status: Long,
+        thumbnailUrl: String?,
+        backgroundUrl: String?,
+        favorite: Boolean,
+        initialized: Boolean,
+        dateAdded: Long,
+        lastUpdate: Long,
+        fetchType: Long,
+        episodeFlags: Long,
+    ) = mapAnimeRaw(id, source, url, artist, author, description, genre, title, status, thumbnailUrl, backgroundUrl, favorite, initialized, dateAdded, lastUpdate, fetchType, episodeFlags).withCustomInfo()
 
     private fun mapEpisode(
         id: Long,

@@ -92,3 +92,18 @@ LIMIT :limit;
 
 getByUrl:
 SELECT * FROM episodes WHERE anime_id = :animeId AND url = :url LIMIT 1;
+
+-- KMK: per-anime numbers for the anime library's filters, sorts and badges
+animeLibraryStats:
+SELECT
+    ep.anime_id AS animeId,
+    COUNT(*) AS total,
+    coalesce(SUM(CASE WHEN ep.seen = 1 THEN 1 ELSE 0 END), 0) AS seenCount,
+    coalesce(SUM(CASE WHEN ep.bookmark = 1 THEN 1 ELSE 0 END), 0) AS bookmarkCount,
+    coalesce(SUM(CASE WHEN ep.seen = 0 AND ep.last_second_seen > 0 THEN 1 ELSE 0 END), 0) AS inProgressCount,
+    coalesce(MAX(ep.date_upload), 0) AS latestUpload,
+    coalesce(MAX(ep.date_fetch), 0) AS latestFetch,
+    coalesce(MAX(h.last_seen), 0) AS lastSeen
+FROM episodes ep
+LEFT JOIN anime_history h ON h.episode_id = ep._id
+GROUP BY ep.anime_id;

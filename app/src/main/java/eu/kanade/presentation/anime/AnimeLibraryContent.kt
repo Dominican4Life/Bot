@@ -25,6 +25,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
+import eu.kanade.presentation.components.wideSpan
+import eu.kanade.tachiyomi.util.system.toast
+import kotlinx.coroutines.launch
 import eu.kanade.presentation.library.components.CommonMangaItemDefaults
 import eu.kanade.presentation.library.components.MangaComfortableGridItem
 import eu.kanade.presentation.library.components.MangaCompactGridItem
@@ -49,7 +52,11 @@ fun AnimeLibraryContent(
     contentPadding: PaddingValues,
     searchQuery: String?,
     onClickAnime: (Anime) -> Unit,
+    // KMK: Migrate from the selection bar
+    onMigrate: ((List<Long>) -> Unit)? = null,
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     val repository = remember { Injekt.get<AnimeRepository>() }
     val sourceManager = remember { Injekt.get<AnimeSourceManager>() }
     val favorites by remember { repository.subscribeFavorites() }.collectAsState(initial = null)
@@ -60,6 +67,41 @@ fun AnimeLibraryContent(
         if (isLandscape) libraryPreferences.landscapeColumns() else libraryPreferences.portraitColumns()
     }
     val columns by columnsPref.collectAsState()
+
+    // KMK: the anime library's own filters, sort and badges
+    val stats by remember { repository.subscribeLibraryStats() }.collectAsState(initial = emptyMap())
+    val filters = rememberAnimeLibraryFilters()
+    val sortMode by remember { AnimeLibraryPrefs.sort() }.collectAsState()
+    val sortAscending by remember { AnimeLibraryPrefs.sortAscending() }.collectAsState()
+    val randomSeed by remember { AnimeLibraryPrefs.randomSeed() }.collectAsState()
+    val showUnseenBadge by remember { AnimeLibraryPrefs.unseenBadge() }.collectAsState()
+    val showDownloadBadge by remember { AnimeLibraryPrefs.downloadBadge() }.collectAsState()
+    val showContinue by remember { AnimeLibraryPrefs.continueButton() }.collectAsState()
+    val downloadManager = remember { Injekt.get<eu.kanade.tachiyomi.data.anime.download.AnimeDownloadManager>() }
+    val downloadChanges by downloadManager.changes.collectAsState()
+    val needDownloads = showDownloadBadge || filters.downloaded != tachiyomi.core.common.preference.TriState.DISABLED
+    // Look at each anime's download folder once, when downloads matter
+    androidx.compose.runtime.LaunchedEffect(favorites?.size, needDownloads) {
+        if (needDownloads) favorites?.forEach { downloadManager.refresh(it) }
+    }
+    val downloaded = remember(favorites, downloadChanges, needDownloads) {
+        if (!needDownloads) emptyMap() else favorites.orEmpty().associate { it.id to downloadManager.downloadedCount(it) }
+    }
+    val needTracks = filters.tracked.values.any { it != tachiyomi.core.common.preference.TriState.DISABLED } ||
+        sortMode == AnimeLibrarySort.TRACKER_SCORE
+    val tracks by androidx.compose.runtime.produceState(
+        initialValue = emptyMap<Long, List<eu.kanade.tachiyomi.data.anime.track.AnimeTrack>>(),
+        favorites,
+        needTracks,
+    ) {
+        value = if (needTracks) {
+            runCatching {
+                Injekt.get<eu.kanade.tachiyomi.data.anime.track.AnimeTrackRepository>().getAll().groupBy { it.animeId }
+            }.getOrDefault(emptyMap())
+        } else {
+            emptyMap()
+        }
+    }
 
     val list = favorites ?: return
     // KMK: category tabs, like the manga library. "Default" holds the anime in no category.
@@ -106,13 +148,30 @@ fun AnimeLibraryContent(
         )
     }
 
-    val filtered = remember(current, searchQuery) {
+    val filtered = remember(current, searchQuery, stats, downloaded, tracks, filters, sortMode, sortAscending, randomSeed) {
         val inPage = current?.third.orEmpty()
-        if (searchQuery.isNullOrBlank()) {
+        val searched = if (searchQuery.isNullOrBlank()) {
             inPage
         } else {
             inPage.filter { it.title.contains(searchQuery, ignoreCase = true) }
         }
+        searched.filterAndSortAnime(stats, downloaded, tracks, filters, sortMode, sortAscending, randomSeed)
+    }
+    val continueWatching: (Anime) -> Unit = { anime ->
+        scope.launch {
+            val next = repository.getEpisodes(anime.id)
+                .filter { !it.seen }
+                .minWithOrNull(compareBy<eu.kanade.tachiyomi.data.anime.Episode> { it.episodeNumber }.thenByDescending { it.sourceOrder })
+            if (next != null) {
+                context.startActivity(eu.kanade.tachiyomi.ui.player.PlayerActivity.newIntent(context, anime.id, next.id))
+            } else {
+                context.toast(KMR.strings.anime_library_no_next_episode)
+            }
+        }
+    }
+    val unseenBadge: @Composable androidx.compose.foundation.layout.RowScope.(Anime) -> Unit = { anime ->
+        if (showUnseenBadge) eu.kanade.presentation.library.components.UnreadBadge(stats[anime.id]?.unseen ?: 0L)
+        if (showDownloadBadge) eu.kanade.presentation.library.components.DownloadsBadge((downloaded[anime.id] ?: 0).toLong())
     }
     val showTabs = pages.size > 1
     val tabRow: @Composable () -> Unit = {
@@ -137,7 +196,13 @@ fun AnimeLibraryContent(
         Column {
             tabRow()
             EmptyScreen(
-                message = stringResource(KMR.strings.anime_library_empty),
+                message = stringResource(
+                    if (filters.isActive && current?.third.orEmpty().isNotEmpty()) {
+                        KMR.strings.anime_library_no_match
+                    } else {
+                        KMR.strings.anime_library_empty
+                    },
+                ),
                 modifier = Modifier.padding(top = topPadding, bottom = contentPadding.calculateBottomPadding()),
             )
         }
@@ -145,7 +210,30 @@ fun AnimeLibraryContent(
     }
     // Same items and display mode as the manga library
     val displayMode by remember { libraryPreferences.displayMode() }.collectAsState()
+    // KMK: Panorama styles like the manga library (Color fill / Fit width / Wide)
+    val panoramaStyle by remember { Injekt.get<eu.kanade.domain.ui.UiPreferences>().libraryPanoramaStyle() }
+        .collectAsState()
+    val usePanorama = displayMode == LibraryDisplayMode.ComfortableGridPanorama
+    val doubleWide = usePanorama && panoramaStyle == eu.kanade.domain.ui.model.PanoramaStyle.WIDE
+    val wideCovers = eu.kanade.presentation.components.rememberWideCovers()
+    val knownWide = remember(filtered, doubleWide) {
+        if (!doubleWide) {
+            emptySet<Long>()
+        } else {
+            filtered.mapNotNullTo(HashSet()) { anime ->
+                // The saved shape is width / height, keyed by the cover's id
+                val widthByHeight = tachiyomi.domain.manga.model.MangaCover.coverRatioMap[anime.coverId()]
+                    ?: return@mapNotNullTo null
+                anime.id.takeIf {
+                    widthByHeight > 0f && 1f / widthByHeight <= eu.kanade.presentation.components.WideCovers.WIDE_RATIO
+                }
+            }
+        }
+    }
+    val foundWide = wideCovers.ids
+    val wide = remember(knownWide, foundWide) { if (foundWide.isEmpty()) knownWide else knownWide + foundWide }
     Box(modifier = Modifier.fillMaxSize()) {
+        eu.kanade.presentation.components.ProvideCoverFillSettings {
         Column {
             tabRow()
             FastScrollLazyVerticalGrid(
@@ -163,15 +251,25 @@ fun AnimeLibraryContent(
                 verticalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridVerticalSpacer),
                 horizontalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridHorizontalSpacer),
             ) {
-                items(filtered, key = { it.id }) { anime ->
+                items(
+                    filtered,
+                    key = { it.id },
+                    span = { anime -> wideSpan(doubleWide, wide, anime.id) },
+                ) { anime ->
+                    val onContinue: (() -> Unit)? = if (showContinue && (stats[anime.id]?.unseen ?: 0L) > 0) {
+                        { continueWatching(anime) }
+                    } else {
+                        null
+                    }
                     when (displayMode) {
                         LibraryDisplayMode.List -> MangaListItem(
                             coverData = anime.asMangaCover(),
                             title = anime.title,
                             onClick = { onClick(anime) },
                             onLongClick = { onLongClickAnime(anime) },
-                            badge = {},
+                            badge = { unseenBadge(anime) },
                             isSelected = anime.id in selected,
+                            onClickContinueReading = onContinue,
                         )
                         LibraryDisplayMode.CompactGrid, LibraryDisplayMode.CoverOnlyGrid -> MangaCompactGridItem(
                             coverData = anime.asMangaCover(),
@@ -179,18 +277,25 @@ fun AnimeLibraryContent(
                             onClick = { onClick(anime) },
                             onLongClick = { onLongClickAnime(anime) },
                             isSelected = anime.id in selected,
+                            coverBadgeStart = { unseenBadge(anime) },
+                            onClickContinueReading = onContinue,
                         )
                         else -> MangaComfortableGridItem(
                             coverData = anime.asMangaCover(),
                             title = anime.title,
                             onClick = { onClick(anime) },
                             onLongClick = { onLongClickAnime(anime) },
-                            usePanoramaCover = displayMode == LibraryDisplayMode.ComfortableGridPanorama,
+                            usePanoramaCover = usePanorama,
+                            panoramaStyle = panoramaStyle,
+                            onCoverRatio = { if (doubleWide && anime.id !in knownWide) wideCovers.report(anime.id, it) },
                             isSelected = anime.id in selected,
+                            coverBadgeStart = { unseenBadge(anime) },
+                            onClickContinueReading = onContinue,
                         )
                     }
                 }
             }
+        }
         }
         if (selected.isNotEmpty()) {
             AnimeSelectionBar(
@@ -208,6 +313,12 @@ fun AnimeLibraryContent(
                     selected = emptySet()
                 },
                 onRemove = { showRemove = true },
+                onMigrate = onMigrate?.let { migrate ->
+                    {
+                        migrate(selected.toList())
+                        selected = emptySet()
+                    }
+                },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(bottom = contentPadding.calculateBottomPadding()),

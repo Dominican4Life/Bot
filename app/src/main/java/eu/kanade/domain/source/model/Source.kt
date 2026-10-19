@@ -11,7 +11,11 @@ import uy.kohesive.injekt.api.get
 
 val Source.icon: ImageBitmap?
     get() {
-        return Injekt.get<ExtensionManager>().getAppIconForSource(id)
+        return (
+            Injekt.get<ExtensionManager>().getAppIconForSource(id)
+                // KMK: an anime source shown with the manga source rows (anime migration)
+                ?: Injekt.get<eu.kanade.tachiyomi.animeextension.AnimeExtensionManager>().getAppIconForSource(id)
+            )
             ?.toBitmap()
             ?.asImageBitmap()
     }

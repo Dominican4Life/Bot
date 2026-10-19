@@ -59,6 +59,10 @@ WHERE _id = :id AND favorite = 0;
 setFavorite:
 UPDATE animes SET favorite = :favorite, date_added = :dateAdded WHERE _id = :id;
 
+-- KMK: a no-op write so screens watching an anime read it again (after Edit info)
+touch:
+UPDATE animes SET episode_flags = episode_flags WHERE _id = :id;
+
 setEpisodeFlags:
 UPDATE animes SET episode_flags = :flags WHERE _id = :id;
 

@@ -12,11 +12,13 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.data.anime.Anime
+import eu.kanade.tachiyomi.data.anime.AnimeEpisodeDefaults
 import eu.kanade.tachiyomi.data.anime.AnimeRepository
 import eu.kanade.tachiyomi.data.anime.AnimeVideoFetcher
 import eu.kanade.tachiyomi.data.anime.Episode
 import eu.kanade.tachiyomi.data.anime.download.AnimeDownloadManager
 import eu.kanade.tachiyomi.data.download.model.Download
+import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -28,7 +30,9 @@ import logcat.LogPriority
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.preference.TriState
 import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.icons.FlagEmoji
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -358,6 +362,112 @@ class AnimeScreenModel(
         val anime = state.value.anime ?: return
         screenModelScope.launchIO { repository.setFavorite(anime, !anime.favorite) }
     }
+
+    // KMK --> episode multi-select (long-press an episode, like manga chapters)
+
+    fun setSeen(episodes: List<Episode>, seen: Boolean) {
+        screenModelScope.launchIO { repository.setSeen(episodes.filter { it.seen != seen }, seen) }
+    }
+
+    /** Marks every episode before [episode] (in watching order) as seen */
+    fun markPreviousSeen(episode: Episode) {
+        val inOrder = state.value.allEpisodes.sortedByDescending { it.sourceOrder }
+        val index = inOrder.indexOfFirst { it.id == episode.id }
+        if (index <= 0) return
+        setSeen(inOrder.take(index), true)
+    }
+
+    fun setBookmark(episodes: List<Episode>, bookmark: Boolean) {
+        screenModelScope.launchIO {
+            episodes.filter { it.bookmark != bookmark }.forEach { repository.setBookmark(it, bookmark) }
+        }
+    }
+
+    fun downloadSelected(episodes: List<Episode>) {
+        val anime = state.value.anime ?: return
+        episodes.sortedByDescending { it.sourceOrder }
+            .groupBy { state.value.animeOf(it) ?: anime }
+            .forEach { (owner, list) -> downloadManager.enqueue(owner, list) }
+    }
+
+    fun deleteSelected(episodes: List<Episode>) {
+        val anime = state.value.anime ?: return
+        episodes.groupBy { state.value.animeOf(it) ?: anime }
+            .forEach { (owner, list) -> downloadManager.delete(owner, list) }
+    }
+
+    // Episode sheet: "Set as default"
+
+    /** Uses this anime's episode sort, filters and display for anime added from now on (and all of them with [applyToLibrary]) */
+    fun setEpisodeSettingsAsDefault(applyToLibrary: Boolean) {
+        val anime = state.value.anime ?: return
+        AnimeEpisodeDefaults.flags().set(anime.episodeFlags)
+        if (applyToLibrary) {
+            screenModelScope.launchIO {
+                repository.getFavorites().forEach { other ->
+                    if (other.id != anime.id) repository.setEpisodeFlags(other, anime.episodeFlags)
+                }
+            }
+        }
+    }
+
+    // Edit info and cover
+
+    fun customInfo(): eu.kanade.tachiyomi.data.anime.AnimeCustomInfo? = repository.getCustomInfo(animeId)
+
+    fun saveInfo(info: eu.kanade.tachiyomi.data.anime.AnimeCustomInfo) {
+        screenModelScope.launchIO {
+            // Keep a custom cover that was set apart from this dialog
+            val cover = repository.getCustomInfo(animeId)?.thumbnailUrl
+            repository.setCustomInfo(info.copy(animeId = animeId, thumbnailUrl = info.thumbnailUrl ?: cover))
+        }
+    }
+
+    /** Copies the picked picture into the app and uses it as this anime's cover */
+    fun setCustomCover(context: android.content.Context, uri: android.net.Uri) {
+        screenModelScope.launchIO {
+            try {
+                val dir = java.io.File(context.filesDir, "anime_covers").apply { mkdirs() }
+                // A new name each time, so the image cache doesn't keep showing the old picture
+                dir.listFiles { f -> f.name.startsWith("${animeId}_") }?.forEach { it.delete() }
+                val file = java.io.File(dir, "${animeId}_${System.currentTimeMillis()}.jpg")
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    file.outputStream().use { input.copyTo(it) }
+                } ?: return@launchIO
+                val info = repository.getCustomInfo(animeId)
+                    ?: eu.kanade.tachiyomi.data.anime.AnimeCustomInfo(animeId)
+                repository.setCustomInfo(info.copy(thumbnailUrl = "file://" + file.absolutePath))
+                tachiyomi.domain.manga.model.MangaCover.coverRatioMap.remove(-animeId)
+            } catch (e: Throwable) {
+                logcat(LogPriority.ERROR, e) { "Couldn't set the anime cover" }
+                withUIContext { context.toast(MR.strings.notification_cover_update_failed) }
+            }
+        }
+    }
+
+    fun deleteCustomCover(context: android.content.Context) {
+        screenModelScope.launchIO {
+            java.io.File(context.filesDir, "anime_covers").listFiles { f -> f.name.startsWith("${animeId}_") }
+                ?.forEach { it.delete() }
+            val info = repository.getCustomInfo(animeId) ?: return@launchIO
+            repository.setCustomInfo(info.copy(thumbnailUrl = null))
+        }
+    }
+
+    // Duplicates
+
+    fun sourceNameOf(sourceId: Long): String = sourceManager.get(sourceId)?.name ?: sourceId.toString()
+
+    /** Anime already in the library with the same title (from another source or entry) */
+    suspend fun findDuplicates(): List<Anime> {
+        val anime = state.value.anime ?: return emptyList()
+        val title = anime.title.normalizedTitle()
+        if (title.isBlank()) return emptyList()
+        return repository.getFavorites().filter { it.id != anime.id && it.title.normalizedTitle() == title }
+    }
+
+    private fun String.normalizedTitle() = lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
+    // KMK <--
 
     fun toggleSort() {
         val anime = state.value.anime ?: return

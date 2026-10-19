@@ -22,6 +22,9 @@ class Bangumi(id: Long) : BaseTracker(id, "Bangumi") {
 
     private val api by lazy { BangumiApi(id, client, interceptor) }
 
+    // KMK: signed-in client for anime tracking (BangumiAnime)
+    val animeClient by lazy { client.newBuilder().addInterceptor(interceptor).build() }
+
     override val supportsPrivateTracking: Boolean = true
 
     override fun getScoreList(): ImmutableList<String> = SCORE_LIST

@@ -180,3 +180,35 @@ data class AnimeCategory(
     val name: String,
     val order: Long,
 )
+
+/** KMK: what the user changed with Edit info. Null keeps the source's value. */
+@Immutable
+data class AnimeCustomInfo(
+    val animeId: Long,
+    val title: String? = null,
+    val author: String? = null,
+    val artist: String? = null,
+    val description: String? = null,
+    /** Comma separated, like the source's */
+    val genre: String? = null,
+    val status: Long? = null,
+    val thumbnailUrl: String? = null,
+) {
+    fun isEmpty() = title == null && author == null && artist == null && description == null && genre == null &&
+        status == null && thumbnailUrl == null
+}
+
+/** KMK: per-anime numbers for the anime library */
+@Immutable
+data class AnimeLibraryStats(
+    val total: Long,
+    val seen: Long,
+    val bookmarked: Long,
+    val inProgress: Long,
+    val latestUpload: Long,
+    val latestFetch: Long,
+    val lastSeen: Long,
+) {
+    val unseen: Long get() = (total - seen).coerceAtLeast(0)
+    val started: Boolean get() = seen > 0 || inProgress > 0
+}

@@ -1,0 +1,13 @@
+-- KMK: anime Edit info / custom cover
+CREATE TABLE IF NOT EXISTS anime_custom_info(
+    anime_id INTEGER NOT NULL PRIMARY KEY,
+    title TEXT,
+    author TEXT,
+    artist TEXT,
+    description TEXT,
+    genre TEXT,
+    status INTEGER,
+    thumbnail_url TEXT,
+    FOREIGN KEY(anime_id) REFERENCES animes (_id)
+    ON DELETE CASCADE
+);

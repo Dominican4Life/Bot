@@ -11,6 +11,7 @@ import androidx.compose.material.icons.outlined.DoneAll
 import androidx.compose.material.icons.outlined.FlipToBack
 import androidx.compose.material.icons.outlined.RemoveDone
 import androidx.compose.material.icons.outlined.SelectAll
+import androidx.compose.material.icons.outlined.SwapCalls
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -168,6 +169,8 @@ fun AnimeSelectionBar(
     onMarkUnseen: () -> Unit,
     onRemove: () -> Unit,
     modifier: Modifier = Modifier,
+    // KMK: Migrate the selected anime
+    onMigrate: (() -> Unit)? = null,
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -194,6 +197,9 @@ fun AnimeSelectionBar(
             BarButton(Icons.AutoMirrored.Outlined.Label, stringResource(MR.strings.action_move_category), onSetCategories)
             BarButton(Icons.Outlined.DoneAll, stringResource(KMR.strings.anime_action_mark_seen), onMarkSeen)
             BarButton(Icons.Outlined.RemoveDone, stringResource(KMR.strings.anime_action_mark_unseen), onMarkUnseen)
+            if (onMigrate != null) {
+                BarButton(Icons.Outlined.SwapCalls, stringResource(MR.strings.migrate), onMigrate)
+            }
             BarButton(Icons.Outlined.DeleteOutline, stringResource(MR.strings.remove_from_library), onRemove)
         }
     }

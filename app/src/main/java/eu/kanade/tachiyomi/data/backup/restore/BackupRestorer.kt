@@ -117,6 +117,7 @@ class BackupRestorer(
                     !manga.favorite || CategoryChoice.keepManga(keys, manga.categories.mapNotNull { orderToName[it] })
                 },
                 backupAnime = decoded.backupAnime.filter { CategoryChoice.keepAnime(keys, it.categories) },
+                backupAnimeCategories = decoded.backupAnimeCategories.filter { CategoryChoice.anime(it.name) in keys },
             )
         } ?: decoded
 
@@ -181,7 +182,9 @@ class BackupRestorer(
             }
             // KMK -->
             if (options.libraryEntries) {
-                restoreAnime(backup.backupAnime)
+                restoreAnime(backup.backupAnime, backup.backupAnimeCategories)
+            } else if (options.categories) {
+                restoreAnime(emptyList(), backup.backupAnimeCategories)
             }
             if (options.extensionStores) {
                 restoreAnimeExtensionStores(backup.backupAnimeExtensionStores)
@@ -342,9 +345,18 @@ class BackupRestorer(
     }
 
     // KMK -->
-    private fun CoroutineScope.restoreAnime(backupAnime: List<eu.kanade.tachiyomi.data.backup.models.BackupAnime>) =
+    private fun CoroutineScope.restoreAnime(
+        backupAnime: List<eu.kanade.tachiyomi.data.backup.models.BackupAnime>,
+        categories: List<eu.kanade.tachiyomi.data.backup.models.BackupAnimeCategory>,
+    ) =
         launch {
             val helper = eu.kanade.tachiyomi.data.backup.AnimeBackupHelper()
+            // Categories first, so they keep the backup's order
+            try {
+                helper.restoreCategories(categories)
+            } catch (e: Exception) {
+                errors.add(Date() to "Anime categories: ${e.message}")
+            }
             backupAnime.forEach {
                 ensureActive()
                 try {

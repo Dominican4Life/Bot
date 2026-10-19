@@ -36,6 +36,9 @@ class Kitsu(id: Long) : BaseTracker(id, "Kitsu"), DeletableTracker {
 
     private val api by lazy { KitsuApi(client, interceptor) }
 
+    // KMK: signed-in client for anime tracking (KitsuAnime)
+    val animeClient by lazy { client.newBuilder().addInterceptor(interceptor).build() }
+
     override fun getLogo() = R.drawable.brand_kitsu
 
     override fun getStatusList(): List<Long> {

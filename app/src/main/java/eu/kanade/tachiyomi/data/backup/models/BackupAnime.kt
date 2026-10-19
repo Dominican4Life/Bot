@@ -25,6 +25,49 @@ data class BackupAnime(
     @ProtoNumber(17) var history: List<BackupAnimeHistory> = emptyList(),
     // KMK: names of its anime categories
     @ProtoNumber(18) var categories: List<String> = emptyList(),
+    // KMK: tracker entries (anime_sync)
+    @ProtoNumber(19) var tracking: List<BackupAnimeTrack> = emptyList(),
+    // KMK: the user's notes and hidden scanlators (kept in preferences by anime id)
+    @ProtoNumber(20) var notes: String = "",
+    @ProtoNumber(21) var excludedScanlators: List<String> = emptyList(),
+    // KMK: edited info (anime_custom_info); a local custom cover file is not backed up
+    @ProtoNumber(22) var customInfo: BackupAnimeCustomInfo? = null,
+)
+
+/** KMK: one tracker entry of an anime (anime_sync) */
+@Serializable
+data class BackupAnimeTrack(
+    @ProtoNumber(1) var trackerId: Long,
+    @ProtoNumber(2) var remoteId: Long,
+    @ProtoNumber(3) var libraryId: Long? = null,
+    @ProtoNumber(4) var title: String = "",
+    @ProtoNumber(5) var lastEpisodeSeen: Double = 0.0,
+    @ProtoNumber(6) var totalEpisodes: Long = 0,
+    @ProtoNumber(7) var status: Long = 0,
+    @ProtoNumber(8) var score: Double = 0.0,
+    @ProtoNumber(9) var remoteUrl: String = "",
+    @ProtoNumber(10) var startDate: Long = 0,
+    @ProtoNumber(11) var finishDate: Long = 0,
+    @ProtoNumber(12) var private: Boolean = false,
+)
+
+/** KMK: what the user edited on an anime (anime_custom_info); null keeps the source's value */
+@Serializable
+data class BackupAnimeCustomInfo(
+    @ProtoNumber(1) var title: String? = null,
+    @ProtoNumber(2) var author: String? = null,
+    @ProtoNumber(3) var artist: String? = null,
+    @ProtoNumber(4) var description: String? = null,
+    @ProtoNumber(5) var genre: String? = null,
+    @ProtoNumber(6) var status: Long? = null,
+    @ProtoNumber(7) var thumbnailUrl: String? = null,
+)
+
+/** KMK: an anime category with its place in the category list */
+@Serializable
+data class BackupAnimeCategory(
+    @ProtoNumber(1) var name: String,
+    @ProtoNumber(2) var order: Long = 0,
 )
 
 @Serializable

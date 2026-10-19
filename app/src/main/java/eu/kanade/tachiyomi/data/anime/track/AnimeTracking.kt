@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.data.anime.track
 
 import androidx.compose.runtime.Immutable
 import eu.kanade.domain.track.service.TrackPreferences
+import eu.kanade.tachiyomi.data.anime.Anime
 import eu.kanade.tachiyomi.data.anime.AnimeRepository
 import eu.kanade.tachiyomi.data.track.BaseTracker
 import eu.kanade.tachiyomi.data.track.TrackerManager
@@ -68,6 +69,24 @@ interface AnimeTrackService {
     val id: Long get() = tracker.id
     val name: String get() = tracker.name
     val isLoggedIn: Boolean get() = tracker.isLoggedIn
+
+    // KMK -->
+    /** Whether a list entry can be hidden from others on this tracker */
+    val supportsPrivate: Boolean get() = false
+
+    /** Whether the tracker keeps a score, and start/finish dates */
+    val supportsScore: Boolean get() = true
+    val supportsDates: Boolean get() = true
+
+    /** False for trackers that bind by themselves ([autoBind]) and can't be searched */
+    val canSearch: Boolean get() = true
+
+    /** Whether this tracker can track [anime] at all (e.g. Jellyfin only tracks anime from its own extension) */
+    fun accepts(anime: Anime): Boolean = true
+
+    /** For trackers that bind without a search: the entry for [anime], or null when it can't be bound */
+    suspend fun autoBind(anime: Anime, lastSeenEpisode: Double): AnimeTrack? = null
+    // KMK <--
 
     suspend fun search(query: String): List<AnimeTrackSearch>
 

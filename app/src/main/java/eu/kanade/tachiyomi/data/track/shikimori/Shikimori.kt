@@ -36,6 +36,9 @@ class Shikimori(id: Long) : BaseTracker(id, "Shikimori"), DeletableTracker {
 
     private val api by lazy { ShikimoriApi(id, client, interceptor) }
 
+    // KMK: signed-in client for anime tracking (ShikimoriAnime)
+    val animeClient by lazy { client.newBuilder().addInterceptor(interceptor).build() }
+
     override fun getScoreList(): ImmutableList<String> = SCORE_LIST
 
     override fun displayScore(track: DomainTrack): String {

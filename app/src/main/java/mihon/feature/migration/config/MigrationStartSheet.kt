@@ -343,7 +343,7 @@ fun MigrationStartSheet(
 }
 
 @Composable
-private fun SectionHeader(text: String) {
+internal fun SectionHeader(text: String) {
     Text(
         text = text,
         style = MaterialTheme.typography.header,
@@ -355,7 +355,7 @@ private fun SectionHeader(text: String) {
 
 /** A box showing the picked sources (icons, the first names, "· N in total"), or what to pick when empty */
 @Composable
-private fun SourcesBox(
+internal fun SourcesBox(
     sources: List<Source>,
     emptyText: String,
     countText: @Composable (names: String, total: Int) -> String,
@@ -407,7 +407,7 @@ private fun SourcesBox(
 }
 
 @Composable
-private fun PrefSwitch(title: String, subtitle: String?, preference: Preference<Boolean>) {
+internal fun PrefSwitch(title: String, subtitle: String?, preference: Preference<Boolean>) {
     SheetSwitch(
         title = title,
         subtitle = subtitle,
@@ -417,7 +417,7 @@ private fun PrefSwitch(title: String, subtitle: String?, preference: Preference<
 }
 
 @Composable
-private fun SheetSwitch(title: String, subtitle: String?, checked: Boolean, onClick: () -> Unit) {
+internal fun SheetSwitch(title: String, subtitle: String?, checked: Boolean, onClick: () -> Unit) {
     ListItem(
         headlineContent = { Text(text = title) },
         supportingContent = subtitle?.let { { Text(text = it) } },

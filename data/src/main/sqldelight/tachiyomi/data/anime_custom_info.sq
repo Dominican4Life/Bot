@@ -1,0 +1,26 @@
+-- KMK: what the user edited on an anime (Edit info / custom cover). Null fields keep the source's value.
+CREATE TABLE anime_custom_info(
+    anime_id INTEGER NOT NULL PRIMARY KEY,
+    title TEXT,
+    author TEXT,
+    artist TEXT,
+    description TEXT,
+    genre TEXT,
+    status INTEGER,
+    thumbnail_url TEXT,
+    FOREIGN KEY(anime_id) REFERENCES animes (_id)
+    ON DELETE CASCADE
+);
+
+getByAnimeId:
+SELECT * FROM anime_custom_info WHERE anime_id = :animeId;
+
+getAll:
+SELECT * FROM anime_custom_info;
+
+upsert:
+INSERT OR REPLACE INTO anime_custom_info(anime_id, title, author, artist, description, genre, status, thumbnail_url)
+VALUES (:animeId, :title, :author, :artist, :description, :genre, :status, :thumbnailUrl);
+
+delete:
+DELETE FROM anime_custom_info WHERE anime_id = :animeId;

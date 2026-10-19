@@ -34,3 +34,13 @@ enum class MigrationFlag(val flag: Int) {
         }
     }
 }
+
+/** KMK: What anime migration can carry over: episodes, categories, tracking, extra (episode settings, notes, edited
+ * info) and deleting the old downloads */
+val ANIME_MIGRATION_FLAGS = listOf(
+    MigrationFlag.CHAPTER,
+    MigrationFlag.CATEGORY,
+    MigrationFlag.TRACK,
+    MigrationFlag.EXTRA,
+    MigrationFlag.REMOVE_DOWNLOAD,
+)

@@ -250,6 +250,16 @@
                 <data android:host="myanimelist-auth" />
                 <data android:host="shikimori-auth" />
             </intent-filter>
+            <!-- KMK: Simkl signs in with Anikku's app, whose redirect is anikku://simkl-auth -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data android:scheme="anikku" />
+                <data android:host="simkl-auth" />
+            </intent-filter>
         </activity>
         <activity
             android:name=".ui.setting.track.GoogleDriveLoginActivity"
@@ -285,6 +295,10 @@
         <!-- KMK: the Cancel button on the migration's notifications -->
         <receiver
             android:name="mihon.feature.migration.list.ActiveMigration$CancelReceiver"
+            android:exported="false" />
+        <!-- KMK: the Cancel button on the anime migration's notifications -->
+        <receiver
+            android:name="mihon.feature.migration.anime.ActiveAnimeMigration$CancelReceiver"
             android:exported="false" />
 
         <receiver

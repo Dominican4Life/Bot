@@ -27,6 +27,9 @@ class TrackLoginActivity : BaseOAuthLoginActivity() {
                     "bangumi-auth" -> handleBangumi(data["code"])
                     "myanimelist-auth" -> handleMyAnimeList(data["code"])
                     "shikimori-auth" -> handleShikimori(data["code"])
+                    // KMK -->
+                    "simkl-auth" -> handleSimkl(data["code"])
+                    // KMK <--
                 }
             } finally {
                 returnToSettings()
@@ -65,4 +68,14 @@ class TrackLoginActivity : BaseOAuthLoginActivity() {
             trackerManager.shikimori.logout()
         }
     }
+
+    // KMK -->
+    private suspend fun handleSimkl(code: String?) {
+        if (code != null) {
+            trackerManager.simkl.login(code)
+        } else {
+            trackerManager.simkl.logout()
+        }
+    }
+    // KMK <--
 }

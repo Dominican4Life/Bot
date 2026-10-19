@@ -14,8 +14,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
@@ -153,6 +155,12 @@ data object LibraryTab : Tab {
         // KMK -->
         val showAnimePref = remember { Injekt.get<SourcePreferences>().libraryShowAnime() }
         val showAnime by showAnimePref.collectAsState()
+        // The anime library has its own Filter / Sort / Display sheet
+        var showAnimeSettings by remember { mutableStateOf(false) }
+        val animeFilters = eu.kanade.presentation.anime.rememberAnimeLibraryFilters()
+        if (showAnimeSettings) {
+            eu.kanade.presentation.anime.AnimeLibrarySettingsDialog(onDismissRequest = { showAnimeSettings = false })
+        }
         // KMK <--
 
         Scaffold(
@@ -163,13 +171,13 @@ data object LibraryTab : Tab {
                     page = state.coercedActiveCategoryIndex,
                 )
                 LibraryToolbar(
-                    hasActiveFilters = state.hasActiveFilters,
+                    hasActiveFilters = if (showAnime) animeFilters.isActive else state.hasActiveFilters,
                     selectedCount = state.selection.size,
                     title = title,
                     onClickUnselectAll = screenModel::clearSelection,
                     onClickSelectAll = screenModel::selectAll,
                     onClickInvertSelection = screenModel::invertSelection,
-                    onClickFilter = screenModel::showSettingsDialog,
+                    onClickFilter = { if (showAnime) showAnimeSettings = true else screenModel.showSettingsDialog() },
                     onClickRefresh = { onClickRefresh(state.activeCategory) },
                     onClickGlobalUpdate = { onClickRefresh(null) },
                     onClickOpenRandomManga = {

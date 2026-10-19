@@ -87,7 +87,7 @@ import uy.kohesive.injekt.api.get
  * on top, the picker below.
  */
 @Composable
-private fun PickerWindow(
+internal fun PickerWindow(
     title: String,
     okEnabled: Boolean,
     onDismissRequest: () -> Unit,
@@ -477,7 +477,7 @@ private fun MigrateTitlesPicker(
 }
 
 @Composable
-private fun PickerHeader(text: String) {
+internal fun PickerHeader(text: String) {
     Text(
         text = text,
         style = MaterialTheme.typography.bodyMedium,
@@ -486,7 +486,7 @@ private fun PickerHeader(text: String) {
 }
 
 @Composable
-private fun PickerCard(first: Boolean, last: Boolean, content: @Composable () -> Unit) {
+internal fun PickerCard(first: Boolean, last: Boolean, content: @Composable () -> Unit) {
     val shape = remember(first, last) {
         val top = if (first) 12.dp else 0.dp
         val bottom = if (last) 12.dp else 0.dp
@@ -499,7 +499,7 @@ private fun PickerCard(first: Boolean, last: Boolean, content: @Composable () ->
 }
 
 @Composable
-private fun PickerRow(
+internal fun PickerRow(
     source: Source,
     showLanguage: Boolean,
     onClick: () -> Unit,

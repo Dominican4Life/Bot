@@ -129,6 +129,14 @@ import tachiyomi.presentation.core.util.collectAsState
 import tachiyomi.presentation.core.util.shouldExpandFAB
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import kotlinx.coroutines.launch
+import coil3.imageLoader
+import coil3.asDrawable
+import eu.kanade.tachiyomi.util.system.getBitmapOrNull
+import eu.kanade.tachiyomi.util.system.toShareIntent
+import tachiyomi.core.common.util.system.logcat
+import logcat.LogPriority
+import eu.kanade.tachiyomi.data.anime.AnimeEpisodeDefaults
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -172,12 +180,32 @@ class AnimeScreen(private val animeId: Long) : Screen() {
         var dialog by remember { mutableStateOf<AnimeDialog?>(null) }
         // KMK: like manga, adding to the library asks for categories once some exist
         val hasCategories = rememberHasAnimeCategories()
+        // KMK: long-press selects episodes, like manga chapters
+        var selection by remember { mutableStateOf(emptySet<Long>()) }
+        androidx.activity.compose.BackHandler(enabled = selection.isNotEmpty()) { selection = emptySet() }
+        val selectedEpisodes = state.episodes.filter { it.id in selection }
+        val scope = androidx.compose.runtime.rememberCoroutineScope()
+        // Adding to the library: warn first when the same title is already there
+        var duplicates by remember { mutableStateOf<List<Anime>>(emptyList()) }
+        val addToLibrary: () -> Unit = {
+            if (hasCategories) dialog = AnimeDialog.Categories
+            screenModel.toggleFavorite()
+        }
+        val pickCover = androidx.activity.compose.rememberLauncherForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.GetContent(),
+        ) { uri -> if (uri != null) screenModel.setCustomCover(context, uri) }
         val actions = AnimeActions(
             navigateUp = navigator::pop,
             onRefresh = screenModel::refresh,
             onToggleFavorite = {
-                if (!anime.favorite && hasCategories) dialog = AnimeDialog.Categories
-                screenModel.toggleFavorite()
+                if (anime.favorite) {
+                    screenModel.toggleFavorite()
+                } else {
+                    scope.launch {
+                        val found = screenModel.findDuplicates()
+                        if (found.isEmpty()) addToLibrary() else duplicates = found
+                    }
+                }
             },
             onEditCategories = { dialog = AnimeDialog.Categories },
             onFilter = { dialog = AnimeDialog.Settings },
@@ -206,6 +234,44 @@ class AnimeScreen(private val animeId: Long) : Screen() {
             onPlay = playEpisode,
             onToggleSeen = screenModel::toggleSeen,
             onToggleBookmark = screenModel::toggleBookmark,
+            selection = selection,
+            onEpisodeClick = { episode ->
+                if (selection.isEmpty()) {
+                    playEpisode(episode)
+                } else {
+                    selection = if (episode.id in selection) selection - episode.id else selection + episode.id
+                }
+            },
+            onEpisodeLongClick = { episode ->
+                selection = if (episode.id in selection) selection - episode.id else selection + episode.id
+            },
+            onSelectAll = { selection = state.episodes.map { it.id }.toSet() },
+            onInvertSelection = { selection = state.episodes.map { it.id }.toSet() - selection },
+            onClearSelection = { selection = emptySet() },
+            onSelectionSeen = { seen ->
+                screenModel.setSeen(selectedEpisodes, seen)
+                selection = emptySet()
+            },
+            onSelectionPreviousSeen = {
+                selectedEpisodes.singleOrNull()?.let(screenModel::markPreviousSeen)
+                selection = emptySet()
+            },
+            onSelectionBookmark = { bookmark ->
+                screenModel.setBookmark(selectedEpisodes, bookmark)
+                selection = emptySet()
+            },
+            onSelectionDownload = {
+                screenModel.downloadSelected(selectedEpisodes)
+                selection = emptySet()
+            },
+            onSelectionDelete = {
+                screenModel.deleteSelected(selectedEpisodes)
+                selection = emptySet()
+            },
+            selectedEpisodes = selectedEpisodes,
+            onEditInfo = { dialog = AnimeDialog.EditInfo },
+            onCoverClick = { dialog = AnimeDialog.Cover },
+            onMigrate = null,
         )
 
         CoverSeedTheme(seedColor = state.seedColor) {
@@ -220,6 +286,7 @@ class AnimeScreen(private val animeId: Long) : Screen() {
                     onSortModeChanged = screenModel::setSortMode,
                     onDisplayNumberChanged = screenModel::setDisplayNumber,
                     onReset = screenModel::resetEpisodeSettings,
+                    onSetAsDefault = { dialog = AnimeDialog.SetDefault },
                 )
                 AnimeDialog.Scanlators -> ScanlatorFilterDialog(
                     availableScanlators = state.scanlators.toImmutableSet(),
@@ -251,6 +318,51 @@ class AnimeScreen(private val animeId: Long) : Screen() {
                     animeId = anime.id,
                     onDismissRequest = { dialog = null },
                 )
+                AnimeDialog.EditInfo -> AnimeEditInfoDialog(
+                    anime = anime,
+                    custom = screenModel.customInfo(),
+                    onDismissRequest = { dialog = null },
+                    onSave = screenModel::saveInfo,
+                )
+                AnimeDialog.Cover -> {
+                    val snackbarHostState = remember { androidx.compose.material3.SnackbarHostState() }
+                    eu.kanade.presentation.manga.components.MangaCoverDialog(
+                        manga = anime.asDisplayManga(),
+                        isCustomCover = screenModel.customInfo()?.thumbnailUrl != null,
+                        snackbarHostState = snackbarHostState,
+                        onShareClick = { saveAnimeCover(context, scope, anime, snackbarHostState, share = true) },
+                        onSaveClick = { saveAnimeCover(context, scope, anime, snackbarHostState, share = false) },
+                        onEditClick = { action ->
+                            when (action) {
+                                eu.kanade.presentation.manga.EditCoverAction.EDIT -> pickCover.launch("image/*")
+                                eu.kanade.presentation.manga.EditCoverAction.DELETE -> screenModel.deleteCustomCover(context)
+                            }
+                        },
+                        onDismissRequest = { dialog = null },
+                    )
+                }
+                AnimeDialog.SetDefault -> AnimeSetDefaultDialog(
+                    onDismissRequest = { dialog = AnimeDialog.Settings },
+                    onConfirm = { applyToLibrary ->
+                        screenModel.setEpisodeSettingsAsDefault(applyToLibrary)
+                        dialog = null
+                    },
+                )
+            }
+            if (duplicates.isNotEmpty()) {
+                AnimeDuplicateDialog(
+                    duplicates = duplicates,
+                    sourceName = { id -> screenModel.sourceNameOf(id) },
+                    onDismissRequest = { duplicates = emptyList() },
+                    onAddAnyway = {
+                        duplicates = emptyList()
+                        addToLibrary()
+                    },
+                    onOpen = {
+                        duplicates = emptyList()
+                        navigator.push(AnimeScreen(it.id))
+                    },
+                )
             }
             if (isTabletUi()) {
                 AnimeScreenLarge(state, anime, actions, screenModel.source)
@@ -267,7 +379,7 @@ class AnimeScreen(private val animeId: Long) : Screen() {
     }
 }
 
-private enum class AnimeDialog { Settings, Scanlators, Notes, Clear, MergeSettings, Categories }
+private enum class AnimeDialog { Settings, Scanlators, Notes, Clear, MergeSettings, Categories, EditInfo, Cover, SetDefault }
 
 /** Everything the details page can do, passed down to both layouts */
 private class AnimeActions(
@@ -292,6 +404,22 @@ private class AnimeActions(
     val onPlay: (Episode) -> Unit,
     val onToggleSeen: (Episode) -> Unit,
     val onToggleBookmark: (Episode) -> Unit,
+    // KMK: episode multi-select
+    val selection: Set<Long>,
+    val onEpisodeClick: (Episode) -> Unit,
+    val onEpisodeLongClick: (Episode) -> Unit,
+    val onSelectAll: () -> Unit,
+    val onInvertSelection: () -> Unit,
+    val onClearSelection: () -> Unit,
+    val onSelectionSeen: (Boolean) -> Unit,
+    val onSelectionPreviousSeen: () -> Unit,
+    val onSelectionBookmark: (Boolean) -> Unit,
+    val onSelectionDownload: () -> Unit,
+    val onSelectionDelete: () -> Unit,
+    val selectedEpisodes: List<Episode>,
+    val onEditInfo: () -> Unit,
+    val onCoverClick: () -> Unit,
+    val onMigrate: (() -> Unit)?,
 )
 
 @Composable
@@ -392,19 +520,19 @@ private fun AnimeToolbar(
         onClickShare = actions.onShare,
         onClickDownload = actions.onDownload,
         onClickEditCategory = null,
-        onClickMigrate = null,
+        onClickMigrate = actions.onMigrate,
         onClickEditNotes = actions.onEditNotes,
-        onClickEditInfo = null,
+        onClickEditInfo = actions.onEditInfo,
         onClickRelatedMangas = actions.onRelatedScreen.takeIf { !expandRelated && relatedInOverflow },
         onClearManga = actions.onClearAnime,
         onOpenMangaFolder = null,
         onClickRecommend = null,
         onClickMerge = actions.onMerge,
         onClickMergedSettings = actions.onMergeSettings,
-        actionModeCounter = 0,
-        onCancelActionMode = {},
-        onSelectAll = {},
-        onInvertSelection = {},
+        actionModeCounter = actions.selection.size,
+        onCancelActionMode = actions.onClearSelection,
+        onSelectAll = actions.onSelectAll,
+        onInvertSelection = actions.onInvertSelection,
         titleAlphaProvider = titleAlphaProvider,
         backgroundAlphaProvider = backgroundAlphaProvider,
         onPaletteScreenClick = {},
@@ -422,6 +550,7 @@ private fun AnimeEpisodeSettingsDialog(
     onSortModeChanged: (Long) -> Unit,
     onDisplayNumberChanged: (Boolean) -> Unit,
     onReset: () -> Unit,
+    onSetAsDefault: () -> Unit,
 ) {
     TabbedDialog(
         onDismissRequest = onDismissRequest,
@@ -431,6 +560,13 @@ private fun AnimeEpisodeSettingsDialog(
             stringResource(MR.strings.action_display),
         ),
         tabOverflowMenuContent = { closeMenu ->
+            DropdownMenuItem(
+                text = { Text(stringResource(MR.strings.set_chapter_settings_as_default)) },
+                onClick = {
+                    onSetAsDefault()
+                    closeMenu()
+                },
+            )
             DropdownMenuItem(
                 text = { Text(stringResource(MR.strings.action_reset)) },
                 onClick = {
@@ -493,6 +629,15 @@ private fun AnimeEpisodeSettingsDialog(
                         label = stringResource(KMR.strings.anime_show_episode_number),
                         selected = anime.displayNumber,
                         onClick = { onDisplayNumberChanged(true) },
+                    )
+                    // KMK: show or hide the source's episode pictures and summaries
+                    tachiyomi.presentation.core.components.CheckboxItem(
+                        label = stringResource(KMR.strings.anime_show_episode_previews),
+                        pref = AnimeEpisodeDefaults.showPreviews(),
+                    )
+                    tachiyomi.presentation.core.components.CheckboxItem(
+                        label = stringResource(KMR.strings.anime_show_episode_summaries),
+                        pref = AnimeEpisodeDefaults.showSummaries(),
                     )
                 }
             }
@@ -575,13 +720,13 @@ private fun AnimeInfo(
             sourceName = state.sourceName ?: anime.source.toString(),
             isStubSource = state.sourceMissing,
             isSourceIncognito = sourceIncognito,
-            onCoverClick = {},
+            onCoverClick = actions.onCoverClick,
             doSearch = { query, global -> if (global) actions.onGlobalSearch(query) else actions.onSearch(query) },
             librarySearch = { actions.onSearch(it) },
             onSourceClick = actions.onSourceClick,
             onCoverLoaded = {},
             coverRatio = coverRatio,
-            forcePanoramaCover = true,
+            forcePanoramaCover = false,
         )
         MangaActionRow(
             favorite = anime.favorite,
@@ -657,7 +802,10 @@ private fun AnimeScreenSmall(
                 backgroundAlphaProvider = { backgroundAlpha },
             )
         },
-        floatingActionButton = { StartFab(state, listState.shouldExpandFAB(), actions.onPlay) },
+        bottomBar = { EpisodeSelectionBar(actions) },
+        floatingActionButton = {
+            if (actions.selection.isEmpty()) StartFab(state, listState.shouldExpandFAB(), actions.onPlay)
+        },
     ) { contentPadding ->
         val topPadding = contentPadding.calculateTopPadding()
         PullRefresh(
@@ -709,7 +857,10 @@ private fun AnimeScreenLarge(
                 backgroundAlphaProvider = { 1f },
             )
         },
-        floatingActionButton = { StartFab(state, listState.shouldExpandFAB(), actions.onPlay) },
+        bottomBar = { EpisodeSelectionBar(actions) },
+        floatingActionButton = {
+            if (actions.selection.isEmpty()) StartFab(state, listState.shouldExpandFAB(), actions.onPlay)
+        },
     ) { contentPadding ->
         PullRefresh(
             refreshing = state.isRefreshing,
@@ -889,9 +1040,11 @@ private fun LazyListScope.episodeItems(
             downloadState = state.downloadState(episode),
             downloadProgress = state.downloadProgress(episode),
             onDownload = { action -> actions.onEpisodeDownload(episode, action) },
-            onPlay = { actions.onPlay(episode) },
+            onPlay = { actions.onEpisodeClick(episode) },
             onToggleSeen = { actions.onToggleSeen(episode) },
             onToggleBookmark = { actions.onToggleBookmark(episode) },
+            selected = episode.id in actions.selection,
+            onLongClick = { actions.onEpisodeLongClick(episode) },
         )
     }
 }
@@ -908,8 +1061,12 @@ private fun EpisodeItem(
     onPlay: () -> Unit,
     onToggleSeen: () -> Unit,
     onToggleBookmark: () -> Unit,
+    selected: Boolean = false,
+    onLongClick: () -> Unit = onToggleSeen,
 ) {
     val context = LocalContext.current
+    val showPreviews by remember { AnimeEpisodeDefaults.showPreviews() }.collectAsState()
+    val showSummaries by remember { AnimeEpisodeDefaults.showSummaries() }.collectAsState()
     val uiPreferences = remember { Injekt.get<UiPreferences>() }
     val libraryPreferences = remember { Injekt.get<LibraryPreferences>() }
     val relativeTime by uiPreferences.relativeTime().collectAsState()
@@ -955,7 +1112,9 @@ private fun EpisodeItem(
         stringResource(KMR.strings.anime_filler).takeIf { episode.fillermark },
     ).joinToString(" • ").ifEmpty { null }
     // KMK: AniZen-style row (preview image, title, summary, date · Sub / Dub) when the source gives them
-    if (!episode.previewUrl.isNullOrBlank() || !episode.summary.isNullOrBlank()) {
+    val hasPreview = showPreviews && !episode.previewUrl.isNullOrBlank()
+    val hasSummary = showSummaries && !episode.summary.isNullOrBlank()
+    if (hasPreview || hasSummary) {
         RichEpisodeItem(
             title = when {
                 !displayNumber || episode.name.isBlank() || episode.name == title -> title
@@ -963,9 +1122,9 @@ private fun EpisodeItem(
                 episode.name.startsWith("ep", ignoreCase = true) -> title
                 else -> "$title: ${episode.name}"
             },
-            summary = episode.summary,
+            summary = episode.summary.takeIf { hasSummary },
             // KMK: kept in the anime's download folder when it's in the library (Auto save covers)
-            preview = episode.previewUrl?.takeIf { it.isNotBlank() }?.let { url ->
+            preview = episode.previewUrl?.takeIf { hasPreview && it.isNotBlank() }?.let { url ->
                 eu.kanade.tachiyomi.data.coil.EpisodePreview(
                     animeId = episode.animeId,
                     key = eu.kanade.tachiyomi.data.coil.episodePreviewKey(episode.episodeNumber, episode.url),
@@ -980,7 +1139,8 @@ private fun EpisodeItem(
             downloadProgress = downloadProgress,
             onDownload = onDownload,
             onPlay = onPlay,
-            onLongClick = onToggleSeen,
+            onLongClick = onLongClick,
+            selected = selected,
             swipeStartAction = swipeStart,
             swipeEndAction = swipeEnd,
             onSwipe = onSwipe,
@@ -995,13 +1155,13 @@ private fun EpisodeItem(
         sourceName = null,
         read = episode.seen,
         bookmark = episode.bookmark,
-        selected = false,
+        selected = selected,
         downloadIndicatorEnabled = true,
         downloadStateProvider = { downloadState },
         downloadProgressProvider = { downloadProgress },
         chapterSwipeStartAction = swipeStart,
         chapterSwipeEndAction = swipeEnd,
-        onLongClick = onToggleSeen,
+        onLongClick = onLongClick,
         onClick = onPlay,
         onDownloadClick = onDownload,
         onChapterSwipe = onSwipe,
@@ -1025,6 +1185,7 @@ private fun RichEpisodeItem(
     onDownload: (ChapterDownloadAction) -> Unit,
     onPlay: () -> Unit,
     onLongClick: () -> Unit,
+    selected: Boolean,
     // KMK: swipe left / right, the same as plain episode rows
     swipeStartAction: LibraryPreferences.ChapterSwipeAction,
     swipeEndAction: LibraryPreferences.ChapterSwipeAction,
@@ -1050,7 +1211,9 @@ private fun RichEpisodeItem(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.surface)
+                .background(
+                    if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
+                )
                 .combinedClickable(onClick = onPlay, onLongClick = onLongClick)
                 .padding(start = 16.dp, top = 10.dp, end = 8.dp, bottom = 10.dp),
         ) {
@@ -1241,3 +1404,234 @@ private fun openExternalPlayer(context: Context, video: Video, animeTitle: Strin
         context.toast(KMR.strings.anime_no_player)
     }
 }
+
+// KMK --> episode selection, Edit info, cover, Set as default, duplicates
+
+@Composable
+private fun EpisodeSelectionBar(actions: AnimeActions) {
+    val selected = actions.selectedEpisodes
+    eu.kanade.presentation.manga.components.MangaBottomActionMenu(
+        visible = actions.selection.isNotEmpty(),
+        modifier = Modifier.fillMaxWidth(),
+        onBookmarkClicked = { actions.onSelectionBookmark(true) }.takeIf { selected.any { !it.bookmark } },
+        onRemoveBookmarkClicked = { actions.onSelectionBookmark(false) }.takeIf { selected.all { it.bookmark } },
+        onMarkAsReadClicked = { actions.onSelectionSeen(true) }.takeIf { selected.any { !it.seen } },
+        onMarkAsUnreadClicked = { actions.onSelectionSeen(false) }.takeIf { selected.any { it.seen } },
+        onMarkPreviousAsReadClicked = actions.onSelectionPreviousSeen.takeIf { selected.size == 1 },
+        onDownloadClicked = actions.onSelectionDownload,
+        onDeleteClicked = actions.onSelectionDelete,
+    )
+}
+
+@Composable
+private fun AnimeEditInfoDialog(
+    anime: Anime,
+    custom: eu.kanade.tachiyomi.data.anime.AnimeCustomInfo?,
+    onDismissRequest: () -> Unit,
+    onSave: (eu.kanade.tachiyomi.data.anime.AnimeCustomInfo) -> Unit,
+) {
+    var title by remember { mutableStateOf(custom?.title ?: anime.title) }
+    var author by remember { mutableStateOf(custom?.author ?: anime.author.orEmpty()) }
+    var artist by remember { mutableStateOf(custom?.artist ?: anime.artist.orEmpty()) }
+    var description by remember { mutableStateOf(custom?.description ?: anime.description.orEmpty()) }
+    var genre by remember { mutableStateOf(custom?.genre ?: anime.genre.orEmpty().joinToString(", ")) }
+    AlertDialog(
+        onDismissRequest = onDismissRequest,
+        title = { Text(stringResource(SYMR.strings.action_edit_info)) },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text(stringResource(SYMR.strings.title_hint, anime.title)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = author,
+                    onValueChange = { author = it },
+                    label = { Text(stringResource(KMR.strings.anime_edit_studio)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = artist,
+                    onValueChange = { artist = it },
+                    label = { Text(stringResource(KMR.strings.anime_edit_artist)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = description,
+                    onValueChange = { description = it },
+                    label = { Text(stringResource(KMR.strings.anime_edit_description)) },
+                    minLines = 3,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = genre,
+                    onValueChange = { genre = it },
+                    label = { Text(stringResource(KMR.strings.anime_edit_tags)) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    text = stringResource(KMR.strings.anime_edit_info_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    // Only what differs from the source is kept, so the source's own updates still show
+                    fun String.orKeep(source: String?) = trim().takeIf { it != source.orEmpty().trim() }
+                    onSave(
+                        eu.kanade.tachiyomi.data.anime.AnimeCustomInfo(
+                            animeId = anime.id,
+                            title = title.orKeep(if (custom?.title != null) null else anime.title)
+                                ?.takeIf { it.isNotBlank() },
+                            author = author.orKeep(if (custom?.author != null) null else anime.author),
+                            artist = artist.orKeep(if (custom?.artist != null) null else anime.artist),
+                            description = description.orKeep(
+                                if (custom?.description != null) null else anime.description,
+                            ),
+                            genre = genre.orKeep(
+                                if (custom?.genre != null) null else anime.genre.orEmpty().joinToString(", "),
+                            ),
+                        ),
+                    )
+                    onDismissRequest()
+                },
+            ) { Text(stringResource(MR.strings.action_save)) }
+        },
+        dismissButton = {
+            Row {
+                TextButton(
+                    onClick = {
+                        // Back to the source's info (a custom cover stays)
+                        onSave(eu.kanade.tachiyomi.data.anime.AnimeCustomInfo(animeId = anime.id))
+                        onDismissRequest()
+                    },
+                ) { Text(stringResource(MR.strings.action_reset)) }
+                TextButton(onClick = onDismissRequest) { Text(stringResource(MR.strings.action_cancel)) }
+            }
+        },
+    )
+}
+
+@Composable
+private fun AnimeSetDefaultDialog(onDismissRequest: () -> Unit, onConfirm: (applyToLibrary: Boolean) -> Unit) {
+    var applyToLibrary by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = onDismissRequest,
+        title = { Text(stringResource(MR.strings.set_chapter_settings_as_default)) },
+        text = {
+            Column {
+                Text(stringResource(KMR.strings.anime_set_default_text))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { applyToLibrary = !applyToLibrary }
+                        .padding(top = 8.dp),
+                ) {
+                    androidx.compose.material3.Checkbox(checked = applyToLibrary, onCheckedChange = { applyToLibrary = it })
+                    Text(stringResource(KMR.strings.anime_set_default_library))
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(applyToLibrary) }) { Text(stringResource(MR.strings.action_ok)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismissRequest) { Text(stringResource(MR.strings.action_cancel)) }
+        },
+    )
+}
+
+@Composable
+private fun AnimeDuplicateDialog(
+    duplicates: List<Anime>,
+    sourceName: (Long) -> String,
+    onDismissRequest: () -> Unit,
+    onAddAnyway: () -> Unit,
+    onOpen: (Anime) -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismissRequest,
+        title = { Text(stringResource(KMR.strings.anime_duplicate_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(stringResource(KMR.strings.anime_duplicate_text))
+                duplicates.forEach { other ->
+                    Text(
+                        text = "${other.title} • ${sourceName(other.source)}",
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onOpen(other) }
+                            .padding(vertical = 8.dp),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onAddAnyway) { Text(stringResource(MR.strings.action_add_anyway)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismissRequest) { Text(stringResource(MR.strings.action_cancel)) }
+        },
+    )
+}
+
+/** Saves the cover to Pictures, or shares it */
+private fun saveAnimeCover(
+    context: Context,
+    scope: kotlinx.coroutines.CoroutineScope,
+    anime: Anime,
+    snackbarHostState: androidx.compose.material3.SnackbarHostState,
+    share: Boolean,
+) {
+    scope.launch {
+        try {
+            val uri = tachiyomi.core.common.util.lang.withIOContext {
+                val request = coil3.request.ImageRequest.Builder(context)
+                    .data(anime.asDisplayManga())
+                    .size(coil3.size.Size.ORIGINAL)
+                    .build()
+                val bitmap = context.imageLoader.execute(request).image
+                    ?.asDrawable(context.resources)
+                    ?.getBitmapOrNull()
+                    ?: return@withIOContext null
+                Injekt.get<eu.kanade.tachiyomi.data.saver.ImageSaver>().save(
+                    eu.kanade.tachiyomi.data.saver.Image.Cover(
+                        bitmap = bitmap,
+                        name = anime.title,
+                        location = if (share) {
+                            eu.kanade.tachiyomi.data.saver.Location.Cache
+                        } else {
+                            eu.kanade.tachiyomi.data.saver.Location.Pictures.create()
+                        },
+                    ),
+                )
+            } ?: error("No cover")
+            if (share) {
+                context.startActivity(uri.toShareIntent(context))
+            } else {
+                snackbarHostState.showSnackbar(context.stringResource(MR.strings.cover_saved), withDismissAction = true)
+            }
+        } catch (e: Throwable) {
+            logcat(LogPriority.ERROR, e)
+            snackbarHostState.showSnackbar(
+                context.stringResource(if (share) MR.strings.error_sharing_cover else MR.strings.error_saving_cover),
+                withDismissAction = true,
+            )
+        }
+    }
+}
+// KMK <--

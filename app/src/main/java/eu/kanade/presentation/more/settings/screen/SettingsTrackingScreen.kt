@@ -53,6 +53,7 @@ import eu.kanade.tachiyomi.data.track.anilist.AnilistApi
 import eu.kanade.tachiyomi.data.track.bangumi.BangumiApi
 import eu.kanade.tachiyomi.data.track.myanimelist.MyAnimeListApi
 import eu.kanade.tachiyomi.data.track.shikimori.ShikimoriApi
+import eu.kanade.tachiyomi.data.track.simkl.SimklApi
 import eu.kanade.tachiyomi.util.system.openInBrowser
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.collections.immutable.persistentListOf
@@ -194,6 +195,24 @@ object SettingsTrackingScreen : SearchableSettings {
                     Preference.PreferenceItem.InfoPreference(stringResource(MR.strings.tracking_info)),
                 ),
             ),
+            // KMK -->
+            Preference.PreferenceGroup(
+                title = stringResource(KMR.strings.anime_trackers),
+                preferenceItems = persistentListOf(
+                    Preference.PreferenceItem.TrackerPreference(
+                        tracker = trackerManager.simkl,
+                        login = { context.openInBrowser(SimklApi.authUrl(), forceDefaultBrowser = true) },
+                        logout = { dialog = LogoutDialog(trackerManager.simkl) },
+                    ),
+                    Preference.PreferenceItem.TrackerPreference(
+                        tracker = trackerManager.jellyfin,
+                        login = { trackerManager.jellyfin.loginNoop() },
+                        logout = trackerManager.jellyfin::logout,
+                    ),
+                    Preference.PreferenceItem.InfoPreference(stringResource(KMR.strings.anime_trackers_info)),
+                ),
+            ),
+            // KMK <--
             Preference.PreferenceGroup(
                 title = stringResource(MR.strings.enhanced_services),
                 preferenceItems = (
