@@ -395,6 +395,8 @@ class MainActivity : BaseActivity() {
 
                 // KMK: the Migrate window, opened from the library, a title's page or migrate by source
                 mihon.feature.migration.config.MigrationStartHost(navigator)
+                // KMK: the anime Migrate window, the same for anime
+                mihon.feature.migration.anime.AnimeMigrationStartHost(navigator)
 
                 // KMK -->
                 RearmJobs()
@@ -682,6 +684,13 @@ class MainActivity : BaseActivity() {
             mihon.feature.migration.list.ActiveMigration.ACTION_SHOW -> {
                 if (navigator.lastItem !is mihon.feature.migration.list.MigrationListScreen) {
                     navigator.push(mihon.feature.migration.list.MigrationListScreen.resume())
+                }
+                null
+            }
+            // The anime migration notification: back to its matching screen
+            mihon.feature.migration.anime.ActiveAnimeMigration.ACTION_SHOW -> {
+                if (navigator.lastItem !is mihon.feature.migration.anime.AnimeMigrationListScreen) {
+                    navigator.push(mihon.feature.migration.anime.AnimeMigrationListScreen.resume())
                 }
                 null
             }

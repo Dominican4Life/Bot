@@ -453,12 +453,10 @@ fun ExtensionsPaneHeader(
     }
 }
 
-/** Anime side of the Migrate tab (needs the anime library, coming next) */
+/** Anime side of Migrate by source: the anime sources with library anime, like the manga list */
 @Composable
 fun AnimeMigratePane(contentPadding: PaddingValues) {
-    Box(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
-        EmptyMessage(stringResource(KMR.strings.anime_migrate_coming))
-    }
+    mihon.feature.migration.anime.AnimeMigrateSourcesContent(contentPadding)
 }
 
 /** Manga-style section: divider between sections, then the same header the manga extension list uses */

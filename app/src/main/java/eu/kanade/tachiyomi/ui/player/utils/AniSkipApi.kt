@@ -48,7 +48,7 @@ class AniSkipApi {
     fun getMalIdFromAL(id: Long): Long {
         val query = """
                 query{
-                Media(id:$id){idMal}
+                Media(id:$id,type:ANIME){idMal}
                 }
         """.trimMargin()
         val response = try {
@@ -62,8 +62,8 @@ class AniSkipApi {
         } catch (_: Exception) {
             return 0
         }
-        return response.body.string().substringAfter("idMal\":").substringBefore("}")
-            .toLongOrNull() ?: 0
+        return response.use { it.body.string() }.substringAfter("idMal\":").substringBefore("}")
+            .trim().toLongOrNull() ?: 0
     }
 }
 

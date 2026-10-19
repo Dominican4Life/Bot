@@ -52,7 +52,6 @@ import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
 import eu.kanade.tachiyomi.data.library.RefreshMissingCovers
 import eu.kanade.tachiyomi.data.sync.SyncDataJob
 import eu.kanade.tachiyomi.ui.anime.AnimeScreen
-import eu.kanade.tachiyomi.ui.browse.migration.sources.MigrateSourcesScreen
 import eu.kanade.tachiyomi.ui.browse.source.SourcesScreen
 import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchScreen
 import eu.kanade.tachiyomi.ui.category.CategoryScreen
@@ -230,7 +229,7 @@ data object LibraryTab : Tab {
                     onClickMigrate = {
                         // KMK: manga opens the Migrate window ("Source to migrate"); anime keeps its own screen
                         if (showAnime) {
-                            navigator.push(MigrateSourcesScreen(anime = true))
+                            mihon.feature.migration.anime.AnimeMigrationStart.open(emptyList())
                         } else {
                             MigrationStart.open(emptyList())
                         }
@@ -338,6 +337,7 @@ data object LibraryTab : Tab {
                     contentPadding = contentPadding,
                     searchQuery = state.searchQuery,
                     onClickAnime = { navigator.push(AnimeScreen(it.id)) },
+                    onMigrate = { ids -> mihon.feature.migration.anime.AnimeMigrationStart.open(ids) },
                 )
                 return@Scaffold
             }

@@ -22,6 +22,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material.icons.outlined.Search
@@ -39,6 +40,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
@@ -67,10 +69,12 @@ import eu.kanade.tachiyomi.data.anime.track.AnimeTrackSearch
 import eu.kanade.tachiyomi.data.anime.track.AnimeTrackService
 import eu.kanade.tachiyomi.data.anime.track.AnimeTrackStatus
 import eu.kanade.tachiyomi.data.anime.track.AnimeTracking
+import eu.kanade.tachiyomi.util.system.copyToClipboard
 import eu.kanade.tachiyomi.util.system.openInBrowser
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.launch
 import logcat.LogPriority
+import tachiyomi.core.common.i18n.stringResource as contextString
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
@@ -105,25 +109,32 @@ fun AnimeTrackSheet(
 
     fun update(service: AnimeTrackService, track: AnimeTrack) {
         scope.launch {
-            repository.upsert(track)
+            // Kept here and sent later when the tracker can't be reached
+            if (!AnimeTracking.send(service, track)) {
+                context.toast(context.contextString(KMR.strings.anime_track_saved_later, service.name))
+            }
+        }
+    }
+
+    // Trackers that bind by themselves (Jellyfin): no search, the anime is matched by its own URL
+    fun autoBind(service: AnimeTrackService) {
+        scope.launch {
             try {
-                repository.upsert(service.save(track))
+                val track = service.autoBind(anime, lastSeenEpisode)
+                if (track != null) {
+                    repository.upsert(track)
+                } else {
+                    context.toast(context.contextString(KMR.strings.anime_track_jellyfin_only))
+                }
             } catch (e: Throwable) {
                 failed(service, e)
             }
         }
     }
 
-    // Pull the latest from each tracker when the sheet opens
+    // When the sheet opens: send what's pending, then pull the latest (progress, title, episodes) from each tracker
     LaunchedEffect(anime.id) {
-        repository.getTracks(anime.id).forEach { track ->
-            val service = AnimeTracking.service(track.trackerId)?.takeIf { it.isLoggedIn } ?: return@forEach
-            try {
-                service.find(anime.id, track.remoteId)?.let { repository.upsert(it.copy(title = it.title.ifBlank { track.title })) }
-            } catch (e: Throwable) {
-                service.logcat(LogPriority.WARN, e) { "Anime tracking: refresh ${service.name}" }
-            }
-        }
+        AnimeTracking.refresh(anime)
     }
 
     AdaptiveSheet(onDismissRequest = onDismissRequest) {
@@ -137,15 +148,22 @@ fun AnimeTrackSheet(
                 style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             )
-            AnimeTracking.services.forEachIndexed { index, service ->
+            // Trackers that can't track this anime (Jellyfin for other sources) are left out unless already bound
+            val services = remember(anime.id, anime.source, tracks) {
+                AnimeTracking.services.filter { service ->
+                    tracks.any { it.trackerId == service.id } || service.accepts(anime)
+                }
+            }
+            services.forEachIndexed { index, service ->
                 if (index > 0) HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                 TrackerRow(
                     service = service,
                     track = tracks.firstOrNull { it.trackerId == service.id },
-                    onAdd = { searchFor = service },
+                    onAdd = { if (service.canSearch) searchFor = service else autoBind(service) },
                     onChange = { update(service, it) },
                     onRemove = { removing = service to it },
                     onOpen = { context.openInBrowser(it.remoteUrl) },
+                    onCopy = { context.copyToClipboard(service.name, it.remoteUrl) },
                 )
             }
         }
@@ -237,6 +255,7 @@ private fun TrackerRow(
     onChange: (AnimeTrack) -> Unit,
     onRemove: (AnimeTrack) -> Unit,
     onOpen: (AnimeTrack) -> Unit,
+    onCopy: (AnimeTrack) -> Unit,
 ) {
     Column(modifier = Modifier.padding(horizontal = 16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -266,6 +285,11 @@ private fun TrackerRow(
                 }
             }
             if (track != null) {
+                if (track.remoteUrl.isNotBlank()) {
+                    IconButton(onClick = { onCopy(track) }) {
+                        Icon(Icons.Outlined.ContentCopy, contentDescription = stringResource(KMR.strings.anime_track_copy_link))
+                    }
+                }
                 IconButton(onClick = { onOpen(track) }) {
                     Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = stringResource(KMR.strings.anime_track_open))
                 }
@@ -280,18 +304,34 @@ private fun TrackerRow(
             Spacer(Modifier.size(8.dp))
             StatusField(track.status) { onChange(track.copy(status = it)) }
             EpisodesField(track) { onChange(it) }
-            ScoreField(track.score) { onChange(track.copy(score = it)) }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                DateField(
-                    label = stringResource(KMR.strings.anime_track_start),
-                    millis = track.startDate,
-                    modifier = Modifier.weight(1f),
-                ) { onChange(track.copy(startDate = it)) }
-                DateField(
-                    label = stringResource(KMR.strings.anime_track_finish),
-                    millis = track.finishDate,
-                    modifier = Modifier.weight(1f),
-                ) { onChange(track.copy(finishDate = it)) }
+            if (service.supportsScore) {
+                ScoreField(track.score) { onChange(track.copy(score = it)) }
+            }
+            if (service.supportsDates) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DateField(
+                        label = stringResource(KMR.strings.anime_track_start),
+                        millis = track.startDate,
+                        modifier = Modifier.weight(1f),
+                    ) { onChange(track.copy(startDate = it)) }
+                    DateField(
+                        label = stringResource(KMR.strings.anime_track_finish),
+                        millis = track.finishDate,
+                        modifier = Modifier.weight(1f),
+                    ) { onChange(track.copy(finishDate = it)) }
+                }
+            }
+            if (service.supportsPrivate) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .clickable { onChange(track.copy(private = !track.private)) },
+                ) {
+                    Text(stringResource(KMR.strings.anime_track_private), modifier = Modifier.weight(1f))
+                    Switch(checked = track.private, onCheckedChange = { onChange(track.copy(private = it)) })
+                }
             }
         }
     }

@@ -54,5 +54,8 @@ class TrackPreferences(
 
     // KMK -->
     fun autoSyncProgressFromTrackers() = preferenceStore.getBoolean("pref_auto_sync_progress_from_trackers_key", true)
+
+    /** Anime tracking changes that couldn't be sent yet, as "animeId:trackerId" (see AnimeTracking) */
+    fun animeTrackPending() = preferenceStore.getStringSet(Preference.privateKey("anime_track_pending"), emptySet())
     // KMK <--
 }

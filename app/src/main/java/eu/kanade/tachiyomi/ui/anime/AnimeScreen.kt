@@ -271,7 +271,7 @@ class AnimeScreen(private val animeId: Long) : Screen() {
             selectedEpisodes = selectedEpisodes,
             onEditInfo = { dialog = AnimeDialog.EditInfo },
             onCoverClick = { dialog = AnimeDialog.Cover },
-            onMigrate = null,
+            onMigrate = { mihon.feature.migration.anime.AnimeMigrationStart.open(listOf(animeId)) },
         )
 
         CoverSeedTheme(seedColor = state.seedColor) {

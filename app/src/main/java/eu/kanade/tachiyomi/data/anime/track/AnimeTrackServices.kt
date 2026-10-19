@@ -1,9 +1,24 @@
 package eu.kanade.tachiyomi.data.anime.track
 
+import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
+import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
+import eu.kanade.tachiyomi.animesource.sourcePreferences
+import eu.kanade.tachiyomi.data.anime.Anime
+import eu.kanade.tachiyomi.data.anime.AnimeRepository
 import eu.kanade.tachiyomi.data.track.anilist.Anilist
+import eu.kanade.tachiyomi.data.track.bangumi.Bangumi
+import eu.kanade.tachiyomi.data.track.jellyfin.Jellyfin
+import eu.kanade.tachiyomi.data.track.kitsu.Kitsu
+import eu.kanade.tachiyomi.data.track.kitsu.KitsuDateHelper
 import eu.kanade.tachiyomi.data.track.myanimelist.MyAnimeList
+import eu.kanade.tachiyomi.data.track.shikimori.Shikimori
+import eu.kanade.tachiyomi.data.track.shikimori.ShikimoriApi
+import eu.kanade.tachiyomi.data.track.simkl.Simkl
+import eu.kanade.tachiyomi.data.track.simkl.SimklApi
 import eu.kanade.tachiyomi.network.DELETE
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.HttpException
+import eu.kanade.tachiyomi.network.PATCH
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.PUT
 import eu.kanade.tachiyomi.network.await
@@ -15,19 +30,37 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.addJsonObject
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
+import logcat.LogPriority
+import okhttp3.CacheControl
 import okhttp3.FormBody
+import okhttp3.Headers.Companion.headersOf
+import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import tachiyomi.core.common.util.lang.withIOContext
+import tachiyomi.core.common.util.system.logcat
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
+import java.text.SimpleDateFormat
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import java.util.Date
+import java.util.Locale
+import kotlin.math.abs
 
 /*
  * KMK: the anime side of the trackers. AniList, MyAnimeList, Kitsu, Shikimori and Bangumi share the manga
@@ -739,7 +772,7 @@ class SimklAnime(override val tracker: Simkl) : AnimeTrackService {
                 if (type == "anime") throw e
                 ""
             }
-            if (text.isBlank()) return@flatMap emptyList()
+            if (text.isBlank()) return@flatMap emptyList<AnimeTrackSearch>()
             (json.parseToJsonElement(text) as? JsonArray).orEmpty().mapNotNull { item ->
                 val remoteId = item.obj("ids").long("simkl_id") ?: return@mapNotNull null
                 val path = item.str("url") ?: "/${if (type == "movie") "movies" else type}/$remoteId"

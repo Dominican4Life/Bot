@@ -2453,9 +2453,31 @@ class PlayerViewModel @JvmOverloads constructor(
      * Returns the response of the AniSkipApi for this episode.
      * just works if tracking is enabled.
      */
-    /** KMK: AniSkip needs a MyAnimeList/AniList id from tracking, which isn't merged yet */
-    @Suppress("UNUSED_PARAMETER", "RedundantSuspendModifier")
-    suspend fun aniSkipResponse(playerDuration: Int?): List<TimeStamp>? = null
+    // KMK: AniSkip looks timestamps up by MyAnimeList id: the anime's MyAnimeList tracking, else its AniList one
+    suspend fun aniSkipResponse(playerDuration: Int?): List<TimeStamp>? {
+        val animeId = anime?.id ?: return null
+        val episodeNumber = currentEpisode.value?.episode_number?.toInt()?.takeIf { it > 0 } ?: return null
+        val duration = playerDuration?.takeIf { it > 0 } ?: return null
+        return withIOContext {
+            try {
+                val tracks = Injekt.get<eu.kanade.tachiyomi.data.anime.track.AnimeTrackRepository>().getTracks(animeId)
+                if (tracks.isEmpty()) {
+                    logcat { "AniSkip: no tracking for anime $animeId" }
+                    return@withIOContext null
+                }
+                val api = AniSkipApi()
+                val malId = tracks.firstOrNull { it.trackerId == 1L /* MyAnimeList */ && it.remoteId > 0 }?.remoteId
+                    ?: tracks.firstOrNull { it.trackerId == 2L /* AniList */ && it.remoteId > 0 }
+                        ?.let { api.getMalIdFromAL(it.remoteId) }
+                        ?.takeIf { it > 0 }
+                    ?: return@withIOContext null
+                api.getResult(malId.toInt(), episodeNumber, duration.toLong())
+            } catch (e: Throwable) {
+                logcat(LogPriority.WARN, e) { "AniSkip failed" }
+                null
+            }
+        }
+    }
 
     val introSkipEnabled = playerPreferences.enableSkipIntro().get()
     private val autoSkip = playerPreferences.autoSkipIntro().get()
