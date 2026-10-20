@@ -80,7 +80,8 @@ object AnikkuBackupConverter {
         favorite = favorite,
         initialized = initialized,
         fetchType = fetchType,
-        episodeFlags = episodeFlags.toLong(),
+        // Anikku lays out its episode flag bits differently; start from our defaults
+        episodeFlags = 0L,
         episodes = episodes.filter { it.url.isNotBlank() }.map { ep ->
             BackupEpisode(
                 url = ep.url,

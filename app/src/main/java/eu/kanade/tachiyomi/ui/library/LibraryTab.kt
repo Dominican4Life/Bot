@@ -14,10 +14,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
@@ -31,8 +29,6 @@ import cafe.adriel.voyager.navigator.Navigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import cafe.adriel.voyager.navigator.tab.LocalTabNavigator
 import cafe.adriel.voyager.navigator.tab.TabOptions
-import eu.kanade.domain.source.service.SourcePreferences
-import eu.kanade.presentation.anime.AnimeLibraryContent
 import eu.kanade.presentation.category.components.ChangeCategoryDialog
 import eu.kanade.presentation.library.DeleteLibraryMangaDialog
 import eu.kanade.presentation.library.LibrarySettingsDialog
@@ -51,7 +47,6 @@ import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
 import eu.kanade.tachiyomi.data.library.RefreshMissingCovers
 import eu.kanade.tachiyomi.data.sync.SyncDataJob
-import eu.kanade.tachiyomi.ui.anime.AnimeScreen
 import eu.kanade.tachiyomi.ui.browse.source.SourcesScreen
 import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchScreen
 import eu.kanade.tachiyomi.ui.category.CategoryScreen
@@ -88,11 +83,11 @@ import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.EmptyScreen
 import tachiyomi.presentation.core.screens.EmptyScreenAction
 import tachiyomi.presentation.core.screens.LoadingScreen
-import tachiyomi.presentation.core.util.collectAsState
 import tachiyomi.source.local.isLocal
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
+/** The Manga library (KMK: the anime have their own tab, [AnimeLibraryTab]); its menu acts on manga only */
 data object LibraryTab : Tab {
     @Suppress("unused")
     private fun readResolve(): Any = LibraryTab
@@ -103,8 +98,9 @@ data object LibraryTab : Tab {
             val isSelected = LocalTabNavigator.current.current.key == key
             val image = AnimatedImageVector.animatedVectorResource(R.drawable.anim_library_enter)
             return TabOptions(
-                index = 0u,
-                title = stringResource(MR.strings.label_library),
+                // KMK: after the Anime library tab
+                index = 1u,
+                title = stringResource(KMR.strings.label_manga_library_tab),
                 icon = rememberAnimatedVectorPainter(image, isSelected),
             )
         }
@@ -138,6 +134,8 @@ data object LibraryTab : Tab {
                     LibraryGroup.BY_STATUS -> category?.id?.minus(1)?.toString()
                     else -> null
                 },
+                // KMK: the Anime library tab updates the anime
+                withAnime = false,
             )
             // SY <--
             scope.launch {
@@ -151,32 +149,22 @@ data object LibraryTab : Tab {
             started
         }
 
-        // KMK -->
-        val showAnimePref = remember { Injekt.get<SourcePreferences>().libraryShowAnime() }
-        val showAnime by showAnimePref.collectAsState()
-        // The anime library has its own Filter / Sort / Display sheet
-        var showAnimeSettings by remember { mutableStateOf(false) }
-        val animeFilters = eu.kanade.presentation.anime.rememberAnimeLibraryFilters()
-        if (showAnimeSettings) {
-            eu.kanade.presentation.anime.AnimeLibrarySettingsDialog(onDismissRequest = { showAnimeSettings = false })
-        }
-        // KMK <--
-
         Scaffold(
             topBar = { scrollBehavior ->
                 val title = state.getToolbarTitle(
-                    defaultTitle = stringResource(MR.strings.label_library),
+                    // KMK: named like its tab
+                    defaultTitle = stringResource(KMR.strings.label_manga_library_tab),
                     defaultCategoryTitle = stringResource(MR.strings.label_default),
                     page = state.coercedActiveCategoryIndex,
                 )
                 LibraryToolbar(
-                    hasActiveFilters = if (showAnime) animeFilters.isActive else state.hasActiveFilters,
+                    hasActiveFilters = state.hasActiveFilters,
                     selectedCount = state.selection.size,
                     title = title,
                     onClickUnselectAll = screenModel::clearSelection,
                     onClickSelectAll = screenModel::selectAll,
                     onClickInvertSelection = screenModel::invertSelection,
-                    onClickFilter = { if (showAnime) showAnimeSettings = true else screenModel.showSettingsDialog() },
+                    onClickFilter = screenModel::showSettingsDialog,
                     onClickRefresh = { onClickRefresh(state.activeCategory) },
                     onClickGlobalUpdate = { onClickRefresh(null) },
                     onClickOpenRandomManga = {
@@ -199,7 +187,6 @@ data object LibraryTab : Tab {
                         }
                     },
                     // SY -->
-                    onClickSyncExh = screenModel::openFavoritesSyncDialog.takeIf { state.showSyncExh },
                     isSyncEnabled = state.isSyncEnabled,
                     // SY <--
                     searchQuery = state.searchQuery,
@@ -211,8 +198,6 @@ data object LibraryTab : Tab {
                     // For scroll overlay when no tab
                     scrollBehavior = scrollBehavior.takeIf { !state.showCategoryTabs },
                     // KMK -->
-                    showingAnime = showAnime,
-                    onClickSwitchType = { showAnimePref.set(!showAnime) },
                     // Only the titles of the tab being looked at
                     onClickRefreshMissingCovers = {
                         val mangas = screenModel.mangaForCurrentTab()
@@ -224,19 +209,9 @@ data object LibraryTab : Tab {
                         }
                         scope.launch { snackbarHostState.showSnackbar(context.stringResource(message)) }
                         Unit
-                    }.takeIf { !showAnime },
-                    // Migrate by source (it used to be a tab in Browse), manga or anime like the library
-                    onClickMigrate = {
-                        // KMK: manga opens the Migrate window ("Source to migrate"); anime keeps its own screen
-                        if (showAnime) {
-                            mihon.feature.migration.anime.AnimeMigrationStart.open(emptyList())
-                        } else {
-                            MigrationStart.open(emptyList())
-                        }
                     },
-                    onClickComingUp = {
-                        navigator.push(eu.kanade.tachiyomi.ui.anime.AnimeComingUpScreen())
-                    }.takeIf { showAnime },
+                    // Migrate by source (it used to be a tab in Browse): the Migrate window ("Source to migrate")
+                    onClickMigrate = { MigrationStart.open(emptyList()) },
                     // KMK <--
                 )
             },
@@ -334,17 +309,6 @@ data object LibraryTab : Tab {
             },
             snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         ) { contentPadding ->
-            // KMK -->
-            if (showAnime) {
-                AnimeLibraryContent(
-                    contentPadding = contentPadding,
-                    searchQuery = state.searchQuery,
-                    onClickAnime = { navigator.push(AnimeScreen(it.id)) },
-                    onMigrate = { ids -> mihon.feature.migration.anime.AnimeMigrationStart.open(ids) },
-                )
-                return@Scaffold
-            }
-            // KMK <--
             when {
                 state.isLoading -> {
                     LoadingScreen(Modifier.padding(contentPadding))

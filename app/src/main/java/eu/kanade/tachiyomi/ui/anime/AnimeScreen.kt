@@ -115,7 +115,9 @@ import tachiyomi.i18n.MR
 import tachiyomi.i18n.ank.AMR
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.i18n.sy.SYMR
+import tachiyomi.presentation.core.components.CheckboxItem
 import tachiyomi.presentation.core.components.LabeledCheckbox
+import tachiyomi.presentation.core.components.ListGroupHeader
 import tachiyomi.presentation.core.components.RadioItem
 import tachiyomi.presentation.core.components.ScrollbarLazyColumn
 import tachiyomi.presentation.core.components.SortItem
@@ -138,7 +140,7 @@ import eu.kanade.tachiyomi.util.system.getBitmapOrNull
 import eu.kanade.tachiyomi.util.system.toShareIntent
 import tachiyomi.core.common.util.system.logcat
 import logcat.LogPriority
-import eu.kanade.tachiyomi.data.anime.AnimeEpisodeDefaults
+import eu.kanade.tachiyomi.data.anime.AnimeEpisodeSeasons
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -278,8 +280,8 @@ class AnimeScreen(private val animeId: Long) : Screen() {
             onEpisodeLongClick = { episode ->
                 selection = if (episode.id in selection) selection - episode.id else selection + episode.id
             },
-            onSelectAll = { selection = state.episodes.map { it.id }.toSet() },
-            onInvertSelection = { selection = state.episodes.map { it.id }.toSet() - selection },
+            onSelectAll = { selection = state.visibleEpisodes.map { it.id }.toSet() },
+            onInvertSelection = { selection = state.visibleEpisodes.map { it.id }.toSet() - selection },
             onClearSelection = { selection = emptySet() },
             onSelectionSeen = { seen ->
                 screenModel.setSeen(selectedEpisodes, seen)
@@ -309,6 +311,7 @@ class AnimeScreen(private val animeId: Long) : Screen() {
             onEditInfo = { dialog = AnimeDialog.EditInfo },
             onCoverClick = { dialog = AnimeDialog.Cover },
             onMigrate = { mihon.feature.migration.anime.AnimeMigrationStart.open(listOf(animeId)) },
+            onSeasonSelected = screenModel::selectSeason,
         )
 
         CoverSeedTheme(seedColor = state.seedColor) {
@@ -322,6 +325,9 @@ class AnimeScreen(private val animeId: Long) : Screen() {
                     onScanlatorFilterClicked = { dialog = AnimeDialog.Scanlators },
                     onSortModeChanged = screenModel::setSortMode,
                     onDisplayNumberChanged = screenModel::setDisplayNumber,
+                    onShowPreviewsChanged = screenModel::setShowPreviews,
+                    onShowSummariesChanged = screenModel::setShowSummaries,
+                    onSeasonGroupingChanged = screenModel::setSeasonGrouping,
                     onReset = screenModel::resetEpisodeSettings,
                     onSetAsDefault = { dialog = AnimeDialog.SetDefault },
                 )
@@ -511,6 +517,8 @@ private class AnimeActions(
     val onEditInfo: () -> Unit,
     val onCoverClick: () -> Unit,
     val onMigrate: (() -> Unit)?,
+    // KMK: season tab picked (season grouping set to Tabs)
+    val onSeasonSelected: (String) -> Unit,
 )
 
 @Composable
@@ -639,7 +647,7 @@ private fun AnimeToolbar(
     )
 }
 
-/** Filter / Sort / Display sheet, same as Anikku's episode settings */
+/** Filter / Sort / Display sheet, AniZen's episode settings with our ⋮ menu (Set as default, Reset) */
 @Composable
 private fun AnimeEpisodeSettingsDialog(
     anime: Anime,
@@ -649,6 +657,9 @@ private fun AnimeEpisodeSettingsDialog(
     onScanlatorFilterClicked: () -> Unit,
     onSortModeChanged: (Long) -> Unit,
     onDisplayNumberChanged: (Boolean) -> Unit,
+    onShowPreviewsChanged: (Boolean) -> Unit,
+    onShowSummariesChanged: (Boolean) -> Unit,
+    onSeasonGroupingChanged: (Long) -> Unit,
     onReset: () -> Unit,
     onSetAsDefault: () -> Unit,
 ) {
@@ -730,15 +741,47 @@ private fun AnimeEpisodeSettingsDialog(
                         selected = anime.displayNumber,
                         onClick = { onDisplayNumberChanged(true) },
                     )
-                    // KMK: show or hide the source's episode pictures and summaries
-                    tachiyomi.presentation.core.components.CheckboxItem(
-                        label = stringResource(KMR.strings.anime_show_episode_previews),
-                        pref = AnimeEpisodeDefaults.showPreviews(),
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 8.dp),
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f),
                     )
-                    tachiyomi.presentation.core.components.CheckboxItem(
-                        label = stringResource(KMR.strings.anime_show_episode_summaries),
-                        pref = AnimeEpisodeDefaults.showSummaries(),
+
+                    // KMK: this anime's own choices (the app defaults are in Settings › Library)
+                    CheckboxItem(
+                        label = stringResource(KMR.strings.anime_show_episode_thumbnail),
+                        checked = anime.showPreviews,
+                        onClick = { onShowPreviewsChanged(!anime.showPreviews) },
                     )
+                    CheckboxItem(
+                        label = stringResource(KMR.strings.anime_show_episode_summary),
+                        checked = anime.showSummaries,
+                        onClick = { onShowSummariesChanged(!anime.showSummaries) },
+                    )
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 8.dp),
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f),
+                    )
+
+                    Text(
+                        text = stringResource(KMR.strings.anime_season_grouping),
+                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    listOf(
+                        stringResource(KMR.strings.anime_season_grouping_default) to Anime.SEASON_GROUP_DEFAULT,
+                        stringResource(MR.strings.disabled) to Anime.SEASON_GROUP_OFF,
+                        stringResource(KMR.strings.anime_season_grouping_headers) to Anime.SEASON_GROUP_HEADERS,
+                        stringResource(MR.strings.tabs_header) to Anime.SEASON_GROUP_TABS,
+                    ).forEach { (label, raw) ->
+                        RadioItem(
+                            label = label,
+                            selected = anime.seasonGroupRaw == raw,
+                            onClick = { onSeasonGroupingChanged(raw) },
+                        )
+                    }
                 }
             }
         }
@@ -1115,13 +1158,24 @@ private fun LazyListScope.episodeItems(
         seasonItems(state, anime, source, actions, seasonColumns)
         return
     }
+    // KMK: season grouping set to Tabs: one season at a time, picked with chips (AniZen)
+    val episodes = state.visibleEpisodes
+    if (state.showSeasonTabs) {
+        item(key = "episode_season_tabs") {
+            EpisodeSeasonSelector(
+                seasons = state.seasonKeys,
+                selectedSeason = state.selectedSeason,
+                onSeasonSelected = actions.onSeasonSelected,
+            )
+        }
+    }
     item(key = "episodes_header") {
         // Like the manga chapter header: tap it to open the filter sheet
         Text(
             text = if (state.isLoaded && state.episodes.isEmpty() && !state.isRefreshing) {
                 stringResource(KMR.strings.anime_no_episodes)
             } else {
-                stringResource(KMR.strings.anime_episodes_count, state.episodes.size)
+                stringResource(KMR.strings.anime_episodes_count, episodes.size)
             },
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
@@ -1131,21 +1185,80 @@ private fun LazyListScope.episodeItems(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
         )
     }
-    items(state.episodes, key = { "ep-${it.id}" }, contentType = { "episode" }) { episode ->
-        EpisodeItem(
-            episode = episode,
-            displayNumber = anime.displayNumber,
-            inLibrary = anime.favorite,
-            sourceLabel = state.memberSources[episode.animeId],
-            downloadState = state.downloadState(episode),
-            downloadProgress = state.downloadProgress(episode),
-            onDownload = { action -> actions.onEpisodeDownload(episode, action) },
-            onPlay = { actions.onEpisodeClick(episode) },
-            onToggleSeen = { actions.onToggleSeen(episode) },
-            onToggleBookmark = { actions.onToggleBookmark(episode) },
-            selected = episode.id in actions.selection,
-            onLongClick = { actions.onEpisodeLongClick(episode) },
-        )
+    // KMK: season grouping set to Headers: a header where each season starts (AniZen)
+    var lastSeason: String? = null
+    episodes.forEach { episode ->
+        val season = state.episodeSeasons[episode.id]
+        if (state.showSeasonHeaders && season != null && season != lastSeason) {
+            item(key = "ep-season-$season-${episode.id}", contentType = "season_header") {
+                ListGroupHeader(text = episodeSeasonLabel(season), modifier = Modifier.fillMaxWidth())
+            }
+        }
+        lastSeason = season
+        item(key = "ep-${episode.id}", contentType = "episode") {
+            EpisodeRow(state, anime, episode, actions)
+        }
+    }
+}
+
+@Composable
+private fun EpisodeRow(state: AnimeScreenModel.State, anime: Anime, episode: Episode, actions: AnimeActions) {
+    EpisodeItem(
+        episode = episode,
+        displayNumber = anime.displayNumber,
+        showPreviews = anime.showPreviews,
+        showSummaries = anime.showSummaries,
+        inLibrary = anime.favorite,
+        sourceLabel = state.memberSources[episode.animeId],
+        downloadState = state.downloadState(episode),
+        downloadProgress = state.downloadProgress(episode),
+        onDownload = { action -> actions.onEpisodeDownload(episode, action) },
+        onPlay = { actions.onEpisodeClick(episode) },
+        onToggleSeen = { actions.onToggleSeen(episode) },
+        onToggleBookmark = { actions.onToggleBookmark(episode) },
+        selected = episode.id in actions.selection,
+        onLongClick = { actions.onEpisodeLongClick(episode) },
+    )
+}
+
+/** KMK: "Season 2", "Specials" or "Extras" for a season key from AnimeEpisodeSeasons */
+@Composable
+private fun episodeSeasonLabel(key: String): String = when (key) {
+    AnimeEpisodeSeasons.SPECIALS -> stringResource(KMR.strings.anime_season_specials)
+    AnimeEpisodeSeasons.EXTRAS -> stringResource(KMR.strings.anime_season_extras)
+    else -> stringResource(KMR.strings.anime_season_number, AnimeEpisodeSeasons.numberOf(key)?.toString() ?: key)
+}
+
+/** KMK: AniZen's season tabs: a row of chips above the episodes */
+@Composable
+private fun EpisodeSeasonSelector(
+    seasons: List<String>,
+    selectedSeason: String?,
+    onSeasonSelected: (String) -> Unit,
+) {
+    LazyRow(
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 0.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items(seasons, key = { "season-$it" }) { season ->
+            androidx.compose.material3.FilterChip(
+                selected = season == selectedSeason,
+                onClick = { onSeasonSelected(season) },
+                label = {
+                    Text(
+                        text = episodeSeasonLabel(season),
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                },
+                shape = androidx.compose.foundation.shape.CircleShape,
+                colors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                ),
+                border = null,
+            )
+        }
     }
 }
 
@@ -1214,6 +1327,8 @@ private fun LazyListScope.seasonItems(
 private fun EpisodeItem(
     episode: Episode,
     displayNumber: Boolean,
+    showPreviews: Boolean,
+    showSummaries: Boolean,
     inLibrary: Boolean,
     sourceLabel: String?,
     downloadState: Download.State,
@@ -1226,8 +1341,6 @@ private fun EpisodeItem(
     onLongClick: () -> Unit = onToggleSeen,
 ) {
     val context = LocalContext.current
-    val showPreviews by remember { AnimeEpisodeDefaults.showPreviews() }.collectAsState()
-    val showSummaries by remember { AnimeEpisodeDefaults.showSummaries() }.collectAsState()
     val uiPreferences = remember { Injekt.get<UiPreferences>() }
     val libraryPreferences = remember { Injekt.get<LibraryPreferences>() }
     val relativeTime by uiPreferences.relativeTime().collectAsState()

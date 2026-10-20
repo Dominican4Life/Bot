@@ -150,7 +150,7 @@ class AnimeRepository(
             )
             val newId = animesQueries.selectLastInsertedRowId().executeAsOne()
             // KMK: episode sort / filters / display chosen with "Set as default"
-            val defaults = AnimeEpisodeDefaults.flags().get()
+            val defaults = AnimeEpisodeDefaults.newAnimeFlags()
             if (defaults != 0L) animesQueries.setEpisodeFlags(flags = defaults, id = newId)
             newId
         }

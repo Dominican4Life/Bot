@@ -684,4 +684,12 @@
     <string name="pref_self_healing_links_details">When a video link fails, gets fresh links from the source and resumes where you were, then moves on to the next video</string>
     <string name="pref_buffer_handoff_details">Keeps your position and pause state when you switch quality or server, and buffers a little further ahead</string>
     <string name="pref_adaptive_shader_scaling_details">When frames start dropping, steps Anime4K down a level and then off until the player is closed. Your settings aren\'t changed</string>
+    <!-- KMK: anime episode sheet (AniZen's Display tab) and Settings › Library -->
+    <string name="anime_show_episode_thumbnail">Show episode thumbnail</string>
+    <string name="anime_show_episode_summary">Show episode summary</string>
+    <string name="anime_season_grouping">Season grouping</string>
+    <string name="anime_season_grouping_default">Default (Use app setting)</string>
+    <string name="anime_season_grouping_headers">Headers</string>
+    <string name="anime_season_specials">Specials</string>
+    <string name="anime_season_extras">Extras</string>
 </resources>

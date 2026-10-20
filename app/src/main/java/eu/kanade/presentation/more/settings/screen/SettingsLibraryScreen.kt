@@ -339,6 +339,27 @@ object SettingsLibraryScreen : SearchableSettings {
                     entries = episodeSwipeEntries(),
                     title = stringResource(KMR.strings.pref_episode_swipe_end),
                 ),
+                // Anime episode list defaults, like AniZen's (each anime can change them in its episode sheet)
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = eu.kanade.tachiyomi.data.anime.AnimeEpisodeDefaults.showSummaries(),
+                    title = stringResource(KMR.strings.anime_show_episode_summary),
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = eu.kanade.tachiyomi.data.anime.AnimeEpisodeDefaults.showPreviews(),
+                    title = stringResource(KMR.strings.anime_show_episode_thumbnail),
+                ),
+                Preference.PreferenceItem.ListPreference(
+                    preference = eu.kanade.tachiyomi.data.anime.AnimeEpisodeDefaults.seasonGrouping(),
+                    entries = persistentMapOf(
+                        eu.kanade.tachiyomi.data.anime.AnimeSeasonGrouping.Disabled to
+                            stringResource(MR.strings.disabled),
+                        eu.kanade.tachiyomi.data.anime.AnimeSeasonGrouping.Headers to
+                            stringResource(KMR.strings.anime_season_grouping_headers),
+                        eu.kanade.tachiyomi.data.anime.AnimeSeasonGrouping.Tabs to
+                            stringResource(MR.strings.tabs_header),
+                    ),
+                    title = stringResource(KMR.strings.anime_season_grouping),
+                ),
                 // KMK <--
                 Preference.PreferenceItem.MultiSelectListPreference(
                     preference = libraryPreferences.markDuplicateReadChapterAsRead(),

@@ -14,8 +14,10 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.data.anime.Anime
 import eu.kanade.tachiyomi.data.anime.AnimeEpisodeDefaults
+import eu.kanade.tachiyomi.data.anime.AnimeEpisodeSeasons
 import eu.kanade.tachiyomi.data.anime.AnimeLibraryStats
 import eu.kanade.tachiyomi.data.anime.AnimeSeasonFlags
+import eu.kanade.tachiyomi.data.anime.AnimeSeasonGrouping
 import eu.kanade.tachiyomi.data.anime.AnimeRepository
 import eu.kanade.tachiyomi.data.anime.AnimeVideoFetcher
 import eu.kanade.tachiyomi.data.anime.Episode
@@ -70,7 +72,52 @@ class AnimeScreenModel(
     private fun orderKey(episode: Episode): Long =
         (state.value.memberOrder[episode.animeId] ?: 0).toLong() * 1_000_000L + episode.sourceOrder
 
-    private data class Quad(val anime: Anime?, val episodes: List<Episode>, val excluded: Set<String>, val notes: String)
+    private data class Quad(
+        val anime: Anime?,
+        val episodes: List<Episode>,
+        val excluded: Set<String>,
+        val notes: String,
+        // KMK: Settings › Library › Season grouping, for anime left on "Default"
+        val grouping: AnimeSeasonGrouping,
+    )
+
+    // KMK --> season grouping (Headers / Tabs), like AniZen
+    private val lastSeasonPref = AnimeEpisodeDefaults.lastSelectedSeason(animeId)
+
+    /** Sets the shown episodes and, when they're grouped, which season each one is in */
+    private fun State.withEpisodes(anime: Anime, shown: List<Episode>): State {
+        val grouping = AnimeEpisodeDefaults.seasonGrouping(anime)
+        if (grouping == AnimeSeasonGrouping.Disabled) {
+            return copy(
+                episodes = shown,
+                seasonGrouping = grouping,
+                episodeSeasons = emptyMap(),
+                seasonKeys = emptyList(),
+                selectedSeason = null,
+            )
+        }
+        val (mapping, seasons) = AnimeEpisodeSeasons.group(shown.sortedBy { orderKey(it) })
+        val selected = if (grouping == AnimeSeasonGrouping.Tabs) {
+            (selectedSeason ?: lastSeasonPref.get().takeIf(String::isNotEmpty))
+                ?.takeIf { it in seasons }
+                ?: seasons.firstOrNull()
+        } else {
+            null
+        }
+        return copy(
+            episodes = shown,
+            seasonGrouping = grouping,
+            episodeSeasons = mapping,
+            seasonKeys = seasons,
+            selectedSeason = selected,
+        )
+    }
+
+    fun selectSeason(season: String) {
+        lastSeasonPref.set(season)
+        mutableState.update { it.copy(selectedSeason = season) }
+    }
+    // KMK <--
 
     private fun filterAndSort(anime: Anime, episodes: List<Episode>, excluded: Set<String>): List<Episode> {
         fun TriState.keep(value: Boolean) = when (this) {
@@ -137,6 +184,18 @@ class AnimeScreenModel(
     private var videoJob: Job? = null
 
     init {
+        // KMK: pictures / summaries used to be hidden app-wide; keep that choice on the anime once
+        screenModelScope.launchIO {
+            val migrated = AnimeEpisodeDefaults.displayFlagsMigrated()
+            if (migrated.get()) return@launchIO
+            migrated.set(true)
+            val hide = (if (AnimeEpisodeDefaults.showPreviews().get()) 0L else Anime.HIDE_PREVIEWS) or
+                (if (AnimeEpisodeDefaults.showSummaries().get()) 0L else Anime.HIDE_SUMMARIES)
+            if (hide == 0L) return@launchIO
+            (repository.getFavorites() + listOfNotNull(repository.getAnime(animeId)))
+                .distinctBy { it.id }
+                .forEach { repository.setEpisodeFlags(it, it.episodeFlags or hide) }
+        }
         screenModelScope.launchIO {
             // KMK: a merged page lists the episodes of every merged anime
             val episodesFlow = repository.subscribeMergeMembers(animeId).flatMapLatest { members ->
@@ -162,8 +221,9 @@ class AnimeScreenModel(
                 episodesFlow,
                 excludedScanlatorsPref.changes(),
                 notesPref.changes(),
-            ) { anime, episodes, excluded, notes ->
-                Quad(anime, episodes, excluded, notes)
+                AnimeEpisodeDefaults.seasonGrouping().changes(),
+            ) { anime, episodes, excluded, notes, grouping ->
+                Quad(anime, episodes, excluded, notes, grouping)
             }.collect { (anime, episodes, excluded, notes) ->
                 // KMK: theme color from the cover, like the manga details page
                 if (anime != null && anime.thumbnailUrl != seedColorUrl) {
@@ -173,10 +233,10 @@ class AnimeScreenModel(
                     }
                 }
                 mutableState.update { state ->
-                    state.copy(
+                    val updated = state.copy(
                         anime = anime,
                         allEpisodes = episodes,
-                        episodes = anime?.let { filterAndSort(it, episodes, excluded) } ?: episodes,
+                        episodes = episodes,
                         scanlators = episodes.mapNotNull { it.scanlator?.takeIf(String::isNotBlank) }.toSet(),
                         excludedScanlators = excluded,
                         notes = notes,
@@ -187,6 +247,7 @@ class AnimeScreenModel(
                         } ?: emptySet(),
                         isLoaded = true,
                     )
+                    anime?.let { updated.withEpisodes(it, filterAndSort(it, episodes, excluded)) } ?: updated
                 }
             }
         }
@@ -232,7 +293,7 @@ class AnimeScreenModel(
             ) { active, _ -> active }.collect { active ->
                 mutableState.update { state ->
                     val anime = state.anime
-                    state.copy(
+                    val updated = state.copy(
                         activeDownloads = active,
                         downloadedIds = anime?.let { a ->
                             state.allEpisodes
@@ -240,9 +301,10 @@ class AnimeScreenModel(
                                 .map { it.id }
                                 .toSet()
                         } ?: emptySet(),
-                        episodes = anime?.let { filterAndSort(it, state.allEpisodes, state.excludedScanlators) }
-                            ?: state.episodes,
                     )
+                    anime?.let {
+                        updated.withEpisodes(it, filterAndSort(it, state.allEpisodes, state.excludedScanlators))
+                    } ?: updated
                 }
             }
         }
@@ -379,11 +441,38 @@ class AnimeScreenModel(
         screenModelScope.launchIO { repository.setEpisodeFlags(anime, flags) }
     }
 
+    // KMK --> Display tab: pictures, summaries and season grouping are this anime's own (AniZen)
+    private fun updateEpisodeFlags(transform: (Long) -> Long) {
+        val anime = state.value.anime ?: return
+        screenModelScope.launchIO { repository.setEpisodeFlags(anime, transform(anime.episodeFlags)) }
+    }
+
+    fun setShowPreviews(show: Boolean) = updateEpisodeFlags {
+        if (show) it and Anime.HIDE_PREVIEWS.inv() else it or Anime.HIDE_PREVIEWS
+    }
+
+    fun setShowSummaries(show: Boolean) = updateEpisodeFlags {
+        if (show) it and Anime.HIDE_SUMMARIES.inv() else it or Anime.HIDE_SUMMARIES
+    }
+
+    /** One of the Anime.SEASON_GROUP_* values */
+    fun setSeasonGrouping(raw: Long) {
+        lastSeasonPref.delete()
+        mutableState.update { it.copy(selectedSeason = null) }
+        updateEpisodeFlags { (it and Anime.SEASON_GROUP_MASK.inv()) or raw }
+    }
+
+    /** Back to the app's defaults: sort, filters, display, pictures, summaries and season grouping */
     fun resetEpisodeSettings() {
         val anime = state.value.anime ?: return
-        screenModelScope.launchIO { repository.setEpisodeFlags(anime, 0L) }
+        val flags = (if (AnimeEpisodeDefaults.showPreviews().get()) 0L else Anime.HIDE_PREVIEWS) or
+            (if (AnimeEpisodeDefaults.showSummaries().get()) 0L else Anime.HIDE_SUMMARIES)
+        lastSeasonPref.delete()
+        mutableState.update { it.copy(selectedSeason = null) }
+        screenModelScope.launchIO { repository.setEpisodeFlags(anime, flags) }
         excludedScanlatorsPref.delete()
     }
+    // KMK <--
 
     fun setExcludedScanlators(excluded: Set<String>) {
         excludedScanlatorsPref.set(excluded)
@@ -485,7 +574,14 @@ class AnimeScreenModel(
     /** Uses this anime's episode sort, filters and display for anime added from now on (and all of them with [applyToLibrary]) */
     fun setEpisodeSettingsAsDefault(applyToLibrary: Boolean) {
         val anime = state.value.anime ?: return
-        AnimeEpisodeDefaults.flags().set(anime.episodeFlags)
+        // KMK: like AniZen, pictures / summaries become the app defaults, and a season grouping other than
+        // "Default" becomes the app's Season grouping
+        AnimeEpisodeDefaults.flags().set(anime.episodeFlags and Anime.SEASON_GROUP_MASK.inv())
+        AnimeEpisodeDefaults.showPreviews().set(anime.showPreviews)
+        AnimeEpisodeDefaults.showSummaries().set(anime.showSummaries)
+        if (anime.seasonGroupRaw != Anime.SEASON_GROUP_DEFAULT) {
+            AnimeEpisodeDefaults.seasonGrouping().set(AnimeEpisodeDefaults.seasonGrouping(anime))
+        }
         if (applyToLibrary) {
             screenModelScope.launchIO {
                 repository.getFavorites().forEach { other ->
@@ -743,7 +839,30 @@ class AnimeScreenModel(
         /** Source name per merged anime id (empty when not merged) */
         val memberSources: Map<Long, String> = emptyMap(),
         val activeDownloads: Map<Long, DownloadInfo> = emptyMap(),
+        // KMK --> season grouping of the episode list
+        val seasonGrouping: AnimeSeasonGrouping = AnimeSeasonGrouping.Disabled,
+        /** Season key of each shown episode (see AnimeEpisodeSeasons) */
+        val episodeSeasons: Map<Long, String> = emptyMap(),
+        /** Seasons of the shown episodes, in order */
+        val seasonKeys: List<String> = emptyList(),
+        /** The season tab picked (Tabs only) */
+        val selectedSeason: String? = null,
+        // KMK <--
     ) {
+        // KMK --> season grouping
+        /** Season headers between the episodes */
+        val showSeasonHeaders: Boolean
+            get() = seasonGrouping == AnimeSeasonGrouping.Headers && seasonKeys.size > 1
+
+        /** Season chips above the episodes, showing one season at a time */
+        val showSeasonTabs: Boolean
+            get() = seasonGrouping == AnimeSeasonGrouping.Tabs && seasonKeys.size > 1 && selectedSeason != null
+
+        /** The episodes on screen: only the picked season's with tabs */
+        val visibleEpisodes: List<Episode>
+            get() = if (showSeasonTabs) episodes.filter { episodeSeasons[it.id] == selectedSeason } else episodes
+        // KMK <--
+
         fun downloadState(episode: Episode): Download.State = activeDownloads[episode.id]?.state
             ?: if (episode.id in downloadedIds) Download.State.DOWNLOADED else Download.State.NOT_DOWNLOADED
 

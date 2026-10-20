@@ -80,6 +80,20 @@ data class Anime(
     val downloadedFilter: TriState
         get() = triState(FILTER_DOWNLOADED, FILTER_DOWNLOADED_EXCLUDE)
 
+    // KMK --> episode sheet's Display tab, per anime like AniZen
+    /** Show the episode's preview picture when the source has one */
+    val showPreviews: Boolean
+        get() = episodeFlags and HIDE_PREVIEWS == 0L
+
+    /** Show the episode's summary when the source has one */
+    val showSummaries: Boolean
+        get() = episodeFlags and HIDE_SUMMARIES == 0L
+
+    /** [SEASON_GROUP_DEFAULT] (the app setting), [SEASON_GROUP_OFF], [SEASON_GROUP_HEADERS] or [SEASON_GROUP_TABS] */
+    val seasonGroupRaw: Long
+        get() = episodeFlags and SEASON_GROUP_MASK
+    // KMK <--
+
     private fun triState(include: Long, exclude: Long): TriState = when {
         episodeFlags and include != 0L -> TriState.ENABLED_IS
         episodeFlags and exclude != 0L -> TriState.ENABLED_NOT
@@ -106,6 +120,17 @@ data class Anime(
         const val SORT_MODE_MASK = 1536L
 
         const val DISPLAY_NUMBER = 2048L
+
+        // KMK --> hidden episode pictures / summaries, and how episodes are grouped by season
+        const val HIDE_PREVIEWS = 4096L
+        const val HIDE_SUMMARIES = 8192L
+
+        const val SEASON_GROUP_DEFAULT = 0L
+        const val SEASON_GROUP_HEADERS = 16384L
+        const val SEASON_GROUP_OFF = 32768L
+        const val SEASON_GROUP_TABS = 49152L
+        const val SEASON_GROUP_MASK = 49152L
+        // KMK <--
 
         const val ALL_FILTERS = FILTER_UNSEEN or FILTER_BOOKMARKED or FILTER_HIDE_FILLER or FILTER_UNSEEN_EXCLUDE or
             FILTER_BOOKMARKED_EXCLUDE or FILTER_FILLER_INCLUDE or FILTER_DOWNLOADED or FILTER_DOWNLOADED_EXCLUDE

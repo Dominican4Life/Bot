@@ -46,6 +46,7 @@ import eu.kanade.presentation.util.isTabletUi
 import eu.kanade.tachiyomi.ui.browse.BrowseTab
 import eu.kanade.tachiyomi.ui.download.DownloadQueueScreen
 import eu.kanade.tachiyomi.ui.history.HistoryTab
+import eu.kanade.tachiyomi.ui.library.AnimeLibraryTab
 import eu.kanade.tachiyomi.ui.library.LibraryTab
 import eu.kanade.tachiyomi.ui.libraryUpdateError.LibraryUpdateErrorScreen
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
@@ -77,7 +78,9 @@ object HomeScreen : Screen() {
     private const val TAB_FADE_DURATION = 200
     private const val TAB_NAVIGATOR_KEY = "HomeTabs"
 
+    // KMK: separate Anime and Manga library tabs, like Aniyomi
     private val TABS = listOf(
+        AnimeLibraryTab,
         LibraryTab,
         UpdatesTab,
         HistoryTab,
@@ -95,9 +98,11 @@ object HomeScreen : Screen() {
             Injekt.get<UiPreferences>().bottomBarLabels().asState(scope)
         }
         // SY <--
+        // KMK: the app opens on the library tab used last
+        val lastLibraryAnime = remember { Injekt.get<SourcePreferences>().libraryShowAnime() }
 
         TabNavigator(
-            tab = LibraryTab,
+            tab = if (lastLibraryAnime.get()) AnimeLibraryTab else LibraryTab,
             key = TAB_NAVIGATOR_KEY,
         ) { tabNavigator ->
             // Provide usable navigator to content screen
@@ -198,10 +203,20 @@ object HomeScreen : Screen() {
             }
 
             val goToLibraryTab = { tabNavigator.current = LibraryTab }
+            // KMK -->
+            val lastLibraryTab = { if (lastLibraryAnime.get()) AnimeLibraryTab else LibraryTab }
+            LaunchedEffect(tabNavigator.current) {
+                when (tabNavigator.current) {
+                    AnimeLibraryTab -> lastLibraryAnime.set(true)
+                    LibraryTab -> lastLibraryAnime.set(false)
+                }
+            }
+            // Back goes to the library tab used last
             BackHandler(
-                enabled = tabNavigator.current != LibraryTab,
-                onBack = goToLibraryTab,
+                enabled = tabNavigator.current != LibraryTab && tabNavigator.current != AnimeLibraryTab,
+                onBack = { tabNavigator.current = lastLibraryTab() },
             )
+            // KMK <--
 
             LaunchedEffect(Unit) {
                 launch {
@@ -213,7 +228,8 @@ object HomeScreen : Screen() {
                 launch {
                     openTabEvent.receiveAsFlow().collectLatest {
                         tabNavigator.current = when (it) {
-                            is Tab.Library -> LibraryTab
+                            // KMK: a manga to open is in the Manga library; otherwise the library used last
+                            is Tab.Library -> if (it.mangaIdToOpen != null) LibraryTab else lastLibraryTab()
                             Tab.Updates -> UpdatesTab
                             Tab.History -> HistoryTab
                             is Tab.Browse -> {

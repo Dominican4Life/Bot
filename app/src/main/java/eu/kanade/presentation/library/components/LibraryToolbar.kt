@@ -4,10 +4,8 @@ import android.content.Context
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Row
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.FlipToBack
-import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -45,7 +43,6 @@ fun LibraryToolbar(
     onClickOpenRandomManga: () -> Unit,
     onClickSyncNow: () -> Unit,
     // SY -->
-    onClickSyncExh: (() -> Unit)?,
     isSyncEnabled: Boolean,
     // SY <--
     searchQuery: String?,
@@ -53,8 +50,6 @@ fun LibraryToolbar(
     scrollBehavior: TopAppBarScrollBehavior?,
     onInvalidateDownloadCache: (Context) -> Unit,
     // KMK -->
-    showingAnime: Boolean = false,
-    onClickSwitchType: (() -> Unit)? = null,
     onClickRefreshMissingCovers: (() -> Unit)? = null,
     onClickMigrate: (() -> Unit)? = null,
     onClickComingUp: (() -> Unit)? = null,
@@ -77,14 +72,11 @@ fun LibraryToolbar(
         onClickOpenRandomManga = onClickOpenRandomManga,
         onClickSyncNow = onClickSyncNow,
         // SY -->
-        onClickSyncExh = onClickSyncExh,
         isSyncEnabled = isSyncEnabled,
         // SY <--
         scrollBehavior = scrollBehavior,
         onInvalidateDownloadCache = onInvalidateDownloadCache,
         // KMK -->
-        showingAnime = showingAnime,
-        onClickSwitchType = onClickSwitchType,
         onClickRefreshMissingCovers = onClickRefreshMissingCovers,
         onClickMigrate = onClickMigrate,
         onClickComingUp = onClickComingUp,
@@ -104,14 +96,11 @@ private fun LibraryRegularToolbar(
     onClickOpenRandomManga: () -> Unit,
     onClickSyncNow: () -> Unit,
     // SY -->
-    onClickSyncExh: (() -> Unit)?,
     isSyncEnabled: Boolean,
     // SY <--
     scrollBehavior: TopAppBarScrollBehavior?,
     onInvalidateDownloadCache: (Context) -> Unit,
     // KMK -->
-    showingAnime: Boolean,
-    onClickSwitchType: (() -> Unit)?,
     onClickRefreshMissingCovers: (() -> Unit)?,
     onClickMigrate: (() -> Unit)?,
     onClickComingUp: (() -> Unit)?,
@@ -141,21 +130,6 @@ private fun LibraryRegularToolbar(
         onChangeSearchQuery = onSearchQueryChange,
         actions = {
             val filterTint = if (hasFilters) MaterialTheme.colorScheme.active else LocalContentColor.current
-            // KMK -->
-            // Manga/anime switch sits between search and filter
-            if (onClickSwitchType != null) {
-                AppBarActions(
-                    persistentListOf(
-                        AppBar.Action(
-                            title = stringResource(KMR.strings.library_switch_type),
-                            icon = if (showingAnime) Icons.Outlined.Movie else Icons.AutoMirrored.Outlined.MenuBook,
-                            iconTint = MaterialTheme.colorScheme.primary,
-                            onClick = onClickSwitchType,
-                        ),
-                    ),
-                )
-            }
-            // KMK <--
             AppBarActions(
                 persistentListOf(
                     AppBar.Action(
@@ -184,14 +158,7 @@ private fun LibraryRegularToolbar(
                     ),
                 ).builder().apply {
                     // SY -->
-                    if (onClickSyncExh != null) {
-                        add(
-                            AppBar.OverflowAction(
-                                title = stringResource(SYMR.strings.sync_favorites),
-                                onClick = onClickSyncExh,
-                            ),
-                        )
-                    }
+                    // KMK: no "Sync EH favorites" here
                     if (isSyncEnabled) {
                         add(
                             AppBar.OverflowAction(
