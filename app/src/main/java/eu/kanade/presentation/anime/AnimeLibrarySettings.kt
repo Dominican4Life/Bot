@@ -256,11 +256,8 @@ fun rememberAnimeLibraryFilters(): AnimeLibraryFilters {
     val bookmarked by remember { AnimeLibraryPrefs.filterBookmarked() }.collectAsState()
     val completed by remember { AnimeLibraryPrefs.filterCompleted() }.collectAsState()
     val trackers = remember { AnimeTracking.services.filter { it.isLoggedIn } }
-    // KMK: one tracker is filtered with "Tracked" alone, like the manga library
-    val tracked = trackers.takeIf { it.size > 1 }.orEmpty().associate { service ->
-        val state by remember(service.id) { AnimeLibraryPrefs.filterTracked(service.id) }.collectAsState()
-        service.id to state
-    }
+    // KMK: only "Tracked" (any tracker), like Anikku's anime library
+    val tracked = emptyMap<Long, TriState>()
     // KMK -->
     val trackedAnyPref by remember { AnimeLibraryPrefs.filterTrackedAny() }.collectAsState()
     val trackedAny = if (trackers.isEmpty()) TriState.DISABLED else trackedAnyPref
@@ -331,14 +328,8 @@ private fun ColumnScope.FilterPage() {
     // KMK <--
     val trackers = remember { AnimeTracking.services.filter { it.isLoggedIn } }
     if (trackers.isNotEmpty()) {
-        // KMK: tracked by any tracker, then each tracker when there are several
+        // KMK: tracked by any tracker, like Anikku's anime library
         TriStatePref(stringResource(MR.strings.action_filter_tracked), AnimeLibraryPrefs.filterTrackedAny())
-        if (trackers.size > 1) {
-            HeadingItem(KMR.strings.anime_library_filter_tracking)
-            trackers.forEach { service ->
-                TriStatePref(service.name, AnimeLibraryPrefs.filterTracked(service.id))
-            }
-        }
     }
 }
 

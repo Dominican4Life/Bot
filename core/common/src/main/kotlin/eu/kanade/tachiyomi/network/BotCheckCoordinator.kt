@@ -40,7 +40,10 @@ object BotCheckCoordinator {
      * [isCanceled] stops waiting early, e.g. when the request it's for was given up.
      */
     fun awaitBlocking(url: String, userAgent: String?, isCanceled: () -> Boolean = { false }): Boolean {
-        if (Looper.myLooper() == Looper.getMainLooper()) return false
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            log { "not opened for $url: asked on the main thread" }
+            return false
+        }
         val result = request(url, userAgent) ?: return false
         return runBlocking {
             withTimeoutOrNull(TIMEOUT_MS) {
@@ -62,6 +65,7 @@ object BotCheckCoordinator {
     /** Called by WebView when it closes: [passed] tells whether the site's check was passed */
     fun finished(url: String, passed: Boolean) {
         val host = hostOf(url) ?: return
+        log { "check for $host ${if (passed) "passed, trying again" else "not passed"}" }
         val done = synchronized(this) { pending.remove(host) } ?: return
         done.result.complete(passed)
     }
@@ -81,17 +85,27 @@ object BotCheckCoordinator {
             pending.entries.removeAll { (_, other) ->
                 (now - other.at >= STALE_MS).also { if (it) other.result.complete(false) }
             }
-            if (pending.isNotEmpty()) return null
+            if (pending.isNotEmpty()) {
+                log { "not opened for $host: another site's check is open" }
+                return null
+            }
             // Never open the same site again and again
-            if (now - (lastOpened[host] ?: 0L) < COOLDOWN_MS) return null
+            if (now - (lastOpened[host] ?: 0L) < COOLDOWN_MS) {
+                log { "not opened for $host: opened less than 2 min ago" }
+                return null
+            }
             pending[host] = Pending(result, now)
             lastOpened[host] = now
         }
         val opened = try {
-            opener?.invoke(url, userAgent) == true
-        } catch (_: Exception) {
+            val open = opener
+            if (open == null) log { "not opened for $host: the app isn't ready" }
+            open?.invoke(url, userAgent) == true
+        } catch (e: Exception) {
+            log { "not opened for $host: ${e.message}" }
             false
         }
+        log { if (opened) "opened $url in WebView, waiting for the check to be passed" else "not opened for $host" }
         if (!opened) {
             synchronized(this) {
                 pending.remove(host)
@@ -105,6 +119,18 @@ object BotCheckCoordinator {
     }
 
     private fun hostOf(url: String): String? = url.toHttpUrlOrNull()?.host?.removePrefix("www.")
+
+    /** Each step goes to the app's Logs, so a check that didn't open shows why */
+    @Volatile
+    var logger: ((String) -> Unit)? = null
+
+    private inline fun log(message: () -> String) {
+        val text = message()
+        try {
+            logger?.invoke(text) ?: android.util.Log.i("BotCheck", text)
+        } catch (_: Exception) {
+        }
+    }
 
     private const val TIMEOUT_MS = 2 * 60_000L
     private const val STALE_MS = TIMEOUT_MS + 60_000L

@@ -62,7 +62,25 @@ class BotCheckInterceptor : Interceptor {
         val request = chain.request()
         val response = chain.proceed(request)
         if (!response.isSuccessful) {
-            BotCheckReporter.classify(response)?.let { BotCheckReporter.report(request.url.toString(), it) }
+            val kind = BotCheckReporter.classify(response) ?: return response
+            // A check that needs a person: opened in WebView when the app is on screen (setting on), and the
+            // request is sent again once it's passed. Otherwise only the notification, as before.
+            if (kind == BotCheckReporter.Kind.BOT_CHECK) {
+                val passed = try {
+                    BotCheckCoordinator.awaitBlocking(
+                        url = request.url.toString(),
+                        userAgent = request.header("User-Agent"),
+                        isCanceled = { chain.call().isCanceled() },
+                    )
+                } catch (_: Exception) {
+                    false
+                }
+                if (passed) {
+                    response.close()
+                    return chain.proceed(request)
+                }
+            }
+            BotCheckReporter.report(request.url.toString(), kind)
         }
         return response
     }

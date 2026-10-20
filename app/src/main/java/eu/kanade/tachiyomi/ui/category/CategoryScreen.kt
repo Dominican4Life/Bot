@@ -59,7 +59,13 @@ class CategoryScreen(
                     stringResource(KMR.strings.feed_tab_anime),
                     stringResource(MR.strings.label_sources),
                 ).forEachIndexed { index, title ->
-                    Tab(selected = tab == index, onClick = { tab = index }, text = { Text(title) })
+                    Tab(
+                        selected = tab == index,
+                        onClick = { tab = index },
+                        text = { Text(title) },
+                        // KMK: like the library's tabs, only the chosen one is colored
+                        unselectedContentColor = androidx.compose.material3.MaterialTheme.colorScheme.onSurface,
+                    )
                 }
             }
         }

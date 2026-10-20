@@ -70,6 +70,8 @@ fun MediaTabRow(
                 selected = MediaTab.fromPref(selected) == tab,
                 onClick = { onSelect(tab) },
                 text = { Text(stringResource(title)) },
+                // KMK: like the library's tabs, only the chosen one is colored
+                unselectedContentColor = androidx.compose.material3.MaterialTheme.colorScheme.onSurface,
             )
         }
     }

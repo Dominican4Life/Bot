@@ -600,7 +600,7 @@
     <string name="anime_library_sort_latest_episode">Latest episode</string>
     <string name="anime_library_sort_episode_fetch">Episode fetch date</string>
     <string name="anime_library_badge_unseen">Unseen episodes</string>
-    <string name="anime_library_continue_button">Show continue watching button</string>
+    <string name="anime_library_continue_button">Continue watching button</string>
     <string name="anime_library_no_next_episode">No next episode</string>
     <string name="anime_library_no_match">No anime match your filters</string>
     <string name="anime_library_badge_downloaded">Downloaded episodes</string>

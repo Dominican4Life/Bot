@@ -61,6 +61,7 @@ object BotCheckNotifier {
         appContext = context.applicationContext
         BotCheckReporter.listener = { url, kind, sourceId -> onReport(url, kind, sourceId, force = false) }
         BotCheckCoordinator.opener = ::openInWebView
+        BotCheckCoordinator.logger = { eu.kanade.tachiyomi.util.system.AppLog.add('I', "botcheck", it) }
     }
 
     /**
@@ -69,12 +70,34 @@ object BotCheckNotifier {
      */
     private fun openInWebView(url: String, userAgent: String?): Boolean {
         if (!::appContext.isInitialized) return false
+        val log = { text: String -> runCatching { eu.kanade.tachiyomi.util.system.AppLog.add('I', "botcheck", text) } }
         val enabled = runCatching { Injekt.get<NetworkPreferences>().autoOpenBotChecks().get() }.getOrDefault(false)
-        if (!enabled) return false
-        val onScreen = ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
-        if (!onScreen) return false
-        val site = hostOf(url)?.let(::siteForHost) ?: return false
-        if (DisabledSources.isDisabled(site.id)) return false
+        if (!enabled) {
+            log("not opened: \"Open bot checks automatically\" is off")
+            return false
+        }
+        // The lifecycle can only be read on the main thread
+        val readState = { ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) }
+        val onScreen = runCatching {
+            if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+                readState()
+            } else {
+                kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.Main) { readState() }
+            }
+        }.getOrDefault(false)
+        if (!onScreen) {
+            log("not opened: the app isn't on screen")
+            return false
+        }
+        val site = hostOf(url)?.let(::siteForHost)
+        if (site == null) {
+            log("not opened: $url isn't one of your sources' sites")
+            return false
+        }
+        if (DisabledSources.isDisabled(site.id)) {
+            log("not opened: ${site.name} is turned off")
+            return false
+        }
         val intent = WebViewActivity.newAutoCloseIntent(appContext, url, site.id, site.name, userAgent)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         appContext.startActivity(intent)
