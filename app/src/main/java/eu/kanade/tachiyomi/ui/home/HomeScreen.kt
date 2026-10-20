@@ -209,6 +209,7 @@ object HomeScreen : Screen() {
                 when (tabNavigator.current) {
                     AnimeLibraryTab -> lastLibraryAnime.set(true)
                     LibraryTab -> lastLibraryAnime.set(false)
+                    else -> {}
                 }
             }
             // Back goes to the library tab used last

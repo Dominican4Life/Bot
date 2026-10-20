@@ -217,7 +217,7 @@ fun rememberAnimeLibraryState(searchQuery: String?): AnimeLibraryState {
                     val name = sourceManager.get(sourceId)?.name ?: sourceId.toString()
                     name to (sourceId to animes)
                 }
-                .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.first })
+                .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { pair: Pair<String, Pair<Long, List<Anime>>> -> pair.first })
                 .mapIndexed { index, (name, group) -> pageCategory(group.first, name, index.toLong()) to group.second }
             LibraryGroup.BY_STATUS -> list.groupBy { it.status }
                 .map { (status, animes) ->
