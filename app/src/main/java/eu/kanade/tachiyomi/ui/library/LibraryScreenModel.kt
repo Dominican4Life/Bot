@@ -1088,6 +1088,7 @@ class LibraryScreenModel(
             context = preferences.context,
             mangaIds = mangaIds,
             target = LibraryUpdateJob.Target.CHAPTERS,
+            withAnime = false,
         )
     }
     // KMK <--
