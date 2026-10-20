@@ -45,6 +45,13 @@ class AnimeCategoryScreenModel(
         screenModelScope.launchIO { repository.moveCategory(target, newIndex) }
     }
 
+    /** Hides the category from the anime library, or shows it again */
+    fun toggleHidden(category: Category) {
+        val pref = eu.kanade.presentation.anime.AnimeLibraryPrefs.hiddenCategories()
+        val key = category.id.toString()
+        pref.set(if (key in pref.get()) pref.get() - key else pref.get() + key)
+    }
+
     fun showDialog(dialog: Dialog?) {
         mutableState.update { it.copy(dialog = dialog) }
     }
@@ -64,4 +71,10 @@ class AnimeCategoryScreenModel(
 }
 
 /** Shown with the same list items and dialogs as manga categories */
-fun AnimeCategory.asCategory() = Category(id = id, name = name, order = order, flags = 0L, hidden = false)
+fun AnimeCategory.asCategory() = Category(
+    id = id,
+    name = name,
+    order = order,
+    flags = 0L,
+    hidden = id.toString() in eu.kanade.presentation.anime.AnimeLibraryPrefs.hiddenCategories().get(),
+)

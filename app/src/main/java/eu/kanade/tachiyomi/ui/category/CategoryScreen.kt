@@ -7,6 +7,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import tachiyomi.presentation.core.util.collectAsState
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -144,7 +146,11 @@ class CategoryScreen(
             LoadingScreen()
             return
         }
-        val categories = state.categories.map { it.asCategory() }.toImmutableList()
+        // Re-read when a category is hidden or shown
+        val hidden by remember { eu.kanade.presentation.anime.AnimeLibraryPrefs.hiddenCategories() }.collectAsState()
+        val categories = remember(state.categories, hidden) {
+            state.categories.map { it.asCategory() }.toImmutableList()
+        }
         val names = categories.fastMap { it.name }.toImmutableList()
 
         CategoryScreen(
@@ -153,7 +159,7 @@ class CategoryScreen(
             onClickRename = { screenModel.showDialog(AnimeCategoryScreenModel.Dialog.Rename(it)) },
             onClickDelete = { screenModel.showDialog(AnimeCategoryScreenModel.Dialog.Delete(it)) },
             onChangeOrder = screenModel::move,
-            onClickHide = null,
+            onClickHide = screenModel::toggleHidden,
             navigateUp = navigator::pop,
             tabs = tabs,
             emptyText = KMR.strings.anime_categories_empty,

@@ -1,5 +1,6 @@
 package eu.kanade.presentation.anime
 
+import androidx.compose.material.icons.outlined.Folder
 import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
@@ -209,7 +210,10 @@ fun rememberAnimeLibraryState(searchQuery: String?): AnimeLibraryState {
     }
 
     // The pages: categories, or groups of the whole library
-    val groups = remember(favorites, categories, links, groupType, tracks) {
+    // Hidden anime categories (More › Categories › Anime), unless "Show hidden categories" is on
+    val hiddenCategoryIds by remember { AnimeLibraryPrefs.hiddenCategories() }.collectAsState()
+    val showHidden by remember { AnimeLibraryPrefs.showHiddenCategories() }.collectAsState()
+    val groups = remember(favorites, categories, links, groupType, tracks, hiddenCategoryIds, showHidden) {
         val list = favorites.orEmpty()
         when (groupType) {
             LibraryGroup.BY_SOURCE -> list.groupBy { it.source }
@@ -250,6 +254,7 @@ fun rememberAnimeLibraryState(searchQuery: String?): AnimeLibraryState {
                         add(pageCategory(Category.UNCATEGORIZED_ID, "", -1) to uncategorized)
                     }
                     categories.forEach { category ->
+                        if (!showHidden && category.id.toString() in hiddenCategoryIds) return@forEach
                         add(
                             pageCategory(category.id, category.name, category.order) to
                                 list.filter { category.id in links[it.id].orEmpty() },
@@ -606,6 +611,7 @@ private data class AnimeBadgeSettings(
     val useLangIcon: Boolean,
     val source: Boolean,
     val continueButton: Boolean,
+    val local: Boolean,
 )
 
 @Composable
@@ -616,7 +622,8 @@ private fun rememberAnimeBadgeSettings(): AnimeBadgeSettings {
     val useLangIcon by remember { AnimeLibraryPrefs.useLangIcon() }.collectAsState()
     val source by remember { AnimeLibraryPrefs.sourceBadge() }.collectAsState()
     val continueButton by remember { AnimeLibraryPrefs.continueButton() }.collectAsState()
-    return AnimeBadgeSettings(downloaded, unseen, language, useLangIcon, source, continueButton)
+    val local by remember { AnimeLibraryPrefs.localBadge() }.collectAsState()
+    return AnimeBadgeSettings(downloaded, unseen, language, useLangIcon, source, continueButton, local)
 }
 
 /**
@@ -631,9 +638,20 @@ private fun animeBadges(
 ): Map<String, @Composable RowScope.() -> Unit> = buildMap<String, @Composable RowScope.() -> Unit> {
     if (settings.downloaded) put(CoverBadge.DOWNLOADED) { DownloadsBadge(count = downloaded.toLong()) }
     if (settings.unseen) put(CoverBadge.UNREAD) { UnreadBadge(count = unseen) }
+    // Local source: anime from Device files get a folder badge where the language goes
+    val isLocal = anime.source == eu.kanade.tachiyomi.devicefiles.DeviceFilesIds.ANIME
+    if (isLocal && settings.local) {
+        put(CoverBadge.LANGUAGE) {
+            tachiyomi.presentation.core.components.Badge(
+                imageVector = androidx.compose.material.icons.Icons.Outlined.Folder,
+                color = androidx.compose.material3.MaterialTheme.colorScheme.tertiary,
+                iconColor = androidx.compose.material3.MaterialTheme.colorScheme.onTertiary,
+            )
+        }
+    }
     if (settings.language || settings.source) {
         val source = AnimeMigrateSources.asSource(anime.source)
-        if (settings.language) {
+        if (settings.language && !isLocal) {
             put(CoverBadge.LANGUAGE) {
                 LanguageBadge(isLocal = false, sourceLanguage = source.lang, useLangIcon = settings.useLangIcon)
             }

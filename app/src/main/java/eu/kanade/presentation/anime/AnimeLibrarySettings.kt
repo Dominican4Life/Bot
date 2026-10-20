@@ -116,6 +116,15 @@ object AnimeLibraryPrefs {
     /** How the library's pages are made, one of [LibraryGroup]'s types */
     fun groupType() = store.getInt("anime_library_group_type", LibraryGroup.BY_DEFAULT)
 
+    /** Local source badge (anime from Device files) */
+    fun localBadge() = store.getBoolean("anime_library_badge_local", true)
+
+    /** Ids of anime categories hidden from the library (More › Categories › Anime) */
+    fun hiddenCategories() = store.getStringSet("anime_library_hidden_categories", emptySet())
+
+    /** Show hidden anime categories anyway */
+    fun showHiddenCategories() = store.getBoolean("anime_library_show_hidden_categories", false)
+
     fun sort() = store.getEnum("anime_library_sort", AnimeLibrarySort.ALPHABETICAL)
     fun sortAscending() = store.getBoolean("anime_library_sort_ascending", true)
 
@@ -492,7 +501,7 @@ private fun ColumnScope.DisplayPage() {
             pillColor = MaterialTheme.colorScheme.surfaceContainerHighest,
         )
     }
-    // KMK: the same badges as the manga library (no Local source badge: anime have no local source)
+    // KMK: the same badges as the manga library (Local source = anime from Device files)
     HeadingItem(MR.strings.overlay_header)
     CheckboxItem(
         label = stringResource(KMR.strings.anime_library_badge_downloaded),
@@ -501,6 +510,10 @@ private fun ColumnScope.DisplayPage() {
     CheckboxItem(
         label = stringResource(KMR.strings.anime_library_badge_unseen),
         pref = AnimeLibraryPrefs.unseenBadge(),
+    )
+    CheckboxItem(
+        label = stringResource(MR.strings.action_display_local_badge),
+        pref = AnimeLibraryPrefs.localBadge(),
     )
     CheckboxItem(
         label = stringResource(MR.strings.action_display_language_badge),
@@ -525,6 +538,10 @@ private fun ColumnScope.DisplayPage() {
     CheckboxItem(
         label = stringResource(MR.strings.action_display_show_tabs),
         pref = libraryPreferences.categoryTabs(),
+    )
+    CheckboxItem(
+        label = stringResource(KMR.strings.action_show_hidden_categories),
+        pref = AnimeLibraryPrefs.showHiddenCategories(),
     )
     CheckboxItem(
         label = stringResource(MR.strings.action_display_show_number_of_items),

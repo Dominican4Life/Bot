@@ -595,7 +595,7 @@
     <string name="anime_library_filter_completed">Completed</string>
     <string name="anime_library_filter_tracking">Tracking</string>
     <string name="anime_library_sort_total">Total episodes</string>
-    <string name="anime_library_sort_last_seen">Last watched</string>
+    <string name="anime_library_sort_last_seen">Last seen</string>
     <string name="anime_library_sort_unseen">Unseen count</string>
     <string name="anime_library_sort_latest_episode">Latest episode</string>
     <string name="anime_library_sort_episode_fetch">Episode fetch date</string>
@@ -660,7 +660,7 @@
     <string name="pref_anime_download_new">Download new episodes</string>
     <string name="pref_anime_download_new_categories_details">Anime in excluded categories won\'t be downloaded even if they\'re also in included categories.</string>
     <!-- KMK: next episode airing times (AniList) -->
-    <string name="anime_library_sort_next_airing">Next airing</string>
+    <string name="anime_library_sort_next_airing">Airing time</string>
     <string name="anime_airing_in">Episode %1$d airs in %2$s</string>
     <string name="anime_airing_now">Episode %1$d is airing now</string>
     <string name="anime_airing_duration_days">%1$dd %2$dh</string>
