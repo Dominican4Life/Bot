@@ -78,15 +78,6 @@ interface AnimeTrackService {
     /** Whether the tracker keeps a score, and start/finish dates */
     val supportsScore: Boolean get() = true
     val supportsDates: Boolean get() = true
-
-    /** False for trackers that bind by themselves ([autoBind]) and can't be searched */
-    val canSearch: Boolean get() = true
-
-    /** Whether this tracker can track [anime] at all (e.g. Jellyfin only tracks anime from its own extension) */
-    fun accepts(anime: Anime): Boolean = true
-
-    /** For trackers that bind without a search: the entry for [anime], or null when it can't be bound */
-    suspend fun autoBind(anime: Anime, lastSeenEpisode: Double): AnimeTrack? = null
     // KMK <--
 
     suspend fun search(query: String): List<AnimeTrackSearch>
@@ -172,13 +163,13 @@ object AnimeTracking {
     val services: List<AnimeTrackService> by lazy {
         val manager = Injekt.get<TrackerManager>()
         listOf(
-            AnilistAnime(manager.aniList),
+            // Aniyomi's order
             MyAnimeListAnime(manager.myAnimeList),
+            AnilistAnime(manager.aniList),
             KitsuAnime(manager.kitsu),
             ShikimoriAnime(manager.shikimori),
-            BangumiAnime(manager.bangumi),
             SimklAnime(manager.simkl),
-            JellyfinAnime(manager.jellyfin),
+            BangumiAnime(manager.bangumi),
         )
     }
 
@@ -268,7 +259,7 @@ object AnimeTracking {
 
     /**
      * Brings [anime]'s tracking up to date: sends pending changes, pulls each tracker's entry (progress, status,
-     * title, episode count) into the local one, and binds trackers that bind by themselves (Jellyfin).
+     * title, episode count) into the local one.
      */
     suspend fun refresh(anime: Anime) {
         try {
@@ -287,23 +278,6 @@ object AnimeTracking {
                 logcat(LogPriority.WARN, e) { "Anime tracking: refresh ${service.name}" }
             }
         }
-        autoBind(anime, tracks)
-    }
-
-    private suspend fun autoBind(anime: Anime, tracks: List<AnimeTrack>): List<AnimeTrack> {
-        return services
-            .filter { service ->
-                !service.canSearch && service.isLoggedIn && tracks.none { it.trackerId == service.id } &&
-                    service.accepts(anime)
-            }
-            .mapNotNull { service ->
-                try {
-                    service.autoBind(anime, 0.0)?.also { repository.upsert(it) }
-                } catch (e: Throwable) {
-                    logcat(LogPriority.WARN, e) { "Anime tracking: ${service.name} couldn't bind" }
-                    null
-                }
-            }
     }
 
     /**
@@ -322,7 +296,7 @@ object AnimeTracking {
                 val anime = Injekt.get<AnimeRepository>().getAnime(animeId) ?: return@launch
                 if (AnimeIncognito.isOn(anime.source)) return@launch
                 val tracks = repository.getTracks(animeId)
-                (tracks + autoBind(anime, tracks)).forEach { track ->
+                tracks.forEach { track ->
                     val service = service(track.trackerId)?.takeIf { it.isLoggedIn } ?: return@forEach
                     if (episodeNumber <= track.lastEpisodeSeen) return@forEach
                     val now = System.currentTimeMillis()

@@ -52,6 +52,7 @@ import tachiyomi.domain.source.interactor.GetSourcesWithNonLibraryManga
 import tachiyomi.domain.source.model.Source
 import tachiyomi.domain.source.model.SourceWithCount
 import tachiyomi.i18n.MR
+import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.components.LazyColumnWithAction
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.components.material.padding
@@ -135,7 +136,7 @@ class ClearDatabaseScreen : Screen() {
                 Scaffold(
                     topBar = { scrollBehavior ->
                         AppBar(
-                            title = stringResource(MR.strings.pref_clear_database),
+                            title = stringResource(KMR.strings.pref_clear_manga_database),
                             navigateUp = navigator::pop,
                             actions = {
                                 if (s.items.isNotEmpty()) {

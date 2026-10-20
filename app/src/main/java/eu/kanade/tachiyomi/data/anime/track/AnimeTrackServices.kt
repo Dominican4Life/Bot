@@ -1,13 +1,7 @@
 package eu.kanade.tachiyomi.data.anime.track
 
-import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
-import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
-import eu.kanade.tachiyomi.animesource.sourcePreferences
-import eu.kanade.tachiyomi.data.anime.Anime
-import eu.kanade.tachiyomi.data.anime.AnimeRepository
 import eu.kanade.tachiyomi.data.track.anilist.Anilist
 import eu.kanade.tachiyomi.data.track.bangumi.Bangumi
-import eu.kanade.tachiyomi.data.track.jellyfin.Jellyfin
 import eu.kanade.tachiyomi.data.track.kitsu.Kitsu
 import eu.kanade.tachiyomi.data.track.kitsu.KitsuDateHelper
 import eu.kanade.tachiyomi.data.track.myanimelist.MyAnimeList
@@ -40,31 +34,22 @@ import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
-import logcat.LogPriority
 import okhttp3.CacheControl
 import okhttp3.FormBody
 import okhttp3.Headers.Companion.headersOf
-import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import tachiyomi.core.common.util.lang.withIOContext
-import tachiyomi.core.common.util.system.logcat
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
-import java.text.SimpleDateFormat
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
-import java.util.Date
-import java.util.Locale
-import kotlin.math.abs
 
 /*
  * KMK: the anime side of the trackers. AniList, MyAnimeList, Kitsu, Shikimori and Bangumi share the manga
- * trackers' logins; Simkl and Jellyfin are anime-only (see TrackerManager.animeOnlyTrackers).
+ * trackers' logins; Simkl is anime-only (see TrackerManager.animeOnlyTrackers).
  *
  * The anime side of the AniList and MyAnimeList trackers (from Anikku's AnilistApi / MyAnimeListApi, which
  * use type ANIME and the /anime endpoints). They sign in with the same login as the manga trackers.
@@ -918,162 +903,5 @@ class SimklAnime(override val tracker: Simkl) : AnimeTrackService {
         "hold" -> AnimeTrackStatus.ON_HOLD
         "dropped", "notinteresting" -> AnimeTrackStatus.DROPPED
         else -> AnimeTrackStatus.PLAN_TO_WATCH
-    }
-}
-
-// ======================= Jellyfin =======================
-
-/**
- * From Anikku's JellyfinApi: no search; anime from the Jellyfin extension are bound by their own URL, and the
- * extension's server login (its api key) is used. Watching an episode marks it played on the server.
- */
-class JellyfinAnime(override val tracker: Jellyfin) : AnimeTrackService {
-
-    private val client get() = tracker.animeClient
-
-    override val supportsScore: Boolean get() = false
-
-    override val supportsDates: Boolean get() = false
-
-    override val canSearch: Boolean get() = false
-
-    override fun accepts(anime: Anime): Boolean {
-        val source = Injekt.get<AnimeSourceManager>().get(anime.source) ?: return false
-        return source::class.qualifiedName == Jellyfin.SOURCE_CLASS
-    }
-
-    override suspend fun search(query: String): List<AnimeTrackSearch> = emptyList()
-
-    override suspend fun autoBind(anime: Anime, lastSeenEpisode: Double): AnimeTrack? {
-        if (!accepts(anime)) return null
-        return try {
-            fetch(anime)
-        } catch (e: Exception) {
-            logcat(LogPriority.WARN, e) { "Jellyfin: couldn't bind ${anime.url}" }
-            null
-        }
-    }
-
-    override suspend fun find(animeId: Long, remoteId: Long): AnimeTrack? {
-        val anime = Injekt.get<AnimeRepository>().getAnime(animeId) ?: return null
-        if (!accepts(anime)) return null
-        return fetch(anime)
-    }
-
-    override suspend fun save(track: AnimeTrack): AnimeTrack = withIOContext {
-        val anime = Injekt.get<AnimeRepository>().getAnime(track.animeId) ?: return@withIOContext track
-        val url = withApiKey(anime, track.remoteUrl.ifBlank { anime.url }.toHttpUrl())
-        val fragment = url.fragment.orEmpty()
-        val itemId = if (fragment.startsWith("movie")) {
-            url.pathSegments.last().takeIf { track.lastEpisodeSeen > 0.0 }
-        } else {
-            episodes(anime, url).firstOrNull { episode ->
-                val number = episode.long("IndexNumber") ?: return@firstOrNull false
-                abs(number - track.lastEpisodeSeen) < 0.001
-            }?.str("Id")
-        }
-        if (itemId != null) {
-            val time = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).format(Date())
-            val postUrl = url.newBuilder()
-                .fragment(null)
-                .removePathSegment(3)
-                .removePathSegment(2)
-                .addPathSegment("PlayedItems")
-                .addPathSegment(itemId)
-                .addQueryParameter("DatePlayed", time)
-                .build()
-            client.newCall(POST(postUrl.toString())).awaitSuccess().close()
-        }
-        val remote = fetch(anime)
-        track.copy(
-            lastEpisodeSeen = remote.lastEpisodeSeen,
-            totalEpisodes = remote.totalEpisodes,
-            status = remote.status,
-        )
-    }
-
-    // Nothing to remove on the server
-    override suspend fun delete(track: AnimeTrack) = Unit
-
-    private suspend fun fetch(anime: Anime): AnimeTrack = withIOContext {
-        val url = withApiKey(anime, anime.url.toHttpUrl())
-        val fragment = url.fragment ?: throw IllegalArgumentException("Not a Jellyfin item: ${anime.url}")
-        val item = json.parseToJsonElement(client.newCall(GET(url)).awaitSuccess().body.string())
-        val total: Long
-        val seen: Double
-        val status: Long
-        when {
-            fragment.startsWith("season") -> {
-                val episodes = episodes(anime, url)
-                val firstUnseen = episodes.indexOfFirst { !it.played() }
-                total = episodes.lastOrNull()?.long("IndexNumber") ?: episodes.size.toLong()
-                when {
-                    episodes.isEmpty() || firstUnseen == 0 -> {
-                        seen = 0.0
-                        status = AnimeTrackStatus.PLAN_TO_WATCH
-                    }
-                    firstUnseen == -1 -> {
-                        seen = total.toDouble()
-                        status = AnimeTrackStatus.COMPLETED
-                    }
-                    else -> {
-                        seen = (episodes[firstUnseen - 1].long("IndexNumber") ?: firstUnseen.toLong()).toDouble()
-                        status = AnimeTrackStatus.WATCHING
-                    }
-                }
-            }
-            fragment.startsWith("movie") -> {
-                val played = item.played()
-                total = 1L
-                seen = if (played) 1.0 else 0.0
-                status = if (played) AnimeTrackStatus.COMPLETED else AnimeTrackStatus.PLAN_TO_WATCH
-            }
-            else -> throw IllegalArgumentException("Unexpected Jellyfin item: $fragment")
-        }
-        AnimeTrack(
-            animeId = anime.id,
-            trackerId = id,
-            remoteId = anime.id,
-            libraryId = null,
-            title = item.str("Name") ?: anime.title,
-            lastEpisodeSeen = seen,
-            totalEpisodes = total,
-            status = status,
-            score = 0.0,
-            // Kept without the api key, so copying the link never shares it
-            remoteUrl = anime.url,
-            startDate = 0L,
-            finishDate = 0L,
-            private = false,
-        )
-    }
-
-    private fun JsonElement.played(): Boolean = obj("UserData").str("Played") == "true"
-
-    /** The episodes of the season [url] points at (…/Users/{user}/Items/{season}#season,{series}) */
-    private suspend fun episodes(anime: Anime, url: HttpUrl): List<JsonElement> {
-        val fragment = url.fragment.orEmpty()
-        val episodesUrl = url.newBuilder()
-            .encodedPath("/")
-            .fragment(null)
-            .encodedQuery(null)
-            .addPathSegment("Shows")
-            .addPathSegment(fragment.split(",").last())
-            .addPathSegment("Episodes")
-            .addQueryParameter("seasonId", url.pathSegments.last())
-            .addQueryParameter("userId", url.pathSegments[1])
-            .addQueryParameter("Fields", "Overview,MediaSources")
-            .build()
-        val text = client.newCall(GET(withApiKey(anime, episodesUrl))).awaitSuccess().body.string()
-        return json.parseToJsonElement(text).arr("Items").orEmpty()
-    }
-
-    /** Adds the Jellyfin extension's api key, unless the URL already carries one */
-    private fun withApiKey(anime: Anime, url: HttpUrl): HttpUrl {
-        if (url.queryParameter("api_key") != null) return url
-        val source = Injekt.get<AnimeSourceManager>().get(anime.source) as? ConfigurableAnimeSource
-        val key = source?.sourcePreferences()?.getString("api_key", null)
-        if (key.isNullOrBlank()) throw Exception("Log in to the Jellyfin extension first")
-        return url.newBuilder().addQueryParameter("api_key", key).build()
     }
 }

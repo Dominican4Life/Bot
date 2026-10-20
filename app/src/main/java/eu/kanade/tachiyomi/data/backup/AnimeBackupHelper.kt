@@ -8,6 +8,7 @@ import eu.kanade.tachiyomi.data.anime.AnimeRepository
 import eu.kanade.tachiyomi.data.anime.Episode
 import eu.kanade.tachiyomi.data.anime.track.AnimeTrack
 import eu.kanade.tachiyomi.data.anime.track.AnimeTrackRepository
+import eu.kanade.tachiyomi.data.anime.track.AnimeTracking
 import eu.kanade.tachiyomi.data.backup.models.BackupAnime
 import eu.kanade.tachiyomi.data.backup.models.BackupAnimeCategory
 import eu.kanade.tachiyomi.data.backup.models.BackupAnimeCustomInfo
@@ -231,6 +232,8 @@ class AnimeBackupHelper(
         if (backup.tracking.isNotEmpty()) {
             val existing = trackRepository.getTracks(animeId).associateBy { it.trackerId }
             backup.tracking.forEach { track ->
+                // Trackers that were removed (Jellyfin) aren't restored
+                if (AnimeTracking.service(track.trackerId) == null) return@forEach
                 val here = existing[track.trackerId]
                 trackRepository.upsert(
                     AnimeTrack(

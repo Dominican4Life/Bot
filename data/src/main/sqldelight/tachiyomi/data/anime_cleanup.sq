@@ -1,0 +1,45 @@
+-- KMK: "Clear Anime database" (Settings › Advanced). Non-library anime, leaving out what the library still uses:
+-- seasons of library anime, the anime a library season belongs to, and the members of merged library anime.
+
+getSourceIdsWithNonLibraryAnime:
+SELECT source, count(*) AS anime_count
+FROM animes
+WHERE favorite = 0
+AND (parent_id IS NULL OR parent_id NOT IN (SELECT _id FROM animes WHERE favorite = 1))
+AND _id NOT IN (SELECT parent_id FROM animes WHERE favorite = 1 AND parent_id IS NOT NULL)
+AND _id NOT IN (
+    SELECT am.anime_id
+    FROM anime_merged am
+    JOIN animes m ON m._id = am.merge_id
+    WHERE m.favorite = 1
+)
+GROUP BY source;
+
+-- Episodes, history, tracking, categories and edited info go with them (ON DELETE CASCADE)
+deleteNonLibraryAnime:
+DELETE FROM animes
+WHERE favorite = 0
+AND source IN :sourceIds
+AND (
+    :keepSeenAnime = 0
+    OR _id NOT IN (
+        SELECT DISTINCT anime_id
+        FROM episodes
+        WHERE seen = 1
+        OR last_second_seen != 0
+    )
+)
+AND (parent_id IS NULL OR parent_id NOT IN (SELECT _id FROM animes WHERE favorite = 1))
+AND _id NOT IN (SELECT parent_id FROM animes WHERE favorite = 1 AND parent_id IS NOT NULL)
+AND _id NOT IN (
+    SELECT am.anime_id
+    FROM anime_merged am
+    JOIN animes m ON m._id = am.merge_id
+    WHERE m.favorite = 1
+);
+
+-- Seasons whose anime was just deleted stand on their own
+clearMissingParents:
+UPDATE animes SET parent_id = NULL
+WHERE parent_id IS NOT NULL
+AND parent_id NOT IN (SELECT _id FROM animes);

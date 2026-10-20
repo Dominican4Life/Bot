@@ -20,6 +20,7 @@ import cafe.adriel.voyager.navigator.tab.TabOptions
 import eu.kanade.core.preference.asState
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.presentation.components.MediaDisplayDialog
+import eu.kanade.presentation.components.MediaTab
 import eu.kanade.presentation.updates.UpdateScreen
 import eu.kanade.presentation.updates.UpdatesDeleteConfirmationDialog
 import eu.kanade.presentation.util.Tab
@@ -82,9 +83,10 @@ data object UpdatesTab : Tab {
 
         // KMK -->
         val usePanoramaCover by settingsScreenModel.updatesPreferences.usePanoramaCover().collectAsState()
-        // All | Manga | Anime, and the library's display modes
+        // Anime | Manga (last tab kept, Anime by default), and the library's display modes
         val mediaTabPref = remember { Injekt.get<eu.kanade.domain.source.service.SourcePreferences>().updatesMediaTab() }
-        val mediaTab by mediaTabPref.collectAsState()
+        val savedMediaTab by mediaTabPref.collectAsState()
+        val mediaTab = MediaTab.fromPref(savedMediaTab)
         val displayMode by settingsScreenModel.updatesPreferences.displayMode().collectAsState()
         val columns by settingsScreenModel.updatesPreferences.columns().collectAsState()
         // The filters left the toolbar (only display modes now), so none may stay on unseen

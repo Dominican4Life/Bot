@@ -17,6 +17,7 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
 import eu.kanade.tachiyomi.animesource.model.SAnime
@@ -93,7 +94,13 @@ class AnimeLibraryUpdateJob(
         val allFavorites = repository.getFavorites()
         if (allFavorites.isEmpty()) return Result.success()
 
-        val favorites = filterForUpdate(allFavorites)
+        // KMK: "Update category" in the anime library checks just that page's anime
+        val onlyIds = inputData.getLongArray(KEY_ANIME_IDS)?.toSet()
+        val favorites = if (onlyIds != null) {
+            filterForUpdate(allFavorites.filter { it.id in onlyIds }, ignoreCategories = true)
+        } else {
+            filterForUpdate(allFavorites)
+        }
         val skipped = allFavorites.size - favorites.size
         if (favorites.isEmpty()) return Result.success()
 
@@ -167,10 +174,10 @@ class AnimeLibraryUpdateJob(
     }
 
     /** The favorites the update settings allow */
-    private suspend fun filterForUpdate(favorites: List<Anime>): List<Anime> {
+    private suspend fun filterForUpdate(favorites: List<Anime>, ignoreCategories: Boolean = false): List<Anime> {
         val skip = AnimePrefs.updateSkip().get()
-        val included = AnimePrefs.updateCategories().get()
-        val excluded = AnimePrefs.updateCategoriesExclude().get()
+        val included = if (ignoreCategories) emptySet() else AnimePrefs.updateCategories().get()
+        val excluded = if (ignoreCategories) emptySet() else AnimePrefs.updateCategoriesExclude().get()
 
         val links = if (included.isNotEmpty() || excluded.isNotEmpty()) {
             repository.subscribeCategoryLinks().first()
@@ -293,13 +300,21 @@ class AnimeLibraryUpdateJob(
             return now < days.first() * DAY + interval / 2
         }
 
-        /** Manual update (Updates screen, manga library refresh) */
-        fun startNow(context: Context) {
+        private const val KEY_ANIME_IDS = "anime_ids"
+
+        /**
+         * Manual update (Updates screen, manga library refresh, anime library menu). [animeIds] limits it to those
+         * anime (one page of the anime library). False when an update is already running.
+         */
+        fun startNow(context: Context, animeIds: List<Long>? = null): Boolean {
+            if (context.workManager.isRunning(WORK_NAME)) return false
             val request = OneTimeWorkRequestBuilder<AnimeLibraryUpdateJob>()
                 .addTag(WORK_NAME)
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                .apply { if (animeIds != null) setInputData(workDataOf(KEY_ANIME_IDS to animeIds.toLongArray())) }
                 .build()
             context.workManager.enqueueUniqueWork(WORK_NAME, ExistingWorkPolicy.KEEP, request)
+            return true
         }
 
         /**

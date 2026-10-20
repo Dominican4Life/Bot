@@ -13,7 +13,6 @@ import androidx.compose.foundation.lazy.LazyItemScope
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CollectionsBookmark
 import androidx.compose.material.icons.outlined.LocalLibrary
-import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -43,7 +42,7 @@ fun StatsScreenContent(
     paddingValues: PaddingValues,
     // KMK -->
     animeStats: AnimeStatsData? = null,
-    mediaTab: Int = MediaTab.ALL,
+    mediaTab: Int = MediaTab.ANIME,
     // KMK <--
 ) {
     LazyColumn(
@@ -89,7 +88,7 @@ fun StatsScreenContent(
     }
 }
 
-// KMK -->
+// KMK --> The Anime tab, laid out and named like the manga one (and Aniyomi's)
 @Composable
 private fun LazyItemScope.AnimeOverviewSection(data: AnimeStatsData) {
     val none = stringResource(MR.strings.none)
@@ -99,18 +98,18 @@ private fun LazyItemScope.AnimeOverviewSection(data: AnimeStatsData) {
             .toDuration(DurationUnit.MILLISECONDS)
             .toDurationString(context, fallback = none)
     }
-    SectionCard(KMR.strings.anime_stats_section) {
+    SectionCard(MR.strings.label_overview_section) {
         Row(
             modifier = Modifier.height(IntrinsicSize.Min),
         ) {
             StatsOverviewItem(
                 title = data.libraryCount.toString(),
                 subtitle = stringResource(MR.strings.in_library),
-                icon = Icons.Outlined.Movie,
+                icon = Icons.Outlined.CollectionsBookmark,
             )
             StatsOverviewItem(
                 title = watchTime,
-                subtitle = stringResource(KMR.strings.anime_stats_watch_time),
+                subtitle = stringResource(KMR.strings.anime_stats_watched_duration),
                 icon = Icons.Outlined.Schedule,
             )
             StatsOverviewItem(
@@ -124,15 +123,19 @@ private fun LazyItemScope.AnimeOverviewSection(data: AnimeStatsData) {
 
 @Composable
 private fun LazyItemScope.AnimeTitlesStats(data: AnimeStatsData) {
-    SectionCard(KMR.strings.anime_stats_titles) {
+    SectionCard(MR.strings.label_titles_section) {
         Row {
+            StatsItem(
+                data.globalUpdateCount.toString(),
+                stringResource(MR.strings.label_titles_in_global_update),
+            )
             StatsItem(
                 data.startedCount.toString(),
                 stringResource(MR.strings.label_started),
             )
             StatsItem(
-                data.sourceCount.toString(),
-                stringResource(KMR.strings.anime_stats_sources),
+                data.localCount.toString(),
+                stringResource(MR.strings.label_local),
             )
         }
     }
@@ -144,11 +147,11 @@ private fun LazyItemScope.AnimeEpisodeStats(data: AnimeStatsData) {
         Row {
             StatsItem(
                 data.totalEpisodes.toString(),
-                stringResource(KMR.strings.anime_stats_total_episodes),
+                stringResource(MR.strings.label_total_chapters),
             )
             StatsItem(
                 data.seenEpisodes.toString(),
-                stringResource(KMR.strings.anime_stats_seen_episodes),
+                stringResource(KMR.strings.anime_stats_watched),
             )
             StatsItem(
                 data.downloadedEpisodes.toString(),
@@ -168,11 +171,11 @@ private fun LazyItemScope.AnimeTrackerStats(data: AnimeStatsData) {
             notApplicable
         }
     }
-    SectionCard(KMR.strings.anime_stats_trackers) {
+    SectionCard(MR.strings.label_tracker_section) {
         Row {
             StatsItem(
                 data.trackedCount.toString(),
-                stringResource(KMR.strings.anime_stats_tracked),
+                stringResource(MR.strings.label_tracked_titles),
             )
             StatsItem(
                 meanScoreStr,
@@ -180,7 +183,7 @@ private fun LazyItemScope.AnimeTrackerStats(data: AnimeStatsData) {
             )
             StatsItem(
                 data.trackerCount.toString(),
-                stringResource(KMR.strings.anime_stats_trackers_used),
+                stringResource(MR.strings.label_used),
             )
         }
     }

@@ -22,6 +22,7 @@ import eu.kanade.core.preference.asState
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.presentation.category.components.ChangeCategoryDialog
 import eu.kanade.presentation.components.MediaDisplayDialog
+import eu.kanade.presentation.components.MediaTab
 import eu.kanade.presentation.history.HistoryScreen
 import eu.kanade.presentation.history.components.HistoryDeleteAllDialog
 import eu.kanade.presentation.history.components.HistoryDeleteDialog
@@ -90,9 +91,10 @@ data object HistoryTab : Tab {
         // KMK -->
         val settingsScreenModel = rememberScreenModel { HistorySettingsScreenModel() }
         val usePanoramaCover by settingsScreenModel.historyPreferences.usePanoramaCover().collectAsState()
-        // All | Manga | Anime, and the library's display modes
+        // Anime | Manga (last tab kept, Anime by default), and the library's display modes
         val mediaTabPref = remember { Injekt.get<eu.kanade.domain.source.service.SourcePreferences>().historyMediaTab() }
-        val mediaTab by mediaTabPref.collectAsState()
+        val savedMediaTab by mediaTabPref.collectAsState()
+        val mediaTab = MediaTab.fromPref(savedMediaTab)
         val displayMode by settingsScreenModel.historyPreferences.displayMode().collectAsState()
         val columns by settingsScreenModel.historyPreferences.columns().collectAsState()
         // The filters left the toolbar (only display modes now), so none may stay on unseen

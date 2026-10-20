@@ -97,7 +97,7 @@ fun HistoryScreen(
     onHistorySelected: (HistoryWithRelations, HistorySelectionOptions) -> Unit,
     onDisplayClicked: () -> Unit,
     usePanoramaCover: Boolean,
-    mediaTab: Int = MediaTab.ALL,
+    mediaTab: Int = MediaTab.ANIME,
     onMediaTabChange: (Int) -> Unit = {},
     displayMode: LibraryDisplayMode = LibraryDisplayMode.List,
     columns: Int = 0,

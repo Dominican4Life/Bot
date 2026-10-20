@@ -16,7 +16,6 @@ import androidx.compose.material.icons.outlined.GetApp
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Lightbulb
 import androidx.compose.material.icons.outlined.Palette
-import androidx.compose.material.icons.outlined.PlayCircleOutline
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.Storage
@@ -51,8 +50,6 @@ import exh.assets.ehassets.EhLogo
 import exh.assets.ehassets.MangadexLogo
 import kotlinx.collections.immutable.persistentListOf
 import tachiyomi.i18n.MR
-import tachiyomi.i18n.ank.AMR
-import tachiyomi.i18n.kmk.KMR
 import tachiyomi.i18n.sy.SYMR
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
@@ -203,14 +200,7 @@ object SettingsMainScreen : Screen() {
             icon = Icons.AutoMirrored.Outlined.ChromeReaderMode,
             screen = SettingsReaderScreen,
         ),
-        // KMK -->
-        Item(
-            titleRes = AMR.strings.label_player_settings,
-            subtitleRes = KMR.strings.pref_player_summary,
-            icon = Icons.Outlined.PlayCircleOutline,
-            screen = eu.kanade.presentation.more.settings.screen.player.PlayerSettingsMainScreen,
-        ),
-        // KMK <--
+        // KMK: Player settings moved to the More screen (Aniyomi's)
         Item(
             titleRes = MR.strings.pref_category_downloads,
             subtitleRes = MR.strings.pref_downloads_summary,

@@ -116,22 +116,6 @@ fun AnimeTrackSheet(
         }
     }
 
-    // Trackers that bind by themselves (Jellyfin): no search, the anime is matched by its own URL
-    fun autoBind(service: AnimeTrackService) {
-        scope.launch {
-            try {
-                val track = service.autoBind(anime, lastSeenEpisode)
-                if (track != null) {
-                    repository.upsert(track)
-                } else {
-                    context.toast(context.contextString(KMR.strings.anime_track_jellyfin_only))
-                }
-            } catch (e: Throwable) {
-                failed(service, e)
-            }
-        }
-    }
-
     // When the sheet opens: send what's pending, then pull the latest (progress, title, episodes) from each tracker
     LaunchedEffect(anime.id) {
         AnimeTracking.refresh(anime)
@@ -148,18 +132,12 @@ fun AnimeTrackSheet(
                 style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             )
-            // Trackers that can't track this anime (Jellyfin for other sources) are left out unless already bound
-            val services = remember(anime.id, anime.source, tracks) {
-                AnimeTracking.services.filter { service ->
-                    tracks.any { it.trackerId == service.id } || service.accepts(anime)
-                }
-            }
-            services.forEachIndexed { index, service ->
+            AnimeTracking.services.forEachIndexed { index, service ->
                 if (index > 0) HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                 TrackerRow(
                     service = service,
                     track = tracks.firstOrNull { it.trackerId == service.id },
-                    onAdd = { if (service.canSearch) searchFor = service else autoBind(service) },
+                    onAdd = { searchFor = service },
                     onChange = { update(service, it) },
                     onRemove = { removing = service to it },
                     onOpen = { context.openInBrowser(it.remoteUrl) },

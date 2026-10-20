@@ -2,6 +2,8 @@ package eu.kanade.tachiyomi.ui.browse.source.browse
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.graphics.res.animatedVectorResource
+import androidx.compose.animation.graphics.vector.AnimatedImageVector
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.horizontalScroll
@@ -82,6 +84,7 @@ import eu.kanade.presentation.reader.sidePanelWidth
 import eu.kanade.presentation.theme.CoverSeedTheme
 import eu.kanade.presentation.util.AssistContentScreen
 import eu.kanade.presentation.util.Screen
+import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.sumizuri.SumizuriTabs
@@ -391,6 +394,9 @@ data class BrowseSourceScreen(
                                             selected = !panelOpen && state.listing == Listing.Latest,
                                             label = sourceTabs?.latestName ?: stringResource(MR.strings.latest),
                                             icon = Icons.Outlined.NewReleases,
+                                            animatedIcon = AnimatedImageVector.animatedVectorResource(
+                                                R.drawable.anim_updates_enter,
+                                            ),
                                             onClick = {
                                                 if (!panelOpen && state.listing == Listing.Latest) {
                                                     screenModel.reloadListing()

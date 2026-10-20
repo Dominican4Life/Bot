@@ -3,6 +3,8 @@ package eu.kanade.tachiyomi.ui.anime.source
 import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.graphics.res.animatedVectorResource
+import androidx.compose.animation.graphics.vector.AnimatedImageVector
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.horizontalScroll
@@ -86,6 +88,7 @@ import eu.kanade.presentation.library.components.MangaListItem
 import eu.kanade.presentation.reader.sidePanelWidth
 import eu.kanade.presentation.theme.CoverSeedTheme
 import eu.kanade.presentation.util.Screen
+import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.data.anime.Anime
@@ -658,6 +661,7 @@ private fun ListingChips(
                         selected = !panelOpen && shownTab == "latest",
                         label = tabs?.latestName ?: stringResource(MR.strings.latest),
                         icon = Icons.Outlined.NewReleases,
+                        animatedIcon = AnimatedImageVector.animatedVectorResource(R.drawable.anim_updates_enter),
                         onClick = tab("latest", onLatest),
                     )
                 }

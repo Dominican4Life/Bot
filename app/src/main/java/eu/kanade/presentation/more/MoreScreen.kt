@@ -15,6 +15,7 @@ import androidx.compose.material.icons.outlined.NewReleases
 import androidx.compose.material.icons.outlined.QueryStats
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Storage
+import androidx.compose.material.icons.outlined.VideoSettings
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -27,6 +28,7 @@ import eu.kanade.tachiyomi.ui.more.DownloadQueueState
 import exh.pref.DelegateSourcePreferences
 import exh.source.ExhPreferences
 import tachiyomi.i18n.MR
+import tachiyomi.i18n.ank.AMR
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.i18n.sy.SYMR
 import tachiyomi.presentation.core.components.ScrollbarLazyColumn
@@ -53,6 +55,9 @@ fun MoreScreen(
     onClickStats: () -> Unit,
     onClickDataAndStorage: () -> Unit,
     onClickSettings: () -> Unit,
+    // KMK -->
+    onClickPlayerSettings: () -> Unit,
+    // KMK <--
     onClickAbout: () -> Unit,
     onClickBatchAdd: () -> Unit,
     onClickUpdates: () -> Unit,
@@ -208,6 +213,15 @@ fun MoreScreen(
                     onPreferenceClick = onClickSettings,
                 )
             }
+            // KMK --> Aniyomi's place for the player settings
+            item {
+                TextPreferenceWidget(
+                    title = stringResource(AMR.strings.label_player_settings),
+                    icon = Icons.Outlined.VideoSettings,
+                    onPreferenceClick = onClickPlayerSettings,
+                )
+            }
+            // KMK <--
             item {
                 TextPreferenceWidget(
                     title = stringResource(MR.strings.pref_category_about),

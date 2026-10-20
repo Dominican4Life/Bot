@@ -301,7 +301,6 @@
     <string name="refresh_missing_covers_started">Updating missing covers</string>
     <string name="refresh_missing_covers_none">No missing covers here</string>
     <string name="refresh_missing_covers_done">Fixed %1$d of %2$d missing covers</string>
-    <string name="pref_player_summary">Anime player, gestures, subtitles, audio</string>
     <string name="anime_updating_library">Updating anime library</string>
     <string name="anime_no_history">No anime watched yet</string>
     <string name="anime_no_updates">No new episodes yet. Add anime to your library to see new episodes here.</string>
@@ -333,9 +332,6 @@
     <string name="anime_track_private">Private</string>
     <string name="anime_track_copy_link">Copy link</string>
     <string name="anime_track_saved_later">%1$s couldn\'t be reached. Your change will be sent when you\'re back online.</string>
-    <string name="anime_track_jellyfin_only">Only works with anime from the Jellyfin extension</string>
-    <string name="anime_trackers">Anime trackers</string>
-    <string name="anime_trackers_info">These services only track anime. Jellyfin uses the server login from the Jellyfin extension.</string>
     <string name="anime_watched_until">Watched until %1$s</string>
     <string name="anime_filler">Filler</string>
     <string name="anime_hide_filler">Hide filler episodes</string>
@@ -345,6 +341,10 @@
     <string name="anime_sort_by_episode_number">By episode number</string>
     <string name="anime_show_episode_number">Episode number</string>
     <string name="anime_clear_episodes">Remove the saved episode list? It will be fetched again from the source.</string>
+    <string name="pref_clear_anime_database">Clear Anime database</string>
+    <string name="pref_clear_anime_database_summary">Delete history for anime that are not saved in your library</string>
+    <string name="pref_clear_manga_database">Clear Manga database</string>
+    <string name="pref_clear_manga_database_summary">Delete history for manga that are not saved in your library</string>
     <string name="anime_downloads_coming">Anime downloads are coming in the next update</string>
     <string name="anime_preview_tap_to_play">Tap to preview %1$s</string>
     <string name="anime_preview_loading">Loading video…</string>
@@ -601,6 +601,9 @@
     <string name="anime_library_continue_button">Show continue watching button</string>
     <string name="anime_library_no_next_episode">No next episode</string>
     <string name="anime_library_no_match">No anime match your filters</string>
+    <string name="anime_library_badge_downloaded">Downloaded episodes</string>
+    <string name="label_anime_library_tab">Anime</string>
+    <string name="label_manga_library_tab">Manga</string>
     <string name="anime_show_episode_previews">Show episode pictures</string>
     <string name="anime_show_episode_summaries">Show episode summaries</string>
     <string name="anime_edit_studio">Studio / author</string>
@@ -625,16 +628,9 @@
     <!-- KMK: anime Updates selection and anime Stats -->
     <string name="anime_action_bookmark_episode">Bookmark episode</string>
     <string name="anime_action_remove_bookmark_episode">Remove bookmark</string>
-    <string name="anime_stats_section">Anime</string>
-    <string name="anime_stats_titles">Anime titles</string>
-    <string name="anime_stats_watch_time">Watch time</string>
-    <string name="anime_stats_sources">Sources used</string>
     <string name="anime_stats_episodes">Episodes</string>
-    <string name="anime_stats_total_episodes">Total episodes</string>
-    <string name="anime_stats_seen_episodes">Seen episodes</string>
-    <string name="anime_stats_trackers">Anime tracking</string>
-    <string name="anime_stats_tracked">Tracked anime</string>
-    <string name="anime_stats_trackers_used">Trackers used</string>
+    <string name="anime_stats_watched_duration">Watched duration</string>
+    <string name="anime_stats_watched">Watched</string>
     <!-- KMK: anime library update and download settings -->
     <string name="pref_anime_group">Anime</string>
     <string name="pref_anime_update_interval">Automatic anime updates</string>

@@ -30,6 +30,7 @@ import eu.kanade.tachiyomi.ui.category.CategoryScreen
 import eu.kanade.tachiyomi.ui.download.DownloadQueueScreen
 import eu.kanade.tachiyomi.ui.history.HistoryTab
 import eu.kanade.tachiyomi.ui.libraryUpdateError.LibraryUpdateErrorScreen
+import eu.kanade.tachiyomi.ui.setting.PlayerSettingsScreen
 import eu.kanade.tachiyomi.ui.setting.SettingsScreen
 import eu.kanade.tachiyomi.ui.stats.StatsScreen
 import eu.kanade.tachiyomi.ui.updates.UpdatesTab
@@ -85,6 +86,9 @@ data object MoreTab : Tab {
             onClickStats = { navigator.push(StatsScreen()) },
             onClickDataAndStorage = { navigator.push(SettingsScreen(SettingsScreen.Destination.DataAndStorage)) },
             onClickSettings = { navigator.push(SettingsScreen()) },
+            // KMK -->
+            onClickPlayerSettings = { navigator.push(PlayerSettingsScreen()) },
+            // KMK <--
             onClickAbout = { navigator.push(SettingsScreen(SettingsScreen.Destination.About)) },
             // SY -->
             onClickBatchAdd = { navigator.push(BatchAddScreen()) },

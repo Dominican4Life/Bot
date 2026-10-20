@@ -2,7 +2,6 @@ package eu.kanade.tachiyomi.data.track
 
 import eu.kanade.tachiyomi.data.track.anilist.Anilist
 import eu.kanade.tachiyomi.data.track.bangumi.Bangumi
-import eu.kanade.tachiyomi.data.track.jellyfin.Jellyfin
 import eu.kanade.tachiyomi.data.track.kavita.Kavita
 import eu.kanade.tachiyomi.data.track.kitsu.Kitsu
 import eu.kanade.tachiyomi.data.track.komga.Komga
@@ -25,9 +24,8 @@ class TrackerManager {
         const val MDLIST = 60L
         // SY <--
 
-        // KMK --> anime-only trackers (Anikku's ids)
+        // KMK --> anime-only tracker (Anikku's id)
         const val SIMKL = 101L
-        const val JELLYFIN = 102L
         // KMK <--
     }
 
@@ -48,13 +46,12 @@ class TrackerManager {
 
     // KMK -->
     val simkl = Simkl(SIMKL)
-    val jellyfin = Jellyfin(JELLYFIN)
 
     /**
      * Trackers that only track anime (see AnimeTracking). They're kept out of [trackers] on purpose, so manga
      * screens (track sheets, library filters, stats, backups) never list them.
      */
-    val animeOnlyTrackers = listOf(simkl, jellyfin)
+    val animeOnlyTrackers = listOf(simkl)
     // KMK <--
 
     fun loggedInTrackers() = trackers.filter { it.isLoggedIn }

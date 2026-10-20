@@ -124,7 +124,7 @@ fun UpdateScreen(
     // KMK -->
     usePanoramaCover: Boolean,
     collapseToggle: (key: String) -> Unit,
-    mediaTab: Int = MediaTab.ALL,
+    mediaTab: Int = MediaTab.ANIME,
     onMediaTabChange: (Int) -> Unit = {},
     displayMode: LibraryDisplayMode = LibraryDisplayMode.List,
     columns: Int = 0,
@@ -132,7 +132,7 @@ fun UpdateScreen(
 ) {
     BackHandler(enabled = state.selectionMode, onBack = { onSelectAll(false) })
     // KMK -->
-    // Anime updates next to the manga ones: All | Manga | Anime
+    // Anime updates next to the manga ones: Anime | Manga tabs
     val context = LocalContext.current
     val navigator = LocalNavigator.current
     val animeRepository = remember { Injekt.get<AnimeRepository>() }
@@ -607,7 +607,7 @@ sealed interface UpdatesUiModel {
     /** The first [Item] in a group of chapters from same manga */
     data class Leader(override val item: UpdatesItem, override val isExpandable: Boolean) : Item(item)
 
-    /** A new episode of an anime, in the All and Anime tabs */
+    /** A new episode of an anime, in the Anime tab */
     data class Anime(val item: AnimeUpdateItem) : UpdatesUiModel
     // KMK <--
 }

@@ -108,7 +108,7 @@ internal fun LazyListScope.updatesUiItems(
     updateSwipeStartAction: LibraryPreferences.ChapterSwipeAction,
     updateSwipeEndAction: LibraryPreferences.ChapterSwipeAction,
     onUpdateSwipe: (UpdatesItem, LibraryPreferences.ChapterSwipeAction) -> Unit,
-    /** How an anime episode of the All and Anime tabs is drawn */
+    /** How an anime episode of the Anime tab is drawn */
     animeContent: @Composable (AnimeUpdateItem) -> Unit = {},
     // KMK <--
 ) {

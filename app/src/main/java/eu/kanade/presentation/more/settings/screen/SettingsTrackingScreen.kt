@@ -187,6 +187,13 @@ object SettingsTrackingScreen : SearchableSettings {
                         login = { context.openInBrowser(ShikimoriApi.authUrl(), forceDefaultBrowser = true) },
                         logout = { dialog = LogoutDialog(trackerManager.shikimori) },
                     ),
+                    // KMK --> anime-only; Aniyomi's place in the list
+                    Preference.PreferenceItem.TrackerPreference(
+                        tracker = trackerManager.simkl,
+                        login = { context.openInBrowser(SimklApi.authUrl(), forceDefaultBrowser = true) },
+                        logout = { dialog = LogoutDialog(trackerManager.simkl) },
+                    ),
+                    // KMK <--
                     Preference.PreferenceItem.TrackerPreference(
                         tracker = trackerManager.bangumi,
                         login = { context.openInBrowser(BangumiApi.authUrl(), forceDefaultBrowser = true) },
@@ -195,24 +202,6 @@ object SettingsTrackingScreen : SearchableSettings {
                     Preference.PreferenceItem.InfoPreference(stringResource(MR.strings.tracking_info)),
                 ),
             ),
-            // KMK -->
-            Preference.PreferenceGroup(
-                title = stringResource(KMR.strings.anime_trackers),
-                preferenceItems = persistentListOf(
-                    Preference.PreferenceItem.TrackerPreference(
-                        tracker = trackerManager.simkl,
-                        login = { context.openInBrowser(SimklApi.authUrl(), forceDefaultBrowser = true) },
-                        logout = { dialog = LogoutDialog(trackerManager.simkl) },
-                    ),
-                    Preference.PreferenceItem.TrackerPreference(
-                        tracker = trackerManager.jellyfin,
-                        login = { trackerManager.jellyfin.loginNoop() },
-                        logout = trackerManager.jellyfin::logout,
-                    ),
-                    Preference.PreferenceItem.InfoPreference(stringResource(KMR.strings.anime_trackers_info)),
-                ),
-            ),
-            // KMK <--
             Preference.PreferenceGroup(
                 title = stringResource(MR.strings.enhanced_services),
                 preferenceItems = (

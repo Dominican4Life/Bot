@@ -1,0 +1,2 @@
+-- KMK: the Jellyfin anime tracker (id 102) was removed; drop its bindings
+DELETE FROM anime_sync WHERE sync_id = 102;

@@ -4,6 +4,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.graphics.res.rememberAnimatedVectorPainter
+import androidx.compose.animation.graphics.vector.AnimatedImageVector
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -21,7 +23,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -37,6 +43,7 @@ import tachiyomi.presentation.core.i18n.stringResource
 /**
  * KMK: A Popular / Latest / Filter / Settings button of a source's Browse screen. The selected one shows its
  * [label]; the others shrink to their [icon] (a button without an icon always shows its label).
+ * [animatedIcon], when given, plays as the button gets selected (like the nav bar's Updates icon) and back.
  */
 @Composable
 fun BrowseTabChip(
@@ -46,8 +53,13 @@ fun BrowseTabChip(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     filledIcon: ImageVector? = null,
+    animatedIcon: AnimatedImageVector? = null,
 ) {
     val showLabel = selected || icon == null
+    // Starts at the beginning and moves to the end once selected, so the animation plays when shown selected
+    var animatedAtEnd by remember { mutableStateOf(false) }
+    LaunchedEffect(selected) { animatedAtEnd = selected }
+    val animatedPainter = animatedIcon?.let { rememberAnimatedVectorPainter(it, animatedAtEnd) }
     // KMK: not selected, a button with an icon is a square the size of the Left / Right Panel buttons
     if (!showLabel) {
         Surface(
@@ -59,11 +71,19 @@ fun BrowseTabChip(
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         ) {
             Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    imageVector = icon!!,
-                    contentDescription = label,
-                    modifier = Modifier.size(FilterChipDefaults.IconSize),
-                )
+                if (animatedPainter != null) {
+                    Icon(
+                        painter = animatedPainter,
+                        contentDescription = label,
+                        modifier = Modifier.size(FilterChipDefaults.IconSize),
+                    )
+                } else {
+                    Icon(
+                        imageVector = icon!!,
+                        contentDescription = label,
+                        modifier = Modifier.size(FilterChipDefaults.IconSize),
+                    )
+                }
             }
         }
         return
@@ -74,11 +94,19 @@ fun BrowseTabChip(
         modifier = modifier.animateContentSize(),
         leadingIcon = if (showLabel && icon != null) {
             {
-                Icon(
-                    imageVector = if (selected) filledIcon ?: icon else icon,
-                    contentDescription = null,
-                    modifier = Modifier.size(FilterChipDefaults.IconSize),
-                )
+                if (animatedPainter != null) {
+                    Icon(
+                        painter = animatedPainter,
+                        contentDescription = null,
+                        modifier = Modifier.size(FilterChipDefaults.IconSize),
+                    )
+                } else {
+                    Icon(
+                        imageVector = if (selected) filledIcon ?: icon else icon,
+                        contentDescription = null,
+                        modifier = Modifier.size(FilterChipDefaults.IconSize),
+                    )
+                }
             }
         } else {
             null

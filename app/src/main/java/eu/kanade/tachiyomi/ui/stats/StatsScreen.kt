@@ -34,7 +34,8 @@ class StatsScreen : Screen() {
         val state by screenModel.state.collectAsState()
         // KMK -->
         val animeStats by screenModel.animeStats.collectAsState()
-        var mediaTab by rememberSaveable { mutableIntStateOf(MediaTab.ALL) }
+        // Anime | Manga, opening on Anime
+        var mediaTab by rememberSaveable { mutableIntStateOf(MediaTab.ANIME) }
         // KMK <--
 
         Scaffold(
@@ -70,7 +71,7 @@ class StatsScreen : Screen() {
                 // KMK <--
             },
         ) { paddingValues ->
-            if (state is StatsScreenState.Loading && /* KMK */ mediaTab != MediaTab.ANIME) {
+            if (state is StatsScreenState.Loading && /* KMK */ mediaTab == MediaTab.MANGA) {
                 LoadingScreen()
                 return@Scaffold
             }

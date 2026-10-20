@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.data.backup
 
 import eu.kanade.tachiyomi.data.anime.track.AnimeTrackStatus
+import eu.kanade.tachiyomi.data.anime.track.AnimeTracking
 import eu.kanade.tachiyomi.data.backup.models.AnikkuBackup
 import eu.kanade.tachiyomi.data.backup.models.AnikkuBackupAnime
 import eu.kanade.tachiyomi.data.backup.models.AnikkuBackupSourcePreferences
@@ -119,6 +120,8 @@ object AnikkuBackupConverter {
         val trackerId = syncId.toLong()
         val remoteId = if (mediaIdInt != 0) mediaIdInt.toLong() else mediaId
         if (trackerId == 0L || remoteId == 0L) return null
+        // Trackers that aren't here (Jellyfin, 102) are left out
+        if (AnimeTracking.service(trackerId) == null) return null
         return BackupAnimeTrack(
             trackerId = trackerId,
             remoteId = remoteId,
@@ -157,13 +160,6 @@ object AnikkuBackupConverter {
             3L -> AnimeTrackStatus.WATCHING
             4L -> AnimeTrackStatus.ON_HOLD
             5L -> AnimeTrackStatus.DROPPED
-            else -> status
-        }
-        // Jellyfin
-        102L -> when (status) {
-            1L -> AnimeTrackStatus.PLAN_TO_WATCH
-            2L -> AnimeTrackStatus.WATCHING
-            3L -> AnimeTrackStatus.COMPLETED
             else -> status
         }
         else -> status

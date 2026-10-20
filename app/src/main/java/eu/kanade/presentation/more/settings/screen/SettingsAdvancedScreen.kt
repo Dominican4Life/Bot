@@ -37,6 +37,7 @@ import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.domain.source.service.SourcePreferences.DataSaver
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.presentation.more.settings.Preference
+import eu.kanade.presentation.more.settings.screen.advanced.ClearAnimeDatabaseScreen
 import eu.kanade.presentation.more.settings.screen.advanced.ClearDatabaseScreen
 import eu.kanade.presentation.more.settings.screen.debug.DebugInfoScreen
 import eu.kanade.tachiyomi.R
@@ -253,11 +254,18 @@ object SettingsAdvancedScreen : SearchableSettings {
                         context.toast(MR.strings.download_cache_invalidated)
                     },
                 ),
+                // KMK --> Aniyomi's: anime on top, then manga
                 Preference.PreferenceItem.TextPreference(
-                    title = stringResource(MR.strings.pref_clear_database),
-                    subtitle = stringResource(MR.strings.pref_clear_database_summary),
+                    title = stringResource(KMR.strings.pref_clear_anime_database),
+                    subtitle = stringResource(KMR.strings.pref_clear_anime_database_summary),
+                    onClick = { navigator.push(ClearAnimeDatabaseScreen()) },
+                ),
+                Preference.PreferenceItem.TextPreference(
+                    title = stringResource(KMR.strings.pref_clear_manga_database),
+                    subtitle = stringResource(KMR.strings.pref_clear_manga_database_summary),
                     onClick = { navigator.push(ClearDatabaseScreen()) },
                 ),
+                // KMK <--
             ),
         )
     }

@@ -158,7 +158,10 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
         // KMK -->
         // Anime in the library are checked alongside manga
         // (scheduled manga updates only take the anime along when the anime update has no schedule of its own)
-        eu.kanade.tachiyomi.data.anime.AnimeLibraryUpdateJob.startWithManga(context, tags.contains(WORK_NAME_AUTO))
+        // (the Manga library tab's own menu updates manga only)
+        if (inputData.getBoolean(KEY_WITH_ANIME, true)) {
+            eu.kanade.tachiyomi.data.anime.AnimeLibraryUpdateJob.startWithManga(context, tags.contains(WORK_NAME_AUTO))
+        }
         libraryUpdateStatus.start()
 
         deleteLibraryUpdateErrors.cleanUnrelevantMangaErrors()
@@ -759,6 +762,9 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
          * Key for specific manga IDs to update.
          */
         private const val KEY_MANGA_IDS = "manga_ids"
+
+        /** False when only manga should be updated (the anime library is not checked along) */
+        private const val KEY_WITH_ANIME = "with_anime"
         // KMK <--
 
         fun setupTask(
@@ -823,6 +829,7 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
             // SY <--
             // KMK -->
             mangaIds: List<Long>? = null,
+            withAnime: Boolean = true,
             // KMK <--
         ): Boolean {
             val wm = context.workManager
@@ -841,6 +848,7 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
                 // SY <--
                 // KMK -->
                 KEY_MANGA_IDS to mangaIds?.toLongArray(),
+                KEY_WITH_ANIME to withAnime,
                 // KMK <--
             )
 

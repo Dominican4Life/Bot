@@ -40,14 +40,19 @@ import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
-/** KMK: The All | Manga | Anime tabs of History and Updates */
+/** KMK: The Anime | Manga tabs of History, Updates and Stats (anime on the left) */
 object MediaTab {
-    const val ALL = 0
+    const val ANIME = 0
     const val MANGA = 1
-    const val ANIME = 2
 
-    fun showsManga(tab: Int) = tab != ANIME
-    fun showsAnime(tab: Int) = tab != MANGA
+    fun showsManga(tab: Int) = tab == MANGA
+    fun showsAnime(tab: Int) = tab == ANIME
+
+    /**
+     * The tab a saved preference points to. Older builds saved All = 0, Manga = 1, Anime = 2:
+     * Manga stays Manga, everything else opens on Anime.
+     */
+    fun fromPref(value: Int) = if (value == MANGA) MANGA else ANIME
 }
 
 @Composable
@@ -56,15 +61,14 @@ fun MediaTabRow(
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    PrimaryTabRow(selectedTabIndex = selected.coerceIn(0, 2), modifier = modifier) {
+    PrimaryTabRow(selectedTabIndex = MediaTab.fromPref(selected), modifier = modifier) {
         listOf(
-            KMR.strings.download_queue_tab_all,
-            KMR.strings.feed_tab_manga,
-            KMR.strings.feed_tab_anime,
-        ).forEachIndexed { index, title ->
+            MediaTab.ANIME to KMR.strings.feed_tab_anime,
+            MediaTab.MANGA to KMR.strings.feed_tab_manga,
+        ).forEach { (tab, title) ->
             Tab(
-                selected = selected == index,
-                onClick = { onSelect(index) },
+                selected = MediaTab.fromPref(selected) == tab,
+                onClick = { onSelect(tab) },
                 text = { Text(stringResource(title)) },
             )
         }
