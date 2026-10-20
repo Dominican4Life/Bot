@@ -115,6 +115,19 @@ internal object SumizuriBrowserFetch {
         ) == "yes"
         if (stillChallenged) {
             webView.destroy()
+            // KMK: a check that needs a person: opened in WebView when the app is on screen; once it's passed there
+            // (same cookies and user agent as this page), the page is opened again. Once per site for a while.
+            val passed = try {
+                eu.kanade.tachiyomi.network.BotCheckCoordinator.await(
+                    "$origin/",
+                    Injekt.get<NetworkHelper>().defaultUserAgentProvider(),
+                )
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                false
+            }
+            if (passed) return openTab(context, origin)
             // KMK: a notification to open the site in WebView and pass the check
             eu.kanade.tachiyomi.network.BotCheckReporter.report("$origin/")
             throw IllegalStateException(

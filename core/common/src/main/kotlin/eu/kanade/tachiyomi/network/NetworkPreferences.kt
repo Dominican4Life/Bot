@@ -15,6 +15,11 @@ class NetworkPreferences(
         return preferenceStore.getInt("doh_provider", -1)
     }
 
+    // KMK: open a bot check the app can't pass by itself in WebView right away, and try again once it's passed
+    fun autoOpenBotChecks(): Preference<Boolean> {
+        return preferenceStore.getBoolean("auto_open_bot_checks", true)
+    }
+
     fun defaultUserAgent(): Preference<String> {
         return preferenceStore.getString(
             "default_user_agent",

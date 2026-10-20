@@ -505,6 +505,8 @@
     <string name="too_many_requests_text">The site asked to slow down. It will be tried again in a while</string>
     <string name="bot_check_waiting_title">Waiting for Cloudflare (%1$d left)</string>
     <string name="bot_check_skip">Skip</string>
+    <string name="pref_auto_open_bot_checks">Open bot checks automatically</string>
+    <string name="pref_auto_open_bot_checks_summary">When a site asks you to verify you are human, open it in WebView right away, close it once passed and try again</string>
     <string name="restore_covers_title">Loading covers after restore</string>
     <string name="migrate_source_to_migrate">Source to migrate</string>
     <string name="migrate_pick_source_to_migrate">Pick a source to migrate</string>

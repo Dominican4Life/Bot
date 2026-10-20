@@ -4,14 +4,19 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.PermissionChecker
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ProcessLifecycleOwner
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
+import eu.kanade.tachiyomi.network.BotCheckCoordinator
 import eu.kanade.tachiyomi.network.BotCheckReporter
+import eu.kanade.tachiyomi.network.NetworkPreferences
 import eu.kanade.tachiyomi.source.DisabledSources
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource
@@ -55,6 +60,25 @@ object BotCheckNotifier {
     fun install(context: Context) {
         appContext = context.applicationContext
         BotCheckReporter.listener = { url, kind, sourceId -> onReport(url, kind, sourceId, force = false) }
+        BotCheckCoordinator.opener = ::openInWebView
+    }
+
+    /**
+     * KMK: Opens a source's bot check in WebView right away (it closes by itself once passed), when the app is on
+     * screen and the setting is on. Only a source's own site is opened, not image servers and the like.
+     */
+    private fun openInWebView(url: String, userAgent: String?): Boolean {
+        if (!::appContext.isInitialized) return false
+        val enabled = runCatching { Injekt.get<NetworkPreferences>().autoOpenBotChecks().get() }.getOrDefault(false)
+        if (!enabled) return false
+        val onScreen = ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+        if (!onScreen) return false
+        val site = hostOf(url)?.let(::siteForHost) ?: return false
+        if (DisabledSources.isDisabled(site.id)) return false
+        val intent = WebViewActivity.newAutoCloseIntent(appContext, url, site.id, site.name, userAgent)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        appContext.startActivity(intent)
+        return true
     }
 
     /** A source found to need a bot check (or to be asking for fewer requests); [force] shows it again right away */

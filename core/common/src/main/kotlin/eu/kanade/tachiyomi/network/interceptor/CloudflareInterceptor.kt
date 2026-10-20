@@ -8,6 +8,7 @@ import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import eu.kanade.tachiyomi.network.AndroidCookieJar
+import eu.kanade.tachiyomi.network.BotCheckCoordinator
 import eu.kanade.tachiyomi.network.BotCheckReporter
 import eu.kanade.tachiyomi.util.system.isOutdated
 import eu.kanade.tachiyomi.util.system.toast
@@ -64,6 +65,19 @@ class CloudflareInterceptor(
         // we don't crash the entire app
         catch (e: CloudflareBypassException) {
             // KMK -->
+            // A check that needs a person (the "Verify you are human" box): when the app is on screen, it's opened in
+            // WebView, and once it's passed (and WebView closed by itself) the request is sent again with the new
+            // cookie. Off the main thread only, once per site for a while; otherwise it fails as before.
+            val passed = try {
+                BotCheckCoordinator.awaitBlocking(
+                    url = request.url.toString(),
+                    userAgent = request.header("User-Agent"),
+                    isCanceled = { chain.call().isCanceled() },
+                )
+            } catch (_: Exception) {
+                false
+            }
+            if (passed) return chain.proceed(request)
             BotCheckReporter.report(request.url.toString())
             // KMK <--
             throw IOException(context.stringResource(MR.strings.information_cloudflare_bypass_failure), e)

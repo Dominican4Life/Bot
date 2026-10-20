@@ -312,6 +312,13 @@ object SettingsAdvancedScreen : SearchableSettings {
                         }
                     },
                 ),
+                // KMK -->
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = networkPreferences.autoOpenBotChecks(),
+                    title = stringResource(KMR.strings.pref_auto_open_bot_checks),
+                    subtitle = stringResource(KMR.strings.pref_auto_open_bot_checks_summary),
+                ),
+                // KMK <--
                 Preference.PreferenceItem.ListPreference(
                     preference = networkPreferences.dohProvider(),
                     entries = persistentMapOf(
