@@ -31,9 +31,9 @@ enum class GlobalSearchMode { RESULTS, ANILIST }
 
 /**
  * KMK: The one row of buttons under global search's search bar, drawn like a source's Browse buttons (square until
- * picked, then the icon and name): Results and AniList, then, on the same row, the picked tab's own buttons:
- * Pinned / All / Has results for Results, or Genres / Season / Format / Status / Sort for AniList. The screenshot
- * search sits at the far right (anime only).
+ * picked, then the icon and name): Pinned, All, Results (sources that found something) and AniList. With AniList
+ * picked, a divider and its Genres / Season / Format / Status / Sort buttons follow on the same row, and the
+ * screenshot search sits at the far right (anime only). The same row in every global search, anime and manga.
  */
 @Composable
 fun GlobalSearchModeRow(
@@ -64,11 +64,36 @@ fun GlobalSearchModeRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            // Your sources: Pinned / All, and Results (only sources that found something). Any of them goes back
+            // to the sources' results.
+            val onSources = mode == GlobalSearchMode.RESULTS
+            if (pinnedOnly != null) {
+                AniListTabChip(
+                    selected = onSources && pinnedOnly,
+                    label = stringResource(MR.strings.pinned_sources),
+                    icon = Icons.Outlined.PushPin,
+                    onClick = {
+                        onPinnedOnly(true)
+                        onMode(GlobalSearchMode.RESULTS)
+                    },
+                )
+            }
             AniListTabChip(
-                selected = mode == GlobalSearchMode.RESULTS,
+                selected = onSources && pinnedOnly != true,
+                label = stringResource(MR.strings.all),
+                icon = Icons.Outlined.DoneAll,
+                onClick = {
+                    onPinnedOnly(false)
+                    onMode(GlobalSearchMode.RESULTS)
+                },
+            )
+            AniListTabChip(
+                selected = onSources && onlyShowHasResults,
                 label = stringResource(KMR.strings.anilist_results),
-                icon = Icons.Outlined.Search,
-                onClick = { onMode(GlobalSearchMode.RESULTS) },
+                icon = Icons.Outlined.FilterList,
+                onClick = {
+                    if (onSources) onToggleHasResults() else onMode(GlobalSearchMode.RESULTS)
+                },
             )
             if (showAniList) {
                 AniListTabChip(
@@ -78,29 +103,9 @@ fun GlobalSearchModeRow(
                     onClick = { onMode(GlobalSearchMode.ANILIST) },
                 )
             }
-            VerticalDivider(modifier = Modifier.height(24.dp))
-            if (mode == GlobalSearchMode.RESULTS) {
-                if (pinnedOnly != null) {
-                    AniListTabChip(
-                        selected = pinnedOnly,
-                        label = stringResource(MR.strings.pinned_sources),
-                        icon = Icons.Outlined.PushPin,
-                        onClick = { onPinnedOnly(true) },
-                    )
-                    AniListTabChip(
-                        selected = !pinnedOnly,
-                        label = stringResource(MR.strings.all),
-                        icon = Icons.Outlined.DoneAll,
-                        onClick = { onPinnedOnly(false) },
-                    )
-                }
-                AniListTabChip(
-                    selected = onlyShowHasResults,
-                    label = stringResource(MR.strings.has_results),
-                    icon = Icons.Outlined.FilterList,
-                    onClick = onToggleHasResults,
-                )
-            } else {
+            // AniList's own buttons appear to its right
+            if (mode == GlobalSearchMode.ANILIST) {
+                VerticalDivider(modifier = Modifier.height(24.dp))
                 AniListFilterTab.entries.forEach { tab ->
                     AniListTabChip(
                         selected = openFilter == tab,

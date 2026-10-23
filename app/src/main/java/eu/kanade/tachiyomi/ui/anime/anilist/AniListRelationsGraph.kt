@@ -26,7 +26,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CenterFocusStrong
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material.icons.outlined.CloseFullscreen
 import androidx.compose.material.icons.outlined.OpenInFull
 import androidx.compose.material3.CircularProgressIndicator
@@ -63,6 +66,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.foundation.layout.systemBarsPadding
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.i18n.stringResource
 import kotlin.math.max
@@ -71,8 +77,8 @@ import kotlin.math.min
 private val NodeWidth = 150.dp
 private val NodeHeight = 66.dp
 private val ColumnGap = 120.dp
-private val RowGap = 36.dp
-private const val MAX_COLUMN = 6
+private val RowGap = 50.dp
+private val DotSpacing = 20.dp
 
 /** Where each anime sits in the diagram, in dp, left to right from prequels to sequels */
 private class GraphLayout(
@@ -81,11 +87,17 @@ private class GraphLayout(
     val height: Float,
 )
 
-/** Prequels on the left, sequels and side stories to the right, like Hayase's (dagre, left to right) */
+/**
+ * Hayase's layout (dagre, left to right): prequels on the left, sequels and side stories to the right, each title
+ * placed right next to the one it's linked to, and lined up with its neighbors.
+ */
 private fun layoutGraph(graph: AniListGraph): GraphLayout {
     val ids = graph.nodes.map { it.id }
+    if (ids.isEmpty()) return GraphLayout(emptyMap(), 1f, 1f)
+    val preds = graph.edges.groupBy({ it.to }, { it.from })
+    val succs = graph.edges.groupBy({ it.from }, { it.to })
     val rank = HashMap<Int, Int>().apply { ids.forEach { put(it, 0) } }
-    // Longest path from the start, stopping on loops
+    // 1. Longest path, stopping on loops
     repeat(ids.size) {
         var changed = false
         graph.edges.forEach { edge ->
@@ -98,54 +110,87 @@ private fun layoutGraph(graph: AniListGraph): GraphLayout {
         }
         if (!changed) return@repeat
     }
-    val columns = ids.groupBy { rank[it] ?: 0 }.toSortedMap()
-    // Within a column, keep anime near the ones they come from
-    val order = HashMap<Int, Float>()
-    val parents = graph.edges.groupBy({ it.to }, { it.from })
-    val placed = LinkedHashMap<Int, List<Int>>()
-    columns.forEach { (column, members) ->
-        val sorted = members.sortedBy { id ->
-            parents[id]?.mapNotNull { order[it] }?.takeIf { it.isNotEmpty() }?.average()?.toFloat() ?: Float.MAX_VALUE
+    // 2. Tighten: pull each title next to the ones it's linked to (dagre's tight tree)
+    repeat(8) {
+        ids.forEach { id ->
+            val p = preds[id].orEmpty().mapNotNull { rank[it] }
+            val s = succs[id].orEmpty().mapNotNull { rank[it] }
+            val low = (p.maxOrNull() ?: Int.MIN_VALUE / 2) + 1
+            val high = (s.minOrNull() ?: Int.MAX_VALUE / 2) - 1
+            rank[id] = when {
+                p.isNotEmpty() -> low.coerceAtMost(maxOf(low, high))
+                s.isNotEmpty() -> high
+                else -> rank[id] ?: 0
+            }
         }
-        sorted.forEachIndexed { index, id -> order[id] = index.toFloat() }
-        placed[column] = sorted
     }
-    // A tall column (lots of movies and specials off one title) is split into a few narrower ones, the titles
-    // linked to nothing else going furthest out, so the diagram spreads out like Hayase's instead of one long line
-    val degree = HashMap<Int, Int>()
+    val minRank = rank.values.minOrNull() ?: 0
+    ids.forEach { rank[it] = (rank[it] ?: 0) - minRank }
+    val columnCount = (rank.values.maxOrNull() ?: 0) + 1
+    val columns = MutableList(columnCount) { mutableListOf<Int>() }
+    ids.forEach { columns[rank[it] ?: 0] += it }
+    val neighbors = HashMap<Int, MutableList<Int>>()
     graph.edges.forEach { edge ->
-        degree[edge.from] = (degree[edge.from] ?: 0) + 1
-        degree[edge.to] = (degree[edge.to] ?: 0) + 1
+        neighbors.getOrPut(edge.from) { mutableListOf() } += edge.to
+        neighbors.getOrPut(edge.to) { mutableListOf() } += edge.from
     }
-    val outgoing = graph.edges.map { it.from }.toSet()
-    val subColumns = placed.values.flatMap { members ->
-        if (members.size <= MAX_COLUMN) {
-            listOf(members)
-        } else {
-            val (onward, leaves) = members.partition { it in outgoing || (degree[it] ?: 0) > 1 }
-            (onward + leaves).chunked(MAX_COLUMN)
+    // 3. Order inside each column: next to the neighbors (barycenter, both ways a few times)
+    val order = HashMap<Int, Float>()
+    columns.forEach { column -> column.forEachIndexed { i, id -> order[id] = i.toFloat() } }
+    fun sweep(range: IntProgression, side: Int) {
+        for (c in range) {
+            val column = columns[c]
+            val sorted = column.sortedBy { id ->
+                neighbors[id].orEmpty().filter { rank[it] == c + side }.mapNotNull { order[it] }
+                    .takeIf { it.isNotEmpty() }?.average()?.toFloat() ?: order[id] ?: 0f
+            }
+            column.clear()
+            column += sorted
+            sorted.forEachIndexed { i, id -> order[id] = i.toFloat() }
         }
     }
-    val stepX = NodeWidth.value + ColumnGap.value
+    repeat(3) {
+        sweep(1 until columnCount, -1)
+        sweep(columnCount - 2 downTo 0, 1)
+    }
+    // 4. Heights: each title lined up with its neighbors, without overlapping
     val stepY = NodeHeight.value + RowGap.value
-    val tallest = subColumns.maxOfOrNull { it.size } ?: 1
-    val positions = HashMap<Int, Offset>()
-    subColumns.forEachIndexed { columnIndex, members ->
-        val top = (tallest - members.size) * stepY / 2f
-        members.forEachIndexed { index, id ->
-            positions[id] = Offset(columnIndex * stepX, top + index * stepY)
+    val y = HashMap<Int, Float>()
+    columns.forEach { column -> column.forEachIndexed { i, id -> y[id] = i * stepY } }
+    fun place(c: Int, side: Int) {
+        val column = columns[c]
+        if (column.isEmpty()) return
+        val wanted = column.map { id ->
+            neighbors[id].orEmpty().filter { rank[it] == c + side }.mapNotNull { y[it] }
+                .takeIf { it.isNotEmpty() }?.average()?.toFloat() ?: y[id] ?: 0f
         }
+        val placed = FloatArray(column.size)
+        column.indices.forEach { i ->
+            placed[i] = if (i == 0) wanted[i] else maxOf(wanted[i], placed[i - 1] + stepY)
+        }
+        // Shift the column back toward where it wanted to be
+        val shift = (wanted.sum() - placed.sum()) / column.size
+        column.forEachIndexed { i, id -> y[id] = placed[i] + shift }
     }
+    repeat(4) {
+        for (c in 1 until columnCount) place(c, -1)
+        for (c in columnCount - 2 downTo 0) place(c, 1)
+    }
+    val top = y.values.minOrNull() ?: 0f
+    val stepX = NodeWidth.value + ColumnGap.value
+    val positions = ids.associateWith { id -> Offset((rank[id] ?: 0) * stepX, (y[id] ?: 0f) - top) }
+    val bottom = positions.values.maxOfOrNull { it.y } ?: 0f
     return GraphLayout(
         positions = positions,
-        width = max(1, subColumns.size) * stepX - ColumnGap.value,
-        height = tallest * stepY - RowGap.value,
+        width = columnCount * stepX - ColumnGap.value,
+        height = bottom + NodeHeight.value,
     )
 }
 
 /**
- * KMK: Hayase's relations diagram: a box you can drag around and pinch to zoom, with every anime of the franchise
- * linked by moving lines. Tapping an anime opens it.
+ * KMK: Hayase's relations diagram: a box you can drag around and pinch to zoom (dots behind that move with it),
+ * every anime of the franchise linked by moving lines. Tapping a title switches the page to it.
+ * Bottom left: zoom in, zoom out, fit, full window and refresh, like Hayase.
  */
 @Composable
 fun AniListRelationsGraph(
@@ -157,21 +202,45 @@ fun AniListRelationsGraph(
     /** Takes all the space it's given (the tablet's right side) instead of a set height */
     fill: Boolean = false,
     height: androidx.compose.ui.unit.Dp = 420.dp,
+    onRefresh: (() -> Unit)? = null,
+    /** Inside the full-window view: the expand button closes it */
+    onCloseFullWindow: (() -> Unit)? = null,
 ) {
-    var expanded by rememberSaveable { mutableStateOf(false) }
-    val boxHeight = if (expanded) height * 1.5f else height
+    var fullWindow by remember { mutableStateOf(false) }
+    if (fullWindow) {
+        Dialog(
+            onDismissRequest = { fullWindow = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            AniListRelationsGraph(
+                graph = graph,
+                loading = loading,
+                currentId = currentId,
+                onClickNode = {
+                    fullWindow = false
+                    onClickNode(it)
+                },
+                fill = true,
+                onRefresh = onRefresh,
+                onCloseFullWindow = { fullWindow = false },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .systemBarsPadding()
+                    .padding(8.dp),
+            )
+        }
+    }
     Surface(
         modifier = modifier
             .fillMaxWidth()
             .then(if (fill) Modifier.fillMaxSize() else Modifier)
-            .padding(vertical = 8.dp)
-            .animateContentSize(),
+            .padding(vertical = 8.dp),
         shape = RoundedCornerShape(12.dp),
-        color = Color(0xFF0B0B0B),
+        color = Color(0xFF050505),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         BoxWithConstraints(
-            modifier = (if (fill) Modifier.fillMaxSize() else Modifier.height(boxHeight)).clipToBounds(),
+            modifier = (if (fill) Modifier.fillMaxSize() else Modifier.height(height)).clipToBounds(),
         ) {
             if (graph == null || graph.nodes.size <= 1) {
                 Column(
@@ -196,11 +265,10 @@ fun AniListRelationsGraph(
             val boxHeightDp = maxHeight.value
             var scale by remember { mutableFloatStateOf(1f) }
             var offset by remember { mutableStateOf(Offset.Zero) }
+            val fitScale = min(min(boxWidthDp / (layout.width + 40f), boxHeightDp / (layout.height + 40f)), 1.2f)
+                .coerceAtLeast(0.05f)
             val fit: () -> Unit = {
-                val fitScale = min(min(boxWidthDp / (layout.width + 40f), boxHeightDp / (layout.height + 40f)), 1.2f)
-                    .coerceAtLeast(0.15f)
                 scale = fitScale
-                // Centered, in px
                 offset = with(density) {
                     Offset(
                         ((boxWidthDp - layout.width * fitScale) / 2f).dp.toPx(),
@@ -208,25 +276,66 @@ fun AniListRelationsGraph(
                     )
                 }
             }
-            LaunchedEffect(layout, maxWidth, maxHeight) { fit() }
+            // Like Hayase when zoomed in: readable, around the title this page is about
+            val focusCurrent: () -> Unit = {
+                val target = maxOf(fitScale, 0.85f)
+                val position = layout.positions[currentId]
+                if (position == null || target == fitScale) {
+                    fit()
+                } else {
+                    scale = target
+                    offset = with(density) {
+                        Offset(
+                            (boxWidthDp / 2f - (position.x + NodeWidth.value / 2f) * target).dp.toPx(),
+                            (boxHeightDp / 2f - (position.y + NodeHeight.value / 2f) * target).dp.toPx(),
+                        )
+                    }
+                }
+            }
+            LaunchedEffect(layout, currentId, maxWidth, maxHeight) { focusCurrent() }
+            val zoomBy: (Float) -> Unit = { factor ->
+                val newScale = (scale * factor).coerceIn(0.05f, 2.5f)
+                val center = with(density) { Offset(boxWidthDp.dp.toPx() / 2f, boxHeightDp.dp.toPx() / 2f) }
+                offset = (offset - center) * (newScale / scale) + center
+                scale = newScale
+            }
 
             val transition = rememberInfiniteTransition(label = "relations")
             val phase by transition.animateFloat(
                 initialValue = 0f,
-                targetValue = 40f,
-                animationSpec = infiniteRepeatable(tween(1200, easing = LinearEasing), RepeatMode.Restart),
+                targetValue = 20f,
+                animationSpec = infiniteRepeatable(tween(1000, easing = LinearEasing), RepeatMode.Restart),
                 label = "dash",
             )
-            val lineColor = Color.White.copy(alpha = 0.45f)
+            val lineColor = Color.White.copy(alpha = 0.35f)
             val currentColor = MaterialTheme.colorScheme.primary
             val textMeasurer = rememberTextMeasurer()
+
+            // The dots behind, moving and growing with the diagram
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val spacing = DotSpacing.toPx() * scale
+                if (spacing >= 4f) {
+                    val radius = (1.dp.toPx() * scale).coerceIn(0.6f, 2.5f)
+                    val startX = ((offset.x % spacing) + spacing) % spacing
+                    val startY = ((offset.y % spacing) + spacing) % spacing
+                    var x = startX
+                    while (x < size.width) {
+                        var yy = startY
+                        while (yy < size.height) {
+                            drawCircle(Color.White.copy(alpha = 0.12f), radius, Offset(x, yy))
+                            yy += spacing
+                        }
+                        x += spacing
+                    }
+                }
+            }
 
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .pointerInput(Unit) {
                         detectTransformGestures { centroid, pan, zoom, _ ->
-                            val newScale = (scale * zoom).coerceIn(0.15f, 2.5f)
+                            val newScale = (scale * zoom).coerceIn(0.05f, 2.5f)
                             // Zoom around the fingers
                             val factor = newScale / scale
                             offset = (offset - centroid) * factor + centroid + pan
@@ -248,12 +357,13 @@ fun AniListRelationsGraph(
                     Canvas(modifier = Modifier.fillMaxSize()) {
                         val nodeW = NodeWidth.toPx()
                         val nodeH = NodeHeight.toPx()
+                        // The lines first, then the labels over them
+                        val labels = mutableListOf<Pair<Offset, Pair<String, Color>>>()
                         graph.edges.forEach { edge ->
                             val from = layout.positions[edge.from] ?: return@forEach
                             val to = layout.positions[edge.to] ?: return@forEach
                             val start = Offset(from.x.dp.toPx() + nodeW, from.y.dp.toPx() + nodeH / 2f)
                             val end = Offset(to.x.dp.toPx(), to.y.dp.toPx() + nodeH / 2f)
-                            // Lines going back (a loop) come out of the same side
                             val bend = max(60.dp.toPx(), kotlin.math.abs(end.x - start.x) / 2f)
                             val path = Path().apply {
                                 moveTo(start.x, start.y)
@@ -265,29 +375,34 @@ fun AniListRelationsGraph(
                                 path = path,
                                 color = color,
                                 style = Stroke(
-                                    width = 1.5.dp.toPx(),
+                                    width = 1.dp.toPx(),
                                     pathEffect = PathEffect.dashPathEffect(
-                                        floatArrayOf(10.dp.toPx(), 10.dp.toPx()),
+                                        floatArrayOf(5.dp.toPx(), 5.dp.toPx()),
                                         -phase.dp.toPx(),
                                     ),
                                 ),
                             )
-                            val label = AniListLabels.relation(edge.label)
-                            val measured = textMeasurer.measure(
-                                text = label,
-                                style = TextStyle(fontSize = 9.sp, color = color, fontWeight = FontWeight.SemiBold),
-                            )
                             val middle = Offset((start.x + end.x) / 2f, (start.y + end.y) / 2f)
-                            drawRect(
-                                color = Color(0xFF0B0B0B),
+                            labels += middle to (edge.label.replace('_', ' ').uppercase() to color)
+                        }
+                        labels.forEach { (middle, label) ->
+                            val (text, color) = label
+                            val measured = textMeasurer.measure(
+                                text = text,
+                                style = TextStyle(fontSize = 8.sp, color = color, fontWeight = FontWeight.Medium),
+                            )
+                            val pad = 3.dp.toPx()
+                            drawRoundRect(
+                                color = Color(0xFF141414),
                                 topLeft = Offset(
-                                    middle.x - measured.size.width / 2f - 3f,
-                                    middle.y - measured.size.height / 2f - 1f,
+                                    middle.x - measured.size.width / 2f - pad,
+                                    middle.y - measured.size.height / 2f - pad / 2f,
                                 ),
                                 size = androidx.compose.ui.geometry.Size(
-                                    measured.size.width + 6f,
-                                    measured.size.height + 2f,
+                                    measured.size.width + pad * 2,
+                                    measured.size.height + pad,
                                 ),
+                                cornerRadius = androidx.compose.ui.geometry.CornerRadius(2.dp.toPx()),
                             )
                             drawText(
                                 textLayoutResult = measured,
@@ -309,25 +424,27 @@ fun AniListRelationsGraph(
                     }
                 }
             }
-            // Fit and Bigger box, bottom left like the diagram's controls
+            // Hayase's controls, bottom left
             Row(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .padding(8.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    .padding(10.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(Color(0xFF1E1E1E)),
             ) {
+                GraphButton(Icons.Outlined.Add, "+", onClick = { zoomBy(1.25f) })
+                GraphButton(Icons.Outlined.Remove, "-", onClick = { zoomBy(0.8f) })
                 GraphButton(
                     icon = Icons.Outlined.CenterFocusStrong,
                     label = stringResource(KMR.strings.anilist_relations_fit),
                     onClick = fit,
                 )
-                if (!fill) {
-                    GraphButton(
-                        icon = if (expanded) Icons.Outlined.CloseFullscreen else Icons.Outlined.OpenInFull,
-                        label = stringResource(KMR.strings.anilist_relations_expand),
-                        onClick = { expanded = !expanded },
-                    )
-                }
+                GraphButton(
+                    icon = if (onCloseFullWindow != null) Icons.Outlined.CloseFullscreen else Icons.Outlined.OpenInFull,
+                    label = stringResource(KMR.strings.anilist_relations_expand),
+                    onClick = { if (onCloseFullWindow != null) onCloseFullWindow() else fullWindow = true },
+                )
+                if (onRefresh != null) GraphButton(Icons.Outlined.Refresh, "Refresh", onClick = onRefresh)
             }
             if (loading) {
                 CircularProgressIndicator(
@@ -346,9 +463,7 @@ fun AniListRelationsGraph(
 private fun GraphButton(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .size(32.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .background(Color(0xFF1E1E1E))
+            .size(34.dp)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {

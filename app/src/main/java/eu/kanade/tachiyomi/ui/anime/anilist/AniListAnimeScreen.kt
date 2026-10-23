@@ -53,8 +53,6 @@ import eu.kanade.presentation.components.swipeBetweenTabs
 import eu.kanade.presentation.manga.components.ExpandableMangaDescription
 import eu.kanade.presentation.util.Screen
 import eu.kanade.presentation.util.isTabletUi
-import eu.kanade.tachiyomi.sumizuri.ReaderVideos
-import eu.kanade.tachiyomi.sumizuri.playLinks
 import eu.kanade.tachiyomi.ui.anime.AnimeGlobalSearchScreen
 import eu.kanade.tachiyomi.ui.anime.AnimeScreen
 import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchScreen
@@ -190,26 +188,10 @@ class AniListAnimeScreen(private val anilistId: Int, private val manga: Boolean 
                     context.startActivity(ReaderActivity.newIntent(context, link.localId, chapter.id))
                 }
             },
+            // Openings and endings play in the same small window as the trailer
             onPlayTheme = { themeIndex, entryIndex ->
-                val themes = state.themes.orEmpty()
-                val videos = themes.flatMapIndexed { t, theme ->
-                    theme.entries.mapIndexedNotNull { e, entry ->
-                        entry.videoUrl?.let { url ->
-                            Triple(t to e, "${theme.type} v${entry.version} · ${theme.title}", url)
-                        }
-                    }
-                }
-                val start = videos.indexOfFirst { it.first == (themeIndex to entryIndex) }.coerceAtLeast(0)
-                scope.launch {
-                    val ok = ReaderVideos.playLinks(
-                        context = context,
-                        title = card.title,
-                        thumbnail = card.cover,
-                        videos = videos.map { it.second to it.third },
-                        index = start,
-                        pip = true,
-                    )
-                    if (!ok) context.toast(KMR.strings.anilist_no_video_app)
+                state.themes?.getOrNull(themeIndex)?.entries?.getOrNull(entryIndex)?.videoUrl?.let { url ->
+                    trailer = AniListTrailerVideo("video", url)
                 }
             },
         )
@@ -401,6 +383,7 @@ private fun AniListTabsPanel(
                     loading = state.graphLoading,
                     currentId = details.card.id,
                     onClickNode = actions.onOpenAniList,
+                    onRefresh = screenModel::refreshGraph,
                     fill = true,
                     modifier = Modifier
                         .fillMaxSize()
@@ -451,6 +434,7 @@ private fun AniListPhoneContent(
                     loading = state.graphLoading,
                     currentId = details.card.id,
                     onClickNode = actions.onOpenAniList,
+                    onRefresh = screenModel::refreshGraph,
                     height = graphHeight,
                     modifier = Modifier.padding(horizontal = 12.dp),
                 )
@@ -557,6 +541,13 @@ class AniListAnimeScreenModel(initialId: Int, val manga: Boolean) :
             AniListTab.CHAPTERS -> loadChapters()
             else -> {}
         }
+    }
+
+    /** The diagram's refresh button: asks AniList again */
+    fun refreshGraph() {
+        mutableState.update { it.copy(graph = null) }
+        loadedTabs.remove(AniListTab.RELATIONS)
+        onTabShown(AniListTab.RELATIONS)
     }
 
     private fun loadChapters() {

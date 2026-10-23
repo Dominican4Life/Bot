@@ -242,6 +242,7 @@ object AniListApi {
         val nodes = LinkedHashMap<Int, AniListRelationNode>()
         val edges = LinkedHashMap<String, AniListGraphEdge>()
         val pending = LinkedHashSet<Int>()
+        val crossovers = HashSet<Int>()
 
         // Anime pages link anime, manga pages link manga
         val mediaType = details.card.type ?: "ANIME"
@@ -264,20 +265,24 @@ object AniListApi {
                 )
                 if (other.id !in nodes) {
                     nodes[other.id] = other
-                    if (depth >= 1) pending += other.id
+                    // A crossover ("Other": e.g. a Dragon Ball × One Piece special) shows, but its own links aren't
+                    // followed, or another whole franchise would come in
+                    if (relation.type == "OTHER") crossovers += other.id
+                    if (depth >= 1 && other.id !in crossovers) pending += other.id
                 }
             }
         }
 
         process(details.asRelationNode(), details.relations, 0)
         // The direct relations' own relations come from the search below
-        pending += details.relations.map { it.node.id }.filter { nodes[it]?.type == mediaType }
+        pending += details.relations.map { it.node.id }
+            .filter { nodes[it]?.type == mediaType && it !in crossovers }
         onUpdate(AniListGraph(nodes.values.toList(), edges.values.toList()))
         var rounds = 0
         val done = HashSet<Int>().apply { add(details.card.id) }
-        while (pending.isNotEmpty() && rounds < 6 && nodes.size < 120) {
+        while (pending.isNotEmpty() && rounds < 12 && nodes.size < 200) {
             val ids = pending.filter { it !in done }.take(50)
-            pending.clear()
+            pending.removeAll(ids.toSet())
             if (ids.isEmpty()) break
             done += ids
             val data = runCatching { query(RELATIONS_QUERY, buildJsonObject { put("ids", ids.toIntJsonArray()) }) }

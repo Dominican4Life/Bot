@@ -45,7 +45,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlin.math.roundToInt
 
-/** KMK: A YouTube or Dailymotion trailer for the floating window */
+/**
+ * KMK: What the floating window plays: a YouTube or Dailymotion trailer, or (site "video") a plain video link like
+ * the openings and endings from AnimeThemes, where [id] is the link
+ */
 data class AniListTrailerVideo(val site: String, val id: String) {
     val embedUrl: String
         get() = when (site.lowercase()) {
@@ -113,20 +116,18 @@ fun AniListTrailerWindow(video: AniListTrailerVideo, onClose: () -> Unit) {
                     <html><head><meta name="viewport" content="width=device-width, initial-scale=1">
                     <style>html,body{margin:0;padding:0;background:#000;height:100%;overflow:hidden}
                     iframe{border:0;width:100%;height:100%}</style></head>
-                    <body><iframe src="${video.embedUrl}" allow="autoplay; encrypted-media; picture-in-picture"
-                    allowfullscreen></iframe></body></html>
+                    <body>${
+                        if (video.site == "video") {
+                            "<video src=\"${video.id}\" autoplay controls playsinline " +
+                                "style=\"width:100%;height:100%;background:#000\"></video>"
+                        } else {
+                            "<iframe src=\"${video.embedUrl}\" allow=\"autoplay; encrypted-media; picture-in-picture\" " +
+                                "allowfullscreen></iframe>"
+                        }
+                    }</body></html>
                     """.trimIndent()
                 }
-                var webView by remember { mutableStateOf<WebView?>(null) }
-                DisposableEffect(Unit) {
-                    onDispose {
-                        webView?.apply {
-                            stopLoading()
-                            loadUrl("about:blank")
-                            destroy()
-                        }
-                    }
-                }
+                androidx.compose.runtime.key(video) {
                 AndroidView(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -146,10 +147,16 @@ fun AniListTrailerWindow(video: AniListTrailerVideo, onClose: () -> Unit) {
                             webViewClient = WebViewClient()
                             // YouTube's embed wants to know which site it's on
                             loadDataWithBaseURL("https://anilist.co/", html, "text/html", "utf-8", null)
-                            webView = this
                         }
                     },
+                    // Stops the sound when the window closes or another video replaces it
+                    onRelease = { view ->
+                        view.stopLoading()
+                        view.loadUrl("about:blank")
+                        view.destroy()
+                    },
                 )
+                }
             }
         }
     }
