@@ -72,7 +72,10 @@ import eu.kanade.tachiyomi.ui.anime.anilist.AniListFilterTabRow
 import eu.kanade.tachiyomi.ui.anime.anilist.AniListNoticeHost
 import eu.kanade.tachiyomi.ui.anime.anilist.AniListResults
 import eu.kanade.tachiyomi.ui.anime.anilist.AniListSearchModel
-import eu.kanade.tachiyomi.ui.anime.anilist.AniListTabChip
+import eu.kanade.tachiyomi.ui.anime.anilist.AniListSearchPane
+import eu.kanade.tachiyomi.ui.anime.anilist.GlobalSearchMode
+import eu.kanade.tachiyomi.ui.anime.anilist.GlobalSearchModeRow
+import eu.kanade.tachiyomi.ui.anime.anilist.swipeBetweenModes
 import eu.kanade.tachiyomi.ui.anime.source.AnimeSourceScreen
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -117,20 +120,12 @@ class AnimeGlobalSearchScreen(
         var pendingMerge by remember { mutableStateOf<Pair<Anime, String>?>(null) }
         var openFilter by rememberSaveable { mutableStateOf<AniListFilterTab?>(null) }
 
-        // The tabs: Pinned (when some sources are pinned), All and AniList (not when merging)
-        val tabs = remember(state.hasPinned) {
-            buildList {
-                if (state.hasPinned) add(SearchTab.PINNED)
-                add(SearchTab.ALL)
-                if (mergeIntoId == null) add(SearchTab.ANILIST)
-            }
-        }
-        val tab = state.tab.takeIf { it in tabs } ?: SearchTab.ALL
-        val selectTab: (SearchTab) -> Unit = { screenModel.selectTab(it, query.orEmpty()) }
+        val mode = state.mode
+        val selectMode: (GlobalSearchMode) -> Unit = { screenModel.selectMode(it, query.orEmpty()) }
 
         val pickScreenshot = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
             if (uri == null) return@rememberLauncherForActivityResult
-            screenModel.selectTab(SearchTab.ANILIST, query.orEmpty())
+            screenModel.selectMode(GlobalSearchMode.ANILIST, query.orEmpty())
             scope.launch {
                 val bytes = withIOContext {
                     runCatching { context.contentResolver.openInputStream(uri)?.use { it.readBytes() } }.getOrNull()
@@ -139,8 +134,8 @@ class AnimeGlobalSearchScreen(
             }
         }
 
-        LaunchedEffect(tab) {
-            if (tab == SearchTab.ANILIST) aniList.start(query.orEmpty())
+        LaunchedEffect(mode) {
+            if (mode == GlobalSearchMode.ANILIST) aniList.start(query.orEmpty())
         }
 
         pendingMerge?.let { (anime, sourceName) ->
@@ -162,143 +157,86 @@ class AnimeGlobalSearchScreen(
             )
         }
 
-        Scaffold(
-            topBar = { scrollBehavior ->
-                Column(modifier = Modifier.background(MaterialTheme.colorScheme.surface)) {
-                    Box {
-                        SearchToolbar(
-                            searchQuery = query,
-                            onChangeSearchQuery = { query = it },
-                            titleContent = { Text(stringResource(KMR.strings.anime_global_search)) },
-                            navigateUp = navigator::pop,
-                            placeholderText = stringResource(KMR.strings.anime_global_search),
-                            onSearch = { screenModel.submit(it) },
-                            onClickCloseSearch = navigator::pop,
-                            scrollBehavior = scrollBehavior,
-                        )
-                        val progress = state.rows.count { it.items != null }
-                        if (tab != SearchTab.ANILIST && progress in 1..<state.rows.size) {
-                            LinearProgressIndicator(
-                                progress = { progress / state.rows.size.toFloat() },
-                                modifier = Modifier
-                                    .align(Alignment.BottomStart)
-                                    .fillMaxWidth(),
+        Box(modifier = Modifier.fillMaxSize()) {
+            Scaffold(
+                topBar = { scrollBehavior ->
+                    Column(modifier = Modifier.background(MaterialTheme.colorScheme.surface)) {
+                        Box {
+                            SearchToolbar(
+                                searchQuery = query,
+                                onChangeSearchQuery = { query = it },
+                                titleContent = { Text(stringResource(KMR.strings.anime_global_search)) },
+                                navigateUp = navigator::pop,
+                                placeholderText = stringResource(KMR.strings.anime_global_search),
+                                onSearch = { screenModel.submit(it) },
+                                onClickCloseSearch = navigator::pop,
+                                scrollBehavior = scrollBehavior,
                             )
-                        }
-                    }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = MaterialTheme.padding.small),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .weight(1f)
-                                .horizontalScroll(rememberScrollState())
-                                .padding(vertical = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            tabs.forEach { item ->
-                                when (item) {
-                                    SearchTab.PINNED -> BrowseTabChip(
-                                        selected = tab == item,
-                                        label = stringResource(MR.strings.pinned_sources),
-                                        icon = Icons.Outlined.PushPin,
-                                        onClick = { selectTab(item) },
-                                    )
-                                    SearchTab.ALL -> BrowseTabChip(
-                                        selected = tab == item,
-                                        label = stringResource(MR.strings.all),
-                                        icon = Icons.Outlined.DoneAll,
-                                        onClick = { selectTab(item) },
-                                    )
-                                    SearchTab.ANILIST -> BrowseTabChip(
-                                        selected = tab == item,
-                                        label = stringResource(KMR.strings.anilist_tab),
-                                        icon = Icons.Outlined.Public,
-                                        filledIcon = Icons.Filled.Public,
-                                        onClick = { selectTab(item) },
-                                    )
-                                }
-                            }
-                            if (tab != SearchTab.ANILIST) {
-                                VerticalDivider(modifier = Modifier.height(24.dp))
-                                BrowseTabChip(
-                                    selected = state.onlyShowHasResults,
-                                    label = stringResource(MR.strings.has_results),
-                                    icon = Icons.Outlined.FilterList,
-                                    onClick = screenModel::toggleHasResults,
+                            val progress = state.rows.count { it.items != null }
+                            if (mode == GlobalSearchMode.RESULTS && progress in 1..<state.rows.size) {
+                                LinearProgressIndicator(
+                                    progress = { progress / state.rows.size.toFloat() },
+                                    modifier = Modifier
+                                        .align(Alignment.BottomStart)
+                                        .fillMaxWidth(),
                                 )
                             }
                         }
-                        // Screenshot search (trace.moe), at the end of the row like Shiru
-                        if (mergeIntoId == null) {
-                            AniListTabChip(
-                                selected = false,
-                                label = stringResource(KMR.strings.anilist_screenshot_search),
-                                icon = Icons.Outlined.ImageSearch,
-                                onClick = {
-                                    pickScreenshot.launch(
-                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-                                    )
-                                },
-                                modifier = Modifier.padding(start = 8.dp),
-                            )
-                        }
-                    }
-                    if (tab == SearchTab.ANILIST) {
-                        AniListFilterTabRow(
-                            open = openFilter,
-                            onOpen = { openFilter = it },
+                        GlobalSearchModeRow(
+                            mode = mode,
+                            onMode = selectMode,
+                            pinnedOnly = state.pinnedOnly.takeIf { state.hasPinned },
+                            onPinnedOnly = { screenModel.setPinnedOnly(it) },
+                            onlyShowHasResults = state.onlyShowHasResults,
+                            onToggleHasResults = screenModel::toggleHasResults,
+                            openFilter = openFilter,
+                            onOpenFilter = { openFilter = it },
                             onRefreshGenres = { aniList.refreshGenres() },
+                            onScreenshot = {
+                                pickScreenshot.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                                )
+                            },
+                            showAniList = mergeIntoId == null,
                         )
-                        AniListChipBar(model = aniList)
+                        if (mode == GlobalSearchMode.ANILIST) AniListChipBar(model = aniList)
+                        HorizontalDivider()
                     }
-                    HorizontalDivider()
-                }
-            },
-        ) { paddingValues ->
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .swipeBetweenTabs(
-                        count = tabs.size,
-                        selected = tabs.indexOf(tab),
-                        onSelect = { selectTab(tabs[it]) },
-                    ),
-            ) {
-                if (tab == SearchTab.ANILIST) {
-                    Box(modifier = Modifier.padding(top = paddingValues.calculateTopPadding())) {
-                        AniListResults(
+                },
+            ) { paddingValues ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .swipeBetweenModes(mode, selectMode, enabled = mergeIntoId == null),
+                ) {
+                    if (mode == GlobalSearchMode.ANILIST) {
+                        AniListSearchPane(
                             model = aniList,
+                            openFilter = openFilter,
+                            onOpenFilter = { openFilter = it },
                             onClick = { navigator.push(AniListAnimeScreen(it.id)) },
-                            contentPadding = PaddingValues(bottom = paddingValues.calculateBottomPadding()),
+                            modifier = Modifier.padding(top = paddingValues.calculateTopPadding()),
+                            bottomPadding = paddingValues.calculateBottomPadding(),
                         )
-                        AniListFilterPanel(open = openFilter, model = aniList, onOpen = { openFilter = it })
+                    } else {
+                        SourceRows(
+                            state = state,
+                            paddingValues = paddingValues,
+                            onOpenSource = { navigator.push(AnimeSourceScreen(it.id, state.query)) },
+                            onClickAnime = { anime, sourceName ->
+                                if (mergeIntoId != null) {
+                                    pendingMerge = anime to sourceName
+                                } else {
+                                    navigator.push(AnimeScreen(anime.id))
+                                }
+                            },
+                            onLongClickAnime = { navigator.push(AnimeScreen(it.id)) },
+                        )
                     }
-                } else {
-                    SourceRows(
-                        state = state,
-                        paddingValues = paddingValues,
-                        onOpenSource = { navigator.push(AnimeSourceScreen(it.id, state.query)) },
-                        onClickAnime = { anime, sourceName ->
-                            if (mergeIntoId != null) {
-                                pendingMerge = anime to sourceName
-                            } else {
-                                navigator.push(AnimeScreen(anime.id))
-                            }
-                        },
-                        onLongClickAnime = { navigator.push(AnimeScreen(it.id)) },
-                    )
                 }
-                AniListNoticeHost(
-                    notice = aniList.notice,
-                    onDismiss = aniList::dismissNotice,
-                    modifier = Modifier.padding(top = paddingValues.calculateTopPadding()),
-                )
             }
+            // Shiru's toast, over everything at the top right
+            AniListNoticeHost(notice = aniList.notice, onDismiss = aniList::dismissNotice)
         }
     }
 
@@ -350,9 +288,6 @@ class AnimeGlobalSearchScreen(
     }
 }
 
-/** KMK: The tabs of anime global search */
-enum class SearchTab { PINNED, ALL, ANILIST }
-
 class AnimeGlobalSearchScreenModel(
     initialQuery: String,
     private val mergeIntoId: Long?,
@@ -363,9 +298,10 @@ class AnimeGlobalSearchScreenModel(
 ) : StateScreenModel<AnimeGlobalSearchScreenModel.State>(State()) {
 
     private var searchJob: Job? = null
-    private val tabPref = preferenceStore.getString("anime_global_search_tab", SearchTab.ALL.name)
+    private val modePref = preferenceStore.getString("anime_global_search_mode", GlobalSearchMode.RESULTS.name)
+    private val pinnedPref = preferenceStore.getBoolean("anime_global_search_pinned_only", false)
 
-    /** The globe tab's AniList search, kept here so it stays when coming back from a title */
+    /** The AniList tab's search, kept here so it stays when coming back from a title */
     val aniList = AniListSearchModel(screenModelScope)
 
     /** What was last searched with the search button, for the tab that's opened next */
@@ -373,32 +309,36 @@ class AnimeGlobalSearchScreenModel(
 
     init {
         val hasPinned = sourcePreferences.animePinnedSources().get().isNotEmpty()
-        val savedTab = runCatching { SearchTab.valueOf(tabPref.get()) }.getOrDefault(SearchTab.ALL)
-        val tab = when {
-            mergeIntoId != null -> SearchTab.ALL
-            savedTab == SearchTab.PINNED && !hasPinned -> SearchTab.ALL
-            else -> savedTab
+        val savedMode = runCatching { GlobalSearchMode.valueOf(modePref.get()) }.getOrDefault(GlobalSearchMode.RESULTS)
+        val mode = if (mergeIntoId != null) GlobalSearchMode.RESULTS else savedMode
+        mutableState.update {
+            it.copy(mode = mode, hasPinned = hasPinned, pinnedOnly = hasPinned && pinnedPref.get() && mergeIntoId == null)
         }
-        mutableState.update { it.copy(tab = tab, hasPinned = hasPinned) }
-        if (tab != SearchTab.ANILIST && initialQuery.isNotBlank()) search(initialQuery)
+        if (mode == GlobalSearchMode.RESULTS && initialQuery.isNotBlank()) search(initialQuery)
     }
 
     fun submit(query: String) {
         submitted = query
-        if (state.value.tab == SearchTab.ANILIST) aniList.search(query) else search(query)
+        if (state.value.mode == GlobalSearchMode.ANILIST) aniList.search(query) else search(query)
     }
 
-    fun selectTab(tab: SearchTab, typed: String) {
-        val previous = state.value.tab
+    fun selectMode(mode: GlobalSearchMode, typed: String) {
         if (typed.isNotBlank()) submitted = typed
-        mutableState.update { it.copy(tab = tab) }
-        if (mergeIntoId == null) tabPref.set(tab.name)
+        mutableState.update { it.copy(mode = mode) }
+        if (mergeIntoId == null) modePref.set(mode.name)
         when {
-            tab == SearchTab.ANILIST -> if (aniList.query != submitted && aniList.traceMatches == null) aniList.search(submitted)
-            submitted.isBlank() -> {}
-            // Pinned and All search different sources
-            previous != tab || state.value.query != submitted -> search(submitted)
+            mode == GlobalSearchMode.ANILIST -> {
+                if (aniList.query != submitted && aniList.traceMatches == null) aniList.search(submitted)
+            }
+            submitted.isNotBlank() && state.value.query != submitted -> search(submitted)
         }
+    }
+
+    fun setPinnedOnly(pinnedOnly: Boolean) {
+        if (state.value.pinnedOnly == pinnedOnly) return
+        mutableState.update { it.copy(pinnedOnly = pinnedOnly) }
+        if (mergeIntoId == null) pinnedPref.set(pinnedOnly)
+        if (submitted.isNotBlank()) search(submitted)
     }
 
     fun toggleHasResults() {
@@ -410,7 +350,7 @@ class AnimeGlobalSearchScreenModel(
         val disabledLangs = sourcePreferences.animeDisabledLanguages().get()
         val disabledSources = sourcePreferences.animeDisabledSources().get()
         val pinned = sourcePreferences.animePinnedSources().get()
-        val pinnedOnly = state.value.tab == SearchTab.PINNED
+        val pinnedOnly = state.value.pinnedOnly
         val sources = sourceManager.getCatalogueSources()
             .filter { it.lang !in disabledLangs && it.id.toString() !in disabledSources }
             .filter { !pinnedOnly || it.id.toString() in pinned }
@@ -463,8 +403,9 @@ class AnimeGlobalSearchScreenModel(
     data class State(
         val query: String = "",
         val rows: List<Row> = emptyList(),
-        val tab: SearchTab = SearchTab.ALL,
+        val mode: GlobalSearchMode = GlobalSearchMode.RESULTS,
         val hasPinned: Boolean = false,
+        val pinnedOnly: Boolean = false,
         val onlyShowHasResults: Boolean = false,
     )
 }

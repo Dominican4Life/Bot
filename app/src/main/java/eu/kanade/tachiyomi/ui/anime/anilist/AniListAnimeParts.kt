@@ -1,8 +1,11 @@
 package eu.kanade.tachiyomi.ui.anime.anilist
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,11 +23,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowLeft
-import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Business
@@ -36,20 +40,15 @@ import androidx.compose.material.icons.outlined.RateReview
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.SmartDisplay
 import androidx.compose.material.icons.outlined.StarOutline
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -58,33 +57,40 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.components.material.DISABLED_ALPHA
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.clickableNoIndication
 import tachiyomi.presentation.core.util.secondaryItemAlpha
-import kotlin.math.ceil
+import java.text.DateFormat
+import java.util.Date
 
 /** KMK: Filler episodes get a gold frame, like Hayase */
 private val FillerGold = Color(0xFFFACC15)
 
 /**
- * KMK: The top of the AniList anime page: the banner behind, the cover with Watch now under it, and all three
+ * KMK: The top of the AniList page: the banner behind, the cover with Watch now / Read now under it, and all three
  * titles: Japanese above, the main one, then Romaji.
  */
 @Composable
 fun AniListHeader(
     details: AniListDetails,
     isTablet: Boolean,
+    manga: Boolean,
+    linkedSource: String?,
     onWatchNow: () -> Unit,
+    onPickSource: () -> Unit,
     onSearch: (String) -> Unit,
 ) {
     val card = details.card
@@ -107,6 +113,15 @@ fun AniListHeader(
                 }
                 .alpha(0.35f),
         )
+        val button: @Composable (Modifier) -> Unit = { modifier ->
+            WatchNowButton(
+                label = stringResource(if (manga) KMR.strings.anilist_read_now else KMR.strings.anilist_watch_now),
+                linkedSource = linkedSource,
+                onClick = onWatchNow,
+                onLongClick = onPickSource,
+                modifier = modifier,
+            )
+        }
         if (isTablet) {
             Column(
                 modifier = Modifier
@@ -116,10 +131,10 @@ fun AniListHeader(
             ) {
                 Column(modifier = Modifier.fillMaxWidth(0.6f)) {
                     Cover(card)
-                    WatchNowButton(onWatchNow, Modifier.fillMaxWidth().padding(top = 10.dp))
+                    button(Modifier.fillMaxWidth().padding(top = 10.dp))
                 }
                 Spacer(modifier = Modifier.height(14.dp))
-                Titles(details, TextAlign.Center, Alignment.CenterHorizontally, onSearch)
+                Titles(details, manga, TextAlign.Center, Alignment.CenterHorizontally, onSearch)
             }
         } else {
             Row(
@@ -130,10 +145,10 @@ fun AniListHeader(
             ) {
                 Column(modifier = Modifier.width(112.dp)) {
                     Cover(card)
-                    WatchNowButton(onWatchNow, Modifier.fillMaxWidth().padding(top = 8.dp))
+                    button(Modifier.fillMaxWidth().padding(top = 8.dp))
                 }
                 Column(modifier = Modifier.weight(1f)) {
-                    Titles(details, TextAlign.Start, Alignment.Start, onSearch)
+                    Titles(details, manga, TextAlign.Start, Alignment.Start, onSearch)
                 }
             }
         }
@@ -154,18 +169,62 @@ private fun Cover(card: AniListMedia) {
     )
 }
 
+/** Watch now / Read now: a tap plays from the remembered source (or asks for one), holding it picks again */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun WatchNowButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Button(onClick = onClick, modifier = modifier, contentPadding = androidx.compose.foundation.layout.PaddingValues(8.dp)) {
-        Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-        Spacer(modifier = Modifier.width(4.dp))
-        Text(text = stringResource(KMR.strings.anilist_watch_now), maxLines = 1, fontSize = 13.sp)
+private fun WatchNowButton(
+    label: String,
+    linkedSource: String?,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val haptic = LocalHapticFeedback.current
+    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(40.dp)
+                .clip(CircleShape)
+                .combinedClickable(
+                    onClick = onClick,
+                    onLongClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onLongClick()
+                    },
+                ),
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.primary,
+            contentColor = MaterialTheme.colorScheme.onPrimary,
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(horizontal = 8.dp),
+            ) {
+                Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(text = label, maxLines = 1, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            }
+        }
+        if (linkedSource != null) {
+            Text(
+                text = linkedSource,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .padding(top = 4.dp)
+                    .secondaryItemAlpha(),
+            )
+        }
     }
 }
 
 @Composable
 private fun Titles(
     details: AniListDetails,
+    manga: Boolean,
     textAlign: TextAlign,
     alignment: Alignment.Horizontal,
     onSearch: (String) -> Unit,
@@ -201,16 +260,29 @@ private fun Titles(
         val meta = listOfNotNull(
             AniListLabels.format(card.format).takeIf { it.isNotEmpty() },
             AniListLabels.status(card.status).takeIf { it.isNotEmpty() },
-            listOfNotNull(AniListLabels.season(card.season).takeIf { it.isNotEmpty() }, card.seasonYear)
-                .joinToString(" ")
-                .takeIf { it.isNotEmpty() },
+            if (manga) {
+                details.startDate?.take(4)
+            } else {
+                listOfNotNull(AniListLabels.season(card.season).takeIf { it.isNotEmpty() }, card.seasonYear)
+                    .joinToString(" ")
+                    .takeIf { it.isNotEmpty() }
+            },
         ).joinToString(" · ")
         if (meta.isNotEmpty()) InfoLine(Icons.Outlined.Info, meta)
-        val length = listOfNotNull(
-            card.episodes?.let { stringResource(KMR.strings.anilist_episode_count, it) },
-            card.duration?.let { "${it}m" },
-        ).joinToString(" · ")
-        if (length.isNotEmpty()) InfoLine(Icons.Outlined.Schedule, length)
+        val length = if (manga) {
+            listOfNotNull(
+                card.chapters?.let { stringResource(KMR.strings.anilist_chapter_count, it) },
+                card.volumes?.let { stringResource(KMR.strings.anilist_volume_count, it) },
+            )
+        } else {
+            listOfNotNull(
+                card.episodes?.let { stringResource(KMR.strings.anilist_episode_count, it) },
+                card.duration?.let { "${it}m" },
+            )
+        }.joinToString(" · ")
+        if (length.isNotEmpty()) {
+            InfoLine(if (manga) Icons.AutoMirrored.Outlined.MenuBook else Icons.Outlined.Schedule, length)
+        }
     }
 }
 
@@ -226,22 +298,24 @@ private fun InfoLine(icon: ImageVector, text: String) {
     }
 }
 
-/** KMK: WebView, then Trailer, AniList and MAL (only on these AniList pages) */
+/** KMK: WebView, then Trailer (anime), AniList and MAL, all opened inside the app */
 @Composable
-fun AniListActionRow(details: AniListDetails, actions: AniListActions) {
+fun AniListActionRow(actions: AniListActions, manga: Boolean) {
     Row(modifier = Modifier.padding(start = 16.dp, top = 4.dp, end = 16.dp)) {
         ActionButton(
             title = stringResource(MR.strings.action_web_view),
             icon = { Icon(Icons.Outlined.Public, contentDescription = null, tint = it, modifier = Modifier.size(20.dp)) },
             onClick = actions.onWebView,
         )
-        ActionButton(
-            title = stringResource(KMR.strings.anilist_trailer),
-            icon = {
-                Icon(Icons.Outlined.SmartDisplay, contentDescription = null, tint = it, modifier = Modifier.size(20.dp))
-            },
-            onClick = actions.onTrailer,
-        )
+        if (!manga) {
+            ActionButton(
+                title = stringResource(KMR.strings.anilist_trailer),
+                icon = {
+                    Icon(Icons.Outlined.SmartDisplay, contentDescription = null, tint = it, modifier = Modifier.size(20.dp))
+                },
+                onClick = actions.onTrailer,
+            )
+        }
         ActionButton(
             title = stringResource(KMR.strings.anilist_open_anilist),
             icon = { LetterMark("AL", it) },
@@ -345,70 +419,47 @@ private fun airsIn(airingAt: Long): String {
     }
 }
 
-/**
- * KMK: Hayase's episode cards: the picture with the minutes and ★ rating on it, the title and summary beside it.
- * Filler episodes have a gold frame and "Filler" in the corner. 16 a page.
- */
 @Composable
-fun AniListEpisodes(
+private fun CenterMessage(text: String?, loading: Boolean) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(32.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (loading) {
+            CircularProgressIndicator()
+        } else if (text != null) {
+            Text(text = text, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+        }
+    }
+}
+
+/**
+ * KMK: Hayase's episode cards, all of them in one list: the picture with the minutes and ★ rating on it, the
+ * title and summary beside it. Filler episodes have a gold frame and "Filler" in the corner.
+ */
+fun LazyListScope.aniListEpisodeItems(
     episodes: List<AniListEpisode>,
     loading: Boolean,
     columns: Int,
     onClick: (AniListEpisode) -> Unit,
 ) {
     if (episodes.isEmpty()) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(32.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (loading) {
-                CircularProgressIndicator()
-            } else {
-                Text(
-                    text = stringResource(KMR.strings.anilist_no_episodes),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+        item(key = "episodes-empty") {
+            CenterMessage(stringResource(KMR.strings.anilist_no_episodes), loading)
         }
         return
     }
-    val perPage = 16
-    val pages = ceil(episodes.size / perPage.toFloat()).toInt()
-    var page by rememberSaveable(episodes.size) { mutableIntStateOf(0) }
-    val start = page * perPage
-    val end = minOf(start + perPage, episodes.size)
-    Column(
-        modifier = Modifier.padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        episodes.subList(start, end).chunked(columns).forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                row.forEach { episode ->
-                    EpisodeCard(episode, onClick = { onClick(episode) }, modifier = Modifier.weight(1f))
-                }
-                repeat(columns - row.size) { Spacer(modifier = Modifier.weight(1f)) }
+    items(episodes.chunked(columns), key = { "episodes-${it.first().number}" }) { row ->
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            row.forEach { episode ->
+                EpisodeCard(episode, onClick = { onClick(episode) }, modifier = Modifier.weight(1f))
             }
-        }
-        if (pages > 1) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center,
-            ) {
-                IconButton(onClick = { page-- }, enabled = page > 0) {
-                    Icon(Icons.AutoMirrored.Outlined.KeyboardArrowLeft, contentDescription = null)
-                }
-                Text(
-                    text = "${start + 1}–$end / ${episodes.size}",
-                    style = MaterialTheme.typography.labelLarge,
-                    modifier = Modifier.padding(horizontal = 12.dp),
-                )
-                IconButton(onClick = { page++ }, enabled = page < pages - 1) {
-                    Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null)
-                }
-            }
+            repeat(columns - row.size) { Spacer(modifier = Modifier.weight(1f)) }
         }
     }
 }
@@ -505,34 +556,102 @@ private fun ImageBadge(text: String, modifier: Modifier = Modifier, star: Boolea
     }
 }
 
-/** KMK: Openings and endings (AnimeThemes), with a play button for each version */
-@Composable
-fun AniListThemes(themes: List<AniListTheme>?, loading: Boolean, onPlay: (String) -> Unit) {
-    if (themes.isNullOrEmpty()) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(32.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (loading || themes == null) {
-                CircularProgressIndicator()
-            } else {
+/**
+ * KMK: Manga's Chapters tab: the chapters of the source it's read from (all in one list), or a button to pick
+ * that source
+ */
+fun LazyListScope.aniListChapterItems(
+    chapters: List<Chapter>?,
+    loading: Boolean,
+    linkedSource: String?,
+    onPickSource: () -> Unit,
+    onClick: (Chapter) -> Unit,
+) {
+    if (linkedSource == null) {
+        item(key = "chapters-pick") {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
                 Text(
-                    text = stringResource(KMR.strings.anilist_no_themes),
+                    text = stringResource(KMR.strings.anilist_chapters_pick_source),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                OutlinedButton(onClick = onPickSource, modifier = Modifier.padding(top = 12.dp)) {
+                    Text(stringResource(KMR.strings.anilist_pick_source))
+                }
             }
         }
         return
     }
-    Column(
-        modifier = Modifier.padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        themes.forEach { theme ->
-            Surface(shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
-                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+    if (chapters.isNullOrEmpty()) {
+        item(key = "chapters-empty") { CenterMessage(stringResource(MR.strings.no_chapters_error), loading || chapters == null) }
+        return
+    }
+    item(key = "chapters-source") {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = linkedSource,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.weight(1f),
+            )
+            if (loading) CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+            TextButton(onClick = onPickSource) { Text(stringResource(KMR.strings.anilist_pick_source)) }
+        }
+    }
+    items(chapters.reversed(), key = { "chapter-${it.id}" }) { chapter ->
+        val dateFormat = DateFormat.getDateInstance(DateFormat.MEDIUM)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onClick(chapter) }
+                .padding(horizontal = 16.dp, vertical = 10.dp)
+                .alpha(if (chapter.read) 0.5f else 1f),
+        ) {
+            Text(text = chapter.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val sub = listOfNotNull(
+                chapter.dateUpload.takeIf { it > 0 }?.let { dateFormat.format(Date(it)) },
+                chapter.scanlator?.takeIf { it.isNotBlank() },
+            ).joinToString(" · ")
+            if (sub.isNotEmpty()) {
+                Text(
+                    text = sub,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+/** KMK: Openings and endings (AnimeThemes), with a play button for each version */
+fun LazyListScope.aniListThemeItems(
+    themes: List<AniListTheme>?,
+    loading: Boolean,
+    onPlay: (themeIndex: Int, entryIndex: Int) -> Unit,
+) {
+    if (themes.isNullOrEmpty()) {
+        item(key = "themes-empty") {
+            CenterMessage(stringResource(KMR.strings.anilist_no_themes), loading || themes == null)
+        }
+        return
+    }
+    themes.forEachIndexed { themeIndex, theme ->
+        item(key = "theme-${theme.id}-$themeIndex") {
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+            ) {
+                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             text = theme.type,
@@ -550,7 +669,7 @@ fun AniListThemes(themes: List<AniListTheme>?, loading: Boolean, onPlay: (String
                             }
                         }
                     }
-                    theme.entries.forEach { entry ->
+                    theme.entries.forEachIndexed { entryIndex, entry ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -573,13 +692,13 @@ fun AniListThemes(themes: List<AniListTheme>?, loading: Boolean, onPlay: (String
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.weight(1f),
                             )
-                            entry.videoUrl?.let { url ->
+                            if (entry.videoUrl != null) {
                                 Box(
                                     modifier = Modifier
                                         .size(32.dp)
                                         .clip(CircleShape)
                                         .background(MaterialTheme.colorScheme.primary)
-                                        .clickableNoIndication(onClick = { onPlay(url) }),
+                                        .clickable { onPlay(themeIndex, entryIndex) },
                                     contentAlignment = Alignment.Center,
                                 ) {
                                     Icon(
@@ -598,32 +717,23 @@ fun AniListThemes(themes: List<AniListTheme>?, loading: Boolean, onPlay: (String
     }
 }
 
-/** KMK: AniList's recommendations, as small cards; tapping one opens its AniList page */
+/** KMK: AniList's recommendations, as small cards; tapping one switches the page to it */
 @OptIn(ExperimentalLayoutApi::class)
-@Composable
-fun AniListRecommendations(recommendations: List<AniListMedia>, onClick: (Int) -> Unit) {
+fun LazyListScope.aniListRecommendationItems(recommendations: List<AniListMedia>, onClick: (Int) -> Unit) {
     if (recommendations.isEmpty()) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(32.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = stringResource(KMR.strings.anilist_no_recommendations),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        item(key = "recommendations-empty") { CenterMessage(stringResource(KMR.strings.anilist_no_recommendations), false) }
         return
     }
-    FlowRow(
-        modifier = Modifier.padding(12.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        recommendations.forEach { media ->
-            Box(modifier = Modifier.width(110.dp)) {
-                AniListSmallCard(media, null, onClick = { onClick(media.id) })
+    item(key = "recommendations") {
+        FlowRow(
+            modifier = Modifier.padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            recommendations.forEach { media ->
+                Box(modifier = Modifier.width(110.dp)) {
+                    AniListSmallCard(media, null, onClick = { onClick(media.id) })
+                }
             }
         }
     }

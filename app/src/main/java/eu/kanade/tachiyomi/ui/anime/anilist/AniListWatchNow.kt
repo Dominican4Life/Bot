@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.anime.anilist
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -25,7 +27,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,73 +40,52 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import cafe.adriel.voyager.navigator.LocalNavigator
-import eu.kanade.domain.source.service.SourcePreferences
-import eu.kanade.presentation.anime.asMangaCover
 import eu.kanade.presentation.browse.components.MangaItem
-import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
-import eu.kanade.tachiyomi.animesource.AnimeCatalogueSource
-import eu.kanade.tachiyomi.data.anime.Anime
-import eu.kanade.tachiyomi.data.anime.AnimeRepository
-import eu.kanade.tachiyomi.ui.anime.AnimeScreen
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
-import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.i18n.stringResource
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 
-@Immutable
-private data class WatchRow(val source: AnimeCatalogueSource, val items: List<Anime>? = null)
-
-/** Searches every enabled anime source (APK and JS) for one title, trying its other names when nothing turns up */
-private class WatchNowSearch(private val scope: CoroutineScope) {
-    private val sourceManager = Injekt.get<AnimeSourceManager>()
-    private val repository = Injekt.get<AnimeRepository>()
-    private val sourcePreferences = Injekt.get<SourcePreferences>()
-
-    var rows by mutableStateOf<List<WatchRow>>(emptyList())
+/** Searches every enabled source for one title, trying its other names when nothing turns up */
+private class SourcePickerSearch(private val scope: CoroutineScope, private val manga: Boolean) {
+    var rows by mutableStateOf<List<PickRow>>(emptyList())
         private set
     private var job: Job? = null
 
-    fun search(queries: List<String>) {
+    fun search(queries: List<String>, names: List<String>) {
         job?.cancel()
-        val names = queries.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
-        if (names.isEmpty()) return
-        val disabledLangs = sourcePreferences.animeDisabledLanguages().get()
-        val disabledSources = sourcePreferences.animeDisabledSources().get()
-        val pinned = sourcePreferences.animePinnedSources().get()
-        val sources = sourceManager.getCatalogueSources()
-            .filter { it.lang !in disabledLangs && it.id.toString() !in disabledSources }
-            .sortedWith(compareBy({ it.id.toString() !in pinned }, { it.name.lowercase() }))
-        rows = sources.map { WatchRow(it) }
+        val tries = queries.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        if (tries.isEmpty()) return
+        val sources = AniListPlayback.sources(manga)
+        rows = sources.map { (id, name, lang) -> PickRow(id, name, lang) }
         val semaphore = Semaphore(5)
         job = scope.launch {
-            sources.forEach { source ->
+            sources.forEach { (sourceId, _, _) ->
                 launch {
                     semaphore.withPermit {
-                        var found = emptyList<Anime>()
-                        for (name in names) {
+                        var found = emptyList<PickItem>()
+                        for (query in tries) {
                             found = try {
-                                withIOContext {
-                                    source.getSearchAnime(1, name, source.getFilterList()).animes.mapNotNull {
-                                        runCatching { repository.networkToLocal(it, source.id) }.getOrNull()
-                                    }
-                                }
+                                AniListPlayback.search(sourceId, query, manga)
                             } catch (e: Throwable) {
                                 if (e is CancellationException) throw e
                                 emptyList()
                             }
                             if (found.isNotEmpty()) break
                         }
-                        val result = WatchRow(source, found)
-                        rows = rows.map { if (it.source.id == source.id) result else it }
-                            .sortedBy { it.items?.isEmpty() == true }
+                        // Best match first
+                        val sorted = found.sortedByDescending { AniListPlayback.similarity(it.title, names) }
+                        rows = rows.map { if (it.sourceId == sourceId) it.copy(items = sorted) else it }
+                            .sortedWith(
+                                compareBy<PickRow> { it.items?.isEmpty() == true }
+                                    .thenByDescending { row ->
+                                        row.items?.firstOrNull()?.let { AniListPlayback.similarity(it.title, names) } ?: 0.0
+                                    },
+                            )
                     }
                 }
             }
@@ -114,19 +94,23 @@ private class WatchNowSearch(private val scope: CoroutineScope) {
 }
 
 /**
- * KMK: Watch now: looks for the AniList title in your installed anime sources (APK and JS) so you can pick one to
- * watch from. The search box can be changed and searched again.
+ * KMK: "Pick a source": looks for the AniList title in your installed sources (APK and JS) with the best match of
+ * each source first (outlined). Picking one plays the episode (or opens the chapter) straight from it.
  */
 @Composable
-fun AniListWatchNowDialog(media: AniListMedia, onDismissRequest: () -> Unit) {
-    val navigator = LocalNavigator.current
+fun AniListSourcePicker(
+    media: AniListMedia,
+    manga: Boolean,
+    onDismissRequest: () -> Unit,
+    onPick: (PickRow, PickItem) -> Unit,
+) {
     val scope = rememberCoroutineScope()
-    val search = remember { WatchNowSearch(scope) }
+    val search = remember(manga) { SourcePickerSearch(scope, manga) }
     val names = remember(media) {
-        listOfNotNull(media.english, media.romaji, media.userPreferred, media.native)
+        listOfNotNull(media.english, media.romaji, media.userPreferred, media.native).filter { it.isNotBlank() }
     }
     var query by remember { mutableStateOf(names.firstOrNull().orEmpty()) }
-    LaunchedEffect(media.id) { search.search(names) }
+    LaunchedEffect(media.id) { search.search(names, names) }
 
     Dialog(
         onDismissRequest = onDismissRequest,
@@ -145,7 +129,7 @@ fun AniListWatchNowDialog(media: AniListMedia, onDismissRequest: () -> Unit) {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = stringResource(KMR.strings.anilist_watch_now),
+                        text = stringResource(KMR.strings.anilist_pick_source),
                         style = MaterialTheme.typography.titleLarge,
                         modifier = Modifier.weight(1f),
                     )
@@ -158,12 +142,12 @@ fun AniListWatchNowDialog(media: AniListMedia, onDismissRequest: () -> Unit) {
                     onValueChange = { query = it },
                     singleLine = true,
                     trailingIcon = {
-                        IconButton(onClick = { search.search(listOf(query)) }) {
+                        IconButton(onClick = { search.search(listOf(query), names + query) }) {
                             Icon(Icons.Outlined.Search, contentDescription = null)
                         }
                     },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = { search.search(listOf(query)) }),
+                    keyboardActions = KeyboardActions(onSearch = { search.search(listOf(query), names + query) }),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 8.dp),
@@ -193,10 +177,10 @@ fun AniListWatchNowDialog(media: AniListMedia, onDismissRequest: () -> Unit) {
                     }
                 }
                 LazyColumn(contentPadding = PaddingValues(bottom = 16.dp)) {
-                    items(withResults, key = { it.source.id }) { row ->
+                    items(withResults, key = { it.sourceId }) { row ->
                         Column(modifier = Modifier.padding(top = 8.dp)) {
                             Text(
-                                text = row.source.name + "  ·  " + row.source.lang.uppercase(),
+                                text = row.sourceName + "  ·  " + row.lang.uppercase(),
                                 fontWeight = FontWeight.SemiBold,
                                 style = MaterialTheme.typography.titleSmall,
                                 modifier = Modifier.padding(horizontal = 16.dp),
@@ -205,20 +189,31 @@ fun AniListWatchNowDialog(media: AniListMedia, onDismissRequest: () -> Unit) {
                                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                             ) {
-                                items(row.items.orEmpty(), key = { it.id }) { anime ->
-                                    MangaItem(
-                                        title = anime.title,
-                                        cover = anime.asMangaCover(),
-                                        isFavorite = anime.favorite,
-                                        onClick = {
-                                            onDismissRequest()
-                                            navigator?.push(AnimeScreen(anime.id))
+                                itemsIndexed(row.items.orEmpty(), key = { _, item -> item.id }) { index, item ->
+                                    // The best match of each source is outlined
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                        border = if (index == 0) {
+                                            BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                                        } else {
+                                            null
                                         },
-                                        onLongClick = {
-                                            onDismissRequest()
-                                            navigator?.push(AnimeScreen(anime.id))
-                                        },
-                                    )
+                                    ) {
+                                        MangaItem(
+                                            title = item.title,
+                                            cover = item.cover,
+                                            isFavorite = item.favorite,
+                                            onClick = {
+                                                onDismissRequest()
+                                                onPick(row, item)
+                                            },
+                                            onLongClick = {
+                                                onDismissRequest()
+                                                onPick(row, item)
+                                            },
+                                        )
+                                    }
                                 }
                             }
                         }

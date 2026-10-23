@@ -75,8 +75,8 @@ object AniListApi {
         }
 
     private const val CARD_FIELDS = """
-        id idMal title { romaji english native userPreferred } coverImage { extraLarge large color } bannerImage
-        format status episodes duration season seasonYear averageScore genres description(asHtml: false) isAdult
+        id idMal type title { romaji english native userPreferred } coverImage { extraLarge large color } bannerImage
+        format status episodes chapters volumes duration season seasonYear averageScore genres description(asHtml: false) isAdult
         nextAiringEpisode { episode airingAt } studios(isMain: true) { nodes { name } }
     """
 
@@ -84,10 +84,11 @@ object AniListApi {
         query (${'$'}page: Int, ${'$'}perPage: Int, ${'$'}search: String, ${'$'}genre_in: [String],
             ${'$'}genre_not_in: [String], ${'$'}tag_in: [String], ${'$'}tag_not_in: [String],
             ${'$'}format_in: [MediaFormat], ${'$'}status_in: [MediaStatus], ${'$'}season: MediaSeason,
-            ${'$'}seasonYear: Int, ${'$'}sort: [MediaSort], ${'$'}id_in: [Int]) {
+            ${'$'}seasonYear: Int, ${'$'}sort: [MediaSort], ${'$'}id_in: [Int], ${'$'}type: MediaType,
+            ${'$'}startDate_like: String) {
           Page(page: ${'$'}page, perPage: ${'$'}perPage) {
             pageInfo { hasNextPage }
-            media(type: ANIME, search: ${'$'}search, genre_in: ${'$'}genre_in, genre_not_in: ${'$'}genre_not_in,
+            media(type: ${'$'}type, search: ${'$'}search, startDate_like: ${'$'}startDate_like, genre_in: ${'$'}genre_in, genre_not_in: ${'$'}genre_not_in,
                 tag_in: ${'$'}tag_in, tag_not_in: ${'$'}tag_not_in, format_in: ${'$'}format_in,
                 status_in: ${'$'}status_in, season: ${'$'}season, seasonYear: ${'$'}seasonYear, sort: ${'$'}sort,
                 id_in: ${'$'}id_in) {
@@ -98,8 +99,15 @@ object AniListApi {
     """.trimIndent()
 
     /** One page of search results. Adult titles are always included. */
-    suspend fun search(filters: AniListFilters, query: String, page: Int, idIn: List<Int>? = null): AniListPage {
+    suspend fun search(
+        filters: AniListFilters,
+        query: String,
+        page: Int,
+        idIn: List<Int>? = null,
+        manga: Boolean = false,
+    ): AniListPage {
         val variables = buildJsonObject {
+            put("type", if (manga) "MANGA" else "ANIME")
             put("page", page)
             put("perPage", 50)
             if (query.isNotBlank()) put("search", query)
@@ -109,8 +117,13 @@ object AniListApi {
             if (filters.tagsExcluded.isNotEmpty()) put("tag_not_in", filters.tagsExcluded.toJsonArray())
             if (filters.formats.isNotEmpty()) put("format_in", filters.formats.toJsonArray())
             if (filters.statuses.isNotEmpty()) put("status_in", filters.statuses.toJsonArray())
-            filters.season?.let { put("season", it) }
-            filters.year?.let { put("seasonYear", it) }
+            if (manga) {
+                // Manga have no seasons: the year they started
+                filters.year?.let { put("startDate_like", "$it%") }
+            } else {
+                filters.season?.let { put("season", it) }
+                filters.year?.let { put("seasonYear", it) }
+            }
             if (idIn != null) put("id_in", JsonArray(idIn.map { JsonPrimitive(it) }))
             put("sort", filters.sortValues(hasQuery = query.isNotBlank(), hasIds = idIn != null).toJsonArray())
         }
@@ -141,7 +154,7 @@ object AniListApi {
 
     private val DETAILS_QUERY = """
         query (${'$'}id: Int) {
-          Media(id: ${'$'}id, type: ANIME) {
+          Media(id: ${'$'}id) {
             $CARD_FIELDS
             meanScore popularity favourites source countryOfOrigin synonyms hashtag
             startDate { year month day } endDate { year month day }
@@ -213,7 +226,7 @@ object AniListApi {
     private val RELATIONS_QUERY = """
         query (${'$'}ids: [Int]) {
           Page(perPage: 50) {
-            media(id_in: ${'$'}ids, type: ANIME) {
+            media(id_in: ${'$'}ids) {
               $RELATION_NODE
               relations { edges { relationType(version: 2) node { $RELATION_NODE } } }
             }
@@ -230,12 +243,15 @@ object AniListApi {
         val edges = LinkedHashMap<String, AniListGraphEdge>()
         val pending = LinkedHashSet<Int>()
 
+        // Anime pages link anime, manga pages link manga
+        val mediaType = details.card.type ?: "ANIME"
+
         fun process(node: AniListRelationNode, relations: List<AniListRelation>, depth: Int) {
-            if (node.type.isNotEmpty() && node.type != "ANIME") return
+            if (node.type.isNotEmpty() && node.type != mediaType) return
             nodes.putIfAbsent(node.id, node)
             for (relation in relations) {
                 val other = relation.node
-                if (other.type != "ANIME" || relation.type == "CHARACTER") continue
+                if (other.type != mediaType || relation.type == "CHARACTER") continue
                 val key = listOf(node.id, other.id).sorted().joinToString("-")
                 val existing = edges[key]
                 // "Parent" is very broad: a more exact link wins
@@ -255,7 +271,7 @@ object AniListApi {
 
         process(details.asRelationNode(), details.relations, 0)
         // The direct relations' own relations come from the search below
-        pending += details.relations.map { it.node.id }.filter { nodes[it]?.type == "ANIME" }
+        pending += details.relations.map { it.node.id }.filter { nodes[it]?.type == mediaType }
         onUpdate(AniListGraph(nodes.values.toList(), edges.values.toList()))
         var rounds = 0
         val done = HashSet<Int>().apply { add(details.card.id) }
@@ -366,6 +382,23 @@ object AniListApi {
         return fillers
     }
 
+    /** Shiru's fallback: the YouTube trailer MyAnimeList has (through tenrai) when AniList has none */
+    suspend fun malTrailer(malId: Int): String? = withIOContext {
+        runCatching {
+            val response = client.newCall(GET("https://api.tenrai.org/v1/anime/$malId")).await()
+            if (!response.isSuccessful) {
+                response.close()
+                return@runCatching null
+            }
+            val root = json.parseToJsonElement(response.body.string()) as? JsonObject
+            val trailer = root?.alObj("data")?.alObj("trailer")
+            trailer?.alStr("youtube_id")
+                ?: trailer?.alStr("embed_url")?.let { YOUTUBE_ID.find(it)?.groupValues?.get(1) }
+        }.getOrNull()
+    }
+
+    private val YOUTUBE_ID = Regex("embed/([-_0-9A-Za-z]{10,15})")
+
     // ============================== Themes ==============================
 
     /** Openings and endings from AnimeThemes, with a video for each version */
@@ -437,6 +470,9 @@ object AniListApi {
         return AniListMedia(
             id = id,
             idMal = media.alInt("idMal"),
+            type = media.alStr("type"),
+            chapters = media.alInt("chapters"),
+            volumes = media.alInt("volumes"),
             romaji = title?.alStr("romaji"),
             english = title?.alStr("english"),
             native = title?.alStr("native"),
@@ -521,6 +557,9 @@ internal fun JsonElement?.alBool(key: String): Boolean? =
 data class AniListMedia(
     val id: Int,
     val idMal: Int?,
+    val type: String?,
+    val chapters: Int?,
+    val volumes: Int?,
     val romaji: String?,
     val english: String?,
     val native: String?,
@@ -609,7 +648,7 @@ data class AniListDetails(
 ) {
     fun asRelationNode() = AniListRelationNode(
         id = card.id,
-        type = "ANIME",
+        type = card.type ?: "ANIME",
         format = card.format,
         status = card.status,
         episodes = card.episodes,

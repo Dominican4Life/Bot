@@ -108,6 +108,10 @@ class GlobalSearchScreen(
                 // KMK -->
                 bulkFavoriteScreenModel = bulkFavoriteScreenModel,
                 hasPinnedSources = screenModel.hasPinnedSources(),
+                aniList = screenModel.aniList.takeIf { extensionFilter.isNullOrEmpty() },
+                onClickAniList = {
+                    navigator.push(eu.kanade.tachiyomi.ui.anime.anilist.AniListAnimeScreen(it.id, manga = true))
+                },
                 // KMK <--
             )
         }

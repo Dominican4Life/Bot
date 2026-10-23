@@ -1,11 +1,16 @@
 package eu.kanade.tachiyomi.ui.browse.source.globalsearch
 
+import cafe.adriel.voyager.core.model.screenModelScope
 import eu.kanade.tachiyomi.source.Source
+import eu.kanade.tachiyomi.ui.anime.anilist.AniListSearchModel
 
 class GlobalSearchScreenModel(
     initialQuery: String = "",
     initialExtensionFilter: String? = null,
 ) : SearchScreenModel(State(searchQuery = initialQuery)) {
+
+    // KMK: the AniList tab, searching AniList's manga
+    val aniList = AniListSearchModel(screenModelScope, manga = true)
 
     init {
         extensionFilter = initialExtensionFilter

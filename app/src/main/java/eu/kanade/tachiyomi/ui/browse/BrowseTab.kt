@@ -8,6 +8,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Movie
+import androidx.compose.material.icons.outlined.TravelExplore
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -74,7 +75,12 @@ data object BrowseTab : Tab {
         }
 
     override suspend fun onReselect(navigator: Navigator) {
-        navigator.push(GlobalSearchScreen())
+        // KMK: the anime global search while Browse shows anime
+        if (Injekt.get<SourcePreferences>().browseShowAnime().get()) {
+            navigator.push(eu.kanade.tachiyomi.ui.anime.AnimeGlobalSearchScreen())
+        } else {
+            navigator.push(GlobalSearchScreen())
+        }
     }
 
     private val switchToExtensionTabChannel = Channel<Unit>(1, BufferOverflow.DROP_OLDEST)
@@ -136,7 +142,14 @@ data object BrowseTab : Tab {
                             iconTint = switchTint,
                             onClick = { browseAnimePref.set(!browseAnime) },
                         ),
-                    ) + actions
+                    ) + actions.map { action ->
+                        // KMK: the global search button searches anime while Browse shows anime
+                        if (browseAnime && action is AppBar.Action && action.icon == Icons.Outlined.TravelExplore) {
+                            action.copy(onClick = { navigator.push(eu.kanade.tachiyomi.ui.anime.AnimeGlobalSearchScreen()) })
+                        } else {
+                            action
+                        }
+                    }
                     ).toImmutableList(),
                 content = { contentPadding, snackbarHostState ->
                     if (browseAnime) anime(contentPadding) else mangaContent(contentPadding, snackbarHostState)

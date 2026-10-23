@@ -102,7 +102,8 @@ data class AniListFilters(
 /** KMK: A small note shown at the top right for a moment, like Shiru's */
 @Immutable
 data class AniListNotice(
-    val text: String,
+    val title: String,
+    val description: String? = null,
     val loading: Boolean = false,
     val isError: Boolean = false,
     val id: Long = System.nanoTime(),
@@ -112,11 +113,18 @@ data class AniListNotice(
  * KMK: The globe tab of anime global search: AniList search with genre, tag, season, format and status filters,
  * a sort and screenshot search (trace.moe). Kept by the screen model so it stays when coming back from a title.
  */
-class AniListSearchModel(private val scope: CoroutineScope) {
+class AniListSearchModel(
+    private val scope: CoroutineScope,
+    /** Manga search (manga global search) instead of anime */
+    val manga: Boolean = false,
+) {
 
     private val store = Injekt.get<PreferenceStore>()
     private val app = Injekt.get<Application>()
     val largeCardsPref = store.getBoolean("anilist_search_large_cards", false)
+
+    /** The Format list: anime and manga have different ones */
+    val formats: List<String> get() = if (manga) MANGA_FORMATS else FORMATS
     private val genresPref = store.getString("anilist_search_genres", "")
     private val tagsPref = store.getString("anilist_search_tags", "")
 
@@ -185,7 +193,7 @@ class AniListSearchModel(private val scope: CoroutineScope) {
             if (debounceMs > 0) delay(debounceMs)
             try {
                 val ids = traceMatches?.map { it.anilistId }?.distinct()
-                val result = AniListApi.search(filters, if (ids != null) "" else query, 1, ids)
+                val result = AniListApi.search(filters, if (ids != null) "" else query, 1, ids, manga)
                 results = if (ids != null) result.media.sortedBy { ids.indexOf(it.id) } else result.media
                 hasNext = result.hasNextPage && ids == null
             } catch (e: Throwable) {
@@ -205,7 +213,7 @@ class AniListSearchModel(private val scope: CoroutineScope) {
         val next = page + 1
         searchJob = scope.launch {
             try {
-                val result = AniListApi.search(filters, query, next)
+                val result = AniListApi.search(filters, query, next, manga = manga)
                 page = next
                 results = (results + result.media).distinctBy { it.id }
                 hasNext = result.hasNextPage
@@ -220,7 +228,13 @@ class AniListSearchModel(private val scope: CoroutineScope) {
 
     /** Holding the # button: fetches AniList's genres and tags again */
     fun refreshGenres(silent: Boolean = false) {
-        if (!silent) notice = AniListNotice(app.stringResource(KMR.strings.anilist_genres_updating), loading = true)
+        if (!silent) {
+            notice = AniListNotice(
+                title = app.stringResource(KMR.strings.anilist_genres_updating),
+                description = app.stringResource(KMR.strings.anilist_genres_updating_desc),
+                loading = true,
+            )
+        }
         scope.launch {
             try {
                 val (newGenres, newTags) = AniListApi.genresAndTags()
@@ -234,14 +248,16 @@ class AniListSearchModel(private val scope: CoroutineScope) {
                 }
                 if (!silent) {
                     notice = AniListNotice(
-                        app.stringResource(KMR.strings.anilist_genres_updated, genres.size, tags.size),
+                        title = app.stringResource(KMR.strings.anilist_genres_updated_title),
+                        description = app.stringResource(KMR.strings.anilist_genres_updated, genres.size, tags.size),
                     )
                 }
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
                 if (!silent) {
                     notice = AniListNotice(
-                        app.stringResource(KMR.strings.anilist_genres_failed, e.message ?: e.javaClass.simpleName),
+                        title = app.stringResource(KMR.strings.anilist_genres_failed_title),
+                        description = e.message ?: e.javaClass.simpleName,
                         isError = true,
                     )
                 }
@@ -251,7 +267,11 @@ class AniListSearchModel(private val scope: CoroutineScope) {
 
     /** Screenshot search: finds where a picture comes from and shows those anime, best match first */
     fun searchScreenshot(image: ByteArray, mime: String?) {
-        notice = AniListNotice(app.stringResource(KMR.strings.anilist_screenshot_searching), loading = true)
+        notice = AniListNotice(
+            title = app.stringResource(KMR.strings.anilist_screenshot_searching),
+            description = app.stringResource(KMR.strings.anilist_screenshot_hint),
+            loading = true,
+        )
         scope.launch {
             try {
                 val matches = AniListApi.traceMoe(image, mime)
@@ -259,14 +279,19 @@ class AniListSearchModel(private val scope: CoroutineScope) {
                     .distinctBy { it.anilistId }
                     .take(10)
                 if (good.isEmpty()) {
-                    notice = AniListNotice(app.stringResource(KMR.strings.anilist_screenshot_none), isError = true)
+                    notice = AniListNotice(
+                        title = app.stringResource(KMR.strings.anilist_screenshot_none),
+                        description = app.stringResource(KMR.strings.anilist_screenshot_none_desc),
+                        isError = true,
+                    )
                     return@launch
                 }
                 val best = good.first()
                 traceMatches = good
                 reload()
                 notice = AniListNotice(
-                    app.stringResource(
+                    title = app.stringResource(KMR.strings.anilist_screenshot_found_title),
+                    description = app.stringResource(
                         KMR.strings.anilist_screenshot_found,
                         best.title ?: "?",
                         best.episode ?: "?",
@@ -276,7 +301,8 @@ class AniListSearchModel(private val scope: CoroutineScope) {
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
                 notice = AniListNotice(
-                    app.stringResource(KMR.strings.anilist_screenshot_failed, e.message ?: e.javaClass.simpleName),
+                    title = app.stringResource(KMR.strings.anilist_screenshot_none),
+                    description = e.message ?: e.javaClass.simpleName,
                     isError = true,
                 )
             }
@@ -305,6 +331,7 @@ class AniListSearchModel(private val scope: CoroutineScope) {
         )
 
         val FORMATS = listOf("TV", "TV_SHORT", "MOVIE", "SPECIAL", "OVA", "ONA", "MUSIC")
+        val MANGA_FORMATS = listOf("MANGA", "NOVEL", "ONE_SHOT")
         val STATUSES = listOf("RELEASING", "FINISHED", "NOT_YET_RELEASED", "HIATUS", "CANCELLED")
         val SEASONS = listOf(
             "WINTER" to KMR.strings.anilist_season_winter,

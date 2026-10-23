@@ -72,6 +72,7 @@ private val NodeWidth = 150.dp
 private val NodeHeight = 66.dp
 private val ColumnGap = 120.dp
 private val RowGap = 36.dp
+private const val MAX_COLUMN = 6
 
 /** Where each anime sits in the diagram, in dp, left to right from prequels to sequels */
 private class GraphLayout(
@@ -109,11 +110,27 @@ private fun layoutGraph(graph: AniListGraph): GraphLayout {
         sorted.forEachIndexed { index, id -> order[id] = index.toFloat() }
         placed[column] = sorted
     }
+    // A tall column (lots of movies and specials off one title) is split into a few narrower ones, the titles
+    // linked to nothing else going furthest out, so the diagram spreads out like Hayase's instead of one long line
+    val degree = HashMap<Int, Int>()
+    graph.edges.forEach { edge ->
+        degree[edge.from] = (degree[edge.from] ?: 0) + 1
+        degree[edge.to] = (degree[edge.to] ?: 0) + 1
+    }
+    val outgoing = graph.edges.map { it.from }.toSet()
+    val subColumns = placed.values.flatMap { members ->
+        if (members.size <= MAX_COLUMN) {
+            listOf(members)
+        } else {
+            val (onward, leaves) = members.partition { it in outgoing || (degree[it] ?: 0) > 1 }
+            (onward + leaves).chunked(MAX_COLUMN)
+        }
+    }
     val stepX = NodeWidth.value + ColumnGap.value
     val stepY = NodeHeight.value + RowGap.value
-    val tallest = placed.values.maxOfOrNull { it.size } ?: 1
+    val tallest = subColumns.maxOfOrNull { it.size } ?: 1
     val positions = HashMap<Int, Offset>()
-    placed.entries.forEachIndexed { columnIndex, (_, members) ->
+    subColumns.forEachIndexed { columnIndex, members ->
         val top = (tallest - members.size) * stepY / 2f
         members.forEachIndexed { index, id ->
             positions[id] = Offset(columnIndex * stepX, top + index * stepY)
@@ -121,7 +138,7 @@ private fun layoutGraph(graph: AniListGraph): GraphLayout {
     }
     return GraphLayout(
         positions = positions,
-        width = max(1, placed.size) * stepX - ColumnGap.value,
+        width = max(1, subColumns.size) * stepX - ColumnGap.value,
         height = tallest * stepY - RowGap.value,
     )
 }
@@ -137,19 +154,25 @@ fun AniListRelationsGraph(
     currentId: Int,
     onClickNode: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    /** Takes all the space it's given (the tablet's right side) instead of a set height */
+    fill: Boolean = false,
+    height: androidx.compose.ui.unit.Dp = 420.dp,
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
-    val boxHeight = if (expanded) 640.dp else 420.dp
+    val boxHeight = if (expanded) height * 1.5f else height
     Surface(
         modifier = modifier
             .fillMaxWidth()
+            .then(if (fill) Modifier.fillMaxSize() else Modifier)
             .padding(vertical = 8.dp)
             .animateContentSize(),
         shape = RoundedCornerShape(12.dp),
         color = Color(0xFF0B0B0B),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
-        BoxWithConstraints(modifier = Modifier.height(boxHeight).clipToBounds()) {
+        BoxWithConstraints(
+            modifier = (if (fill) Modifier.fillMaxSize() else Modifier.height(boxHeight)).clipToBounds(),
+        ) {
             if (graph == null || graph.nodes.size <= 1) {
                 Column(
                     modifier = Modifier.align(Alignment.Center),
@@ -185,7 +208,7 @@ fun AniListRelationsGraph(
                     )
                 }
             }
-            LaunchedEffect(layout, boxHeight) { fit() }
+            LaunchedEffect(layout, maxWidth, maxHeight) { fit() }
 
             val transition = rememberInfiniteTransition(label = "relations")
             val phase by transition.animateFloat(
@@ -298,11 +321,13 @@ fun AniListRelationsGraph(
                     label = stringResource(KMR.strings.anilist_relations_fit),
                     onClick = fit,
                 )
-                GraphButton(
-                    icon = if (expanded) Icons.Outlined.CloseFullscreen else Icons.Outlined.OpenInFull,
-                    label = stringResource(KMR.strings.anilist_relations_expand),
-                    onClick = { expanded = !expanded },
-                )
+                if (!fill) {
+                    GraphButton(
+                        icon = if (expanded) Icons.Outlined.CloseFullscreen else Icons.Outlined.OpenInFull,
+                        label = stringResource(KMR.strings.anilist_relations_expand),
+                        onClick = { expanded = !expanded },
+                    )
+                }
             }
             if (loading) {
                 CircularProgressIndicator(

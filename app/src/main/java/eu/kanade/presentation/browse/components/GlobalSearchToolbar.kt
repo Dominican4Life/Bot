@@ -52,6 +52,8 @@ fun GlobalSearchToolbar(
     toggleSelectionMode: () -> Unit,
     isRunning: Boolean,
     hasPinnedSources: Boolean,
+    /** KMK: global search's one row of buttons (Results / AniList), in place of the chips below */
+    modeRow: (@Composable () -> Unit)? = null,
     // KMK <--
 ) {
     Column(modifier = Modifier.background(MaterialTheme.colorScheme.surface)) {
@@ -83,6 +85,13 @@ fun GlobalSearchToolbar(
             }
         }
 
+        // KMK -->
+        if (modeRow != null) {
+            modeRow()
+            HorizontalDivider()
+            return@Column
+        }
+        // KMK <--
         Row(
             modifier = Modifier
                 .horizontalScroll(rememberScrollState())

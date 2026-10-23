@@ -225,6 +225,53 @@ object ReaderVideos {
     }
 }
 
+/**
+ * KMK: Plays plain video links (the AniList page's openings and endings) in the app's player, one after another,
+ * through the same hidden source. [index] is the one to start with; [pip] starts the player in a small window.
+ */
+suspend fun ReaderVideos.playLinks(
+    context: Context,
+    title: String,
+    thumbnail: String?,
+    videos: List<Pair<String, String>>,
+    index: Int,
+    pip: Boolean,
+): Boolean {
+    if (videos.isEmpty()) return false
+    val (animeId, episodeId) = withIOContext {
+        val sAnime = SAnime.create().apply {
+            url = "-1\nanilist-videos:$title"
+            this.title = title
+            thumbnail_url = thumbnail
+            initialized = true
+        }
+        val repository = Injekt.get<AnimeRepository>()
+        val anime = repository.networkToLocal(sAnime, ReaderVideos.SOURCE_ID)
+        val episodes = videos.mapIndexed { i, (name, link) ->
+            SEpisode.create().apply {
+                url = encode(
+                    buildJsonObject {
+                        put("url", link)
+                        put("title", name)
+                    },
+                )
+                this.name = name
+                episode_number = (i + 1).toFloat()
+            }
+        }
+        repository.syncEpisodes(anime, episodes.reversed())
+        val wanted = episodes.getOrNull(index)?.url
+        anime.id to repository.getEpisodes(anime.id).firstOrNull { it.url == wanted }?.id
+    }
+    if (episodeId == null) return false
+    withUIContext {
+        context.startActivity(
+            PlayerActivity.newIntent(context, animeId, episodeId).putExtra(PlayerActivity.EXTRA_START_PIP, pip),
+        )
+    }
+    return true
+}
+
 /** KMK: The hidden anime source that plays the videos found in manga chapters. Not listed with the other sources. */
 class ReaderVideosSource : AnimeSource {
     override val id: Long = ReaderVideos.SOURCE_ID

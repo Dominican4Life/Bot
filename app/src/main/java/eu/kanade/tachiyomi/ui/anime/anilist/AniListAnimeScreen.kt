@@ -1,21 +1,27 @@
 package eu.kanade.tachiyomi.ui.anime.anilist
 
-import android.content.ActivityNotFoundException
+import android.app.Application
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.content.Intent
-import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
@@ -30,29 +36,39 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.core.net.toUri
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
+import dev.icerock.moko.resources.StringResource
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarActions
 import eu.kanade.presentation.components.swipeBetweenTabs
 import eu.kanade.presentation.manga.components.ExpandableMangaDescription
 import eu.kanade.presentation.util.Screen
 import eu.kanade.presentation.util.isTabletUi
+import eu.kanade.tachiyomi.sumizuri.ReaderVideos
+import eu.kanade.tachiyomi.sumizuri.playLinks
 import eu.kanade.tachiyomi.ui.anime.AnimeGlobalSearchScreen
+import eu.kanade.tachiyomi.ui.anime.AnimeScreen
+import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchScreen
+import eu.kanade.tachiyomi.ui.manga.MangaScreen
+import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
-import eu.kanade.tachiyomi.util.system.openInBrowser
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.components.TwoPanelBox
@@ -60,21 +76,46 @@ import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.EmptyScreen
 import tachiyomi.presentation.core.screens.LoadingScreen
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
+
+/** KMK: The tabs of the AniList page (anime: Episodes, Relations, Themes, Recommendations; manga: Chapters, …) */
+enum class AniListTab(val title: StringResource) {
+    EPISODES(KMR.strings.anilist_episodes),
+    CHAPTERS(KMR.strings.anilist_chapters),
+    RELATIONS(KMR.strings.anilist_relations),
+    THEMES(KMR.strings.anilist_themes),
+    RECOMMENDATIONS(KMR.strings.anilist_recommendations),
+    ;
+
+    companion object {
+        fun of(manga: Boolean) = if (manga) {
+            listOf(CHAPTERS, RELATIONS, RECOMMENDATIONS)
+        } else {
+            listOf(EPISODES, RELATIONS, THEMES, RECOMMENDATIONS)
+        }
+    }
+}
 
 /**
- * KMK: An anime opened from the globe tab of anime global search, all from AniList: the three titles, Watch now
- * (search your anime sources for it), Trailer, AniList and MAL, then Episodes, Relations, Themes and
- * Recommendations, like Hayase.
+ * KMK: An anime (or manga) opened from the AniList tab of global search, all from AniList: the three titles,
+ * Watch now / Read now (plays straight from a source you pick), Trailer, AniList and MAL, then the tabs, like
+ * Hayase. Tapping a title in Relations or Recommendations switches this page to it (Back comes back).
  */
-class AniListAnimeScreen(private val anilistId: Int) : Screen() {
+class AniListAnimeScreen(private val anilistId: Int, private val manga: Boolean = false) : Screen() {
 
     @Composable
     override fun Content() {
         val navigator = LocalNavigator.currentOrThrow
         val context = LocalContext.current
-        val screenModel = rememberScreenModel { AniListAnimeScreenModel(anilistId) }
+        val scope = rememberCoroutineScope()
+        val screenModel = rememberScreenModel { AniListAnimeScreenModel(anilistId, manga) }
         val state by screenModel.state.collectAsState()
-        var showWatchNow by remember { mutableStateOf(false) }
+        var picker by remember { mutableStateOf<PickRequest?>(null) }
+        var trailer by remember { mutableStateOf<AniListTrailerVideo?>(null) }
+
+        BackHandler(enabled = trailer != null) { trailer = null }
+        BackHandler(enabled = trailer == null && state.canGoBack) { screenModel.back() }
 
         val details = state.details
         if (details == null) {
@@ -91,87 +132,154 @@ class AniListAnimeScreen(private val anilistId: Int) : Screen() {
         }
         val card = details.card
 
-        if (showWatchNow) {
-            AniListWatchNowDialog(
+        val openPage: (Long) -> Unit = { localId ->
+            if (manga) navigator.push(MangaScreen(localId, true)) else navigator.push(AnimeScreen(localId))
+        }
+        // Play (or read) from the remembered source, or ask for one first
+        val watch: (Int?, Boolean) -> Unit = { target, pickAgain ->
+            val link = state.link
+            if (link == null || pickAgain) {
+                picker = PickRequest(target)
+            } else {
+                screenModel.play(context, link, target, openPage)
+            }
+        }
+
+        picker?.let { request ->
+            AniListSourcePicker(
                 media = card,
-                onDismissRequest = { showWatchNow = false },
+                manga = manga,
+                onDismissRequest = { picker = null },
+                onPick = { row, item ->
+                    val link = AniListLink(row.sourceId, item.id, row.sourceName)
+                    screenModel.setLink(link)
+                    screenModel.play(context, link, request.target, openPage)
+                },
             )
         }
 
         val actions = AniListActions(
-            onWatchNow = { showWatchNow = true },
-            onWebView = { navigator.push(WebViewScreen("https://anilist.co/anime/${card.id}", card.title)) },
-            onTrailer = details.trailer?.let { trailer -> { context.openLink(trailer.url) } },
-            onAniList = { context.openLink("https://anilist.co/anime/${card.id}") },
-            onMal = card.idMal?.let { mal -> { context.openLink("https://myanimelist.net/anime/$mal") } },
-            onSearch = { navigator.push(AnimeGlobalSearchScreen(it)) },
-            onOpenAniList = { navigator.push(AniListAnimeScreen(it)) },
+            onWatchNow = { watch(null, false) },
+            onPickSource = { watch(null, true) },
+            onWebView = { navigator.push(WebViewScreen(siteUrl(card), card.title)) },
+            onTrailer = {
+                scope.launch {
+                    val video = screenModel.trailer()
+                    if (video != null) trailer = video else context.toast(KMR.strings.anilist_no_trailer)
+                }
+            },
+            onAniList = { navigator.push(WebViewScreen(siteUrl(card), card.title)) },
+            onMal = card.idMal?.let { mal ->
+                {
+                    val kind = if (manga) "manga" else "anime"
+                    navigator.push(WebViewScreen("https://myanimelist.net/$kind/$mal", card.title))
+                }
+            },
+            onSearch = { query ->
+                if (manga) navigator.push(GlobalSearchScreen(query)) else navigator.push(AnimeGlobalSearchScreen(query))
+            },
+            onOpenAniList = screenModel::open,
             onCopy = { text ->
                 context.getSystemService(ClipboardManager::class.java)
                     ?.setPrimaryClip(ClipData.newPlainText(text, text))
                 context.toast(MR.strings.copied_to_clipboard_plain)
             },
-            onPlayTheme = { url -> context.playVideo(url) },
+            onEpisode = { watch(it.number, false) },
+            onChapter = { chapter ->
+                state.link?.let { link ->
+                    context.startActivity(ReaderActivity.newIntent(context, link.localId, chapter.id))
+                }
+            },
+            onPlayTheme = { themeIndex, entryIndex ->
+                val themes = state.themes.orEmpty()
+                val videos = themes.flatMapIndexed { t, theme ->
+                    theme.entries.mapIndexedNotNull { e, entry ->
+                        entry.videoUrl?.let { url ->
+                            Triple(t to e, "${theme.type} v${entry.version} · ${theme.title}", url)
+                        }
+                    }
+                }
+                val start = videos.indexOfFirst { it.first == (themeIndex to entryIndex) }.coerceAtLeast(0)
+                scope.launch {
+                    val ok = ReaderVideos.playLinks(
+                        context = context,
+                        title = card.title,
+                        thumbnail = card.cover,
+                        videos = videos.map { it.second to it.third },
+                        index = start,
+                        pip = true,
+                    )
+                    if (!ok) context.toast(KMR.strings.anilist_no_video_app)
+                }
+            },
         )
 
         val tablet = isTabletUi()
-        Scaffold(
-            topBar = {
-                AppBar(
-                    title = card.title,
-                    navigateUp = navigator::pop,
-                    scrollBehavior = it,
-                    actions = {
-                        AppBarActions(
-                            persistentListOf(
-                                AppBar.Action(
-                                    title = stringResource(MR.strings.action_webview_refresh),
-                                    icon = Icons.Outlined.Refresh,
-                                    onClick = screenModel::refresh,
-                                ),
-                            ),
+        val tabs = remember(manga) { AniListTab.of(manga) }
+        Box(modifier = Modifier.fillMaxSize()) {
+            Scaffold(
+                topBar = {
+                    Column {
+                        AppBar(
+                            title = card.title,
+                            navigateUp = { if (state.canGoBack) screenModel.back() else navigator.pop() },
+                            scrollBehavior = it,
+                            actions = {
+                                AppBarActions(
+                                    persistentListOf(
+                                        AppBar.Action(
+                                            title = stringResource(MR.strings.action_webview_refresh),
+                                            icon = Icons.Outlined.Refresh,
+                                            onClick = screenModel::refresh,
+                                        ),
+                                    ),
+                                )
+                            },
                         )
-                    },
-                )
-            },
-        ) { contentPadding ->
-            if (tablet) {
-                TwoPanelBox(
-                    modifier = Modifier.padding(top = contentPadding.calculateTopPadding()),
-                    startContent = {
-                        Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                            AniListInfo(details, state, isTablet = true, actions = actions)
-                        }
-                    },
-                    endContent = {
-                        AniListTabs(details, state, screenModel, actions, episodeColumns = 2)
-                    },
-                )
-            } else {
-                Column(
-                    modifier = Modifier
-                        .padding(top = contentPadding.calculateTopPadding())
-                        .verticalScroll(rememberScrollState()),
-                ) {
-                    AniListInfo(details, state, isTablet = false, actions = actions)
-                    AniListTabContent(
+                        if (state.switching) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    }
+                },
+            ) { contentPadding ->
+                if (tablet) {
+                    TwoPanelBox(
+                        modifier = Modifier.padding(top = contentPadding.calculateTopPadding()),
+                        startContent = {
+                            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                                AniListInfo(details, state, isTablet = true, manga = manga, actions = actions)
+                            }
+                        },
+                        endContent = {
+                            AniListTabsPanel(tabs, details, state, screenModel, actions)
+                        },
+                    )
+                } else {
+                    AniListPhoneContent(
+                        tabs = tabs,
                         details = details,
                         state = state,
                         screenModel = screenModel,
                         actions = actions,
-                        episodeColumns = 1,
-                        scrollable = false,
+                        topPadding = contentPadding.calculateTopPadding(),
                     )
                 }
             }
+            trailer?.let { AniListTrailerWindow(video = it, onClose = { trailer = null }) }
+            AniListNoticeHost(notice = state.notice, onDismiss = screenModel::dismissNotice)
         }
     }
+
+    private fun siteUrl(card: AniListMedia) = "https://anilist.co/${if (manga) "manga" else "anime"}/${card.id}"
 }
 
-/** What the buttons of the AniList anime page do */
+/** Which episode or chapter the source picker was opened for (null: the next one) */
+@Immutable
+data class PickRequest(val target: Int?)
+
+/** What the buttons of the AniList page do */
 @Immutable
 class AniListActions(
     val onWatchNow: () -> Unit,
+    val onPickSource: () -> Unit,
     val onWebView: () -> Unit,
     val onTrailer: (() -> Unit)?,
     val onAniList: () -> Unit,
@@ -179,7 +287,9 @@ class AniListActions(
     val onSearch: (String) -> Unit,
     val onOpenAniList: (Int) -> Unit,
     val onCopy: (String) -> Unit,
-    val onPlayTheme: (String) -> Unit,
+    val onEpisode: (AniListEpisode) -> Unit,
+    val onChapter: (Chapter) -> Unit,
+    val onPlayTheme: (themeIndex: Int, entryIndex: Int) -> Unit,
 )
 
 @Composable
@@ -187,11 +297,20 @@ private fun AniListInfo(
     details: AniListDetails,
     state: AniListAnimeScreenModel.State,
     isTablet: Boolean,
+    manga: Boolean,
     actions: AniListActions,
 ) {
     Column {
-        AniListHeader(details = details, isTablet = isTablet, onWatchNow = actions.onWatchNow, onSearch = actions.onSearch)
-        AniListActionRow(details = details, actions = actions)
+        AniListHeader(
+            details = details,
+            isTablet = isTablet,
+            manga = manga,
+            linkedSource = state.link?.sourceName,
+            onWatchNow = actions.onWatchNow,
+            onPickSource = actions.onPickSource,
+            onSearch = actions.onSearch,
+        )
+        AniListActionRow(actions = actions, manga = manga)
         AniListStatsRow(details = details, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
         val tags = remember(details) {
             details.card.genres + details.tags.filter { !it.spoiler && it.rank >= 50 }.map { it.name }
@@ -210,196 +329,334 @@ private fun AniListInfo(
         if (state.error != null) {
             Text(
                 text = state.error,
-                color = androidx.compose.material3.MaterialTheme.colorScheme.error,
+                color = MaterialTheme.colorScheme.error,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             )
         }
     }
 }
 
-private val TabTitles = listOf(
-    KMR.strings.anilist_episodes,
-    KMR.strings.anilist_relations,
-    KMR.strings.anilist_themes,
-    KMR.strings.anilist_recommendations,
-)
-
-/** Tablet: the four tabs on the right, swiped between */
 @Composable
-private fun AniListTabs(
-    details: AniListDetails,
-    state: AniListAnimeScreenModel.State,
-    screenModel: AniListAnimeScreenModel,
-    actions: AniListActions,
-    episodeColumns: Int,
-) {
-    val pagerState = rememberPagerState { TabTitles.size }
-    val scope = rememberCoroutineScope()
-    LaunchedEffect(pagerState.currentPage) { screenModel.onTabShown(pagerState.currentPage) }
-    Column(modifier = Modifier.fillMaxSize()) {
-        PrimaryScrollableTabRow(selectedTabIndex = pagerState.currentPage, edgePadding = 8.dp) {
-            TabTitles.forEachIndexed { index, title ->
-                Tab(
-                    selected = pagerState.currentPage == index,
-                    onClick = { scope.launch { pagerState.animateScrollToPage(index) } },
-                    text = { Text(stringResource(title)) },
-                    unselectedContentColor = androidx.compose.material3.MaterialTheme.colorScheme.onSurface,
-                )
-            }
-        }
-        HorizontalPager(
-            state = pagerState,
-            modifier = Modifier.fillMaxSize(),
-            verticalAlignment = androidx.compose.ui.Alignment.Top,
-        ) { page ->
-            Box(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-                AniListPage(page, details, state, screenModel, actions, episodeColumns)
-            }
-        }
-    }
-}
-
-/** Phone: the four tabs under the details, in the same scrolling page */
-@Composable
-private fun AniListTabContent(
-    details: AniListDetails,
-    state: AniListAnimeScreenModel.State,
-    screenModel: AniListAnimeScreenModel,
-    actions: AniListActions,
-    episodeColumns: Int,
-    @Suppress("UNUSED_PARAMETER") scrollable: Boolean,
-) {
-    var page by rememberSaveable { mutableIntStateOf(0) }
-    LaunchedEffect(page) { screenModel.onTabShown(page) }
-    PrimaryScrollableTabRow(selectedTabIndex = page, edgePadding = 8.dp) {
-        TabTitles.forEachIndexed { index, title ->
+private fun AniListTabRow(tabs: List<AniListTab>, selected: Int, onSelect: (Int) -> Unit) {
+    PrimaryScrollableTabRow(selectedTabIndex = selected, edgePadding = 8.dp) {
+        tabs.forEachIndexed { index, tab ->
             Tab(
-                selected = page == index,
-                onClick = { page = index },
-                text = { Text(stringResource(title)) },
-                unselectedContentColor = androidx.compose.material3.MaterialTheme.colorScheme.onSurface,
+                selected = selected == index,
+                onClick = { onSelect(index) },
+                text = { Text(stringResource(tab.title)) },
+                unselectedContentColor = MaterialTheme.colorScheme.onSurface,
             )
         }
     }
-    Box(
-        modifier = Modifier.swipeBetweenTabs(count = TabTitles.size, selected = page, onSelect = { page = it }),
-    ) {
-        AniListPage(page, details, state, screenModel, actions, episodeColumns)
+}
+
+/** The list items of one tab; Relations is drawn on its own (it needs the whole space) */
+private fun LazyListScope.tabItems(
+    tab: AniListTab,
+    details: AniListDetails,
+    state: AniListAnimeScreenModel.State,
+    actions: AniListActions,
+    episodeColumns: Int,
+) {
+    when (tab) {
+        AniListTab.EPISODES -> aniListEpisodeItems(state.episodes, state.episodesLoading, episodeColumns, actions.onEpisode)
+        AniListTab.CHAPTERS -> aniListChapterItems(
+            chapters = state.chapters,
+            loading = state.chaptersLoading,
+            linkedSource = state.link?.sourceName,
+            onPickSource = actions.onPickSource,
+            onClick = actions.onChapter,
+        )
+        AniListTab.THEMES -> aniListThemeItems(state.themes, state.themesLoading, actions.onPlayTheme)
+        AniListTab.RECOMMENDATIONS -> aniListRecommendationItems(details.recommendations, actions.onOpenAniList)
+        AniListTab.RELATIONS -> {}
     }
 }
 
+/** Tablet: the tabs on the right, swiped between; Relations fills the whole right side */
 @Composable
-private fun AniListPage(
-    page: Int,
+private fun AniListTabsPanel(
+    tabs: List<AniListTab>,
     details: AniListDetails,
     state: AniListAnimeScreenModel.State,
     screenModel: AniListAnimeScreenModel,
     actions: AniListActions,
-    episodeColumns: Int,
 ) {
-    when (page) {
-        0 -> AniListEpisodes(
-            episodes = state.episodes,
-            loading = state.episodesLoading,
-            columns = episodeColumns,
-            onClick = { actions.onWatchNow() },
-        )
-        1 -> AniListRelationsGraph(
-            graph = state.graph,
-            loading = state.graphLoading,
-            currentId = details.card.id,
-            onClickNode = actions.onOpenAniList,
-            modifier = Modifier.padding(horizontal = 12.dp),
-        )
-        2 -> AniListThemes(themes = state.themes, loading = state.themesLoading, onPlay = actions.onPlayTheme)
-        else -> AniListRecommendations(details.recommendations, onClick = actions.onOpenAniList)
-    }
-}
-
-private fun Context.openLink(url: String) {
-    try {
-        startActivity(Intent(Intent.ACTION_VIEW, url.toUri()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-    } catch (_: ActivityNotFoundException) {
-        openInBrowser(url)
-    }
-}
-
-/** An opening or ending video: the phone's video player, or the browser */
-private fun Context.playVideo(url: String) {
-    try {
-        startActivity(
-            Intent(Intent.ACTION_VIEW).setDataAndType(url.toUri(), "video/webm").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-        )
-    } catch (_: ActivityNotFoundException) {
-        try {
-            openInBrowser(url)
-        } catch (_: Exception) {
-            toast(KMR.strings.anilist_no_video_app)
+    val pagerState = rememberPagerState { tabs.size }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(pagerState.currentPage, details.card.id) { screenModel.onTabShown(tabs[pagerState.currentPage]) }
+    Column(modifier = Modifier.fillMaxSize()) {
+        AniListTabRow(tabs, pagerState.currentPage) { scope.launch { pagerState.animateScrollToPage(it) } }
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxSize(),
+            verticalAlignment = Alignment.Top,
+            // The diagram takes the drags inside it
+            userScrollEnabled = tabs[pagerState.currentPage] != AniListTab.RELATIONS,
+        ) { page ->
+            val tab = tabs[page]
+            if (tab == AniListTab.RELATIONS) {
+                AniListRelationsGraph(
+                    graph = state.graph,
+                    loading = state.graphLoading,
+                    currentId = details.card.id,
+                    onClickNode = actions.onOpenAniList,
+                    fill = true,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .navigationBarsPadding()
+                        .padding(horizontal = 12.dp),
+                )
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(top = 6.dp, bottom = 24.dp),
+                ) {
+                    tabItems(tab, details, state, actions, episodeColumns = 2)
+                    item(key = "nav-bar") { Box(modifier = Modifier.navigationBarsPadding()) }
+                }
+            }
         }
     }
 }
 
-class AniListAnimeScreenModel(private val anilistId: Int) :
-    StateScreenModel<AniListAnimeScreenModel.State>(State()) {
+/** Phone: one list: the details, the tabs, then the chosen tab (everything loaded, just scroll) */
+@Composable
+private fun AniListPhoneContent(
+    tabs: List<AniListTab>,
+    details: AniListDetails,
+    state: AniListAnimeScreenModel.State,
+    screenModel: AniListAnimeScreenModel,
+    actions: AniListActions,
+    topPadding: androidx.compose.ui.unit.Dp,
+) {
+    var page by rememberSaveable { mutableIntStateOf(0) }
+    val tab = tabs[page.coerceIn(0, tabs.lastIndex)]
+    LaunchedEffect(tab, details.card.id) { screenModel.onTabShown(tab) }
+    val graphHeight = (LocalConfiguration.current.screenHeightDp * 0.75f).dp
+    val manga = screenModel.manga
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(top = topPadding)
+            .swipeBetweenTabs(count = tabs.size, selected = page, onSelect = { page = it }),
+        contentPadding = PaddingValues(bottom = 24.dp),
+    ) {
+        item(key = "info") { AniListInfo(details, state, isTablet = false, manga = manga, actions = actions) }
+        item(key = "tabs") { AniListTabRow(tabs, page) { page = it } }
+        if (tab == AniListTab.RELATIONS) {
+            item(key = "relations") {
+                AniListRelationsGraph(
+                    graph = state.graph,
+                    loading = state.graphLoading,
+                    currentId = details.card.id,
+                    onClickNode = actions.onOpenAniList,
+                    height = graphHeight,
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                )
+            }
+        } else {
+            tabItems(tab, details, state, actions, episodeColumns = 1)
+        }
+        item(key = "nav-bar") { Box(modifier = Modifier.navigationBarsPadding()) }
+    }
+}
+
+class AniListAnimeScreenModel(initialId: Int, val manga: Boolean) :
+    StateScreenModel<AniListAnimeScreenModel.State>(State(currentId = initialId)) {
+
+    private val app = Injekt.get<Application>()
+    private val history = ArrayDeque<Int>()
+    private var loadJob: Job? = null
+    private val loadedTabs = HashSet<AniListTab>()
 
     init {
-        load(refresh = false)
+        load(initialId, refresh = false)
     }
 
-    fun refresh() = load(refresh = true)
+    fun refresh() = load(state.value.currentId, refresh = true)
 
-    private fun load(refresh: Boolean) {
-        screenModelScope.launch {
+    /** Switches the page to another title (from Relations or Recommendations), keeping the diagram */
+    fun open(id: Int) {
+        if (id == state.value.currentId) return
+        history.addLast(state.value.currentId)
+        load(id, refresh = false)
+    }
+
+    /** Back to the title before; false when there's none */
+    fun back(): Boolean {
+        val previous = history.removeLastOrNull() ?: return false
+        load(previous, refresh = false)
+        return true
+    }
+
+    private fun load(id: Int, refresh: Boolean) {
+        loadJob?.cancel()
+        loadedTabs.clear()
+        mutableState.update {
+            it.copy(
+                currentId = id,
+                switching = it.details != null,
+                canGoBack = history.isNotEmpty(),
+                link = AniListLinks.get(id, manga),
+                // The diagram stays when the new title is in it, like Hayase
+                graph = it.graph?.takeIf { graph -> !refresh && graph.nodes.any { node -> node.id == id } },
+            )
+        }
+        loadJob = screenModelScope.launch {
             try {
-                val details = AniListApi.details(anilistId, refresh)
-                mutableState.update { it.copy(details = details, error = null, episodesLoading = true) }
-                val episodes = runCatching { AniListApi.episodes(details, refresh) }.getOrDefault(emptyList())
-                mutableState.update { it.copy(episodes = episodes, episodesLoading = false) }
-                if (refresh) {
-                    mutableState.update { it.copy(graph = null, themes = null) }
-                    loadedTabs.clear()
+                val details = AniListApi.details(id, refresh)
+                mutableState.update {
+                    it.copy(
+                        details = details,
+                        error = null,
+                        switching = false,
+                        episodes = emptyList(),
+                        episodesLoading = !manga,
+                        themes = null,
+                        chapters = null,
+                    )
+                }
+                if (!manga) {
+                    val episodes = runCatching { AniListApi.episodes(details, refresh) }.getOrDefault(emptyList())
+                    mutableState.update { it.copy(episodes = episodes, episodesLoading = false) }
                 }
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
-                mutableState.update { it.copy(error = e.message ?: e.javaClass.simpleName, episodesLoading = false) }
+                mutableState.update {
+                    it.copy(error = e.message ?: e.javaClass.simpleName, episodesLoading = false, switching = false)
+                }
             }
         }
     }
 
-    private val loadedTabs = HashSet<Int>()
-
-    /** Relations and themes load the first time their tab is shown */
-    fun onTabShown(page: Int) {
+    /** Relations, themes and chapters load the first time their tab is shown */
+    fun onTabShown(tab: AniListTab) {
         val details = state.value.details ?: return
-        if (!loadedTabs.add(page)) return
-        when (page) {
-            1 -> screenModelScope.launch {
-                mutableState.update { it.copy(graphLoading = true) }
-                try {
-                    AniListApi.relationsGraph(details) { graph -> mutableState.update { it.copy(graph = graph) } }
-                } catch (e: Throwable) {
-                    if (e is CancellationException) throw e
-                } finally {
-                    mutableState.update { it.copy(graphLoading = false) }
+        if (details.card.id != state.value.currentId) return
+        if (!loadedTabs.add(tab)) return
+        when (tab) {
+            AniListTab.RELATIONS -> {
+                if (state.value.graph != null) return
+                screenModelScope.launch {
+                    mutableState.update { it.copy(graphLoading = true) }
+                    try {
+                        AniListApi.relationsGraph(details) { graph -> mutableState.update { it.copy(graph = graph) } }
+                    } catch (e: Throwable) {
+                        if (e is CancellationException) throw e
+                    } finally {
+                        mutableState.update { it.copy(graphLoading = false) }
+                    }
                 }
             }
-            2 -> screenModelScope.launch {
+            AniListTab.THEMES -> screenModelScope.launch {
                 mutableState.update { it.copy(themesLoading = true) }
                 val themes = runCatching { AniListApi.themes(details.card.id) }.getOrDefault(emptyList())
                 mutableState.update { it.copy(themes = themes, themesLoading = false) }
             }
+            AniListTab.CHAPTERS -> loadChapters()
+            else -> {}
         }
+    }
+
+    private fun loadChapters() {
+        val link = state.value.link ?: return
+        screenModelScope.launch {
+            mutableState.update { it.copy(chaptersLoading = true) }
+            // What's saved shows at once, then the source's list
+            val saved = runCatching { AniListPlayback.mangaChapters(link.localId, refresh = false) }.getOrNull()
+            if (!saved.isNullOrEmpty()) mutableState.update { it.copy(chapters = saved) }
+            val fresh = runCatching { AniListPlayback.mangaChapters(link.localId) }.getOrNull()
+            mutableState.update { it.copy(chapters = fresh ?: saved ?: emptyList(), chaptersLoading = false) }
+        }
+    }
+
+    fun setLink(link: AniListLink) {
+        AniListLinks.set(state.value.currentId, manga, link)
+        mutableState.update { it.copy(link = link, chapters = null) }
+        if (AniListTab.CHAPTERS in loadedTabs) loadChapters()
+    }
+
+    /** Plays episode [target] (or opens chapter [target]; null: the next one) straight from the linked source */
+    fun play(context: Context, link: AniListLink, target: Int?, openPage: (Long) -> Unit) {
+        screenModelScope.launch {
+            notify(
+                AniListNotice(
+                    title = if (manga) {
+                        app.stringResource(KMR.strings.anilist_loading_chapters, link.sourceName)
+                    } else {
+                        app.stringResource(KMR.strings.anilist_loading_episode, target?.toString() ?: "", link.sourceName)
+                    },
+                    description = app.stringResource(KMR.strings.anilist_pick_source_hint),
+                    loading = true,
+                ),
+            )
+            val outcome = try {
+                if (manga) {
+                    AniListPlayback.readManga(context, link.localId, target)
+                } else {
+                    AniListPlayback.playAnime(context, link.localId, target)
+                }
+            } catch (e: Throwable) {
+                if (e is CancellationException) throw e
+                AniListPlayback.Outcome.Failed(e.message ?: e.javaClass.simpleName)
+            }
+            when (outcome) {
+                AniListPlayback.Outcome.Started -> mutableState.update { it.copy(notice = null) }
+                AniListPlayback.Outcome.OpenPage -> {
+                    mutableState.update { it.copy(notice = null) }
+                    openPage(link.localId)
+                }
+                is AniListPlayback.Outcome.Failed -> {
+                    notify(
+                        AniListNotice(
+                            title = app.stringResource(
+                                KMR.strings.anilist_episode_not_found,
+                                link.sourceName,
+                                target?.toString() ?: "",
+                            ),
+                            description = app.stringResource(KMR.strings.anilist_open_source_page),
+                            isError = true,
+                        ),
+                    )
+                    openPage(link.localId)
+                }
+            }
+        }
+    }
+
+    /** The trailer: AniList's, or MyAnimeList's like Shiru when AniList has none */
+    suspend fun trailer(): AniListTrailerVideo? {
+        val details = state.value.details ?: return null
+        details.trailer?.let { return AniListTrailerVideo(it.site, it.id) }
+        val mal = details.card.idMal ?: return null
+        return AniListApi.malTrailer(mal)?.let { AniListTrailerVideo("youtube", it) }
+    }
+
+    private fun notify(notice: AniListNotice) {
+        mutableState.update { it.copy(notice = notice) }
+    }
+
+    fun dismissNotice(id: Long) {
+        mutableState.update { if (it.notice?.id == id) it.copy(notice = null) else it }
     }
 
     @Immutable
     data class State(
+        val currentId: Int,
         val details: AniListDetails? = null,
         val error: String? = null,
+        val switching: Boolean = false,
+        val canGoBack: Boolean = false,
         val episodes: List<AniListEpisode> = emptyList(),
         val episodesLoading: Boolean = false,
         val graph: AniListGraph? = null,
         val graphLoading: Boolean = false,
         val themes: List<AniListTheme>? = null,
         val themesLoading: Boolean = false,
+        val link: AniListLink? = null,
+        val chapters: List<Chapter>? = null,
+        val chaptersLoading: Boolean = false,
+        val notice: AniListNotice? = null,
     )
 }

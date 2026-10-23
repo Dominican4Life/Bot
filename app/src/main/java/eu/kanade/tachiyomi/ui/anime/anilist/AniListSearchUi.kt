@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -332,7 +333,7 @@ fun AniListFilterPanel(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.35f))
+                    .background(Color.Black.copy(alpha = 0.15f))
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
@@ -363,7 +364,7 @@ fun AniListFilterPanel(
                     AniListFilterTab.GENRES -> GenresList(model)
                     AniListFilterTab.SEASON -> SeasonList(model)
                     AniListFilterTab.FORMAT -> ChoiceList(
-                        values = AniListSearchModel.FORMATS,
+                        values = model.formats,
                         picked = model.filters.formats,
                         label = AniListLabels::format,
                         onToggle = { value ->
@@ -568,13 +569,16 @@ private fun SeasonList(model: AniListSearchModel) {
     val yearTitle = stringResource(KMR.strings.anilist_year)
     val seasonLabels = AniListSearchModel.SEASONS.map { it.first to stringResource(it.second) }
     LazyColumn {
-        item(key = "season-header") { ListHeader(seasonTitle) }
-        items(seasonLabels, key = { "season-${it.first}" }) { (value, label) ->
-            PickRow(
-                text = label,
-                state = if (filters.season == value) PickState.INCLUDED else PickState.NONE,
-                onClick = { model.updateFilters { it.copy(season = if (it.season == value) null else value) } },
-            )
+        // Manga have no seasons, only the year they started
+        if (!model.manga) {
+            item(key = "season-header") { ListHeader(seasonTitle) }
+            items(seasonLabels, key = { "season-${it.first}" }) { (value, label) ->
+                PickRow(
+                    text = label,
+                    state = if (filters.season == value) PickState.INCLUDED else PickState.NONE,
+                    onClick = { model.updateFilters { it.copy(season = if (it.season == value) null else value) } },
+                )
+            }
         }
         item(key = "year-header") { ListHeader(yearTitle) }
         items(years, key = { "year-$it" }) { year ->
@@ -846,8 +850,9 @@ private fun AniListLargeCard(media: AniListMedia, match: TraceMoeMatch?, onClick
 private fun Modifier.matchParentSizeCompat(): Modifier = this.fillMaxSize()
 
 /**
- * KMK: The small note at the top right (like Shiru's) for the genre refresh and the screenshot search. It goes
- * away by itself; a newer note replaces it.
+ * KMK: Shiru's top-right toast for the genre refresh and the screenshot search: a title, a line under it and a bar
+ * along the bottom. The bar runs while it's working, then counts down until the toast goes away. A newer toast
+ * replaces it. Put it over the whole screen (it keeps clear of the status bar).
  */
 @Composable
 fun AniListNoticeHost(
@@ -856,16 +861,29 @@ fun AniListNoticeHost(
     modifier: Modifier = Modifier,
 ) {
     var shown by remember { mutableStateOf<AniListNotice?>(null) }
+    val countdown = remember { androidx.compose.animation.core.Animatable(1f) }
     LaunchedEffect(notice) {
         if (notice != null) {
             shown = notice
-            delay(if (notice.loading) 6000 else 3500)
+            countdown.snapTo(1f)
+            if (notice.loading) {
+                // Stays until the work is done (a newer toast), with a safety limit
+                delay(60_000)
+            } else {
+                countdown.animateTo(
+                    0f,
+                    androidx.compose.animation.core.tween(NOTICE_MILLIS, easing = androidx.compose.animation.core.LinearEasing),
+                )
+            }
             onDismiss(notice.id)
-        } else {
-            shown = null
         }
     }
-    Box(modifier = modifier.fillMaxWidth(), contentAlignment = Alignment.TopEnd) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.statusBars),
+        contentAlignment = Alignment.TopEnd,
+    ) {
         AnimatedVisibility(
             visible = notice != null,
             enter = fadeIn() + slideInVertically { -it },
@@ -874,38 +892,77 @@ fun AniListNoticeHost(
             val current = shown ?: return@AnimatedVisibility
             Surface(
                 modifier = Modifier
-                    .padding(8.dp)
-                    .widthIn(max = 300.dp),
-                shape = RoundedCornerShape(12.dp),
+                    .padding(12.dp)
+                    .width(320.dp),
+                shape = RoundedCornerShape(10.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                shadowElevation = 6.dp,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                shadowElevation = 8.dp,
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    when {
-                        current.loading -> CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                        current.isError -> Icon(
-                            Icons.Outlined.ErrorOutline,
-                            contentDescription = null,
-                            tint = AniListExcludeColor,
-                            modifier = Modifier.size(18.dp),
+                Column {
+                    Row(
+                        modifier = Modifier.padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        when {
+                            current.loading -> CircularProgressIndicator(
+                                modifier = Modifier.padding(top = 2.dp).size(16.dp),
+                                strokeWidth = 2.dp,
+                            )
+                            current.isError -> Icon(
+                                Icons.Outlined.ErrorOutline,
+                                contentDescription = null,
+                                tint = AniListExcludeColor,
+                                modifier = Modifier.size(20.dp),
+                            )
+                            else -> Icon(
+                                Icons.Outlined.CheckCircle,
+                                contentDescription = null,
+                                tint = Color(0xFF22C55E),
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                text = current.title,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            current.description?.let {
+                                Text(
+                                    text = it,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                    val barColor = when {
+                        current.isError -> AniListExcludeColor
+                        current.loading -> MaterialTheme.colorScheme.primary
+                        else -> Color(0xFF22C55E)
+                    }
+                    if (current.loading) {
+                        androidx.compose.material3.LinearProgressIndicator(
+                            modifier = Modifier.fillMaxWidth().height(3.dp),
+                            color = barColor,
+                            trackColor = Color.Transparent,
                         )
-                        else -> Icon(
-                            Icons.Outlined.CheckCircle,
-                            contentDescription = null,
-                            tint = AniListIncludeColor,
-                            modifier = Modifier.size(18.dp),
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(countdown.value.coerceIn(0f, 1f))
+                                .height(3.dp)
+                                .background(barColor),
                         )
                     }
-                    Text(text = current.text, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
     }
 }
+
+private const val NOTICE_MILLIS = 4000
 
 /** A thin divider used between the globe tab's rows */
 @Composable

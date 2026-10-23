@@ -156,6 +156,9 @@ class PlayerActivity : BaseActivity() {
     private var restoreAudioFocus: () -> Unit = {}
 
     private var pipRect: Rect? = null
+
+    // KMK: start in picture-in-picture once the video is loaded (see EXTRA_START_PIP)
+    private var startInPip = false
     val isPipSupportedAndEnabled by lazy {
         packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE) &&
             playerPreferences.enablePip().get()
@@ -189,6 +192,9 @@ class PlayerActivity : BaseActivity() {
     }
 
     companion object {
+        /** KMK: start the player in picture-in-picture (AniList page openings, endings and trailers) */
+        const val EXTRA_START_PIP = "startPip"
+
         fun newIntent(
             context: Context,
             animeId: Long?,
@@ -278,6 +284,8 @@ class PlayerActivity : BaseActivity() {
         // ANK <--
         // KMK -->
         PlayerDebugLog.clear()
+        // An opening, ending or trailer from the AniList page starts in a small window
+        startInPip = intent.getBooleanExtra(EXTRA_START_PIP, false)
         // KMK <--
 
         setupPlayerMPV()
@@ -1583,6 +1591,16 @@ class PlayerActivity : BaseActivity() {
 
     private fun fileLoaded() {
         if (player.isExiting) return
+        // KMK -->
+        if (startInPip) {
+            startInPip = false
+            runOnUiThread {
+                if (packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE) && !isInPictureInPictureMode) {
+                    runCatching { enterPictureInPictureMode(createPipParams()) }
+                }
+            }
+        }
+        // KMK <--
 
         setMpvOptions()
         setMpvMediaTitle()
