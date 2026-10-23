@@ -13,6 +13,7 @@ import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarActions
 import eu.kanade.presentation.components.MediaTab
+import eu.kanade.presentation.components.MediaTabPager
 import eu.kanade.presentation.components.MediaTabRow
 import eu.kanade.presentation.more.stats.StatsScreenContent
 import eu.kanade.presentation.more.stats.StatsScreenState
@@ -71,20 +72,23 @@ class StatsScreen : Screen() {
                 // KMK <--
             },
         ) { paddingValues ->
-            if (state is StatsScreenState.Loading && /* KMK */ mediaTab == MediaTab.MANGA) {
-                LoadingScreen()
-                return@Scaffold
-            }
+            // KMK: swipe left or right between Anime and Manga
+            MediaTabPager(selected = mediaTab, onSelect = { mediaTab = it }) { mediaTab ->
+                if (state is StatsScreenState.Loading && /* KMK */ mediaTab == MediaTab.MANGA) {
+                    LoadingScreen()
+                    return@MediaTabPager
+                }
 
-            StatsScreenContent(
-                // KMK: the anime tab doesn't wait on the manga numbers
-                state = state as? StatsScreenState.Success,
-                paddingValues = paddingValues,
-                // KMK -->
-                animeStats = animeStats,
-                mediaTab = mediaTab,
-                // KMK <--
-            )
+                StatsScreenContent(
+                    // KMK: the anime tab doesn't wait on the manga numbers
+                    state = state as? StatsScreenState.Success,
+                    paddingValues = paddingValues,
+                    // KMK -->
+                    animeStats = animeStats,
+                    mediaTab = mediaTab,
+                    // KMK <--
+                )
+            }
         }
     }
 }

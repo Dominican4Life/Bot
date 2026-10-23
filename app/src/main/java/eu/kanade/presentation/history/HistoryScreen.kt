@@ -42,6 +42,7 @@ import eu.kanade.presentation.components.AppBarActions
 import eu.kanade.presentation.components.AppBarTitle
 import eu.kanade.presentation.components.MediaGridItem
 import eu.kanade.presentation.components.MediaTab
+import eu.kanade.presentation.components.MediaTabPager
 import eu.kanade.presentation.components.MediaTabRow
 import eu.kanade.presentation.components.SearchToolbar
 import eu.kanade.presentation.components.animeCover
@@ -210,46 +211,53 @@ fun HistoryScreen(
             )
             return@Scaffold
         }
-        val entries = remember(state.list, animeHistory, mediaTab) {
-            mixHistory(
-                manga = if (MediaTab.showsManga(mediaTab)) state.list else emptyList(),
-                anime = if (MediaTab.showsAnime(mediaTab)) animeHistory else emptyList(),
-            )
-        }
-        // KMK <--
-        if (/* KMK --> */MediaTab.showsManga(mediaTab) && /* KMK <-- */state.isLoading) {
-            LoadingScreen(Modifier.padding(contentPadding))
-        } else if (entries.isEmpty()) {
-            val msg = when {
-                !state.searchQuery.isNullOrEmpty() -> MR.strings.no_results_found
-                // KMK
-                mediaTab == MediaTab.ANIME -> KMR.strings.anime_no_history
-                else -> MR.strings.information_no_recent_manga
+        // KMK: swipe left or right between Anime and Manga
+        MediaTabPager(
+            selected = mediaTab,
+            onSelect = onMediaTabChange,
+            userScrollEnabled = !state.selectionMode,
+        ) { mediaTab ->
+            val entries = remember(state.list, animeHistory, mediaTab) {
+                mixHistory(
+                    manga = if (MediaTab.showsManga(mediaTab)) state.list else emptyList(),
+                    anime = if (MediaTab.showsAnime(mediaTab)) animeHistory else emptyList(),
+                )
             }
-            EmptyScreen(
-                stringRes = msg,
-                modifier = Modifier.padding(contentPadding),
-            )
-        } else {
-            HistoryScreenContent(
-                // KMK -->
-                state = state,
-                entries = entries,
-                displayMode = displayMode,
-                columns = columns,
-                onAnimeDelete = { removeAnimeId = it.animeId },
-                // KMK <--
-                contentPadding = contentPadding,
-                onClickCover = { history -> onClickCover(history.mangaId) },
-                onClickResume = { history -> onClickResume(history.mangaId, history.chapterId) },
-                onClickDelete = { item -> onDialogChange(HistoryScreenModel.Dialog.Delete(item)) },
-                onClickFavorite = { history -> onClickFavorite(history.mangaId) },
-                // KMK -->
-                selectionMode = state.selectionMode,
-                onHistorySelected = onHistorySelected,
-                usePanoramaCover = usePanoramaCover,
-                // KMK <--
-            )
+            // KMK <--
+            if (/* KMK --> */MediaTab.showsManga(mediaTab) && /* KMK <-- */state.isLoading) {
+                LoadingScreen(Modifier.padding(contentPadding))
+            } else if (entries.isEmpty()) {
+                val msg = when {
+                    !state.searchQuery.isNullOrEmpty() -> MR.strings.no_results_found
+                    // KMK
+                    mediaTab == MediaTab.ANIME -> KMR.strings.anime_no_history
+                    else -> MR.strings.information_no_recent_manga
+                }
+                EmptyScreen(
+                    stringRes = msg,
+                    modifier = Modifier.padding(contentPadding),
+                )
+            } else {
+                HistoryScreenContent(
+                    // KMK -->
+                    state = state,
+                    entries = entries,
+                    displayMode = displayMode,
+                    columns = columns,
+                    onAnimeDelete = { removeAnimeId = it.animeId },
+                    // KMK <--
+                    contentPadding = contentPadding,
+                    onClickCover = { history -> onClickCover(history.mangaId) },
+                    onClickResume = { history -> onClickResume(history.mangaId, history.chapterId) },
+                    onClickDelete = { item -> onDialogChange(HistoryScreenModel.Dialog.Delete(item)) },
+                    onClickFavorite = { history -> onClickFavorite(history.mangaId) },
+                    // KMK -->
+                    selectionMode = state.selectionMode,
+                    onHistorySelected = onHistorySelected,
+                    usePanoramaCover = usePanoramaCover,
+                    // KMK <--
+                )
+            }
         }
     }
 

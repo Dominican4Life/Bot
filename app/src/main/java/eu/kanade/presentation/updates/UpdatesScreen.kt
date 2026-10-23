@@ -47,6 +47,7 @@ import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarActions
 import eu.kanade.presentation.components.MediaGridItem
 import eu.kanade.presentation.components.MediaTab
+import eu.kanade.presentation.components.MediaTabPager
 import eu.kanade.presentation.components.MediaTabRow
 import eu.kanade.presentation.components.animeCover
 import eu.kanade.presentation.components.mediaDisplayAction
@@ -266,102 +267,111 @@ fun UpdateScreen(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
     ) { contentPadding ->
         // KMK -->
-        val uiModels = remember(state.items, animeUpdates, mediaTab) {
-            mixUpdates(
-                manga = if (showsManga) state.getUiModel() else emptyList(),
-                anime = if (showsAnime) animeUpdates else emptyList(),
-            )
-        }
-        // KMK <--
-        when {
-            /* KMK --> */showsManga && /* KMK <-- */state.isLoading -> LoadingScreen(Modifier.padding(contentPadding))
-            uiModels.isEmpty() -> EmptyScreen(
-                // KMK
-                stringRes = if (mediaTab == MediaTab.ANIME) KMR.strings.anime_no_updates else MR.strings.information_no_recent,
-                modifier = Modifier.padding(contentPadding),
-            )
-            else -> {
-                val scope = rememberCoroutineScope()
-                var isRefreshing by remember { mutableStateOf(false) }
+        // KMK: swipe left or right between Anime and Manga
+        MediaTabPager(
+            selected = mediaTab,
+            onSelect = onMediaTabChange,
+            userScrollEnabled = !state.selectionMode && !animeSelectionMode,
+        ) { mediaTab ->
+            val showsManga = MediaTab.showsManga(mediaTab)
+            val showsAnime = MediaTab.showsAnime(mediaTab)
+            val uiModels = remember(state.items, animeUpdates, mediaTab) {
+                mixUpdates(
+                    manga = if (showsManga) state.getUiModel() else emptyList(),
+                    anime = if (showsAnime) animeUpdates else emptyList(),
+                )
+            }
+            // KMK <--
+            when {
+                /* KMK --> */showsManga && /* KMK <-- */state.isLoading -> LoadingScreen(Modifier.padding(contentPadding))
+                uiModels.isEmpty() -> EmptyScreen(
+                    // KMK
+                    stringRes = if (mediaTab == MediaTab.ANIME) KMR.strings.anime_no_updates else MR.strings.information_no_recent,
+                    modifier = Modifier.padding(contentPadding),
+                )
+                else -> {
+                    val scope = rememberCoroutineScope()
+                    var isRefreshing by remember { mutableStateOf(false) }
 
-                PullRefresh(
-                    refreshing = isRefreshing,
-                    onRefresh = {
-                        val started = updateLibrary()
-                        if (!started) return@PullRefresh
-                        scope.launch {
-                            // Fake refresh status but hide it after a second as it's a long running task
-                            isRefreshing = true
-                            delay(1.seconds)
-                            isRefreshing = false
-                        }
-                    },
-                    enabled = !state.selectionMode && /* KMK */ !animeSelectionMode,
-                    indicatorPadding = contentPadding,
-                ) {
-                    // KMK --> the library's grids
-                    if (displayMode != LibraryDisplayMode.List) {
-                        UpdatesGrid(
-                            uiModels = uiModels,
-                            displayMode = displayMode,
-                            columns = columns,
-                            contentPadding = contentPadding,
-                            selectionMode = state.selectionMode,
-                            onUpdateSelected = onUpdateSelected,
-                            onClickCover = onClickCover,
-                            onClickAnime = { if (animeSelectionMode) toggleAnime(it) else playEpisode(it.animeId, it.episodeId) },
-                            onLongClickAnime = toggleAnime,
-                            isAnimeSelected = { it.episodeId in animeSelected },
-                        )
-                        return@PullRefresh
-                    }
-                    // KMK <--
-                    FastScrollLazyColumn(
-                        contentPadding = contentPadding,
+                    PullRefresh(
+                        refreshing = isRefreshing,
+                        onRefresh = {
+                            val started = updateLibrary()
+                            if (!started) return@PullRefresh
+                            scope.launch {
+                                // Fake refresh status but hide it after a second as it's a long running task
+                                isRefreshing = true
+                                delay(1.seconds)
+                                isRefreshing = false
+                            }
+                        },
+                        enabled = !state.selectionMode && /* KMK */ !animeSelectionMode,
+                        indicatorPadding = contentPadding,
                     ) {
-                        // KMK
-                        if (showsManga) updatesLastUpdatedItem(lastUpdated)
+                        // KMK --> the library's grids
+                        if (displayMode != LibraryDisplayMode.List) {
+                            UpdatesGrid(
+                                uiModels = uiModels,
+                                displayMode = displayMode,
+                                columns = columns,
+                                contentPadding = contentPadding,
+                                selectionMode = state.selectionMode,
+                                onUpdateSelected = onUpdateSelected,
+                                onClickCover = onClickCover,
+                                onClickAnime = { if (animeSelectionMode) toggleAnime(it) else playEpisode(it.animeId, it.episodeId) },
+                                onLongClickAnime = toggleAnime,
+                                isAnimeSelected = { it.episodeId in animeSelected },
+                            )
+                            return@PullRefresh
+                        }
+                        // KMK <--
+                        FastScrollLazyColumn(
+                            contentPadding = contentPadding,
+                        ) {
+                            // KMK
+                            if (showsManga) updatesLastUpdatedItem(lastUpdated)
 
-                        updatesUiItems(
-                            // KMK -->
-                            uiModels = uiModels,
-                            expandedState = state.expandedState,
-                            collapseToggle = collapseToggle,
-                            usePanoramaCover = usePanoramaCover,
-                            // KMK <--
-                            selectionMode = state.selectionMode,
-                            // SY -->
-                            preserveReadingPosition = preserveReadingPosition,
-                            // SY <--
-                            onUpdateSelected = onUpdateSelected,
-                            onClickCover = onClickCover,
-                            onClickUpdate = onOpenChapter,
-                            onDownloadChapter = onDownloadChapter,
-                            // KMK -->
-                            updateSwipeStartAction = updateSwipeStartAction,
-                            updateSwipeEndAction = updateSwipeEndAction,
-                            onUpdateSwipe = onUpdateSwipe,
-                            animeContent = { item ->
-                                AnimeUpdateRow(
-                                    item = item,
-                                    sourceManager = animeSourceManager,
-                                    onClick = { playEpisode(item.animeId, item.episodeId) },
-                                    onClickCover = { navigator?.push(AnimeScreen(item.animeId)) },
-                                    onToggleSeen = {
-                                        scope.launchIO {
-                                            animeRepository.updateEpisode(id = item.episodeId, seen = !item.seen)
-                                        }
-                                    },
-                                    selected = item.episodeId in animeSelected,
-                                    selectionMode = animeSelectionMode,
-                                    onSelect = { toggleAnime(item) },
-                                    downloaded = item.episodeId in animeDownloads.downloaded,
-                                    queued = animeQueue.firstOrNull { it.episode.id == item.episodeId },
-                                    onDownload = { onAnimeDownload(item, it) },
-                                )
-                            },
-                            // KMK <--
-                        )
+                            updatesUiItems(
+                                // KMK -->
+                                uiModels = uiModels,
+                                expandedState = state.expandedState,
+                                collapseToggle = collapseToggle,
+                                usePanoramaCover = usePanoramaCover,
+                                // KMK <--
+                                selectionMode = state.selectionMode,
+                                // SY -->
+                                preserveReadingPosition = preserveReadingPosition,
+                                // SY <--
+                                onUpdateSelected = onUpdateSelected,
+                                onClickCover = onClickCover,
+                                onClickUpdate = onOpenChapter,
+                                onDownloadChapter = onDownloadChapter,
+                                // KMK -->
+                                updateSwipeStartAction = updateSwipeStartAction,
+                                updateSwipeEndAction = updateSwipeEndAction,
+                                onUpdateSwipe = onUpdateSwipe,
+                                animeContent = { item ->
+                                    AnimeUpdateRow(
+                                        item = item,
+                                        sourceManager = animeSourceManager,
+                                        onClick = { playEpisode(item.animeId, item.episodeId) },
+                                        onClickCover = { navigator?.push(AnimeScreen(item.animeId)) },
+                                        onToggleSeen = {
+                                            scope.launchIO {
+                                                animeRepository.updateEpisode(id = item.episodeId, seen = !item.seen)
+                                            }
+                                        },
+                                        selected = item.episodeId in animeSelected,
+                                        selectionMode = animeSelectionMode,
+                                        onSelect = { toggleAnime(item) },
+                                        downloaded = item.episodeId in animeDownloads.downloaded,
+                                        queued = animeQueue.firstOrNull { it.episode.id == item.episodeId },
+                                        onDownload = { onAnimeDownload(item, it) },
+                                    )
+                                },
+                                // KMK <--
+                            )
+                        }
                     }
                 }
             }

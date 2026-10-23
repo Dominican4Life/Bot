@@ -63,6 +63,9 @@ import eu.kanade.tachiyomi.ui.anime.AnimeDownloadQueueRow
 import eu.kanade.tachiyomi.ui.anime.AnimeScreen
 import eu.kanade.tachiyomi.ui.anime.DownloadQueueSectionHeader
 import eu.kanade.tachiyomi.ui.anime.MangaDownloadQueueRow
+import eu.kanade.presentation.components.MediaTab
+import eu.kanade.presentation.components.MediaTabPager
+import eu.kanade.presentation.components.MediaTabRow
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.Job
 import tachiyomi.core.common.util.lang.launchUI
@@ -97,15 +100,11 @@ object DownloadQueueScreen : Screen() {
             derivedStateOf { downloadList.sumOf { it.subItems.size } }
         }
         // KMK -->
-        // One queue for manga and anime: All | Manga | Anime
-        var tab by rememberSaveable { mutableIntStateOf(TAB_ALL) }
+        // One queue for anime and manga: Anime | Manga, swiped between
+        var tab by rememberSaveable { mutableIntStateOf(TAB_ANIME) }
         val animeManager = remember { Injekt.get<AnimeDownloadManager>() }
         val animeQueue by animeManager.queue.collectAsState()
-        val shownCount = when (tab) {
-            TAB_MANGA -> downloadCount
-            TAB_ANIME -> animeQueue.size
-            else -> downloadCount + animeQueue.size
-        }
+        val shownCount = if (tab == TAB_MANGA) downloadCount else animeQueue.size
         // The manga list is rebuilt when coming back to its tab: stop the old list's listeners
         val collectorJobs = remember { mutableListOf<Job>() }
         // KMK <--
@@ -162,15 +161,12 @@ object DownloadQueueScreen : Screen() {
                         navigateUp = navigator::pop,
                         actions = {
                             // KMK -->
-                            if (tab != TAB_MANGA && shownCount > 0) {
+                            if (tab == TAB_ANIME && shownCount > 0) {
                                 AppBarActions(
                                     persistentListOf(
                                         AppBar.OverflowAction(
                                             title = stringResource(MR.strings.action_cancel_all),
-                                            onClick = {
-                                                if (tab == TAB_ALL) screenModel.clearQueue()
-                                                animeManager.cancelAll()
-                                            },
+                                            onClick = { animeManager.cancelAll() },
                                         ),
                                     ),
                                 )
@@ -253,15 +249,11 @@ object DownloadQueueScreen : Screen() {
                         scrollBehavior = scrollBehavior,
                     )
                     // KMK -->
-                    PrimaryTabRow(selectedTabIndex = tab) {
-                        listOf(
-                            stringResource(KMR.strings.download_queue_tab_all) + " (${downloadCount + animeQueue.size})",
-                            stringResource(KMR.strings.feed_tab_manga) + " ($downloadCount)",
-                            stringResource(KMR.strings.feed_tab_anime) + " (${animeQueue.size})",
-                        ).forEachIndexed { index, title ->
-                            Tab(selected = tab == index, onClick = { tab = index }, text = { Text(title) })
-                        }
-                    }
+                    MediaTabRow(
+                        selected = tab,
+                        onSelect = { tab = it },
+                        counts = listOf(animeQueue.size, downloadCount),
+                    )
                 }
                 // KMK <--
             },
@@ -299,40 +291,20 @@ object DownloadQueueScreen : Screen() {
                 )
             },
         ) { contentPadding ->
-            // KMK -->
-            if (tab != TAB_MANGA) {
-                val mangaDownloads = if (tab == TAB_ALL) {
-                    downloadList.flatMap { header -> header.subItems.map { it.download } }
-                } else {
-                    emptyList()
-                }
-                if (mangaDownloads.isEmpty() && animeQueue.isEmpty()) {
-                    EmptyScreen(
-                        stringRes = MR.strings.information_no_downloads,
-                        modifier = Modifier.padding(contentPadding),
-                    )
-                    return@Scaffold
-                }
-                val mangaTitle = stringResource(KMR.strings.feed_tab_manga)
-                val animeTitle = stringResource(KMR.strings.feed_tab_anime)
-                ScrollbarLazyColumn(
-                    contentPadding = contentPadding,
-                    modifier = Modifier.nestedScroll(nestedScrollConnection),
-                ) {
-                    if (mangaDownloads.isNotEmpty()) {
-                        item(key = "header-manga") { DownloadQueueSectionHeader("$mangaTitle (${mangaDownloads.size})") }
-                        items(mangaDownloads, key = { "manga-${it.chapter.id}" }) { download ->
-                            MangaDownloadQueueRow(
-                                download = download,
-                                onCancel = { screenModel.cancel(listOf(download)) },
-                                onClick = { screenModel.showManga(download.manga.id) },
-                            )
-                        }
+            // KMK: swipe left or right between Anime and Manga
+            MediaTabPager(selected = tab, onSelect = { tab = it }) { page ->
+                if (page == TAB_ANIME) {
+                    if (animeQueue.isEmpty()) {
+                        EmptyScreen(
+                            stringRes = MR.strings.information_no_downloads,
+                            modifier = Modifier.padding(contentPadding),
+                        )
+                        return@MediaTabPager
                     }
-                    if (animeQueue.isNotEmpty()) {
-                        if (tab == TAB_ALL) {
-                            item(key = "header-anime") { DownloadQueueSectionHeader("$animeTitle (${animeQueue.size})") }
-                        }
+                    ScrollbarLazyColumn(
+                        contentPadding = contentPadding,
+                        modifier = Modifier.nestedScroll(nestedScrollConnection),
+                    ) {
                         items(animeQueue, key = { "anime-${it.episode.id}" }) { item ->
                             AnimeDownloadQueueRow(
                                 item = item,
@@ -341,16 +313,31 @@ object DownloadQueueScreen : Screen() {
                             )
                         }
                     }
+                    return@MediaTabPager
                 }
-                return@Scaffold
+                MangaQueuePage(contentPadding, downloadList, nestedScrollConnection, screenModel, scope, collectorJobs)
             }
+        }
+    }
+
+    // KMK: the manga queue, the original list
+    @Composable
+    private fun MangaQueuePage(
+        contentPadding: androidx.compose.foundation.layout.PaddingValues,
+        downloadList: List<DownloadHeaderItem>,
+        nestedScrollConnection: NestedScrollConnection,
+        screenModel: DownloadQueueScreenModel,
+        scope: kotlinx.coroutines.CoroutineScope,
+        collectorJobs: MutableList<Job>,
+    ) {
+        run {
             // KMK <--
             if (downloadList.isEmpty()) {
                 EmptyScreen(
                     stringRes = MR.strings.information_no_downloads,
                     modifier = Modifier.padding(contentPadding),
                 )
-                return@Scaffold
+                return@run
             }
 
             val density = LocalDensity.current
@@ -413,8 +400,7 @@ object DownloadQueueScreen : Screen() {
     }
 
     // KMK -->
-    private const val TAB_ALL = 0
-    private const val TAB_MANGA = 1
-    private const val TAB_ANIME = 2
+    private const val TAB_ANIME = MediaTab.ANIME
+    private const val TAB_MANGA = MediaTab.MANGA
     // KMK <--
 }

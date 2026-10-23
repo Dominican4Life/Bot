@@ -1,7 +1,11 @@
 package eu.kanade.presentation.components
 
 import android.content.res.Configuration
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -18,7 +22,12 @@ import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
@@ -60,22 +69,83 @@ fun MediaTabRow(
     selected: Int,
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    /** Optional counts shown after the titles, anime first */
+    counts: List<Int>? = null,
 ) {
     PrimaryTabRow(selectedTabIndex = MediaTab.fromPref(selected), modifier = modifier) {
         listOf(
             MediaTab.ANIME to KMR.strings.feed_tab_anime,
             MediaTab.MANGA to KMR.strings.feed_tab_manga,
         ).forEach { (tab, title) ->
+            val count = counts?.getOrNull(tab)
             Tab(
                 selected = MediaTab.fromPref(selected) == tab,
                 onClick = { onSelect(tab) },
-                text = { Text(stringResource(title)) },
+                text = { Text(stringResource(title) + (count?.let { " ($it)" } ?: "")) },
                 // KMK: like the library's tabs, only the chosen one is colored
                 unselectedContentColor = androidx.compose.material3.MaterialTheme.colorScheme.onSurface,
             )
         }
     }
 }
+
+/**
+ * KMK: The Anime | Manga pages under a [MediaTabRow]: swiping left or right changes the tab, and picking a tab
+ * slides to its page.
+ */
+@Composable
+fun MediaTabPager(
+    selected: Int,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+    userScrollEnabled: Boolean = true,
+    content: @Composable (tab: Int) -> Unit,
+) {
+    val current = MediaTab.fromPref(selected)
+    val pagerState = rememberPagerState(initialPage = current) { 2 }
+    val latestSelected by rememberUpdatedState(current)
+    val latestOnSelect by rememberUpdatedState(onSelect)
+    LaunchedEffect(current) {
+        if (pagerState.currentPage != current) pagerState.animateScrollToPage(current)
+    }
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.settledPage }.collect { page ->
+            if (page != latestSelected && !pagerState.isScrollInProgress) latestOnSelect(page)
+        }
+    }
+    HorizontalPager(
+        state = pagerState,
+        modifier = modifier.fillMaxSize(),
+        userScrollEnabled = userScrollEnabled,
+        verticalAlignment = Alignment.Top,
+        key = { it },
+    ) { page ->
+        content(page)
+    }
+}
+
+/**
+ * KMK: Swiping left or right anywhere on a screen moves to the next or previous of [count] tabs, for screens whose
+ * tabs each draw a whole page of their own.
+ */
+fun Modifier.swipeBetweenTabs(count: Int, selected: Int, onSelect: (Int) -> Unit): Modifier =
+    pointerInput(count, selected) {
+        var total = 0f
+        detectHorizontalDragGestures(
+            onDragStart = { total = 0f },
+            onDragEnd = {
+                val threshold = 64.dp.toPx()
+                when {
+                    total < -threshold && selected < count - 1 -> onSelect(selected + 1)
+                    total > threshold && selected > 0 -> onSelect(selected - 1)
+                }
+            },
+            onHorizontalDrag = { change, amount ->
+                total += amount
+                change.consume()
+            },
+        )
+    }
 
 /** KMK: The toolbar button that opens [MediaDisplayDialog], with the same icon as a source's display mode button */
 @Composable

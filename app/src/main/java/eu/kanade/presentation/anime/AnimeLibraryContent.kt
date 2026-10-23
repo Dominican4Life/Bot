@@ -11,8 +11,10 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -35,6 +37,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.material3.Text
 import eu.kanade.domain.ui.BadgeCorner
 import eu.kanade.domain.ui.CoverBadge
 import eu.kanade.domain.ui.UiPreferences
@@ -483,6 +486,16 @@ private fun AnimeLibraryPageGrid(
     onContinueWatching: (Anime) -> Unit,
 ) {
     val shown = page.shown
+    // KMK: "Search for … globally", like the manga library
+    val navigator = cafe.adriel.voyager.navigator.LocalNavigator.current
+    val globalSearch: @Composable (Modifier) -> Unit = { modifier ->
+        androidx.compose.material3.TextButton(
+            modifier = modifier,
+            onClick = { navigator?.push(eu.kanade.tachiyomi.ui.anime.AnimeGlobalSearchScreen(searchQuery.orEmpty())) },
+        ) {
+            Text(text = stringResource(MR.strings.action_global_search_query, searchQuery.orEmpty()))
+        }
+    }
     if (shown.isEmpty()) {
         Column(
             modifier = Modifier
@@ -490,6 +503,9 @@ private fun AnimeLibraryPageGrid(
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState()),
         ) {
+            if (!searchQuery.isNullOrEmpty()) {
+                globalSearch(Modifier.fillMaxWidth().padding(8.dp))
+            }
             EmptyScreen(
                 message = stringResource(
                     when {
@@ -544,6 +560,11 @@ private fun AnimeLibraryPageGrid(
         verticalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridVerticalSpacer),
         horizontalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridHorizontalSpacer),
     ) {
+        if (!searchQuery.isNullOrEmpty()) {
+            item(key = "anime-global-search", span = { GridItemSpan(maxLineSpan) }) {
+                globalSearch(Modifier.fillMaxWidth())
+            }
+        }
         items(
             shown,
             key = { it.id },

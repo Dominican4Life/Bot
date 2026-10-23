@@ -18,6 +18,7 @@ import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.category.CategoryScreen
+import eu.kanade.presentation.components.swipeBetweenTabs
 import eu.kanade.presentation.category.SourceCategoryScreen
 import eu.kanade.presentation.category.components.CategoryCreateDialog
 import eu.kanade.presentation.category.components.CategoryDeleteDialog
@@ -54,9 +55,10 @@ class CategoryScreen(
         var tab by rememberSaveable { mutableIntStateOf(initialTab) }
         val tabs: @Composable () -> Unit = {
             PrimaryTabRow(selectedTabIndex = tab) {
+                // Anime on the left, like History, Updates and Stats
                 listOf(
-                    stringResource(KMR.strings.feed_tab_manga),
                     stringResource(KMR.strings.feed_tab_anime),
+                    stringResource(KMR.strings.feed_tab_manga),
                     stringResource(MR.strings.label_sources),
                 ).forEachIndexed { index, title ->
                     Tab(
@@ -69,10 +71,16 @@ class CategoryScreen(
                 }
             }
         }
-        when (tab) {
-            TAB_ANIME -> AnimeCategories(tabs)
-            TAB_SOURCES -> SourceCategories(tabs)
-            else -> MangaCategories(tabs)
+        // Swipe left or right to change tab
+        androidx.compose.foundation.layout.Box(
+            modifier = androidx.compose.ui.Modifier
+                .swipeBetweenTabs(count = 3, selected = tab, onSelect = { tab = it }),
+        ) {
+            when (tab) {
+                TAB_ANIME -> AnimeCategories(tabs)
+                TAB_SOURCES -> SourceCategories(tabs)
+                else -> MangaCategories(tabs)
+            }
         }
         // KMK <--
     }
@@ -248,8 +256,8 @@ class CategoryScreen(
     }
 
     companion object {
-        const val TAB_MANGA = 0
-        const val TAB_ANIME = 1
+        const val TAB_ANIME = 0
+        const val TAB_MANGA = 1
         const val TAB_SOURCES = 2
     }
     // KMK <--
