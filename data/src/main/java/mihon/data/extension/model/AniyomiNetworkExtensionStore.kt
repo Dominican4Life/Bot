@@ -15,7 +15,7 @@ data class AniyomiNetworkExtensionStore(
     @ProtoNumber(1) val name: String = "",
     @ProtoNumber(2) val badgeLabel: String = "",
     @ProtoNumber(3) val signingKey: String = "",
-    @ProtoNumber(4) val contact: NetworkExtensionStore.Contact = NetworkExtensionStore.Contact(""),
+    @ProtoNumber(4) val contact: NetworkExtensionStore.Contact = NetworkExtensionStore.Contact("", null),
     @ProtoNumber(101) val extensionList: ExtensionList? = null,
     @ProtoNumber(102) val extensionListUrl: String? = null,
 ) {
