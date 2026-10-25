@@ -65,6 +65,9 @@ class UiPreferences(
     fun sourceBadges(corner: BadgeCorner) =
         preferenceStore.getStringSet("source_badges_${corner.key}", corner.defaultSourceBadges)
 
+    /** Set once the source type badge has been put next to the language badge for people with their own layout */
+    fun sourceTypeBadgeAdded() = preferenceStore.getBoolean("source_type_badge_added", false)
+
     /** Thin reading-progress bar along the bottom of covers (history, library) */
     fun coverProgressBar() = preferenceStore.getBoolean("cover_progress_bar", true)
     // KMK <--

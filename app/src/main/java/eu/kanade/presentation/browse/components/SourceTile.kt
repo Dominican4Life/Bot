@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,7 +24,6 @@ import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -49,6 +49,7 @@ import androidx.core.net.toUri
 import eu.kanade.domain.ui.BadgeCorner
 import eu.kanade.domain.ui.SourceBadge
 import eu.kanade.presentation.components.BadgeCorners
+import eu.kanade.tachiyomi.ui.browse.extension.unified.ExtensionKind
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
@@ -86,6 +87,8 @@ fun SourceTile(
     onClickLatest: (() -> Unit)?,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    // KMK: where the source comes from, shown as a colored badge (null: none, like Local source)
+    kind: ExtensionKind? = null,
     fallbackIcon: @Composable () -> Unit = { DefaultTileIcon() },
 ) {
     val shape = RoundedCornerShape(16.dp)
@@ -158,12 +161,13 @@ fun SourceTile(
             }
 
             val badges: Map<String, @Composable () -> Unit> = buildMap {
+                if (kind != null) put(SourceBadge.TYPE) { SourceKindBadge(kind) }
                 if (lang.isNotEmpty()) put(SourceBadge.LANGUAGE) { LanguageChip(lang) }
                 if (isNsfw) put(SourceBadge.NSFW) { NsfwChip() }
                 if (onClickSettings != null) {
                     put(SourceBadge.SETTINGS) {
                         TileButton(
-                            icon = { Icon(Icons.Outlined.Settings, contentDescription = stringResource(MR.strings.action_settings), modifier = Modifier.size(18.dp)) },
+                            icon = { Icon(Icons.Outlined.Settings, contentDescription = stringResource(MR.strings.action_settings), modifier = Modifier.size(TileIconSize)) },
                             onClick = onClickSettings,
                         )
                     }
@@ -176,7 +180,7 @@ fun SourceTile(
                                     imageVector = if (isPinned) Icons.Filled.PushPin else Icons.Outlined.PushPin,
                                     contentDescription = stringResource(if (isPinned) MR.strings.action_unpin else MR.strings.action_pin),
                                     tint = if (isPinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(18.dp),
+                                    modifier = Modifier.size(TileIconSize),
                                 )
                             },
                             onClick = onClickPin,
@@ -186,7 +190,7 @@ fun SourceTile(
                 if (supportsLatest && onClickLatest != null) {
                     put(SourceBadge.LATEST) {
                         TileButton(
-                            icon = { Icon(Icons.Outlined.NewReleases, contentDescription = stringResource(MR.strings.latest), modifier = Modifier.size(18.dp)) },
+                            icon = { Icon(Icons.Outlined.NewReleases, contentDescription = stringResource(MR.strings.latest), modifier = Modifier.size(TileIconSize)) },
                             onClick = onClickLatest,
                         )
                     }
@@ -274,9 +278,22 @@ private fun NsfwChip() {
     )
 }
 
+// KMK: small enough to sit level with the EN / 18+ badges; no 48dp touch box, which pushed them out of line
+private val TileIconSize = 14.dp
+
 @Composable
 private fun TileButton(icon: @Composable () -> Unit, onClick: () -> Unit) {
-    IconButton(onClick = onClick, modifier = Modifier.size(30.dp)) { icon() }
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(18.dp)
+            .clip(androidx.compose.foundation.shape.CircleShape)
+            .clickable(onClick = onClick),
+    ) {
+        androidx.compose.runtime.CompositionLocalProvider(
+            androidx.compose.material3.LocalContentColor provides MaterialTheme.colorScheme.onSurfaceVariant,
+        ) { icon() }
+    }
 }
 
 @Composable

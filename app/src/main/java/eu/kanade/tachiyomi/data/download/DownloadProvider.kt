@@ -55,7 +55,9 @@ class DownloadProvider(
         }
 
         val sourceDirName = getSourceDirName(source)
-        val sourceDir = downloadsDir.createDirectory(sourceDirName)
+        // KMK: the manga's folder wherever it already is, else the source's existing folder, else a new one
+        findMangaDir(mangaTitle, source)?.let { return Result.success(it) }
+        val sourceDir = SourceFolders.findOrCreate(downloadsDir, sourceDirName, sourceMatch(source))
         if (sourceDir == null) {
             val displayablePath = downloadsDir.displayablePath + "/$sourceDirName"
             logcat(LogPriority.ERROR) { "Failed to create source download directory: $displayablePath" }
@@ -65,7 +67,7 @@ class DownloadProvider(
         }
 
         val mangaDirName = getMangaDirName(mangaTitle)
-        val mangaDir = sourceDir.createDirectory(mangaDirName)
+        val mangaDir = SourceFolders.findOrCreate(sourceDir, mangaDirName)
         if (mangaDir == null) {
             val displayablePath = sourceDir.displayablePath + "/$mangaDirName"
             logcat(LogPriority.ERROR) { "Failed to create manga download directory: $displayablePath" }
@@ -88,9 +90,32 @@ class DownloadProvider(
             storageManager.getLocalSourceDirectory()
         } else {
             // KMK <--
-            downloadsDir?.findFile(getSourceDirName(source))
+            findSourceDirs(source).firstOrNull()
         }
     }
+
+    // KMK -->
+    /** What counts as this source's folder: today's name, the same source under another tag, numbered copies */
+    fun sourceMatch(source: Source): SourceFolders.Match {
+        val ascii = libraryPreferences.disallowNonAsciiFilenames().get()
+        return SourceFolders.match(
+            exact = getSourceDirName(source),
+            baseName = DiskUtil.buildValidFilename(source.name, disallowNonAscii = ascii),
+            lang = source.lang,
+            js = source is eu.kanade.tachiyomi.jssource.JsMangaSource,
+        )
+    }
+
+    /** Every download folder of [source], best first */
+    fun findSourceDirs(source: Source): List<UniFile> {
+        if (source.isLocal()) return listOfNotNull(storageManager.getLocalSourceDirectory())
+        val dir = downloadsDir ?: return emptyList()
+        dir.findFile(getSourceDirName(source))?.takeIf { it.isDirectory }?.let { exact ->
+            return listOf(exact) + SourceFolders.find(dir, sourceMatch(source)).filter { it.name != exact.name }
+        }
+        return SourceFolders.find(dir, sourceMatch(source))
+    }
+    // KMK <--
 
     /**
      * Returns the download directory for a manga if it exists.
@@ -99,8 +124,9 @@ class DownloadProvider(
      * @param source the source of the manga.
      */
     fun findMangaDir(mangaTitle: String, source: Source): UniFile? {
-        val sourceDir = findSourceDir(source)
-        return sourceDir?.findFile(getMangaDirName(mangaTitle))
+        // KMK: looked for in every folder of the source
+        val name = getMangaDirName(mangaTitle)
+        return findSourceDirs(source).firstNotNullOfOrNull { dir -> dir.findFile(name)?.takeIf { it.isDirectory } }
     }
 
     /**

@@ -34,6 +34,21 @@ class BadgeCorners(private val byCorner: Map<BadgeCorner, List<String>>) {
 @Composable
 private fun rememberCorners(source: Boolean): BadgeCorners {
     val prefs = remember { Injekt.get<UiPreferences>() }
+    // KMK: the source type badge is new: once, put it in the language badge's corner for layouts saved before it
+    if (source) {
+        remember {
+            val added = prefs.sourceTypeBadgeAdded()
+            if (!added.get()) {
+                val type = eu.kanade.domain.ui.SourceBadge.TYPE
+                val all = BadgeCorner.entries.map { prefs.sourceBadges(it) }
+                if (all.none { type in it.get() }) {
+                    val target = all.firstOrNull { eu.kanade.domain.ui.SourceBadge.LANGUAGE in it.get() } ?: all.first()
+                    target.set(target.get() + type)
+                }
+                added.set(true)
+            }
+        }
+    }
     val corners = BadgeCorner.entries.associateWith { corner ->
         val pref = remember(corner) { if (source) prefs.sourceBadges(corner) else prefs.coverBadges(corner) }
         val value by pref.collectAsState()

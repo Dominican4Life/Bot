@@ -433,24 +433,35 @@ class DownloadCache(
                 return@launchIO
             }
 
-            val sourceMap = sources.associate { provider.getSourceDirName(it).lowercase() to it.id }
+            // KMK: a folder belongs to a source by name whatever its tag, (EN), (JS), (ALL), and numbered copies too
+            val matches = sources.map { it.id to provider.sourceMatch(it) }
 
             rootDownloadsDirMutex.withLock {
                 val updatedRootDir = RootDirectory(storageManager.getMangaDownloadsDirectory())
 
-                updatedRootDir.sourceDirs = updatedRootDir.dir?.listFiles().orEmpty()
+                val bySource = HashMap<Long, MutableList<Pair<UniFile, Int>>>()
+                updatedRootDir.dir?.listFiles().orEmpty()
                     .filter { it.isDirectory && !it.name.isNullOrBlank() }
-                    .mapNotNull { dir ->
-                        val sourceId = sourceMap[dir.name!!.lowercase()]
-                        sourceId?.let { it to SourceDirectory(dir) }
+                    .forEach { dir ->
+                        matches
+                            .mapNotNull { (id, match) -> match.rank(dir.name!!)?.let { id to it } }
+                            .minByOrNull { it.second }
+                            ?.let { (id, rank) -> bySource.getOrPut(id) { mutableListOf() } += dir to rank }
                     }
-                    .toMap()
 
-                updatedRootDir.sourceDirs.values.map { sourceDir ->
+                val folders = bySource.mapValues { (_, list) -> list.sortedBy { it.second }.map { it.first } }
+                updatedRootDir.sourceDirs = folders.mapValues { (_, dirs) -> SourceDirectory(dirs.first()) }
+
+                updatedRootDir.sourceDirs.map { (sourceId, sourceDir) ->
                     async {
-                        sourceDir.mangaDirs = sourceDir.dir?.listFiles().orEmpty()
-                            .filter { it.isDirectory && !it.name.isNullOrBlank() }
-                            .associate { it.name!! to MangaDirectory(it) }
+                        // Titles from every folder of the source; the best folder wins when a title is in two
+                        val mangaDirs = LinkedHashMap<String, MangaDirectory>()
+                        folders[sourceId].orEmpty().forEach { folder ->
+                            folder.listFiles().orEmpty()
+                                .filter { it.isDirectory && !it.name.isNullOrBlank() }
+                                .forEach { if (it.name!! !in mangaDirs) mangaDirs[it.name!!] = MangaDirectory(it) }
+                        }
+                        sourceDir.mangaDirs = mangaDirs
 
                         sourceDir.mangaDirs.values.forEach { mangaDir ->
                             val chapterDirs = mangaDir.dir?.listFiles().orEmpty()

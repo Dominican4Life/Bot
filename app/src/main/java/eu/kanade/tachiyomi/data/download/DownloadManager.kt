@@ -315,7 +315,7 @@ class DownloadManager(
      * return the list of all manga folders
      */
     fun getMangaFolders(source: Source): List<UniFile> {
-        return provider.findSourceDir(source)?.listFiles()?.toList().orEmpty()
+        return provider.findSourceDirs(source).flatMap { it.listFiles()?.toList().orEmpty() }
     }
 
     /**
@@ -406,6 +406,8 @@ class DownloadManager(
         val newName = provider.getSourceDirName(newSource)
 
         if (oldFolder.name == newName) return
+        // KMK: a folder that already counts for the new source (same name, other tag) is left as it is
+        if (oldFolder.name?.let { provider.sourceMatch(newSource).rank(it) } != null) return
 
         val capitalizationChanged = oldFolder.name.equals(newName, ignoreCase = true)
         if (capitalizationChanged) {

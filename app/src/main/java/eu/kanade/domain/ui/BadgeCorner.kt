@@ -12,7 +12,7 @@ enum class BadgeCorner(
     TopLeft(
         "top_left",
         setOf(CoverBadge.DOWNLOADED, CoverBadge.UNREAD, CoverBadge.FAVORITE),
-        setOf(SourceBadge.LANGUAGE, SourceBadge.NSFW),
+        setOf(SourceBadge.TYPE, SourceBadge.LANGUAGE, SourceBadge.NSFW),
     ),
     TopRight("top_right", setOf(CoverBadge.LANGUAGE, CoverBadge.SOURCE), setOf(SourceBadge.SETTINGS)),
     BottomLeft("bottom_left", emptySet(), setOf(SourceBadge.PIN)),
@@ -32,11 +32,13 @@ object CoverBadge {
 
 /** Badges shown on source tiles in Browse */
 object SourceBadge {
+    /** Where the source comes from: Mihon, Aniyomi, JS or JSON */
+    const val TYPE = "type"
     const val LANGUAGE = "language"
     const val NSFW = "nsfw"
     const val SETTINGS = "settings"
     const val PIN = "pin"
     const val LATEST = "latest"
 
-    val all = listOf(LANGUAGE, NSFW, SETTINGS, PIN, LATEST)
+    val all = listOf(TYPE, LANGUAGE, NSFW, SETTINGS, PIN, LATEST)
 }

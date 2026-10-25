@@ -279,6 +279,16 @@ fun AnimeSourcesPane(
                     onClickSettings = { sheetSource = source },
                     onClickPin = { onTogglePin(source.id) },
                     onClickLatest = { onClickLatest(source.id) },
+                    // KMK: Aniyomi, JS or JSON badge
+                    kind = when (source) {
+                        is eu.kanade.tachiyomi.jssource.JsAnimeSource ->
+                            if (source.info.json) {
+                                eu.kanade.tachiyomi.ui.browse.extension.unified.ExtensionKind.JSON
+                            } else {
+                                eu.kanade.tachiyomi.ui.browse.extension.unified.ExtensionKind.JS
+                            }
+                        else -> eu.kanade.tachiyomi.ui.browse.extension.unified.ExtensionKind.ANIYOMI.takeIf { ext != null }
+                    },
                 )
             }
             if (pinned.isNotEmpty()) {

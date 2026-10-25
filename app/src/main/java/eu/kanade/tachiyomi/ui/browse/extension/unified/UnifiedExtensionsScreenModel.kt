@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.extension.model.Extension
 import eu.kanade.tachiyomi.extension.model.InstallStep
 import eu.kanade.tachiyomi.jssource.JsSourceManager
+import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -94,8 +95,12 @@ class UnifiedExtensionsScreenModel(
 
         screenModelScope.launchIO {
             combine(mangaFlow, animeFlow, prefsFlow, steps) { manga, anime, prefs, steps ->
-                build(manga, anime, prefs, steps)
+                // KMK: a failed rebuild is logged and skipped, so later changes (like a switch) still show
+                runCatching { build(manga, anime, prefs, steps) }
+                    .onFailure { AppLog.add('E', "extensions", "Rebuilding the extension list failed: ${it.message}") }
+                    .getOrNull()
             }.collectLatest { built ->
+                if (built == null) return@collectLatest
                 mutableState.update {
                     it.copy(
                         isLoading = false,
@@ -121,7 +126,7 @@ class UnifiedExtensionsScreenModel(
                         val enabled = info.enabled && id !in (if (info.anime) animeDisabled else disabled)
                         UnifiedSource(
                             id = info.id,
-                            kind = ExtensionKind.JS,
+                            kind = if (info.json) ExtensionKind.JSON else ExtensionKind.JS,
                             name = info.name,
                             lang = info.displayLang,
                             enabled = enabled,
@@ -448,6 +453,17 @@ class UnifiedExtensionsScreenModel(
     }
 
     fun setSourceEnabled(source: UnifiedSource, enabled: Boolean) {
+        // KMK: the switch moves straight away instead of waiting for the list to be rebuilt
+        mutableState.update { state ->
+            state.copy(
+                allSources = state.allSources.map {
+                    if (it.id == source.id && it.kind == source.kind) it.copy(enabled = enabled) else it
+                },
+            )
+        }
+        if (source.js == null) {
+            AppLog.add('I', "extensions", "${source.name} (${source.kind.label}) switched ${if (enabled) "on" else "off"}")
+        }
         val pref = if (source.isAnime) preferences.animeDisabledSources() else preferences.disabledSources()
         val id = source.id.toString()
         // KMK --> a JS source and an APK can share an id: each keeps its own switch, so turning one off hands the

@@ -54,6 +54,7 @@ import eu.kanade.presentation.components.SourcesSearchBox
 import eu.kanade.presentation.components.rememberSourceBadgeCorners
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.ui.browse.extension.unified.ExtensionKind
 import eu.kanade.tachiyomi.ui.browse.source.SourcesScreenModel
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreenModel.Listing
 import eu.kanade.tachiyomi.util.system.LocaleHelper
@@ -185,6 +186,15 @@ fun SourcesScreen(
                             }
                             val icon = remember(source.id) { source.icon }
                             val isNsfw = remember(source.id) { source.installedExtension?.isNsfw == true }
+                            // KMK: Mihon, JS or JSON badge
+                            val kind = remember(source.id) {
+                                when (val real = sourceManager.get(source.id)) {
+                                    is eu.kanade.tachiyomi.jssource.JsMangaSource ->
+                                        if (real.info.json) ExtensionKind.JSON else ExtensionKind.JS
+                                    null -> null
+                                    else -> if (source.isLocal() || source.installedExtension == null) null else ExtensionKind.MIHON
+                                }
+                            }
                             SourceTile(
                                 name = source.name,
                                 site = site,
@@ -199,6 +209,7 @@ fun SourcesScreen(
                                 onClickSettings = onClickSettings?.let { { it(source) } },
                                 onClickPin = { onClickPin(source) }.takeIf { state.showPin },
                                 onClickLatest = { onClickItem(source, Listing.Latest) },
+                                kind = kind,
                                 fallbackIcon = {
                                     if (source.isLocal()) {
                                         Image(

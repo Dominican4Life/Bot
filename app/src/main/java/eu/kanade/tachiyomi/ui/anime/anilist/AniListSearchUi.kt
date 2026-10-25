@@ -110,11 +110,11 @@ val AniListExcludeColor = Color(0xFFE5484D)
 
 /** KMK: The five lists of the globe tab */
 enum class AniListFilterTab(val icon: ImageVector, val label: StringResource) {
-    GENRES(Icons.Outlined.Tag, KMR.strings.anilist_genres),
-    SEASON(Icons.Outlined.CalendarMonth, KMR.strings.anilist_season),
-    FORMAT(Icons.Outlined.Tv, KMR.strings.anilist_format),
-    STATUS(Icons.Outlined.DesktopWindows, KMR.strings.anilist_status),
-    SORT(Icons.AutoMirrored.Outlined.Sort, KMR.strings.anilist_sort),
+    GENRES(LucideIcons.Hash, KMR.strings.anilist_genres),
+    SEASON(LucideIcons.Calendar, KMR.strings.anilist_season),
+    FORMAT(LucideIcons.Tv, KMR.strings.anilist_format),
+    STATUS(LucideIcons.MonitorPlay, KMR.strings.anilist_status),
+    SORT(LucideIcons.SortDown, KMR.strings.anilist_sort),
 }
 
 /**
@@ -894,13 +894,14 @@ private fun formatLabel(format: String?): String = when (format) {
 }
 
 private fun formatIcon(format: String?): ImageVector = when (format) {
-    "MOVIE" -> Icons.Outlined.Movie
-    "MUSIC" -> Icons.Outlined.MusicNote
-    "SPECIAL", "OVA" -> Icons.Outlined.Album
-    "ONA" -> Icons.Outlined.Language
-    "MANGA", "ONE_SHOT" -> Icons.AutoMirrored.Outlined.MenuBook
-    "NOVEL" -> Icons.Outlined.AutoStories
-    else -> Icons.Outlined.Tv
+    "MOVIE" -> LucideIcons.Film
+    "MUSIC" -> LucideIcons.Music
+    "SPECIAL", "OVA" -> LucideIcons.Disc
+    "ONA" -> LucideIcons.Globe
+    "MANGA" -> LucideIcons.BookOpen
+    "ONE_SHOT" -> LucideIcons.File
+    "NOVEL" -> LucideIcons.BookText
+    else -> LucideIcons.Tv
 }
 
 /**
@@ -925,7 +926,7 @@ private fun androidx.compose.foundation.layout.BoxScope.CoverFooter(media: AniLi
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (year != null) {
-            Icon(Icons.Outlined.CalendarMonth, contentDescription = null, tint = Color.White, modifier = Modifier.size(12.dp))
+            Icon(LucideIcons.Calendar, contentDescription = null, tint = Color.White, modifier = Modifier.size(13.dp))
             Spacer(modifier = Modifier.width(3.dp))
             Text(text = year.toString(), color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Medium)
         }
@@ -939,7 +940,7 @@ private fun androidx.compose.foundation.layout.BoxScope.CoverFooter(media: AniLi
                 maxLines = 1,
             )
             Spacer(modifier = Modifier.width(3.dp))
-            Icon(formatIcon(media.format), contentDescription = null, tint = Color.White, modifier = Modifier.size(12.dp))
+            Icon(formatIcon(media.format), contentDescription = null, tint = Color.White, modifier = Modifier.size(13.dp))
         }
     }
 }

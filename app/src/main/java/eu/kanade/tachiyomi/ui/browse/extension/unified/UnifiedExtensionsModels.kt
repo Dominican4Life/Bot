@@ -11,8 +11,11 @@ enum class ExtensionKind(val label: String) {
     MIHON("Mihon"),
     ANIYOMI("Aniyomi"),
 
-    /** JS / JSON sources from the Code editor; listed with the sources, not packages or repos */
-    JS("JS / JSON"),
+    /** JS sources from the Code editor; listed with the sources, not packages or repos */
+    JS("JS"),
+
+    /** JSON sources from the Code editor */
+    JSON("JSON"),
 }
 
 enum class PackageState {

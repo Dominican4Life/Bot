@@ -27,6 +27,7 @@ abstract class SettingsBadgesScreen(private val forSources: Boolean) : Searchabl
         val uiPreferences = remember { Injekt.get<UiPreferences>() }
         val entries = if (forSources) {
             mapOf(
+                SourceBadge.TYPE to stringResource(KMR.strings.badge_source_type),
                 SourceBadge.LANGUAGE to stringResource(KMR.strings.badge_language),
                 SourceBadge.NSFW to stringResource(KMR.strings.badge_nsfw),
                 SourceBadge.SETTINGS to stringResource(KMR.strings.badge_settings),

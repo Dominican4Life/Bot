@@ -258,13 +258,31 @@ class AnimeDownloadManager(
         return DiskUtil.buildValidFilename(name)
     }
 
+    // KMK: the source's folders under any tag ("Name (EN)", "Name (JS)") and numbered copies count too
+    private fun sourceMatch(anime: Anime): eu.kanade.tachiyomi.data.download.SourceFolders.Match {
+        val source = sourceManager.get(anime.source)
+        return eu.kanade.tachiyomi.data.download.SourceFolders.match(
+            exact = sourceDirName(anime),
+            baseName = DiskUtil.buildValidFilename(source?.name ?: anime.source.toString()),
+            lang = source?.lang.orEmpty(),
+            js = source is eu.kanade.tachiyomi.jssource.JsAnimeSource,
+        )
+    }
+
     // KMK: also where the anime's cover is kept (CoverFolders)
     internal fun animeDir(anime: Anime, create: Boolean): UniFile? {
         // downloads/Anime (the older "anime" folder counts too)
-        val animeRoot = storageManager.getAnimeDownloadsDirectory(create)
-        val sourceDir = animeRoot?.let { if (create) it.createDirectory(sourceDirName(anime)) else it.findFile(sourceDirName(anime)) }
+        val animeRoot = storageManager.getAnimeDownloadsDirectory(create) ?: return null
         val title = DiskUtil.buildValidFilename(anime.title)
-        return sourceDir?.let { if (create) it.createDirectory(title) else it.findFile(title) }
+        val match = sourceMatch(anime)
+        val sourceDirs = eu.kanade.tachiyomi.data.download.SourceFolders.find(animeRoot, match)
+        // KMK: the anime's folder wherever it already is
+        sourceDirs.firstNotNullOfOrNull { dir -> dir.findFile(title)?.takeIf { it.isDirectory } }?.let { return it }
+        if (!create) return null
+        val sourceDir = sourceDirs.firstOrNull()
+            ?: eu.kanade.tachiyomi.data.download.SourceFolders.findOrCreate(animeRoot, sourceDirName(anime), match)
+            ?: return null
+        return eu.kanade.tachiyomi.data.download.SourceFolders.findOrCreate(sourceDir, title)
     }
 
     private fun listFiles(anime: Anime): Set<String> =

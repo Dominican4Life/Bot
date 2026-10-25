@@ -398,6 +398,7 @@
     <string name="badge_source_icon">Source icon</string>
     <string name="badge_in_library">In library</string>
     <string name="badge_nsfw">18+</string>
+    <string name="badge_source_type">Source type (Mihon, Aniyomi, JS, JSON)</string>
     <string name="badge_settings">Settings button</string>
     <string name="badge_pinned">Pin button</string>
     <string name="badge_latest">Latest button</string>

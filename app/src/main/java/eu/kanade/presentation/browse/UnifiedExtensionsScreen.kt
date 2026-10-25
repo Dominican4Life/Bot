@@ -60,6 +60,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
 import coil3.compose.AsyncImage
+import eu.kanade.presentation.browse.components.sourceKindColor
 import eu.kanade.presentation.components.SourcesSearchBox
 import eu.kanade.tachiyomi.extension.model.InstallStep
 import eu.kanade.tachiyomi.ui.browse.extension.unified.ExtensionKind
@@ -284,24 +285,8 @@ private fun Chip(
     )
 }
 
-// KMK: fixed colors that don't follow the app theme: Mihon blue, Aniyomi pink, JS yellow. Each has a darker shade
-// for light themes so the text stays readable.
 @Composable
-private fun kindColor(kind: ExtensionKind): androidx.compose.ui.graphics.Color {
-    val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
-    return when (kind) {
-        ExtensionKind.MIHON -> if (dark) MihonBlueDark else MihonBlueLight
-        ExtensionKind.ANIYOMI -> if (dark) AniyomiPinkDark else AniyomiPinkLight
-        ExtensionKind.JS -> if (dark) JsYellowDark else JsYellowLight
-    }
-}
-
-private val MihonBlueDark = androidx.compose.ui.graphics.Color(0xFF8AB4F8)
-private val MihonBlueLight = androidx.compose.ui.graphics.Color(0xFF1A62C9)
-private val AniyomiPinkDark = androidx.compose.ui.graphics.Color(0xFFE3B9DE)
-private val AniyomiPinkLight = androidx.compose.ui.graphics.Color(0xFF8B4A83)
-private val JsYellowDark = androidx.compose.ui.graphics.Color(0xFFFFCA28)
-private val JsYellowLight = androidx.compose.ui.graphics.Color(0xFFA67C00)
+private fun kindColor(kind: ExtensionKind): androidx.compose.ui.graphics.Color = sourceKindColor(kind)
 
 @Composable
 private fun KindDot(kind: ExtensionKind) {
@@ -387,7 +372,7 @@ private fun SourceList(
     // KMK <--
 ) {
     // KMK: with the JS chip on, a button to make a new JS source
-    val showNewJs = ExtensionKind.JS in emptyKinds
+    val showNewJs = ExtensionKind.JS in emptyKinds || ExtensionKind.JSON in emptyKinds
     LazyColumn(
         contentPadding = padding,
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -448,7 +433,7 @@ private fun SourceList(
                             modifier = Modifier.padding(top = 2.dp),
                         ) {
                             // KMK: a JSON source says so; JS sources also say manga or anime
-                            Tag(source.js?.let { if (it.json) "JSON" else "JS" } ?: source.kind.label, color = kindColor(source.kind))
+                            Tag(source.kind.label, color = kindColor(source.kind))
                             source.js?.let {
                                 Tag(stringResource(if (it.anime) KMR.strings.ext_js_anime else KMR.strings.ext_js_manga))
                             }
