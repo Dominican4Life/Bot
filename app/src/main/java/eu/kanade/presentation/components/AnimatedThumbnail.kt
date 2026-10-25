@@ -2,16 +2,15 @@ package eu.kanade.presentation.components
 
 import android.graphics.drawable.Animatable
 import android.graphics.drawable.Drawable
+import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -32,69 +31,56 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil3.ImageLoader
 import coil3.asDrawable
 import coil3.compose.AsyncImage
 import coil3.compose.AsyncImagePainter
 import coil3.decode.BitmapFactoryDecoder
+import coil3.decode.Decoder
+import coil3.fetch.SourceFetchResult
+import coil3.gif.AnimatedImageDecoder
+import coil3.gif.GifDecoder
 import coil3.request.ImageRequest
+import coil3.request.Options
 import coil3.request.crossfade
-import coil3.size.Precision
-import eu.kanade.tachiyomi.data.coil.PageThumbFiles
-import eu.kanade.tachiyomi.util.system.AppLog
+import eu.kanade.tachiyomi.data.coil.LocalPageThumbnail
+import eu.kanade.tachiyomi.data.coil.SourcePageThumbnail
+import eu.kanade.tachiyomi.data.coil.TachiyomiImageDecoder
+import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okio.BufferedSource
+import java.io.File
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * KMK: A page thumbnail for the page grids (the reader's Pages panel and the Browse preview window).
+ * KMK: A page thumbnail for the page grids (the reader's Pages panel and the Browse preview window), loaded the
+ * same way as in r63 (straight from the page, through the image loader).
  *
- * Every page shows as a still picture, so the grid loads quickly and costs nothing to show. An animated page (GIF,
- * animated WebP) gets a small badge, and plays only while it's the [playing] one: the tile picked by holding and
- * sliding over the grid ([holdToPlay]). Only one tile plays at a time, so the page being read keeps its frame rate.
- *
- * The page is shown from its own kept copy ([PageThumbFiles]), so scrolling back doesn't load it again. [canMake]
- * false only shows a copy kept before (the reader's panel waits until the page is loaded).
+ * Animated pages (GIF, animated WebP) hold still on their first frame, with a GIF or WEBP label, and play only
+ * while they're the [playing] one: the tile picked by holding and sliding over the grid ([holdToPlay]). Only one
+ * plays at a time, so the page being read keeps its frame rate.
  */
 @Composable
-fun AnimatedThumbnail(
-    model: Any,
-    playing: Boolean,
-    modifier: Modifier = Modifier,
-    canMake: Boolean = true,
-) {
+fun AnimatedThumbnail(model: Any, playing: Boolean, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val key = remember(model) { PageThumbFiles.keyOf(model) }
-    var file by remember(key) { mutableStateOf(key?.let { PageThumbFiles.saved(context, it) }) }
-    LaunchedEffect(key, canMake) {
-        if (file != null || key == null || !canMake) return@LaunchedEffect
-        file = runCatching { PageThumbFiles.get(context, key, model) }
-            .onFailure { AppLog.add('W', "thumbs", "Couldn't keep page $key: ${it.message}") }
-            .getOrNull()
-    }
-    val f = file
-    if (f == null) {
-        // A loading circle until the copy is there
-        Box(modifier = modifier, contentAlignment = Alignment.Center) {
-            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+    val key = remember(model) { thumbKeyOf(model) }
+    var drawable by remember(model) { mutableStateOf<Drawable?>(null) }
+    var kind by remember(key) { mutableStateOf(key?.let { kinds[it] }) }
+    // The copies r66–r70 kept of shown pages aren't used any more: cleared once, to give the space back
+    LaunchedEffect(Unit) {
+        if (oldCopiesCleared.compareAndSet(false, true)) {
+            withContext(Dispatchers.IO) { File(context.cacheDir, "page_thumbs").deleteRecursively() }
         }
-        return
     }
-    val kind = remember(f) { PageThumbFiles.kindOf(f) }
-    val animated = kind != PageThumbFiles.Kind.STILL
-    val play = animated && playing
-    var drawable by remember(f, play) { mutableStateOf<Drawable?>(null) }
     Box(modifier = modifier) {
         AsyncImage(
-            model = remember(f, play) {
+            model = remember(model) {
                 ImageRequest.Builder(context)
-                    .data(f)
-                    .size(THUMB_WIDTH_PX, THUMB_HEIGHT_PX)
-                    .precision(Precision.INEXACT)
-                    .crossfade(!play)
-                    // The still and the playing picture are kept apart in memory; otherwise the still one came
-                    // back from memory when the tile was told to play, and it never moved
-                    .memoryCacheKeyExtra("thumb_play", play.toString())
-                    .apply {
-                        // Not playing: the first frame only, as a plain picture
-                        if (!play) decoderFactory(BitmapFactoryDecoder.Factory())
-                    }
+                    .data(model)
+                    .crossfade(true)
+                    .decoderFactory(KindDecoderFactory(key))
                     .build()
             },
             contentDescription = null,
@@ -102,22 +88,22 @@ fun AnimatedThumbnail(
             alignment = Alignment.TopCenter,
             onState = { state ->
                 drawable = (state as? AsyncImagePainter.State.Success)?.result?.image?.asDrawable(context.resources)
+                if (key != null) kind = kinds[key]
             },
             modifier = Modifier.matchParentSize(),
         )
-        // Started by hand: the animation doesn't always start on its own
         val animatable = drawable as? Animatable
-        LaunchedEffect(animatable, play) {
+        // Still unless picked; picked plays from where it stopped
+        LaunchedEffect(animatable, playing) {
             animatable ?: return@LaunchedEffect
-            if (play) animatable.start() else if (animatable.isRunning) animatable.stop()
+            if (playing) animatable.start() else animatable.stop()
         }
         DisposableEffect(animatable) {
-            onDispose { if (animatable?.isRunning == true) animatable.stop() }
+            onDispose { animatable?.stop() }
         }
-        // Animated pages say what they are (GIF, WEBP), until they play
-        if (animated && !play) {
+        if (animatable != null && !playing) {
             Text(
-                text = if (kind == PageThumbFiles.Kind.GIF) "GIF" else "WEBP",
+                text = if (kind == Kind.WEBP) "WEBP" else "GIF",
                 color = Color.White,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.ExtraBold,
@@ -174,6 +160,42 @@ fun Modifier.holdToPlay(state: LazyGridState, onPick: (Int) -> Unit): Modifier =
     }
 }
 
-/** Big enough to look sharp in a three-across grid, small enough to be cheap */
-private const val THUMB_WIDTH_PX = 360
-private const val THUMB_HEIGHT_PX = 520
+private val oldCopiesCleared = AtomicBoolean(false)
+
+private enum class Kind { GIF, WEBP, OTHER }
+
+/** What each page turned out to be, so the label is right when the picture comes back from memory */
+private val kinds = ConcurrentHashMap<String, Kind>()
+
+private fun thumbKeyOf(model: Any): String? = when (model) {
+    is ReaderPage -> runCatching { "reader;${model.chapter.chapter.id};${model.index}" }.getOrNull()
+    is SourcePageThumbnail -> "source;${model.source.id};${model.chapterUrl};${model.page.index}"
+    is LocalPageThumbnail -> "local;${model.chapterId};${model.index};${model.fileUri ?: model.archiveUri}"
+    else -> null
+}
+
+private fun kindOf(source: BufferedSource): Kind {
+    val peek = source.peek()
+    if (!peek.request(21)) return Kind.OTHER
+    val head = peek.readByteArray(21)
+    if (head[0] == 'G'.code.toByte() && head[1] == 'I'.code.toByte() && head[2] == 'F'.code.toByte()) return Kind.GIF
+    if (String(head, 0, 4, Charsets.US_ASCII) == "RIFF" && String(head, 8, 4, Charsets.US_ASCII) == "WEBP") {
+        return Kind.WEBP
+    }
+    return Kind.OTHER
+}
+
+/** The app's usual decoders, in the usual order, noting on the way whether the page is a GIF or a WebP */
+private class KindDecoderFactory(private val key: String?) : Decoder.Factory {
+    override fun create(result: SourceFetchResult, options: Options, imageLoader: ImageLoader): Decoder? {
+        if (key != null) runCatching { kinds[key] = kindOf(result.source.source()) }
+        val animated: Decoder.Factory = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            AnimatedImageDecoder.Factory()
+        } else {
+            GifDecoder.Factory()
+        }
+        return TachiyomiImageDecoder.Factory().create(result, options, imageLoader)
+            ?: animated.create(result, options, imageLoader)
+            ?: BitmapFactoryDecoder.Factory().create(result, options, imageLoader)
+    }
+}

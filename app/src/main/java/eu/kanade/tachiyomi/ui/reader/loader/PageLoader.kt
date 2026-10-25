@@ -30,12 +30,6 @@ abstract class PageLoader {
     open suspend fun loadPage(page: ReaderPage) {}
 
     /**
-     * KMK: Loads just this page, without preloading the ones after it (the Pages panel's thumbnails: preloading
-     * for each tile downloaded far more than was on screen).
-     */
-    open suspend fun loadPageOnly(page: ReaderPage) = loadPage(page)
-
-    /**
      * Retries the given [page] in case it failed to load. This method only makes sense when an
      * online source is used.
      */

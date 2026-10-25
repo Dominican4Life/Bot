@@ -20,7 +20,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -46,7 +45,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -66,8 +64,6 @@ import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import eu.kanade.domain.manga.model.chaptersFiltered
-import eu.kanade.presentation.components.AnimatedThumbnail
-import eu.kanade.presentation.components.holdToPlay
 import eu.kanade.presentation.manga.DownloadAction
 import eu.kanade.presentation.manga.components.ChapterDownloadAction
 import eu.kanade.presentation.manga.components.ChapterDownloadIndicator
@@ -96,6 +92,9 @@ import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.selectedBackground
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import eu.kanade.presentation.components.AnimatedThumbnail
+import eu.kanade.presentation.components.holdToPlay
 
 /**
  * KMK: Left panel on the browse source screen with the chapters of the selected cover.
@@ -405,7 +404,7 @@ fun BrowsePagePanel(
             // KMK: downloaded chapters show their pages from the files, even without the source
             chapter != null && localPages != null -> key(chapter.id, "local") {
                 val gridState = rememberLazyGridState()
-                // KMK: the one tile picked by holding and sliding plays; the rest stay still
+                // KMK: the tile picked by holding and sliding plays and is outlined
                 var active by remember { mutableStateOf<Int?>(null) }
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(3),
@@ -448,7 +447,7 @@ fun BrowsePagePanel(
             }
             else -> key(chapter.id) {
                 val gridState = rememberLazyGridState()
-                // KMK: the one tile picked by holding and sliding plays; the rest stay still
+                // KMK: the tile picked by holding and sliding plays and is outlined
                 var active by remember { mutableStateOf<Int?>(null) }
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(3),
@@ -518,7 +517,7 @@ private fun PageThumbnailBox(
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        // KMK: a still picture; plays while it's the picked tile
+        // KMK: animated pages hold still unless picked
         AnimatedThumbnail(model = model, playing = playing, modifier = Modifier.fillMaxSize())
         // KMK: the reader's play button look (dark circle, white ring, white arrow); tapping opens the reader there
         if (isVideo) {

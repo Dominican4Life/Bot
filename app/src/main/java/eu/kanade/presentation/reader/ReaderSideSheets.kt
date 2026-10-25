@@ -33,7 +33,6 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -51,12 +50,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -72,10 +68,7 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
-import eu.kanade.presentation.components.AnimatedThumbnail
-import eu.kanade.presentation.components.holdToPlay
 import eu.kanade.presentation.manga.components.ChapterDownloadAction
-import eu.kanade.tachiyomi.data.coil.PageThumbFiles
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.jssource.ReaderVideos
 import eu.kanade.tachiyomi.ui.reader.chapter.ReaderChapterItem
@@ -90,6 +83,11 @@ import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.i18n.stringResource
+import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import eu.kanade.presentation.components.AnimatedThumbnail
+import eu.kanade.presentation.components.holdToPlay
 
 /**
  * KMK: Reader panels that slide in from the side of the screen, like Usagi.
@@ -316,10 +314,9 @@ private fun PageGridContent(
                 visibleItems.last().index != index
             if (!shown) gridState.animateScrollToItem(index)
         }
-        // KMK: the tiles on screen; only those animate
-        // KMK: the one tile picked by holding and sliding plays; the rest stay still
+        // KMK: the tile picked by holding and sliding plays and has the highlight; reading on to another page
+        // hands the highlight back to the page being read
         var active by remember { mutableStateOf<Int?>(null) }
-        // Reading on to another page hands the highlight back to the page being read
         LaunchedEffect(currentPage) {
             if (active != null && active != currentPage - 1) active = null
         }
@@ -338,7 +335,6 @@ private fun PageGridContent(
                 PageThumbnail(
                     page = page,
                     chapter = chapter,
-                    // KMK: the highlight follows the tile picked by holding and sliding
                     isCurrent = if (active != null) index == active else page.number == currentPage,
                     playing = index == active,
                     onClick = {
@@ -362,17 +358,12 @@ private fun PageThumbnail(
     val context = LocalContext.current
     val status by page.statusFlow.collectAsState()
     val progress by page.progressFlow.collectAsState()
-    // KMK: a page shown before is kept apart from the reader's cache, and shows straight away without loading again
-    val saved = remember(page) {
-        PageThumbFiles.keyOf(page)?.let { PageThumbFiles.saved(context, it) } != null
-    }
 
-    // Ask the chapter's loader for this page while the thumbnail is on screen (just this page: preloading the
-    // next ones for every tile downloaded far more than was shown). Leaving the screen cancels it.
-    LaunchedEffect(page, saved) {
-        if (saved) return@LaunchedEffect
+    // Ask the chapter's loader for this page while the thumbnail is on screen.
+    // For online chapters this queues the download; leaving the screen cancels it.
+    LaunchedEffect(page) {
         val loader = chapter.pageLoader ?: return@LaunchedEffect
-        if (!loader.isRecycled) loader.loadPageOnly(page)
+        if (!loader.isRecycled) loader.loadPage(page)
     }
 
     val shape = RoundedCornerShape(10.dp)
@@ -392,15 +383,10 @@ private fun PageThumbnail(
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        when (val s = if (saved) Page.State.Ready else status) {
+        when (val s = status) {
             Page.State.Ready -> {
-                // KMK: tile-sized, and animating only while on screen, so the page being read keeps its frame rate
-                AnimatedThumbnail(
-                    model = page,
-                    playing = playing,
-                    canMake = status == Page.State.Ready,
-                    modifier = Modifier.fillMaxSize(),
-                )
+                // KMK: animated pages hold still unless picked
+                AnimatedThumbnail(model = page, playing = playing, modifier = Modifier.fillMaxSize())
             }
             is Page.State.Error -> {
                 Icon(
