@@ -188,7 +188,7 @@ private fun kindOf(source: BufferedSource): Kind {
 /** The app's usual decoders, in the usual order, noting on the way whether the page is a GIF or a WebP */
 private class KindDecoderFactory(private val key: String?) : Decoder.Factory {
     override fun create(result: SourceFetchResult, options: Options, imageLoader: ImageLoader): Decoder? {
-        if (key != null) runCatching { kinds[key] = kindOf(result.source.source()) }
+        key?.let { k -> runCatching { kinds[k] = kindOf(result.source.source()) } }
         val animated: Decoder.Factory = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             AnimatedImageDecoder.Factory()
         } else {
