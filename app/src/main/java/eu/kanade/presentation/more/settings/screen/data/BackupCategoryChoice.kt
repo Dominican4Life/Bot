@@ -63,7 +63,7 @@ fun LazyItemScope.CategoryChoiceCard(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         entries.forEach { entry ->
-            val kind = stringResource(if (entry.anime) KMR.strings.backup_category_anime else MR.strings.manga)
+            val kind = stringResource(if (entry.anime) KMR.strings.backup_category_anime else KMR.strings.backup_category_manga)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 LabeledCheckbox(
                     label = "$kind · " + (entry.name ?: stringResource(KMR.strings.backup_no_category)),

@@ -571,6 +571,7 @@
     <string name="backup_categories_title">Categories</string>
     <string name="backup_categories_summary">Only titles in the ticked categories are included</string>
     <string name="backup_category_anime">Anime</string>
+    <string name="backup_category_manga">Manga</string>
     <string name="backup_no_category">No category</string>
     <string name="pref_save_covers_in_folders">Auto save covers for manga and anime</string>
     <string name="pref_save_covers_in_folders_summary">Each library title\'s cover is kept as cover.jpg in its download folder (and an anime\'s episode previews with it), so after a restore they load from the device instead of being downloaded again. Turning this on saves your whole library\'s covers.</string>
