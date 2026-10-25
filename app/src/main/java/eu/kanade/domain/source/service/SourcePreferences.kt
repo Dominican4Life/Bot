@@ -45,6 +45,9 @@ class SourcePreferences(
      * [PREVIEW_PANELS_BOTH] or [PREVIEW_PANELS_NONE]. Set by the Left Panel / Right Panel buttons.
      */
     fun browsePreviewPanels() = preferenceStore.getInt("pref_browse_preview_panels", PREVIEW_PANELS_BOTH)
+
+    /** The same, for the manga and anime libraries (off until a panel button there is turned on) */
+    fun libraryPreviewPanels() = preferenceStore.getInt("pref_library_preview_panels", PREVIEW_PANELS_NONE)
     // KMK <--
 
     fun sourceDisplayMode() = preferenceStore.getObjectFromString(

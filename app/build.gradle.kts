@@ -325,6 +325,9 @@ dependencies {
     // Image loading
     implementation(platform(libs.coil.bom))
     implementation(libs.bundles.coil)
+    // KMK: animated page thumbnails decoded on their own threads, small (APNG4Android)
+    implementation("com.github.penfeizhou.android.animation:awebp:3.0.5")
+    implementation("com.github.penfeizhou.android.animation:gif:3.0.5")
     implementation(libs.subsamplingscaleimageview) {
         exclude(module = "image-decoder")
     }

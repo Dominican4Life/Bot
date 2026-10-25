@@ -1,5 +1,6 @@
 package eu.kanade.presentation.anime
 
+import androidx.compose.foundation.layout.Row
 import androidx.compose.material.icons.outlined.Folder
 import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
@@ -183,11 +184,13 @@ fun rememberAnimeLibraryState(searchQuery: String?): AnimeLibraryState {
     val downloadManager = remember { Injekt.get<AnimeDownloadManager>() }
     val downloadChanges by downloadManager.changes.collectAsState()
     val needDownloads = showDownloadBadge || filters.downloaded != tachiyomi.core.common.preference.TriState.DISABLED
+    // KMK: asked again after a restore (see LibraryRefresh), and when anime sources finish loading
+    val refreshTick by eu.kanade.tachiyomi.ui.library.LibraryRefresh.tick.collectAsState()
     // Look at each anime's download folder once, when downloads matter
-    LaunchedEffect(favorites?.size, needDownloads) {
+    LaunchedEffect(favorites?.size, needDownloads, refreshTick) {
         if (needDownloads) favorites?.forEach { downloadManager.refresh(it) }
     }
-    val downloaded = remember(favorites, downloadChanges, needDownloads) {
+    val downloaded = remember(favorites, downloadChanges, needDownloads, refreshTick) {
         if (!needDownloads) {
             emptyMap()
         } else {
@@ -310,6 +313,13 @@ fun AnimeLibraryContent(
     onRefresh: () -> Boolean,
     // KMK: Migrate from the selection bar
     onMigrate: ((List<Long>) -> Unit)? = null,
+    // KMK --> preview panels, like Browse (see LibraryContent)
+    highlighted: Long? = null,
+    panelButtons: (@Composable RowScope.() -> Unit)? = null,
+    panelStart: androidx.compose.ui.unit.Dp = 0.dp,
+    panelEnd: androidx.compose.ui.unit.Dp = 0.dp,
+    panels: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit = {},
+    // KMK <--
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -388,14 +398,33 @@ fun AnimeLibraryContent(
                 if (showPageTabs) {
                     val counts = remember(pages) { pages.associate { it.category to it.shown.size } }
                     val showCount = state.showItemCount || !searchQuery.isNullOrEmpty()
-                    LibraryTabs(
-                        categories = pages.map { it.category },
-                        pagerState = pagerState,
-                        getItemCountForCategory = { category -> counts[category]?.takeIf { showCount } },
-                        onTabItemClick = { scope.launch { pagerState.animateScrollToPage(it) } },
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(modifier = Modifier.weight(1f)) {
+                            LibraryTabs(
+                                categories = pages.map { it.category },
+                                pagerState = pagerState,
+                                getItemCountForCategory = { category -> counts[category]?.takeIf { showCount } },
+                                onTabItemClick = { scope.launch { pagerState.animateScrollToPage(it) } },
+                            )
+                        }
+                        panelButtons?.let { buttons ->
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 8.dp),
+                            ) { buttons() }
+                        }
+                    }
+                } else if (panelButtons != null) {
+                    Row(
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                    ) { panelButtons() }
                 }
 
+                Box(modifier = Modifier.fillMaxSize()) {
                 PullRefresh(
                     refreshing = isRefreshing,
                     enabled = selected.isEmpty(),
@@ -410,7 +439,9 @@ fun AnimeLibraryContent(
                     },
                 ) {
                     HorizontalPager(
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(start = panelStart, end = panelEnd),
                         state = pagerState,
                         verticalAlignment = Alignment.Top,
                     ) { index ->
@@ -424,13 +455,16 @@ fun AnimeLibraryContent(
                             state = state,
                             searchQuery = searchQuery,
                             bottomPadding = contentPadding.calculateBottomPadding(),
-                            selected = selected,
+                            // KMK: the previewed cover shows as picked
+                            selected = if (highlighted != null) selected + highlighted else selected,
                             wideCovers = wideCovers,
                             onClick = onClick,
                             onLongClick = toggle,
                             onContinueWatching = continueWatching,
                         )
                     }
+                }
+                panels()
                 }
 
                 // Keep the page in range when the pages change (grouping, categories)
@@ -485,6 +519,7 @@ private fun AnimeLibraryPageGrid(
     onLongClick: (Anime) -> Unit,
     onContinueWatching: (Anime) -> Unit,
 ) {
+    val loadedSources by remember { Injekt.get<AnimeSourceManager>().catalogueSources }.collectAsState()
     val shown = page.shown
     // KMK: "Search for … globally", like the manga library
     val navigator = cafe.adriel.voyager.navigator.LocalNavigator.current
@@ -570,6 +605,9 @@ private fun AnimeLibraryPageGrid(
             key = { it.id },
             span = { anime -> wideSpan(doubleWide, wide, anime.id) },
         ) { anime ->
+            // KMK: read so the cover's language and source badges update when the anime sources finish loading
+            @Suppress("UNUSED_EXPRESSION")
+            loadedSources.size
             val stat = state.stats[anime.id]
             val unseen = stat?.unseen ?: 0L
             val onContinue: (() -> Unit)? = if (badges.continueButton && unseen > 0) {

@@ -8,6 +8,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -83,6 +84,10 @@ data object AnimeLibraryTab : Tab {
         val context = LocalContext.current
         val scope = rememberCoroutineScope()
         val snackbarHostState = remember { SnackbarHostState() }
+        // KMK: the anime Browse preview panels, in the library too
+        val preview = cafe.adriel.voyager.core.model.rememberScreenModel { AnimeLibraryPreviewModel() }
+        val previewOpen by preview.preview.collectAsState()
+        androidx.activity.compose.BackHandler(enabled = previewOpen.anime != null) { preview.clear() }
 
         var searchQuery by rememberSaveable { mutableStateOf<String?>(null) }
         var currentPage by rememberSaveable { mutableIntStateOf(0) }
@@ -174,16 +179,26 @@ data object AnimeLibraryTab : Tab {
             },
             snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         ) { contentPadding ->
-            AnimeLibraryContent(
-                state = state,
-                contentPadding = contentPadding,
-                searchQuery = searchQuery,
-                currentPage = currentPage,
-                onChangeCurrentPage = { currentPage = it },
-                onClickAnime = { navigator.push(AnimeScreen(it.id)) },
-                onRefresh = { onClickRefresh(false) },
-                onMigrate = { ids -> AnimeMigrationStart.open(ids) },
-            )
+            androidx.compose.foundation.layout.BoxWithConstraints {
+                val (panelStart, panelEnd) = preview.panelPadding(maxWidth)
+                val previewState by preview.preview.collectAsState()
+                AnimeLibraryContent(
+                    state = state,
+                    contentPadding = contentPadding,
+                    searchQuery = searchQuery,
+                    currentPage = currentPage,
+                    onChangeCurrentPage = { currentPage = it },
+                    // KMK: with a panel button on, the first tap previews the cover in the panels
+                    onClickAnime = { if (!preview.onCoverClick(it)) navigator.push(AnimeScreen(it.id)) },
+                    onRefresh = { onClickRefresh(false) },
+                    onMigrate = { ids -> AnimeMigrationStart.open(ids) },
+                    highlighted = previewState.anime?.id,
+                    panelButtons = { preview.Buttons(this) },
+                    panelStart = panelStart,
+                    panelEnd = panelEnd,
+                    panels = { preview.Panels(this) },
+                )
+            }
         }
 
         BackHandler(enabled = searchQuery != null) { searchQuery = null }

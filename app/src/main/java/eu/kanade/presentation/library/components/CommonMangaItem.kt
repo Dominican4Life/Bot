@@ -33,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
@@ -487,11 +488,22 @@ private fun GridItemSelectable(
         } else {
             LocalContentColor.current
         }
+        val tint = MaterialTheme.colorScheme.secondary
         CompositionLocalProvider(LocalContentColor provides contentColor) {
-            content()
+            // KMK: a picked cover is coloured over, not only outlined
+            Box(
+                modifier = Modifier.drawWithContent {
+                    drawContent()
+                    if (isSelected) drawRect(color = tint.copy(alpha = SELECTED_TINT_ALPHA))
+                },
+            ) {
+                content()
+            }
         }
     }
 }
+
+private const val SELECTED_TINT_ALPHA = 0.35f
 
 /**
  * @see GridItemSelectable

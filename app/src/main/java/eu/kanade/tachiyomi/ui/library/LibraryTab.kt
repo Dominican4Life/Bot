@@ -121,6 +121,9 @@ data object LibraryTab : Tab {
         val state by screenModel.state.collectAsState()
 
         val snackbarHostState = remember { SnackbarHostState() }
+        // KMK: the Browse preview panels, in the library too
+        val preview = rememberLibraryMangaPreview()
+        androidx.activity.compose.BackHandler(enabled = preview.highlighted() != null) { preview.model?.clear() }
 
         val onClickRefresh: (Category?) -> Boolean = { category ->
             // SY -->
@@ -327,7 +330,8 @@ data object LibraryTab : Tab {
                         ),
                     )
                 }
-                else -> {
+                else -> androidx.compose.foundation.layout.BoxWithConstraints {
+                    val (panelStart, panelEnd) = preview.panelPadding(maxWidth)
                     LibraryContent(
                         categories = state.displayedCategories,
                         // KMK -->
@@ -340,7 +344,11 @@ data object LibraryTab : Tab {
                         hasActiveFilters = state.hasActiveFilters,
                         showPageTabs = state.showCategoryTabs || !state.searchQuery.isNullOrEmpty(),
                         onChangeCurrentPage = screenModel::updateActiveCategoryIndex,
-                        onClickManga = { navigator.push(MangaScreen(it)) },
+                        onClickManga = { id ->
+                            val manga = state.libraryData.favorites.firstOrNull { it.libraryManga.manga.id == id }
+                                ?.libraryManga?.manga
+                            if (manga == null || !preview.onCoverClick(manga)) navigator.push(MangaScreen(id))
+                        },
                         onContinueReadingClicked = { it: LibraryManga ->
                             scope.launchIO {
                                 val chapter = screenModel.getNextUnreadChapter(it.manga)
@@ -367,6 +375,12 @@ data object LibraryTab : Tab {
                         getDisplayMode = { screenModel.getDisplayMode() },
                         getColumnsForOrientation = { screenModel.getColumnsForOrientation(it) },
                         getItemsForCategory = { state.getItemsForCategory(it) },
+                        // KMK
+                        highlighted = preview.highlighted(),
+                        panelButtons = { preview.Buttons(this) },
+                        panelStart = panelStart,
+                        panelEnd = panelEnd,
+                        panels = { preview.Panels(this) },
                     )
                 }
             }

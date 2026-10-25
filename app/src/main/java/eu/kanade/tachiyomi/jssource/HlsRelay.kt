@@ -96,8 +96,28 @@ object HlsRelay {
                 return
             }
             val request = Request.Builder().url(target).headers(headers).build()
-            network.client.newCall(request).execute().use { response ->
+            var call = network.client.newCall(request).execute()
+            // KMK: pieces kept on another site (some hosts put them on image servers) may refuse the source's
+            // Referer / Origin: asked again with only the browser's user agent
+            if (!call.isSuccessful && kind == "s") {
+                val first = call.code
+                call.close()
+                val plain = Headers.Builder().apply {
+                    headers["User-Agent"]?.let { add("User-Agent", it) }
+                    add("Accept", "*/*")
+                }.build()
+                call = network.client.newCall(Request.Builder().url(target).headers(plain).build()).execute()
+                AppLog.add(
+                    if (call.isSuccessful) 'D' else 'W',
+                    "hls",
+                    "Stream piece answered $first with the source's headers" +
+                        (if (call.isSuccessful) ", worked without them" else " and ${call.code} without them") +
+                        ": ${target.toHttpUrlOrNull()?.host ?: target}",
+                )
+            }
+            call.use { response ->
                 if (!response.isSuccessful) {
+                    if (kind == "p") AppLog.add('W', "hls", "Playlist answered ${response.code}: ${target.toHttpUrlOrNull()?.host ?: target}")
                     respond(out, response.code, "text/plain", ByteArray(0))
                     return
                 }
@@ -154,7 +174,10 @@ object HlsRelay {
             (data[0] == 0x89.toByte() && data[1] == 'P'.code.toByte() && data[2] == 'N'.code.toByte()) ||
                 (data[0] == 0xFF.toByte() && data[1] == 0xD8.toByte()) ||
                 (data[0] == 'G'.code.toByte() && data[1] == 'I'.code.toByte() && data[2] == 'F'.code.toByte()) ||
-                (data[0] == 'B'.code.toByte() && data[1] == 'M'.code.toByte())
+                (data[0] == 'B'.code.toByte() && data[1] == 'M'.code.toByte()) ||
+                // KMK: WebP ("RIFF....WEBP")
+                (data[0] == 'R'.code.toByte() && data[1] == 'I'.code.toByte() && data[2] == 'F'.code.toByte() &&
+                    data[3] == 'F'.code.toByte())
         if (!looksLikeImage) return data
         val limit = minOf(data.size - 1, 1_000_000)
         // MPEG-TS: three sync bytes 188 apart

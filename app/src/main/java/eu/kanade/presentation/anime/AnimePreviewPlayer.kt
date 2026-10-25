@@ -8,6 +8,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
@@ -467,15 +468,21 @@ private fun IdleOverlay(episodeName: String?, onClick: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier.clickable(enabled = episodeName != null, onClick = onClick),
     ) {
-        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primary, modifier = Modifier.size(56.dp)) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    imageVector = Icons.Filled.PlayArrow,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimary,
-                    modifier = Modifier.size(32.dp),
-                )
-            }
+        // KMK: the reader's video play button: dark circle, white ring, white arrow
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(56.dp)
+                .clip(CircleShape)
+                .background(Color.Black.copy(alpha = 170f / 255f))
+                .border(androidx.compose.foundation.BorderStroke(1.5.dp, Color.White.copy(alpha = 200f / 255f)), CircleShape),
+        ) {
+            Icon(
+                imageVector = Icons.Filled.PlayArrow,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(36.dp),
+            )
         }
         if (episodeName != null) {
             Spacer(Modifier.height(8.dp))
@@ -649,7 +656,7 @@ private fun VideoSettings(
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         // View: filtered / original / split, plus hold-to-compare
-        SectionLabel(stringResource(KMR.strings.anime_preview_view))
+        SettingsGroup(stringResource(KMR.strings.anime_preview_view), "view") {
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.horizontalScroll(rememberScrollState()),
@@ -684,10 +691,11 @@ private fun VideoSettings(
             Spacer(Modifier.width(8.dp))
             Text(stringResource(KMR.strings.anime_preview_hold_compare))
         }
+        }
 
         // Looks (the player's filter presets)
-        SectionLabel(stringResource(AMR.strings.player_sheets_filters_themes))
         var themeIndex by remember { mutableIntStateOf(decoderPreferences.videoFilterTheme().get()) }
+        SettingsGroup(stringResource(AMR.strings.player_sheets_filters_themes), "presets") {
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.horizontalScroll(rememberScrollState()),
@@ -710,9 +718,10 @@ private fun VideoSettings(
                 )
             }
         }
+        }
 
         // Fine adjustments
-        SectionLabel(stringResource(KMR.strings.anime_preview_adjust))
+        SettingsGroup(stringResource(KMR.strings.anime_preview_adjust), "adjust") {
         VideoFilters.entries.forEach { filter ->
             val pref = remember(filter) { filter.preference(decoderPreferences) }
             var value by remember(filter) { mutableIntStateOf(pref.get()) }
@@ -740,6 +749,7 @@ private fun VideoSettings(
                     modifier = Modifier.width(32.dp),
                 )
             }
+        }
         }
 
         // Anime4K upscaler
@@ -802,8 +812,8 @@ private fun VideoSettings(
         }
 
         // Speed
-        SectionLabel(stringResource(KMR.strings.anime_preview_speed))
         var speed by remember { mutableStateOf(playerPreferences.playerSpeed().get()) }
+        SettingsGroup(stringResource(KMR.strings.anime_preview_speed), "speed") {
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.horizontalScroll(rememberScrollState()),
@@ -819,6 +829,7 @@ private fun VideoSettings(
                     label = { Text("${option}x".replace(".0x", "x")) },
                 )
             }
+        }
         }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -836,6 +847,44 @@ private fun VideoSettings(
                 Text(stringResource(KMR.strings.anime_preview_reset))
             }
         }
+    }
+}
+
+/**
+ * KMK: A group of the video settings (View, Presets, Adjust, Speed) under its own header, folded or opened on its
+ * own by tapping the header. Which groups are folded is remembered.
+ */
+@Composable
+private fun SettingsGroup(
+    title: String,
+    id: String,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+) {
+    val pref = remember {
+        uy.kohesive.injekt.Injekt.get<tachiyomi.core.common.preference.PreferenceStore>()
+            .getStringSet("anime_preview_folded_groups", emptySet())
+    }
+    var folded by remember { mutableStateOf(pref.get()) }
+    val open = id !in folded
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable {
+                folded = if (open) folded + id else folded - id
+                pref.set(folded)
+            },
+    ) {
+        SectionLabel(title, modifier = Modifier.weight(1f))
+        Icon(
+            imageVector = if (open) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+    }
+    AnimatedVisibility(visible = open) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) { content() }
     }
 }
 

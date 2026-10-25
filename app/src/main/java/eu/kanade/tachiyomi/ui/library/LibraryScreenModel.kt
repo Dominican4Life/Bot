@@ -784,7 +784,12 @@ class LibraryScreenModel(
             getLibraryManga.subscribe(),
             getLibraryItemPreferencesFlow(),
             downloadCache.changes,
-        ) { libraryManga, preferences, _ ->
+            // KMK: again when sources finish loading (their languages) and when asked (after a restore)
+            kotlinx.coroutines.flow.combine(
+                sourceManager.sources.map { it.size }.distinctUntilChanged(),
+                LibraryRefresh.tick,
+            ) { a, b -> a to b },
+        ) { libraryManga, preferences, _, _ ->
             libraryManga.map { manga ->
                 // Display mode based on user preference: take it from global library setting or category
                 // KMK -->

@@ -72,7 +72,7 @@ import coil3.request.ImageRequest
 import coil3.request.crossfade
 import eu.kanade.presentation.components.AnimatedThumbnail
 import eu.kanade.presentation.manga.components.ChapterDownloadAction
-import eu.kanade.tachiyomi.data.coil.PageFlipbooks
+import eu.kanade.tachiyomi.data.coil.PageThumbFiles
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.jssource.ReaderVideos
 import eu.kanade.tachiyomi.ui.reader.chapter.ReaderChapterItem
@@ -352,9 +352,9 @@ private fun PageThumbnail(
     val context = LocalContext.current
     val status by page.statusFlow.collectAsState()
     val progress by page.progressFlow.collectAsState()
-    // KMK: a page captured before shows from its flipbook straight away, without loading the page again
+    // KMK: a page shown before is kept apart from the reader's cache, and shows straight away without loading again
     val saved = remember(page) {
-        PageFlipbooks.keyOf(page)?.let { PageFlipbooks.has(context, it) } == true
+        PageThumbFiles.keyOf(page)?.let { PageThumbFiles.saved(context, it) } != null
     }
 
     // Ask the chapter's loader for this page while the thumbnail is on screen (just this page: preloading the

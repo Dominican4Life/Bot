@@ -1,9 +1,16 @@
 package eu.kanade.presentation.library.components
 
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.Composable
@@ -13,8 +20,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import eu.kanade.core.preference.PreferenceMutableState
 import eu.kanade.tachiyomi.ui.library.LibraryItem
 import kotlinx.coroutines.delay
@@ -48,6 +58,14 @@ fun LibraryContent(
     getDisplayMode: (Int) -> PreferenceMutableState<LibraryDisplayMode>,
     getColumnsForOrientation: (Boolean) -> PreferenceMutableState<Int>,
     getItemsForCategory: (Category) -> List<LibraryItem>,
+    // KMK --> preview panels, like Browse: the cover being previewed, the Left / Right Panel buttons (far right of
+    // the category row), room kept for the open panels, and the panels themselves (drawn over the covers)
+    highlighted: Long? = null,
+    panelButtons: (@Composable RowScope.() -> Unit)? = null,
+    panelStart: Dp = 0.dp,
+    panelEnd: Dp = 0.dp,
+    panels: @Composable BoxScope.() -> Unit = {},
+    // KMK <--
 ) {
     Column(
         modifier = Modifier.padding(
@@ -75,18 +93,38 @@ fun LibraryContent(
                 }
                 // KMK <--
             }
-            LibraryTabs(
-                categories = categories,
-                pagerState = pagerState,
-                getItemCountForCategory = getItemCountForCategory,
-                onTabItemClick = {
-                    scope.launch {
-                        pagerState.animateScrollToPage(it)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(modifier = Modifier.weight(1f)) {
+                    LibraryTabs(
+                        categories = categories,
+                        pagerState = pagerState,
+                        getItemCountForCategory = getItemCountForCategory,
+                        onTabItemClick = {
+                            scope.launch {
+                                pagerState.animateScrollToPage(it)
+                            }
+                        },
+                    )
+                }
+                // KMK
+                panelButtons?.let { buttons ->
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 8.dp)) {
+                        buttons()
                     }
-                },
-            )
+                }
+            }
+        } else if (panelButtons != null) {
+            // KMK: no category row: the buttons on their own row, at the right
+            Row(
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            ) { panelButtons() }
         }
 
+        Box(modifier = Modifier.fillMaxSize()) {
         PullRefresh(
             refreshing = isRefreshing,
             enabled = selection.isEmpty(),
@@ -101,11 +139,13 @@ fun LibraryContent(
                 }
             },
         ) {
+            Box(modifier = Modifier.padding(start = panelStart, end = panelEnd)) {
             LibraryPager(
                 state = pagerState,
                 contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding()),
                 hasActiveFilters = hasActiveFilters,
-                selection = selection,
+                // KMK: the previewed cover shows as picked
+                selection = if (highlighted != null) selection + highlighted else selection,
                 searchQuery = searchQuery,
                 onGlobalSearchClicked = onGlobalSearchClicked,
                 getCategoryForPage = { page -> categories[page] },
@@ -122,6 +162,9 @@ fun LibraryContent(
                 onLongClickManga = onToggleRangeSelection,
                 onClickContinueReading = onContinueReadingClicked,
             )
+            }
+        }
+        panels()
         }
 
         LaunchedEffect(pagerState.currentPage) {

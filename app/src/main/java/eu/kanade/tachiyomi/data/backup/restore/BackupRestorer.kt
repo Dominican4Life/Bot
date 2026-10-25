@@ -93,6 +93,8 @@ class BackupRestorer(
         if (options.libraryEntries) {
             runCatching { Injekt.get<eu.kanade.tachiyomi.data.download.DownloadCache>().invalidateCache() }
         }
+        // KMK: the libraries work out their badges again with what was restored
+        eu.kanade.tachiyomi.ui.library.LibraryRefresh.request()
 
         val time = System.currentTimeMillis() - startTime
 
