@@ -30,6 +30,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -146,33 +147,70 @@ class LogsScreen : Screen() {
                             modifier = Modifier.weight(1f),
                         )
                     }
-                    SelectionContainer {
-                        LazyColumn(
-                            contentPadding = PaddingValues(bottom = 24.dp),
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            items(shown) { line ->
-                                val color = when {
-                                    line.level == 'E' -> MaterialTheme.colorScheme.error
-                                    line.level == 'W' -> MaterialTheme.colorScheme.tertiary
-                                    line.level == 'I' -> MaterialTheme.colorScheme.onSurface
-                                    else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                                }
-                                Text(
-                                    text = AppLog.format(line),
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 12.sp,
-                                    lineHeight = 17.sp,
-                                    color = color,
-                                    modifier = Modifier.padding(vertical = 3.dp),
-                                )
-                            }
-                        }
-                    }
+                    // KMK: Android's own text view: selecting across many lines with Compose's selection froze the app
+                    SelectableLogText(lines = shown, modifier = Modifier.fillMaxSize())
                 }
             }
         }
     }
+}
+
+/** Lines shown at most in the selectable text (Copy and Share still take everything) */
+private const val SHOWN_LIMIT = 4000
+
+@Composable
+private fun SelectableLogText(lines: List<AppLog.Line>, modifier: Modifier = Modifier) {
+    val error = MaterialTheme.colorScheme.error.toArgb()
+    val warn = MaterialTheme.colorScheme.tertiary.toArgb()
+    val info = MaterialTheme.colorScheme.onSurface.toArgb()
+    val debug = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f).toArgb()
+    val text = remember(lines, error, warn, info, debug) {
+        val builder = android.text.SpannableStringBuilder()
+        lines.take(SHOWN_LIMIT).forEachIndexed { index, line ->
+            if (index > 0) builder.append("\n")
+            val start = builder.length
+            builder.append(AppLog.format(line))
+            val color = when (line.level) {
+                'E' -> error
+                'W' -> warn
+                'I' -> info
+                else -> debug
+            }
+            builder.setSpan(
+                android.text.style.ForegroundColorSpan(color),
+                start,
+                builder.length,
+                android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+            )
+        }
+        builder
+    }
+    androidx.compose.ui.viewinterop.AndroidView(
+        modifier = modifier,
+        factory = { context ->
+            androidx.core.widget.NestedScrollView(context).apply {
+                isFillViewport = true
+                addView(
+                    android.widget.TextView(context).apply {
+                        setTextIsSelectable(true)
+                        typeface = android.graphics.Typeface.MONOSPACE
+                        textSize = 12f
+                        setLineSpacing(0f, 1.25f)
+                        val pad = (12 * resources.displayMetrics.density).toInt()
+                        setPadding(pad, pad / 2, pad, pad * 2)
+                    },
+                )
+            }
+        },
+        update = { scroll ->
+            val view = scroll.getChildAt(0) as android.widget.TextView
+            // Only when the lines changed: setting it again would drop what's being selected
+            if (view.tag !== text) {
+                view.tag = text
+                view.text = text
+            }
+        },
+    )
 }
 
 /** Characters copied at most: well under the clipboard's 1 MB limit */

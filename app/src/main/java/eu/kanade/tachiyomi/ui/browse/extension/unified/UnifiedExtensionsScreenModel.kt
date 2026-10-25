@@ -365,8 +365,9 @@ class UnifiedExtensionsScreenModel(
     fun toggleKind(kind: ExtensionKind?) = mutableState.update {
         val kinds = when {
             kind == null -> emptySet()
-            kind in it.filters.kinds -> it.filters.kinds - kind
-            else -> it.filters.kinds + kind
+            // One at a time, like the other rows (tapping the picked one again shows all sources)
+            kind in it.filters.kinds -> emptySet()
+            else -> setOf(kind)
         }
         it.copy(filters = it.filters.copy(kinds = kinds))
     }

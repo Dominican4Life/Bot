@@ -115,7 +115,47 @@ class SourceEditorScreenModel(
 
     // Editing
 
-    fun setCode(code: String) = mutableState.update { it.copy(code = code, dirty = true) }
+    fun setCode(code: String) {
+        mutableState.update { it.copy(code = code, dirty = true) }
+        detectDetails()
+    }
+
+    private var detectJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * Reads the name, icon, language, address and kind (manga or anime) from the code a moment after it stops
+     * changing (pasted, typed or imported), so the Details panel follows the code without a button
+     */
+    fun detectDetails(delayMs: Long = 1200) {
+        detectJob?.cancel()
+        detectJob = screenModelScope.launchIO {
+            kotlinx.coroutines.delay(delayMs)
+            if (SourceTemplates.isTemplate(state.value.code)) return@launchIO
+            val meta = try {
+                runtime().metadata()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                return@launchIO
+            }
+            fun value(key: String) = meta.str(key)?.takeIf { it.isNotBlank() }
+            mutableState.update {
+                it.copy(
+                    name = value("name") ?: it.name,
+                    iconUrl = value("iconUrl") ?: it.iconUrl,
+                    lang = value("lang") ?: it.lang,
+                    baseUrl = value("baseUrl") ?: it.baseUrl,
+                    anime = when {
+                        meta["hasVideos"]?.jsonPrimitive?.contentOrNull == "true" &&
+                            meta["hasPages"]?.jsonPrimitive?.contentOrNull != "true" -> true
+                        meta["hasPages"]?.jsonPrimitive?.contentOrNull == "true" &&
+                            meta["hasVideos"]?.jsonPrimitive?.contentOrNull != "true" -> false
+                        else -> it.anime
+                    },
+                )
+            }
+        }
+    }
 
     /** Switches between JS and JSON; an untouched template becomes the other kind's template */
     fun setJson(json: Boolean) = mutableState.update {
@@ -159,7 +199,7 @@ class SourceEditorScreenModel(
             )
         }
         message("Imported ${fileName ?: "file"}")
-        loadInfo()
+        detectDetails(delayMs = 0)
     }
 
     /**

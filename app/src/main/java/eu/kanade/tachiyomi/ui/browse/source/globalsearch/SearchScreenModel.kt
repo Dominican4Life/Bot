@@ -142,6 +142,27 @@ abstract class SearchScreenModel(
         preferences.globalSearchFilterState().toggle()
     }
 
+    // KMK -->
+    /** Global search keeps finished results until the app is closed (see [resultCache]) */
+    protected open val keepsResults: Boolean = false
+
+    /** Searches every source again for the current words, not using what was kept (holding Pinned or All) */
+    fun refreshAll() {
+        val query = state.value.searchQuery ?: return
+        resultCache.remove(query)
+        lastQuery = null
+        search()
+    }
+
+    /** Searches one source again (holding its name) */
+    fun refreshSource(source: Source) {
+        val query = state.value.searchQuery?.takeIf { it.isNotBlank() } ?: return
+        resultCache[query]?.remove(source.id)
+        updateItem(source, SearchItemResult.Loading)
+        ioCoroutineScope.launch { fetch(source, query) }
+    }
+    // KMK <--
+
     fun search() {
         val query = state.value.searchQuery
         val sourceFilter = state.value.sourceFilter
@@ -157,19 +178,21 @@ abstract class SearchScreenModel(
         searchJob?.cancel()
 
         val sources = getSelectedSources()
+        // KMK: what an earlier search with these words found, kept until the app closes
+        val kept = if (keepsResults) resultCache[query].orEmpty() else emptyMap()
 
         // Reuse previous results if possible
         if (sameQuery) {
             val existingResults = state.value.items
             updateItems(
                 sources
-                    .associateWith { existingResults[it] ?: SearchItemResult.Loading }
+                    .associateWith { existingResults[it] ?: kept[it.id] ?: SearchItemResult.Loading }
                     .toPersistentMap(),
             )
         } else {
             updateItems(
                 sources
-                    .associateWith { SearchItemResult.Loading }
+                    .associateWith { kept[it.id] ?: SearchItemResult.Loading }
                     .toPersistentMap(),
             )
         }
@@ -180,29 +203,32 @@ abstract class SearchScreenModel(
                     if (state.value.items[source] !is SearchItemResult.Loading) {
                         return@async
                     }
-
-                    try {
-                        val page = withContext(coroutineDispatcher) {
-                            source.getSearchManga(1, query.sanitize(), source.getFilterList())
-                        }
-
-                        val titles = page.mangas
-                            .map { it.toDomainManga(source.id) }
-                            .distinctBy { it.url }
-                            .let { networkToLocalManga(it) }
-
-                        if (isActive) {
-                            updateItem(source, SearchItemResult.Success(titles))
-                        }
-                    } catch (e: Exception) {
-                        if (isActive) {
-                            updateItem(source, SearchItemResult.Error(e))
-                        }
-                    }
+                    fetch(source, query)
                 }
             }
                 .awaitAll()
         }
+    }
+
+    private suspend fun fetch(source: Source, query: String) {
+        val result = try {
+            val page = withContext(coroutineDispatcher) {
+                source.getSearchManga(1, query.sanitize(), source.getFilterList())
+            }
+
+            val titles = page.mangas
+                .map { it.toDomainManga(source.id) }
+                .distinctBy { it.url }
+                .let { networkToLocalManga(it) }
+            SearchItemResult.Success(titles)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            SearchItemResult.Error(e)
+        }
+        if (state.value.searchQuery != query) return
+        updateItem(source, result)
+        if (keepsResults) resultCache.getOrPut(query) { java.util.concurrent.ConcurrentHashMap() }[source.id] = result
     }
 
     private fun updateItems(items: Map<Source, SearchItemResult>) {
@@ -249,6 +275,9 @@ abstract class SearchScreenModel(
         data class Migrate(val target: Manga, val current: Manga) : Dialog
     }
 }
+
+/** KMK: Global search's finished results per search words and source, kept while the app is open */
+private val resultCache = java.util.concurrent.ConcurrentHashMap<String, MutableMap<Long, SearchItemResult>>()
 
 enum class SourceFilter {
     All,

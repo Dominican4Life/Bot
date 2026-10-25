@@ -448,7 +448,7 @@ private fun SourceList(
                             modifier = Modifier.padding(top = 2.dp),
                         ) {
                             // KMK: a JSON source says so; JS sources also say manga or anime
-                            Tag(if (source.js?.json == true) "JSON" else source.kind.label, color = kindColor(source.kind))
+                            Tag(source.js?.let { if (it.json) "JSON" else "JS" } ?: source.kind.label, color = kindColor(source.kind))
                             source.js?.let {
                                 Tag(stringResource(if (it.anime) KMR.strings.ext_js_anime else KMR.strings.ext_js_manga))
                             }

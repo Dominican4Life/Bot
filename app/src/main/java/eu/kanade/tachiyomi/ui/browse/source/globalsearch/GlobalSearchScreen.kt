@@ -109,6 +109,8 @@ class GlobalSearchScreen(
                 bulkFavoriteScreenModel = bulkFavoriteScreenModel,
                 hasPinnedSources = screenModel.hasPinnedSources(),
                 aniList = screenModel.aniList.takeIf { extensionFilter.isNullOrEmpty() },
+                onRefreshAll = screenModel::refreshAll,
+                onRefreshSource = screenModel::refreshSource,
                 onClickAniList = {
                     navigator.push(eu.kanade.tachiyomi.ui.anime.anilist.AniListAnimeScreen(it.id, manga = true))
                 },

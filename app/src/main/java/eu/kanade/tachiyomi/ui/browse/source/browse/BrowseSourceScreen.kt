@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.NewReleases
 import androidx.compose.material.icons.outlined.Favorite
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.FilterList
@@ -394,9 +395,8 @@ data class BrowseSourceScreen(
                                             selected = !panelOpen && state.listing == Listing.Latest,
                                             label = sourceTabs?.latestName ?: stringResource(MR.strings.latest),
                                             icon = Icons.Outlined.NewReleases,
-                                            animatedIcon = AnimatedImageVector.animatedVectorResource(
-                                                R.drawable.anim_updates_enter,
-                                            ),
+                                            // KMK: no animation here (only the nav bar animates): the filled icon when picked
+                                            filledIcon = Icons.Filled.NewReleases,
                                             onClick = {
                                                 if (!panelOpen && state.listing == Listing.Latest) {
                                                     screenModel.reloadListing()

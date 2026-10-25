@@ -65,6 +65,9 @@ fun GlobalSearchScreen(
     /** The AniList tab (manga), like anime global search */
     aniList: AniListSearchModel? = null,
     onClickAniList: (AniListMedia) -> Unit = {},
+    /** Holding Pinned or All searches again; holding a source's name searches that source again */
+    onRefreshAll: (() -> Unit)? = null,
+    onRefreshSource: ((Source) -> Unit)? = null,
     // KMK <--
 ) {
     // KMK -->
@@ -152,6 +155,7 @@ fun GlobalSearchScreen(
                                     onRefreshGenres = { model.refreshGenres() },
                                     // trace.moe only knows anime
                                     onScreenshot = null,
+                                    onRefreshAll = onRefreshAll,
                                 )
                                 if (mode == GlobalSearchMode.ANILIST) AniListChipBar(model = model)
                             }
@@ -188,6 +192,7 @@ fun GlobalSearchScreen(
             // KMK -->
             selection = bulkFavoriteState.selection,
             modifier = if (aniList != null) Modifier.swipeBetweenModes(mode, selectMode) else Modifier,
+            onLongClickSource = onRefreshSource,
             // KMK <--
         )
     }
@@ -205,6 +210,7 @@ internal fun GlobalSearchContent(
     // KMK -->
     selection: List<Manga>,
     modifier: Modifier = Modifier,
+    onLongClickSource: ((Source) -> Unit)? = null,
     // KMK <--
 ) {
     LazyColumn(
@@ -240,6 +246,8 @@ internal fun GlobalSearchContent(
                     subtitle = LocaleHelper.getLocalizedDisplayName(source.lang),
                     onClick = { onClickSource(source) },
                     modifier = Modifier.animateItem(),
+                    // KMK: holding a source's name searches it again
+                    onLongClick = onLongClickSource?.let { { it(source) } },
                 ) {
                     when (result) {
                         SearchItemResult.Loading -> {

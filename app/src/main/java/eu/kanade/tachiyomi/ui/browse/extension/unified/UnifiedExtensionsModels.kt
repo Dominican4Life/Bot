@@ -12,7 +12,7 @@ enum class ExtensionKind(val label: String) {
     ANIYOMI("Aniyomi"),
 
     /** JS / JSON sources from the Code editor; listed with the sources, not packages or repos */
-    JS("JS"),
+    JS("JS / JSON"),
 }
 
 enum class PackageState {

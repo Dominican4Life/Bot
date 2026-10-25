@@ -30,6 +30,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import eu.kanade.tachiyomi.util.storage.getUriCompat
+import eu.kanade.tachiyomi.util.system.toShareIntent
+import androidx.compose.material.icons.automirrored.outlined.ViewList
+import androidx.compose.material.icons.automirrored.outlined.PlaylistPlay
+import androidx.compose.material.icons.outlined.ClearAll
+import androidx.compose.material.icons.outlined.FilterList
+import androidx.compose.material.icons.outlined.NewReleases
+import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material.icons.outlined.Favorite
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Add
@@ -220,36 +230,24 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
                             Icon(Icons.Outlined.Save, contentDescription = "Save")
                         }
                         IconButton(onClick = { showSaved = true }) {
-                            Icon(Icons.Outlined.FolderOpen, contentDescription = "My sources")
+                            Icon(Icons.Outlined.FolderOpen, contentDescription = "Created Sources")
                         }
                         Box {
                             IconButton(onClick = { showMenu = true }) {
                                 Icon(Icons.Outlined.MoreVert, contentDescription = null)
                             }
                             DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-                                MenuItem("New JS source", Icons.Outlined.Add) {
-                                    showMenu = false
-                                    model.newSource(json = false, anime = state.anime)
-                                }
-                                MenuItem("New JSON source", Icons.Outlined.Add) {
-                                    showMenu = false
-                                    model.newSource(json = true, anime = state.anime)
-                                }
-                                MenuItem("Import .js / .json file", Icons.Outlined.FileUpload) {
+                                MenuItem("Import Source", Icons.Outlined.FileUpload) {
                                     showMenu = false
                                     importLauncher.launch("*/*")
                                 }
-                                MenuItem("Export to ${if (state.json) ".json" else ".js"} file", Icons.Outlined.FileDownload) {
+                                MenuItem("Export Source", Icons.Outlined.FileDownload) {
                                     showMenu = false
                                     val base = state.name.ifBlank { "source" }.replace(Regex("[^A-Za-z0-9._-]+"), "_")
                                     exportLauncher.launch(base + if (state.json) ".json" else ".js")
                                 }
-                                MenuItem("Open in browser", Icons.AutoMirrored.Outlined.OpenInNew) {
-                                    showMenu = false
-                                    openInBrowser()
-                                }
                                 if (state.saved) {
-                                    MenuItem("Delete source", Icons.Outlined.DeleteOutline) {
+                                    MenuItem("Delete Source", Icons.Outlined.DeleteOutline) {
                                         showMenu = false
                                         confirmDelete = true
                                     }
@@ -470,7 +468,6 @@ private fun DetailsPanel(
                 Text("Source settings")
             }
         }
-        OutlinedButton(onClick = model::loadInfo) { Text("Read details from the code") }
     }
 }
 
@@ -501,18 +498,20 @@ private fun TestPanel(
                 },
                 modifier = Modifier.fillMaxWidth(),
             )
+            var picked by rememberSaveable { mutableStateOf<TestAction?>(null) }
             Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.horizontalScroll(rememberScrollState()),
             ) {
-                AssistChip(onClick = { model.runAll(query) }, label = { Text("Run all") })
-                AssistChip(onClick = { model.runPopular() }, label = { Text("Popular") })
-                AssistChip(onClick = { model.runLatest() }, label = { Text("Latest") })
-                AssistChip(onClick = model::runCatalogs, label = { Text("Catalogs") })
-                AssistChip(onClick = model::runFilters, label = { Text("Filters") })
-                AssistChip(onClick = model::openSettings, label = { Text("Source settings") })
-                AssistChip(onClick = model::loadInfo, label = { Text("Info") })
-                AssistChip(onClick = model::clearResults, label = { Text("Clear") })
+                // Square buttons like a source's Browse buttons: the one tapped opens up with its name
+                TestButton(TestAction.RUN_ALL, picked, { picked = it }) { model.runAll(query) }
+                TestButton(TestAction.POPULAR, picked, { picked = it }) { model.runPopular() }
+                TestButton(TestAction.LATEST, picked, { picked = it }) { model.runLatest() }
+                TestButton(TestAction.CATALOGS, picked, { picked = it }, model::runCatalogs)
+                TestButton(TestAction.FILTERS, picked, { picked = it }, model::runFilters)
+                TestButton(TestAction.SETTINGS, picked, { picked = it }, model::openSettings)
+                TestButton(TestAction.CLEAR, picked, { picked = it }, model::clearResults)
             }
             state.running?.let {
                 Text("Running: $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
@@ -562,6 +561,18 @@ private fun TestPanel(
                 },
             ) {
                 Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy console", modifier = Modifier.size(20.dp))
+            }
+            // As a .txt file, like the Logs' Share: it arrives as an attachment, however long it is
+            IconButton(
+                onClick = {
+                    if (state.console.isEmpty()) {
+                        context.toast("The console is empty")
+                    } else {
+                        shareConsole(context, state.name, state.console)
+                    }
+                },
+            ) {
+                Icon(Icons.Outlined.Share, contentDescription = "Share console", modifier = Modifier.size(20.dp))
             }
         }
         if (consoleOpen) {
@@ -672,7 +683,7 @@ private fun SavedSourcesDialog(
     val saved by model.savedSources.collectAsState()
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("My sources") },
+        title = { Text("Created Sources") },
         text = {
             LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
                 if (saved.isEmpty()) {
@@ -856,3 +867,45 @@ private fun Context.fileName(uri: Uri): String? = runCatching {
         if (cursor.moveToFirst()) cursor.getString(0) else null
     }
 }.getOrNull() ?: uri.lastPathSegment
+
+/** KMK: The test buttons of the Code Editor */
+private enum class TestAction(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
+    RUN_ALL("Run all", Icons.AutoMirrored.Outlined.PlaylistPlay),
+    POPULAR("Popular", Icons.Outlined.FavoriteBorder),
+    LATEST("Latest", Icons.Outlined.NewReleases),
+    CATALOGS("Catalogs", Icons.AutoMirrored.Outlined.ViewList),
+    FILTERS("Filters", Icons.Outlined.FilterList),
+    SETTINGS("Source settings", Icons.Outlined.Settings),
+    CLEAR("Clear", Icons.Outlined.ClearAll),
+}
+
+/** A square button with its icon; the last one tapped shows its name, like Browse's Popular / Latest */
+@Composable
+private fun TestButton(
+    action: TestAction,
+    picked: TestAction?,
+    onPick: (TestAction) -> Unit,
+    onRun: () -> Unit,
+) {
+    eu.kanade.presentation.browse.components.BrowseTabChip(
+        selected = picked == action,
+        label = action.label,
+        icon = action.icon,
+        filledIcon = if (action == TestAction.POPULAR) Icons.Outlined.Favorite else null,
+        onClick = {
+            onPick(action)
+            onRun()
+        },
+    )
+}
+
+/** Shares the console as a .txt file */
+private fun shareConsole(context: android.content.Context, name: String, lines: List<String>) {
+    runCatching {
+        val safe = name.ifBlank { "source" }.replace(Regex("[^A-Za-z0-9._-]+"), "_")
+        val file = java.io.File(context.cacheDir, "$safe-console.txt")
+        file.writeText(lines.joinToString("\n"))
+        val uri = file.getUriCompat(context)
+        context.startActivity(uri.toShareIntent(context, type = "text/plain"))
+    }.onFailure { context.toast(it.message ?: "Couldn't share the console") }
+}

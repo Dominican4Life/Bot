@@ -40,6 +40,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.MenuBook
+import androidx.compose.material.icons.outlined.AutoStories
+import androidx.compose.material.icons.outlined.Language
+import androidx.compose.material.icons.outlined.Album
+import androidx.compose.material.icons.outlined.MusicNote
+import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.outlined.ArrowDownward
 import androidx.compose.material.icons.outlined.ArrowUpward
@@ -748,7 +754,9 @@ internal fun AniListSmallCard(media: AniListMedia, match: TraceMoeMatch?, onClic
                     .background(MaterialTheme.colorScheme.surfaceContainerHigh),
             )
             media.averageScore?.let { ScoreBadge(it, Modifier.align(Alignment.TopEnd).padding(4.dp)) }
-            match?.let { TraceBadge(it, Modifier.align(Alignment.BottomStart).padding(4.dp)) }
+            StatusDot(media.status, Modifier.align(Alignment.TopStart).padding(6.dp))
+            CoverFooter(media)
+            match?.let { TraceBadge(it, Modifier.align(Alignment.BottomStart).padding(start = 4.dp, bottom = 26.dp)) }
         }
         Text(
             text = media.title,
@@ -789,7 +797,9 @@ private fun AniListLargeCard(media: AniListMedia, match: TraceMoeMatch?, onClick
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),
                     )
-                    match?.let { TraceBadge(it, Modifier.align(Alignment.BottomStart).padding(4.dp)) }
+                    StatusDot(media.status, Modifier.align(Alignment.TopStart).padding(6.dp))
+                    CoverFooter(media)
+                    match?.let { TraceBadge(it, Modifier.align(Alignment.BottomStart).padding(start = 4.dp, bottom = 26.dp)) }
                 }
                 Column(
                     modifier = Modifier
@@ -842,6 +852,94 @@ private fun AniListLargeCard(media: AniListMedia, match: TraceMoeMatch?, onClick
                     )
                 }
             }
+        }
+    }
+}
+
+/** Like Shiru: green releasing, blue finished, yellow not yet released, orange hiatus, red cancelled */
+private fun statusColor(status: String?): Color? = when (status) {
+    "RELEASING" -> Color(0xFF22C55E)
+    "FINISHED" -> Color(0xFF3D8BFD)
+    "NOT_YET_RELEASED" -> Color(0xFFFACC15)
+    "HIATUS" -> Color(0xFFF97316)
+    "CANCELLED" -> AniListExcludeColor
+    else -> null
+}
+
+@Composable
+private fun StatusDot(status: String?, modifier: Modifier = Modifier) {
+    val color = statusColor(status) ?: return
+    Box(
+        modifier = modifier
+            .size(10.dp)
+            .background(Color.Black.copy(alpha = 0.55f), androidx.compose.foundation.shape.CircleShape)
+            .padding(2.dp)
+            .background(color, androidx.compose.foundation.shape.CircleShape),
+    )
+}
+
+/** The format as Shiru writes it under its covers */
+private fun formatLabel(format: String?): String = when (format) {
+    "TV" -> "TV Series"
+    "TV_SHORT" -> "TV Short"
+    "MOVIE" -> "Movie"
+    "SPECIAL" -> "Special"
+    "OVA" -> "OVA"
+    "ONA" -> "ONA"
+    "MUSIC" -> "Music"
+    "MANGA" -> "Manga"
+    "NOVEL" -> "Novel"
+    "ONE_SHOT" -> "One Shot"
+    else -> AniListLabels.format(format)
+}
+
+private fun formatIcon(format: String?): ImageVector = when (format) {
+    "MOVIE" -> Icons.Outlined.Movie
+    "MUSIC" -> Icons.Outlined.MusicNote
+    "SPECIAL", "OVA" -> Icons.Outlined.Album
+    "ONA" -> Icons.Outlined.Language
+    "MANGA", "ONE_SHOT" -> Icons.AutoMirrored.Outlined.MenuBook
+    "NOVEL" -> Icons.Outlined.AutoStories
+    else -> Icons.Outlined.Tv
+}
+
+/**
+ * Along the bottom of a cover, like Shiru: a calendar and the year on the left, the format and its icon on the
+ * right, over a dark fade so they read on any picture
+ */
+@Composable
+private fun androidx.compose.foundation.layout.BoxScope.CoverFooter(media: AniListMedia) {
+    val year = media.seasonYear ?: media.startYear
+    val format = media.format?.let(::formatLabel)?.takeIf { it.isNotEmpty() }
+    if (year == null && format == null) return
+    Row(
+        modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .fillMaxWidth()
+            .background(
+                androidx.compose.ui.graphics.Brush.verticalGradient(
+                    listOf(Color.Transparent, Color.Black.copy(alpha = 0.8f)),
+                ),
+            )
+            .padding(start = 5.dp, end = 5.dp, top = 10.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (year != null) {
+            Icon(Icons.Outlined.CalendarMonth, contentDescription = null, tint = Color.White, modifier = Modifier.size(12.dp))
+            Spacer(modifier = Modifier.width(3.dp))
+            Text(text = year.toString(), color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+        }
+        Spacer(modifier = Modifier.weight(1f))
+        if (format != null) {
+            Text(
+                text = format,
+                color = Color.White,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+            )
+            Spacer(modifier = Modifier.width(3.dp))
+            Icon(formatIcon(media.format), contentDescription = null, tint = Color.White, modifier = Modifier.size(12.dp))
         }
     }
 }

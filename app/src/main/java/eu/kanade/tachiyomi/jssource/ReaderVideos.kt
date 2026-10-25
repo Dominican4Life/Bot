@@ -114,15 +114,7 @@ object ReaderVideos {
         val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         canvas.drawColor(Color.rgb(28, 28, 30))
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(90, 255, 255, 255) }
-        val r = h / 6f
-        val path = Path().apply {
-            moveTo(w / 2f - r * 0.6f, h / 2f - r)
-            lineTo(w / 2f - r * 0.6f, h / 2f + r)
-            lineTo(w / 2f + r, h / 2f)
-            close()
-        }
-        canvas.drawPath(path, paint)
+        // Plain: the reader and the gallery put their own play button over it
         ByteArrayOutputStream().use { out ->
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
             bitmap.recycle()

@@ -9,6 +9,9 @@ class GlobalSearchScreenModel(
     initialExtensionFilter: String? = null,
 ) : SearchScreenModel(State(searchQuery = initialQuery)) {
 
+    // KMK: results stay until the app is closed, like a source's Browse
+    override val keepsResults: Boolean = true
+
     // KMK: the AniList tab, searching AniList's manga
     val aniList = AniListSearchModel(screenModelScope, manga = true)
 

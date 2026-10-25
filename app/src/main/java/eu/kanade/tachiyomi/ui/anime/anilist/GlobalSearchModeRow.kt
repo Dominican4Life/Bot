@@ -50,6 +50,8 @@ fun GlobalSearchModeRow(
     onScreenshot: (() -> Unit)?,
     modifier: Modifier = Modifier,
     showAniList: Boolean = true,
+    /** Holding Pinned or All: searches every source again */
+    onRefreshAll: (() -> Unit)? = null,
 ) {
     Row(
         modifier = modifier
@@ -76,6 +78,7 @@ fun GlobalSearchModeRow(
                         onPinnedOnly(true)
                         onMode(GlobalSearchMode.RESULTS)
                     },
+                    onLongClick = onRefreshAll,
                 )
             }
             AniListTabChip(
@@ -86,6 +89,7 @@ fun GlobalSearchModeRow(
                     onPinnedOnly(false)
                     onMode(GlobalSearchMode.RESULTS)
                 },
+                onLongClick = onRefreshAll,
             )
             AniListTabChip(
                 selected = onSources && onlyShowHasResults,

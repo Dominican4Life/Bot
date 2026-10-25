@@ -198,6 +198,7 @@ class AnimeGlobalSearchScreen(
                                 )
                             },
                             showAniList = mergeIntoId == null,
+                            onRefreshAll = screenModel::refreshAll,
                         )
                         if (mode == GlobalSearchMode.ANILIST) AniListChipBar(model = aniList)
                         HorizontalDivider()
@@ -231,6 +232,7 @@ class AnimeGlobalSearchScreen(
                                 }
                             },
                             onLongClickAnime = { navigator.push(AnimeScreen(it.id)) },
+                            onRefreshSource = screenModel::refreshSource,
                         )
                     }
                 }
@@ -247,6 +249,7 @@ class AnimeGlobalSearchScreen(
         onOpenSource: (AnimeCatalogueSource) -> Unit,
         onClickAnime: (Anime, String) -> Unit,
         onLongClickAnime: (Anime) -> Unit,
+        onRefreshSource: (AnimeCatalogueSource) -> Unit,
     ) {
         val rows = if (state.onlyShowHasResults) state.rows.filter { it.items == null || it.items.isNotEmpty() } else state.rows
         ScrollbarLazyColumn(contentPadding = paddingValues) {
@@ -256,6 +259,8 @@ class AnimeGlobalSearchScreen(
                         title = row.source.name,
                         subtitle = row.source.lang.uppercase(),
                         onClick = { onOpenSource(row.source) },
+                        // Holding a source's name searches it again
+                        onLongClick = { onRefreshSource(row.source) },
                     ) {
                         when {
                             row.items == null -> GlobalSearchLoadingResultItem()
@@ -345,6 +350,23 @@ class AnimeGlobalSearchScreenModel(
         mutableState.update { it.copy(onlyShowHasResults = !it.onlyShowHasResults) }
     }
 
+    /** Searches every source again for the current words, not using what was kept (holding Pinned or All) */
+    fun refreshAll() {
+        val query = state.value.query.ifBlank { submitted }.takeIf { it.isNotBlank() } ?: return
+        resultCache.remove(query)
+        search(query)
+    }
+
+    /** Searches one source again (holding its name) */
+    fun refreshSource(source: AnimeCatalogueSource) {
+        val query = state.value.query.takeIf { it.isNotBlank() } ?: return
+        resultCache[query]?.remove(source.id)
+        mutableState.update { state ->
+            state.copy(rows = state.rows.map { if (it.source.id == source.id) Row(source) else it })
+        }
+        screenModelScope.launchIO { fetch(source, query) }
+    }
+
     fun search(query: String) {
         searchJob?.cancel()
         val disabledLangs = sourcePreferences.animeDisabledLanguages().get()
@@ -355,33 +377,52 @@ class AnimeGlobalSearchScreenModel(
             .filter { it.lang !in disabledLangs && it.id.toString() !in disabledSources }
             .filter { !pinnedOnly || it.id.toString() in pinned }
             .sortedWith(compareBy({ it.id.toString() !in pinned }, { it.name.lowercase() }))
-        mutableState.update { it.copy(query = query, rows = sources.map { source -> Row(source) }) }
+        // What an earlier search with these words found stays until the app is closed (not when merging)
+        val kept = if (mergeIntoId == null) resultCache[query].orEmpty() else emptyMap()
+        mutableState.update {
+            it.copy(
+                query = query,
+                rows = sources.map { source -> kept[source.id]?.copy(source = source) ?: Row(source) }
+                    .sortedBy { row -> row.items?.isEmpty() == true },
+            )
+        }
         val semaphore = Semaphore(5)
         searchJob = screenModelScope.launchIO {
-            sources.forEach { source ->
+            sources.filter { it.id !in kept }.forEach { source ->
                 launch {
-                    semaphore.withPermit {
-                        val result = try {
-                            val page = source.getSearchAnime(1, query, source.getFilterList())
-                            Row(
-                                source = source,
-                                items = page.animes.mapNotNull {
-                                    runCatching { repository.networkToLocal(it, source.id) }.getOrNull()
-                                }.filter { it.id != mergeIntoId },
-                            )
-                        } catch (e: Throwable) {
-                            if (e is CancellationException) throw e
-                            Row(source, emptyList(), e.message ?: e.javaClass.simpleName)
-                        }
-                        mutableState.update { state ->
-                            // Sources with results first, keeping the original order otherwise
-                            val rows = state.rows.map { if (it.source.id == source.id) result else it }
-                            state.copy(rows = rows.sortedBy { it.items?.isEmpty() == true })
-                        }
-                    }
+                    semaphore.withPermit { fetch(source, query) }
                 }
             }
         }
+    }
+
+    private suspend fun fetch(source: AnimeCatalogueSource, query: String) {
+        val result = try {
+            val page = source.getSearchAnime(1, query, source.getFilterList())
+            Row(
+                source = source,
+                items = page.animes.mapNotNull {
+                    runCatching { repository.networkToLocal(it, source.id) }.getOrNull()
+                }.filter { it.id != mergeIntoId },
+            )
+        } catch (e: Throwable) {
+            if (e is CancellationException) throw e
+            Row(source, emptyList(), e.message ?: e.javaClass.simpleName)
+        }
+        if (state.value.query != query) return
+        if (mergeIntoId == null) {
+            resultCache.getOrPut(query) { java.util.concurrent.ConcurrentHashMap() }[source.id] = result
+        }
+        mutableState.update { state ->
+            // Sources with results first, keeping the original order otherwise
+            val rows = state.rows.map { if (it.source.id == source.id) result else it }
+            state.copy(rows = rows.sortedBy { it.items?.isEmpty() == true })
+        }
+    }
+
+    private companion object {
+        /** Finished results per search words and source, kept while the app is open, like a source's Browse */
+        val resultCache = java.util.concurrent.ConcurrentHashMap<String, MutableMap<Long, Row>>()
     }
 
     fun merge(anime: Anime, onDone: () -> Unit) {

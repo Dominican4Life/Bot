@@ -76,7 +76,7 @@ object AniListApi {
 
     private const val CARD_FIELDS = """
         id idMal type title { romaji english native userPreferred } coverImage { extraLarge large color } bannerImage
-        format status episodes chapters volumes duration season seasonYear averageScore genres description(asHtml: false) isAdult
+        format status episodes chapters volumes duration season seasonYear startDate { year } averageScore genres description(asHtml: false) isAdult
         nextAiringEpisode { episode airingAt } studios(isMain: true) { nodes { name } }
     """
 
@@ -491,6 +491,7 @@ object AniListApi {
             duration = media.alInt("duration"),
             season = media.alStr("season"),
             seasonYear = media.alInt("seasonYear"),
+            startYear = media.alObj("startDate")?.alInt("year"),
             averageScore = media.alInt("averageScore"),
             genres = media.alArr("genres").orEmpty().mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
             description = media.alStr("description")?.let(::cleanDescription),
@@ -578,6 +579,7 @@ data class AniListMedia(
     val duration: Int?,
     val season: String?,
     val seasonYear: Int?,
+    val startYear: Int? = null,
     val averageScore: Int?,
     val genres: List<String>,
     val description: String?,
