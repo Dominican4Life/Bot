@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.ui.sumizuri
+package eu.kanade.tachiyomi.ui.codeeditor
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll

@@ -160,8 +160,8 @@ class AppModule(val app: Application) : InjektModule {
         addSingletonFactory { NetworkHelper(app, get(), get()) }
         addSingletonFactory { JavaScriptEngine(app) }
 
-        // KMK: Sumizuri-compatible JS / JSON sources from the Code editor
-        addSingletonFactory { eu.kanade.tachiyomi.sumizuri.SumizuriManager(app) }
+        // KMK: JS / JSON sources from the Code editor
+        addSingletonFactory { eu.kanade.tachiyomi.jssource.JsSourceManager(app) }
         addSingletonFactory<SourceManager> { AndroidSourceManager(app, get(), get()) }
         addSingletonFactory { ExtensionManager(app) }
         // KMK: anime

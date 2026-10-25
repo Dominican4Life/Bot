@@ -29,7 +29,7 @@ import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.online.MetadataSource
 import eu.kanade.tachiyomi.source.online.all.MangaDex
-import eu.kanade.tachiyomi.sumizuri.SumizuriTabs
+import eu.kanade.tachiyomi.jssource.JsTabs
 import eu.kanade.tachiyomi.util.removeCovers
 import exh.metadata.metadata.RaisedSearchMetadata
 import exh.source.EH_PACKAGE
@@ -340,7 +340,7 @@ open class BrowseSourceScreenModel(
     // KMK -->
     /** Lists one of a JS / JSON source's catalogs, the way picking it in the filter sheet with no search does */
     fun showCatalog(id: String) {
-        val tabs = source as? SumizuriTabs ?: return
+        val tabs = source as? JsTabs ?: return
         val filters = source.getFilterList()
         if (runCatching { tabs.selectCatalog(filters, id) }.getOrNull() != true) return
         runCatching { tabs.rememberTab(id) }
@@ -350,7 +350,7 @@ open class BrowseSourceScreenModel(
 
     /** For a source with tab catalogs: opens the one used last (or the first). False when it has none */
     fun showHomeTab(): Boolean {
-        val id = runCatching { (source as? SumizuriTabs)?.homeTab() }.getOrNull() ?: return false
+        val id = runCatching { (source as? JsTabs)?.homeTab() }.getOrNull() ?: return false
         showCatalog(id)
         return true
     }

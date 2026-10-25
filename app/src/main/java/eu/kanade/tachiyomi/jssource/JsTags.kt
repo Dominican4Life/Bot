@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.sumizuri
+package eu.kanade.tachiyomi.jssource
 
 import android.app.Application
 import android.text.format.DateUtils
@@ -31,7 +31,7 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * getTags() returns `{ listName: ["tag", ...], ... }`. A plain array is one list every box uses.
  */
-class SumizuriTags(
+class JsTags(
     private val context: Application,
     private val codeOf: (String) -> String?,
 ) {
@@ -44,7 +44,7 @@ class SumizuriTags(
         val count: Int get() = lists.values.sumOf { it.size }
     }
 
-    private val dir = File(context.filesDir, "sumizuri_tags").apply { mkdirs() }
+    private val dir = File(context.filesDir, "js_tags").apply { mkdirs() }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val cache = ConcurrentHashMap<String, Cached>()
     private val locks = ConcurrentHashMap<String, Mutex>()
@@ -57,12 +57,12 @@ class SumizuriTags(
     /** The lists saved for [key], read from the device the first time */
     fun cached(key: String): Cached? = cache[key] ?: runCatching {
         file(key).takeIf { it.exists() }
-            ?.let { sumizuriJson.decodeFromString(Cached.serializer(), it.readText()) }
+            ?.let { jsJson.decodeFromString(Cached.serializer(), it.readText()) }
             ?.also { cache[key] = it }
     }.getOrNull()
 
     /** Gets the tag lists ready: reads them from the site in the background when they're missing or old */
-    fun ensure(info: SumizuriSourceInfo) {
+    fun ensure(info: JsSourceInfo) {
         if (!info.hasTags) return
         val failed = failedAt[info.key]
         if (failed != null && System.currentTimeMillis() - failed < RETRY_AFTER_FAILURE_MS) return
@@ -71,7 +71,7 @@ class SumizuriTags(
     }
 
     /** Reads the tag lists from the site now, whatever their age. [onDone] gets the number of tags, on the main thread */
-    fun refresh(info: SumizuriSourceInfo, onDone: (Result<Int>) -> Unit) {
+    fun refresh(info: JsSourceInfo, onDone: (Result<Int>) -> Unit) {
         scope.launch {
             val result = runCatching { load(info, force = true) }
             withContext(Dispatchers.Main) { onDone(result) }
@@ -84,7 +84,7 @@ class SumizuriTags(
         file(key).delete()
     }
 
-    private suspend fun load(info: SumizuriSourceInfo, force: Boolean): Int {
+    private suspend fun load(info: JsSourceInfo, force: Boolean): Int {
         val asked = System.currentTimeMillis()
         return locks.getOrPut(info.key) { Mutex() }.withLock {
             val saved = cached(info.key)
@@ -95,21 +95,21 @@ class SumizuriTags(
             try {
                 val fresh = Cached(System.currentTimeMillis(), fetch(info))
                 cache[info.key] = fresh
-                file(info.key).writeText(sumizuriJson.encodeToString(Cached.serializer(), fresh))
+                file(info.key).writeText(jsJson.encodeToString(Cached.serializer(), fresh))
                 failedAt.remove(info.key)
-                AppLog.add('I', "sumizuri", "${info.name}: got ${fresh.count} tags in ${fresh.lists.size} lists")
+                AppLog.add('I', "js", "${info.name}: got ${fresh.count} tags in ${fresh.lists.size} lists")
                 fresh.count
             } catch (e: Throwable) {
                 failedAt[info.key] = System.currentTimeMillis()
-                AppLog.add('W', "sumizuri", "${info.name}: getTags failed: ${e.message}")
+                AppLog.add('W', "js", "${info.name}: getTags failed: ${e.message}")
                 throw e
             }
         }
     }
 
-    private suspend fun fetch(info: SumizuriSourceInfo): Map<String, List<String>> {
+    private suspend fun fetch(info: JsSourceInfo): Map<String, List<String>> {
         val code = codeOf(info.key) ?: throw IllegalStateException("The code of ${info.name} is missing")
-        val runtime = SumizuriRuntime.create(context, info.key, info.id, info.name, code, info.json)
+        val runtime = JsRuntime.create(context, info.key, info.id, info.name, code, info.json)
         val result = try {
             runtime.metadata()
             runtime.call("getTags")
@@ -177,9 +177,9 @@ class SumizuriTags(
     }
 
     /** "Refresh tag list" in the source's settings */
-    fun addRefreshButton(screen: PreferenceScreen, info: SumizuriSourceInfo) {
+    fun addRefreshButton(screen: PreferenceScreen, info: JsSourceInfo) {
         val button = Preference(screen.context).apply {
-            key = "sumizuri_refresh_tags"
+            key = "js_refresh_tags"
             title = "Refresh tag list"
             summary = summaryOf(cache[info.key])
             isPersistent = false

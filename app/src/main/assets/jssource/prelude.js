@@ -1,4 +1,4 @@
-// From Sumizuri (not-akari/sumizuri-flutter), lib/features/extensions/data/engines/js/js_prelude.dart
+// The JS host's prelude
 
 globalThis.host = {
   fetch: function(url, options) {

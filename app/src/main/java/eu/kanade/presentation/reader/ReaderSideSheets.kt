@@ -70,7 +70,7 @@ import coil3.request.ImageRequest
 import coil3.request.crossfade
 import eu.kanade.presentation.manga.components.ChapterDownloadAction
 import eu.kanade.tachiyomi.source.model.Page
-import eu.kanade.tachiyomi.sumizuri.ReaderVideos
+import eu.kanade.tachiyomi.jssource.ReaderVideos
 import eu.kanade.tachiyomi.ui.reader.chapter.ReaderChapterItem
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage

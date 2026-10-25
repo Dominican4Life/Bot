@@ -21,18 +21,18 @@ class AnimeSourceManager(
     private val scope = CoroutineScope(SupervisorJob())
 
     // Sources made in the Code editor are anime sources too
-    private val sumizuriManager: eu.kanade.tachiyomi.sumizuri.SumizuriManager by lazy { Injekt.get() }
+    private val jsSourceManager: eu.kanade.tachiyomi.jssource.JsSourceManager by lazy { Injekt.get() }
 
     // Videos played from Device files
     private val deviceFiles = eu.kanade.tachiyomi.devicefiles.DeviceFilesAnimeSource()
 
     // Videos found inside manga chapters, played from the reader
-    private val readerVideos = eu.kanade.tachiyomi.sumizuri.ReaderVideosSource()
+    private val readerVideos = eu.kanade.tachiyomi.jssource.ReaderVideosSource()
 
     private val sourcesMapFlow: StateFlow<Map<Long, AnimeSource>> = extensionManager.installedExtensionsFlow
-        .combine(sumizuriManager.animeSourcesFlow) { extensions, jsSources -> extensions to jsSources }
+        .combine(jsSourceManager.animeSourcesFlow) { extensions, jsSources -> extensions to jsSources }
         // KMK: APK sources switched off in favour of a JS source with their id are left out
-        .combine(sumizuriManager.apkOffFlow) { (extensions, jsSources), apkOff ->
+        .combine(jsSourceManager.apkOffFlow) { (extensions, jsSources), apkOff ->
             (extensions.flatMap { it.sources }.filter { it.id !in apkOff } + jsSources + deviceFiles + readerVideos)
                 .associateBy { it.id }
         }

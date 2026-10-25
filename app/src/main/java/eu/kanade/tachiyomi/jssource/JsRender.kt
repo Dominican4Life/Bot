@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.sumizuri
+package eu.kanade.tachiyomi.jssource
 
 import android.annotation.SuppressLint
 import android.content.Context
@@ -23,11 +23,11 @@ import uy.kohesive.injekt.api.get
 import kotlin.coroutines.resume
 
 /**
- * KMK: host.render(url, options) for Sumizuri sources: opens the page in a hidden WebView, waits for it (and for
+ * KMK: host.render(url, options) for JS sources: opens the page in a hidden WebView, waits for it (and for
  * `waitFor` / `waitForResource`), runs `script` if given, and hands back the page's HTML, address, the network
- * addresses matching `capture`, and the script's result. Ported from sumizuri-flutter's render_runner.
+ * addresses matching `capture`, and the script's result.
  */
-internal object SumizuriRender {
+internal object JsRender {
 
     private const val DEFAULT_TIMEOUT_MS = 20_000L
     private const val SETTLE_MS = 500L
@@ -141,8 +141,8 @@ internal object SumizuriRender {
     private suspend fun WebView.evalJson(script: String): JsonObject {
         val raw = evalRaw(script) ?: return JsonObject(emptyMap())
         return runCatching {
-            val text = sumizuriJson.parseToJsonElement(raw).jsonPrimitive.content
-            sumizuriJson.parseToJsonElement(text).jsonObject
+            val text = jsJson.parseToJsonElement(raw).jsonPrimitive.content
+            jsJson.parseToJsonElement(text).jsonObject
         }.getOrDefault(JsonObject(emptyMap()))
     }
 
@@ -160,26 +160,26 @@ internal object SumizuriRender {
 
     private fun runScript(user: String) = """
         (function () {
-          window.__sumizuriDone = false;
-          window.__sumizuriResult = null;
-          window.__sumizuriError = null;
+          window.__jsHostDone = false;
+          window.__jsHostResult = null;
+          window.__jsHostError = null;
           try {
             var val = (0, eval)(${user.jsQuoted()});
             if (val && typeof val.then === 'function') {
               val.then(function (res) {
-                window.__sumizuriResult = res === undefined || res === null ? null : String(res);
-                window.__sumizuriDone = true;
+                window.__jsHostResult = res === undefined || res === null ? null : String(res);
+                window.__jsHostDone = true;
               }).catch(function (err) {
-                window.__sumizuriError = 'ERROR: ' + (err && err.message ? err.message : String(err));
-                window.__sumizuriDone = true;
+                window.__jsHostError = 'ERROR: ' + (err && err.message ? err.message : String(err));
+                window.__jsHostDone = true;
               });
             } else {
-              window.__sumizuriResult = val === undefined || val === null ? null : String(val);
-              window.__sumizuriDone = true;
+              window.__jsHostResult = val === undefined || val === null ? null : String(val);
+              window.__jsHostDone = true;
             }
           } catch (e) {
-            window.__sumizuriError = 'ERROR: ' + (e && e.message ? e.message : String(e));
-            window.__sumizuriDone = true;
+            window.__jsHostError = 'ERROR: ' + (e && e.message ? e.message : String(e));
+            window.__jsHostDone = true;
           }
           return 'started';
         })()
@@ -187,7 +187,7 @@ internal object SumizuriRender {
 
     private val POLL_SCRIPT = """
         (function () {
-          return JSON.stringify({ done: window.__sumizuriDone === true, result: window.__sumizuriResult, error: window.__sumizuriError });
+          return JSON.stringify({ done: window.__jsHostDone === true, result: window.__jsHostResult, error: window.__jsHostError });
         })()
     """.trimIndent()
 

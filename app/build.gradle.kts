@@ -22,9 +22,9 @@ if (Config.includeTelemetry) {
 
 shortcutHelper.setFilePath("./shortcuts.xml")
 
-// KMK: quickjs-kt (Sumizuri-compatible sources) ships a libquickjs.so that clashes with the one extensions use
+// KMK: quickjs-kt (JS / JSON sources) ships a libquickjs.so that clashes with the one extensions use
 // (app.cash.quickjs). Its classes are used as they are, and its native library is packaged as libquickjskt.so,
-// which the app loads itself before the engine starts (SumizuriRuntime).
+// which the app loads itself before the engine starts (JsRuntime).
 val quickjsKt: Configuration by configurations.creating { isTransitive = false }
 val quickjsKtDir = layout.buildDirectory.dir("quickjskt")
 val unpackQuickjsKt by tasks.registering(Copy::class) {
@@ -308,7 +308,7 @@ dependencies {
 
     // HTML parser
     implementation(libs.jsoup)
-    // KMK: Sumizuri-compatible JS / JSON sources (see unpackQuickjsKt below)
+    // KMK: JS / JSON sources (see unpackQuickjsKt below)
     quickjsKt("${libs.quickjs.kt.get()}@aar")
     implementation(files(quickjsKtDir.map { it.file("jar/classes.jar") }).builtBy(unpackQuickjsKt))
 

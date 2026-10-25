@@ -234,7 +234,7 @@ private fun FilterItem(filter: Filter<*>, onUpdate: () -> Unit/* SY --> */, star
         }
         // SY <--
         is Filter.Header -> {
-            // KMK: a blank header is a hidden holder (a Sumizuri source's selected tab), not a title
+            // KMK: a blank header is a hidden holder (a JS source's selected tab), not a title
             if (filter.name.isNotBlank()) HeadingItem(filter.name)
         }
         is Filter.Separator -> {

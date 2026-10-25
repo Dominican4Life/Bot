@@ -39,7 +39,7 @@ import eu.kanade.tachiyomi.ui.browse.extension.details.SourcePreferencesScreen
 import eu.kanade.tachiyomi.ui.browse.extension.unified.UnifiedSource
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreen
 import eu.kanade.tachiyomi.ui.browse.source.feed.SourceFeedScreen
-import eu.kanade.tachiyomi.ui.sumizuri.SourceEditorScreen
+import eu.kanade.tachiyomi.ui.codeeditor.SourceEditorScreen
 import eu.kanade.tachiyomi.util.system.isPackageInstalled
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.launch

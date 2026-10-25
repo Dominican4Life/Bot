@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.sumizuri
+package eu.kanade.tachiyomi.jssource
 
 import android.content.Context
 import android.graphics.Bitmap
@@ -36,7 +36,7 @@ import uy.kohesive.injekt.api.get
 import java.io.ByteArrayOutputStream
 
 /**
- * KMK: Videos inside a manga chapter. A Sumizuri manga source can return pages with a `videoUrl`; the reader shows
+ * KMK: Videos inside a manga chapter. A JS manga source can return pages with a `videoUrl`; the reader shows
  * them as a picture (the page's `imageUrl` or `thumbnailUrl`, or a plain dark tile) with a play button, and tapping
  * it plays the video in the app's own player. The chapter's videos become the episodes of a hidden anime, so the
  * player's next / previous go through the chapter's videos.
@@ -46,24 +46,25 @@ object ReaderVideos {
     /** The hidden anime source the chapter videos are played through */
     const val SOURCE_ID = 7_301_844_225_610_480_103L
 
-    private const val MARK = "sumizuri-video:"
+    private const val MARK = "jsvideo:"
 
     /** The picture of a video page that has no thumbnail; never fetched, see [tileResponse] */
-    const val TILE_URL = "https://sumizuri.invalid/video-tile.png"
+    const val TILE_URL = "https://jssource.invalid/video-tile.png"
 
-    fun isVideo(pageUrl: String?): Boolean = pageUrl?.startsWith(MARK) == true
+    fun isVideo(pageUrl: String?): Boolean =
+        pageUrl != null && (pageUrl.startsWith(MARK) || pageUrl.startsWith(JsLegacy.OLD_VIDEO_MARK))
 
     /** The page url that carries a video: its address, headers, subtitles, thumbnail and quality */
     fun encode(data: JsonObject): String =
         MARK + Base64.encodeToString(data.toString().toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
 
     fun decode(pageUrl: String): JsonObject? = runCatching {
-        val raw = String(Base64.decode(pageUrl.removePrefix(MARK), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
-        sumizuriJson.parseToJsonElement(raw) as JsonObject
+        val raw = String(Base64.decode(pageUrl.removePrefix(MARK).removePrefix(JsLegacy.OLD_VIDEO_MARK), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
+        jsJson.parseToJsonElement(raw) as JsonObject
     }.getOrNull()
 
     /**
-     * Turns one page of a Sumizuri source's `getPageList` into a video page, or null when it has neither a
+     * Turns one page of a JS source's `getPageList` into a video page, or null when it has neither a
      * `videoUrl` (the stream itself) nor a `videoListUrl` (handed to the source's own `getVideoList` when played,
      * for embeds that are slow to resolve). [defaults] are the source's own headers (its Referer first); the page's
      * `headers` win over them.
@@ -166,7 +167,7 @@ object ReaderVideos {
         val listUrl = data.str("listUrl")
         if (listUrl != null) {
             val source = data.str("sourceId")?.toLongOrNull()
-                ?.let { Injekt.get<SourceManager>().get(it) } as? SumizuriMangaSource
+                ?.let { Injekt.get<SourceManager>().get(it) } as? JsMangaSource
                 ?: error("The source of this video isn't installed any more")
             val pageHeaders = data.obj("headers")?.mapNotNull { (k, v) -> (v as? JsonPrimitive)?.content?.let { k to it } }
                 ?.toMap().orEmpty()
@@ -187,8 +188,8 @@ object ReaderVideos {
             videoUrl = if (isHls) HlsRelay.wrap(url, headers) else url,
             videoTitle = quality.ifBlank { "Video" },
             headers = headers,
-            subtitleTracks = SumizuriVideos.tracks(data.arr("subtitles")),
-            audioTracks = SumizuriVideos.tracks(data.arr("audioTracks")),
+            subtitleTracks = JsVideos.tracks(data.arr("subtitles")),
+            audioTracks = JsVideos.tracks(data.arr("audioTracks")),
             initialized = true,
         ).apply {
             type = when {

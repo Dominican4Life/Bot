@@ -53,7 +53,7 @@ import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
 
-/** How wide a tile may grow and how tall it always is (same as Sumizuri's source wall) */
+/** How wide a tile may grow and how tall it always is  */
 val SourceTileMinWidth = 112.dp
 val SourceTileHeight = 138.dp
 val SourceTileGap = 10.dp
@@ -65,7 +65,7 @@ fun sourceSiteOf(baseUrl: String?): String {
 }
 
 /**
- * KMK: One source on the Browse wall (design from Sumizuri): its icon over a wash of its own colours, its name
+ * KMK: One source on the Browse wall: its icon over a wash of its own colours, its name
  * and the site it reads from. Badges (language, 18+, settings, pin, latest) go in the corners chosen in
  * Settings › Library › Badges › Source badges.
  */

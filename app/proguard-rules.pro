@@ -322,7 +322,7 @@
 -keep class com.arthenica.** { public protected *; }
 # KMK <--
 
-# KMK: QuickJS engine for Sumizuri-compatible sources (JNI calls back into these)
+# KMK: QuickJS engine for JS / JSON sources (JNI calls back into these)
 -keep class com.dokar.quickjs.** { *; }
 -keep interface com.dokar.quickjs.** { *; }
 -keep class kotlin.UByteArray { *; }

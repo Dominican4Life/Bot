@@ -80,7 +80,7 @@ fun Screen.sourcesTab(
             ),
             // KMK <--
         ).let { base ->
-            // KMK: the Code editor, for JS / JSON sources (Sumizuri style)
+            // KMK: the Code editor, for JS / JSON sources
             if (smartSearchConfig != null) {
                 base
             } else {
@@ -88,7 +88,7 @@ fun Screen.sourcesTab(
                     AppBar.Action(
                         title = "Code editor",
                         icon = Icons.Outlined.Code,
-                        onClick = { navigator.push(eu.kanade.tachiyomi.ui.sumizuri.SourceEditorScreen()) },
+                        onClick = { navigator.push(eu.kanade.tachiyomi.ui.codeeditor.SourceEditorScreen()) },
                     ),
                 )
             }
@@ -182,15 +182,15 @@ fun Screen.sourcesTab(
                             sheetSource = null
                             Injekt.get<eu.kanade.tachiyomi.extension.ExtensionManager>().uninstallExtension(ext)
                         }
-                    } ?: (httpSource as? eu.kanade.tachiyomi.sumizuri.SumizuriMangaSource)?.let { js ->
+                    } ?: (httpSource as? eu.kanade.tachiyomi.jssource.JsMangaSource)?.let { js ->
                         {
                             sheetSource = null
-                            Injekt.get<eu.kanade.tachiyomi.sumizuri.SumizuriManager>().delete(js.info.key)
+                            Injekt.get<eu.kanade.tachiyomi.jssource.JsSourceManager>().delete(js.info.key)
                         }
                     },
                     // A Code editor source (even one using an installed APK's id) opens its own settings, like in
                     // Extensions; an APK source opens its extension's page
-                    onSettings = (httpSource as? eu.kanade.tachiyomi.sumizuri.SumizuriMangaSource)?.let { js ->
+                    onSettings = (httpSource as? eu.kanade.tachiyomi.jssource.JsMangaSource)?.let { js ->
                         {
                             sheetSource = null
                             navigator.push(SourcePreferencesScreen(js.id))
@@ -201,10 +201,10 @@ fun Screen.sourcesTab(
                             navigator.push(ExtensionDetailsScreen(ext.pkgName))
                         }
                     },
-                    onOpenCodeEditor = (httpSource as? eu.kanade.tachiyomi.sumizuri.SumizuriMangaSource)?.let { js ->
+                    onOpenCodeEditor = (httpSource as? eu.kanade.tachiyomi.jssource.JsMangaSource)?.let { js ->
                         {
                             sheetSource = null
-                            navigator.push(eu.kanade.tachiyomi.ui.sumizuri.SourceEditorScreen(js.info.key))
+                            navigator.push(eu.kanade.tachiyomi.ui.codeeditor.SourceEditorScreen(js.info.key))
                         }
                     },
                 )

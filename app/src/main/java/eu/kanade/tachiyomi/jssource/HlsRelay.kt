@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.sumizuri
+package eu.kanade.tachiyomi.jssource
 
 import android.net.Uri
 import eu.kanade.tachiyomi.network.NetworkHelper

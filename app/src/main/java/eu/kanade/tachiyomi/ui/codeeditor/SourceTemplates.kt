@@ -1,6 +1,6 @@
-package eu.kanade.tachiyomi.ui.sumizuri
+package eu.kanade.tachiyomi.ui.codeeditor
 
-/** KMK: Starting points for a new source, the same ones Sumizuri's Source Editor uses */
+/** KMK: Starting points for a new source */
 object SourceTemplates {
 
     private val js = """

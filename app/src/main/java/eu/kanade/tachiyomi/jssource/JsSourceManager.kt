@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.sumizuri
+package eu.kanade.tachiyomi.jssource
 
 import android.app.Application
 import eu.kanade.domain.source.service.SourcePreferences
@@ -25,29 +25,34 @@ import java.util.UUID
  * KMK: Keeps the JS / JSON sources made in the Code editor (or imported), and turns them into manga and anime
  * sources for the source managers. Each source lives in its own folder: its code and what's known about it.
  */
-class SumizuriManager(private val context: Application) {
+class JsSourceManager(private val context: Application) {
 
-    private val root = File(context.filesDir, "sumizuri_sources").apply { mkdirs() }
+    // Older builds kept everything under other names: moved once, before anything is read
+    init {
+        JsLegacy.migrate(context)
+    }
+
+    private val root = File(context.filesDir, "js_sources").apply { mkdirs() }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    private val _saved = MutableStateFlow(load().also { SumizuriIcons.prepare(context, it) })
+    private val _saved = MutableStateFlow(load().also { JsIcons.prepare(context, it) })
 
     /** Every saved source, newest change first */
-    val savedFlow: StateFlow<List<SumizuriSourceInfo>> = _saved.asStateFlow()
+    val savedFlow: StateFlow<List<JsSourceInfo>> = _saved.asStateFlow()
 
     /** Tag lists for the sources' autocomplete filters */
-    val tags = SumizuriTags(context, ::code)
+    val tags = JsTags(context, ::code)
 
-    private val runtimes = HashMap<String, SumizuriRuntime>()
+    private val runtimes = HashMap<String, JsRuntime>()
     private val runtimeLock = Mutex()
 
     // Only the sources switched on: one switched off is left out, so an APK with the same id is used instead
-    val mangaSourcesFlow: StateFlow<List<SumizuriMangaSource>> = _saved
-        .map { list -> list.filter { !it.anime && it.enabled }.map { SumizuriMangaSource(it, this) } }
+    val mangaSourcesFlow: StateFlow<List<JsMangaSource>> = _saved
+        .map { list -> list.filter { !it.anime && it.enabled }.map { JsMangaSource(it, this) } }
         .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
-    val animeSourcesFlow: StateFlow<List<SumizuriAnimeSource>> = _saved
-        .map { list -> list.filter { it.anime && it.enabled }.map { SumizuriAnimeSource(it, this) } }
+    val animeSourcesFlow: StateFlow<List<JsAnimeSource>> = _saved
+        .map { list -> list.filter { it.anime && it.enabled }.map { JsAnimeSource(it, this) } }
         .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     // KMK --> APK sources switched off while a JS source has their id. Kept apart from the app's disabled sources,
@@ -73,27 +78,27 @@ class SumizuriManager(private val context: Application) {
     fun setEnabled(key: String, enabled: Boolean) {
         val info = get(key)?.takeIf { it.enabled != enabled }?.copy(enabled = enabled) ?: return
         runCatching {
-            File(dir(key), META).writeText(sumizuriJson.encodeToString(SumizuriSourceInfo.serializer(), info))
+            File(dir(key), META).writeText(jsJson.encodeToString(JsSourceInfo.serializer(), info))
         }
         if (!enabled) invalidate(key)
         _saved.value = _saved.value.map { if (it.key == key) info else it }
-        AppLog.add('I', "sumizuri", "${info.name} switched ${if (enabled) "on" else "off"}")
+        AppLog.add('I', "js", "${info.name} switched ${if (enabled) "on" else "off"}")
     }
     // KMK <--
 
     private fun dir(key: String) = File(root, key)
 
-    private fun load(): List<SumizuriSourceInfo> = root.listFiles().orEmpty()
+    private fun load(): List<JsSourceInfo> = root.listFiles().orEmpty()
         .filter { it.isDirectory }
         .mapNotNull { folder ->
             runCatching {
-                sumizuriJson.decodeFromString(SumizuriSourceInfo.serializer(), File(folder, META).readText())
-            }.onFailure { AppLog.add('W', "sumizuri", "Couldn't read source ${folder.name}: ${it.message}") }
+                jsJson.decodeFromString(JsSourceInfo.serializer(), File(folder, META).readText())
+            }.onFailure { AppLog.add('W', "js", "Couldn't read source ${folder.name}: ${it.message}") }
                 .getOrNull()
         }
         .sortedByDescending { it.updatedAt }
 
-    fun get(key: String): SumizuriSourceInfo? = _saved.value.firstOrNull { it.key == key }
+    fun get(key: String): JsSourceInfo? = _saved.value.firstOrNull { it.key == key }
 
     fun code(key: String): String? = get(key)?.let { info ->
         runCatching { File(dir(key), codeFile(info.json)).readText() }.getOrNull()
@@ -107,9 +112,9 @@ class SumizuriManager(private val context: Application) {
      * Saves [code] under [key] (new or existing): it is run once to read its name, language and so on, and what it
      * offers (filters, catalogs, settings). Throws with the source's own error when it can't run.
      */
-    suspend fun save(key: String, code: String, json: Boolean, animeHint: Boolean?, overrides: SumizuriSourceInfo? = null): SumizuriSourceInfo {
+    suspend fun save(key: String, code: String, json: Boolean, animeHint: Boolean?, overrides: JsSourceInfo? = null): JsSourceInfo {
         val existing = get(key)
-        val runtime = SumizuriRuntime.create(context, key, SumizuriSourceInfo.idFor(key), overrides?.name ?: "new source", code, json)
+        val runtime = JsRuntime.create(context, key, JsSourceInfo.idFor(key), overrides?.name ?: "new source", code, json)
         val info = try {
             describe(runtime, key, json, animeHint, existing, overrides)
         } finally {
@@ -118,26 +123,26 @@ class SumizuriManager(private val context: Application) {
         val folder = dir(key).apply { mkdirs() }
         File(folder, codeFile(!json)).delete()
         File(folder, codeFile(json)).writeText(code)
-        File(folder, META).writeText(sumizuriJson.encodeToString(SumizuriSourceInfo.serializer(), info))
+        File(folder, META).writeText(jsJson.encodeToString(JsSourceInfo.serializer(), info))
         invalidate(key)
         // the `id` line was removed or changed: an APK switched off for the old id is used again
         existing?.customId?.takeIf { it != info.customId }?.let { setApkEnabled(it, true) }
         showLanguage(info)
-        SumizuriIcons.prepare(context, listOf(info))
+        JsIcons.prepare(context, listOf(info))
         _saved.value = (listOf(info) + _saved.value.filterNot { it.key == key }).sortedByDescending { it.updatedAt }
-        AppLog.add('I', "sumizuri", "Saved ${if (info.anime) "anime" else "manga"} source ${info.name} (${if (json) "JSON" else "JS"})")
+        AppLog.add('I', "js", "Saved ${if (info.anime) "anime" else "manga"} source ${info.name} (${if (json) "JSON" else "JS"})")
         return info
     }
 
     /** Reads what a running source says about itself */
     suspend fun describe(
-        runtime: SumizuriRuntime,
+        runtime: JsRuntime,
         key: String,
         json: Boolean,
         animeHint: Boolean?,
-        existing: SumizuriSourceInfo?,
-        overrides: SumizuriSourceInfo? = null,
-    ): SumizuriSourceInfo {
+        existing: JsSourceInfo?,
+        overrides: JsSourceInfo? = null,
+    ): JsSourceInfo {
         val meta = runtime.metadata()
         val hasVideos = meta.bool("hasVideos") == true
         val hasPages = meta.bool("hasPages") == true
@@ -148,7 +153,7 @@ class SumizuriManager(private val context: Application) {
         }
         suspend fun optional(method: String, flag: String) =
             if (meta.bool(flag) == true) runCatching { runtime.call(method) }.getOrNull() else null
-        return SumizuriSourceInfo(
+        return JsSourceInfo(
             key = key,
             name = overrides?.name?.takeIf { it.isNotBlank() } ?: meta.str("name")?.takeIf { it.isNotBlank() } ?: existing?.name ?: "Untitled source",
             lang = overrides?.lang?.takeIf { it.isNotBlank() } ?: meta.str("lang") ?: existing?.lang ?: "en",
@@ -187,7 +192,7 @@ class SumizuriManager(private val context: Application) {
             else -> null
         }
         if (reason == null) return id
-        AppLog.add('W', "sumizuri", "${name ?: key}: id $text $reason, so the source keeps its own id")
+        AppLog.add('W', "js", "${name ?: key}: id $text $reason, so the source keeps its own id")
         return null
     }
 
@@ -204,10 +209,10 @@ class SumizuriManager(private val context: Application) {
     }
 
     /** The id a source's settings and videos go by: its own id once saved, or the one made from its key */
-    fun idOf(key: String): Long = get(key)?.id ?: SumizuriSourceInfo.idFor(key)
+    fun idOf(key: String): Long = get(key)?.id ?: JsSourceInfo.idFor(key)
 
     /** A saved source is listed in Browse even when its language was turned off there */
-    private fun showLanguage(info: SumizuriSourceInfo) {
+    private fun showLanguage(info: JsSourceInfo) {
         runCatching {
             val preferences = Injekt.get<SourcePreferences>()
             if (info.anime) {
@@ -228,7 +233,7 @@ class SumizuriManager(private val context: Application) {
     fun exportSources(keys: Set<String>? = null): List<Pair<String, String>> = _saved.value
         .filter { keys == null || it.key in keys }
         .mapNotNull { info ->
-            code(info.key)?.let { sumizuriJson.encodeToString(SumizuriSourceInfo.serializer(), info) to it }
+            code(info.key)?.let { jsJson.encodeToString(JsSourceInfo.serializer(), info) to it }
         }
 
     /**
@@ -236,18 +241,18 @@ class SumizuriManager(private val context: Application) {
      * device already has the same or a newer copy.
      */
     fun importSource(infoJson: String, code: String): Boolean {
-        val info = sumizuriJson.decodeFromString(SumizuriSourceInfo.serializer(), infoJson)
+        val info = jsJson.decodeFromString(JsSourceInfo.serializer(), infoJson)
         val existing = get(info.key)
         if (existing != null && existing.updatedAt >= info.updatedAt) return false
         val folder = dir(info.key).apply { mkdirs() }
         File(folder, codeFile(!info.json)).delete()
         File(folder, codeFile(info.json)).writeText(code)
-        File(folder, META).writeText(sumizuriJson.encodeToString(SumizuriSourceInfo.serializer(), info))
+        File(folder, META).writeText(jsJson.encodeToString(JsSourceInfo.serializer(), info))
         invalidate(info.key)
         showLanguage(info)
-        SumizuriIcons.prepare(context, listOf(info))
+        JsIcons.prepare(context, listOf(info))
         _saved.value = (listOf(info) + _saved.value.filterNot { it.key == info.key }).sortedByDescending { it.updatedAt }
-        AppLog.add('I', "sumizuri", "Got ${info.name} from a paired device")
+        AppLog.add('I', "js", "Got ${info.name} from a paired device")
         return true
     }
     // KMK <--
@@ -257,8 +262,8 @@ class SumizuriManager(private val context: Application) {
     /** Every saved source as (details as JSON, code, its settings) */
     fun backupSources(): List<Triple<String, String, Map<String, *>>> = _saved.value.mapNotNull { info ->
         val code = code(info.key) ?: return@mapNotNull null
-        val settings = runCatching { SumizuriPreferences.of(context, info.id).all }.getOrDefault(emptyMap<String, Any>())
-        Triple(sumizuriJson.encodeToString(SumizuriSourceInfo.serializer(), info), code, settings)
+        val settings = runCatching { JsPreferences.of(context, info.id).all }.getOrDefault(emptyMap<String, Any>())
+        Triple(jsJson.encodeToString(JsSourceInfo.serializer(), info), code, settings)
     }
 
     /**
@@ -271,16 +276,16 @@ class SumizuriManager(private val context: Application) {
         writeSettings: (android.content.SharedPreferences.Editor) -> Unit,
     ): Boolean {
         if (!importSource(infoJson, code)) return false
-        val info = sumizuriJson.decodeFromString(SumizuriSourceInfo.serializer(), infoJson)
+        val info = jsJson.decodeFromString(JsSourceInfo.serializer(), infoJson)
         runCatching {
-            SumizuriPreferences.of(context, info.id).edit().also(writeSettings).apply()
+            JsPreferences.of(context, info.id).edit().also(writeSettings).apply()
         }
         return true
     }
     // KMK <--
 
     // KMK --> the tab catalog each source was last opened on
-    private val tabPrefs by lazy { context.getSharedPreferences("sumizuri_tabs", android.content.Context.MODE_PRIVATE) }
+    private val tabPrefs by lazy { context.getSharedPreferences("js_tabs", android.content.Context.MODE_PRIVATE) }
 
     fun lastTab(key: String): String? = runCatching { tabPrefs.getString(key, null) }.getOrNull()
 
@@ -295,7 +300,7 @@ class SumizuriManager(private val context: Application) {
         runCatching { tabPrefs.edit().remove(key).apply() }
         invalidate(key)
         dir(key).deleteRecursively()
-        File(context.filesDir, "sumizuri_storage/$key").deleteRecursively()
+        File(context.filesDir, "js_storage/$key").deleteRecursively()
         tags.forget(key)
         _saved.value = _saved.value.filterNot { it.key == key }
     }
@@ -307,10 +312,10 @@ class SumizuriManager(private val context: Application) {
     }
 
     /** The running source for [info], started on first use and kept */
-    suspend fun runtime(info: SumizuriSourceInfo): SumizuriRuntime = runtimeLock.withLock {
+    suspend fun runtime(info: JsSourceInfo): JsRuntime = runtimeLock.withLock {
         runtimes[info.key] ?: run {
             val code = code(info.key) ?: throw IllegalStateException("The code of ${info.name} is missing")
-            SumizuriRuntime.create(context, info.key, info.id, info.name, code, info.json).also {
+            JsRuntime.create(context, info.key, info.id, info.name, code, info.json).also {
                 it.metadata()
                 runtimes[info.key] = it
             }
@@ -318,7 +323,7 @@ class SumizuriManager(private val context: Application) {
     }
 
     /** Picks up filters / catalogs / settings a source now gives, without a save */
-    fun refreshDescription(info: SumizuriSourceInfo) {
+    fun refreshDescription(info: JsSourceInfo) {
         scope.launch {
             runCatching {
                 val fresh = describe(runtime(info), info.key, info.json, info.anime, info).copy(updatedAt = info.updatedAt)
@@ -326,7 +331,7 @@ class SumizuriManager(private val context: Application) {
                     fresh.preferences != info.preferences || fresh.hasTags != info.hasTags ||
                     fresh.hasRelated != info.hasRelated
                 if (changed) {
-                    File(dir(info.key), META).writeText(sumizuriJson.encodeToString(SumizuriSourceInfo.serializer(), fresh))
+                    File(dir(info.key), META).writeText(jsJson.encodeToString(JsSourceInfo.serializer(), fresh))
                     _saved.value = _saved.value.map { if (it.key == info.key) fresh else it }
                 }
             }

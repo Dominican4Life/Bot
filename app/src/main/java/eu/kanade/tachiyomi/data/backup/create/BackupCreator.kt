@@ -30,7 +30,7 @@ import eu.kanade.tachiyomi.data.backup.models.IntPreferenceValue
 import eu.kanade.tachiyomi.data.backup.models.LongPreferenceValue
 import eu.kanade.tachiyomi.data.backup.models.StringPreferenceValue
 import eu.kanade.tachiyomi.data.backup.models.StringSetPreferenceValue
-import eu.kanade.tachiyomi.sumizuri.SumizuriManager
+import eu.kanade.tachiyomi.jssource.JsSourceManager
 import kotlinx.serialization.protobuf.ProtoBuf
 import logcat.LogPriority
 import okio.buffer
@@ -200,7 +200,7 @@ class BackupCreator(
     // KMK -->
     /** Sources made in the Code editor, with their settings */
     private fun backupJsSources(): List<BackupJsSource> = runCatching {
-        Injekt.get<SumizuriManager>().backupSources().map { (info, code, settings) ->
+        Injekt.get<JsSourceManager>().backupSources().map { (info, code, settings) ->
             BackupJsSource(info = info, code = code, settings = settings.toBackupPreferences())
         }
     }.getOrDefault(emptyList())

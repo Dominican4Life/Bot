@@ -108,7 +108,7 @@ class ExtensionManager(
 
     fun getAppIconForSource(sourceId: Long): Drawable? {
         // KMK: a Code editor source that took an extension's id shows its own icon, not the extension's
-        eu.kanade.tachiyomi.sumizuri.SumizuriIcons.drawable(context, sourceId)?.let { return it }
+        eu.kanade.tachiyomi.jssource.JsIcons.drawable(context, sourceId)?.let { return it }
         val pkgName = getExtensionPackage(sourceId)
         if (pkgName != null) {
             return iconMap[pkgName] ?: iconMap.getOrPut(pkgName) {
@@ -125,7 +125,7 @@ class ExtensionManager(
             // KMK <--
             MERGED_SOURCE_ID -> ContextCompat.getDrawable(context, R.mipmap.ic_merged_source)
             // KMK: sources made in the Code editor
-            else -> eu.kanade.tachiyomi.sumizuri.SumizuriIcons.drawable(context, sourceId)
+            else -> eu.kanade.tachiyomi.jssource.JsIcons.drawable(context, sourceId)
         }
         // SY <--
     }

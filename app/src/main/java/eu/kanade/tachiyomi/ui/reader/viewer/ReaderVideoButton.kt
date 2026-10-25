@@ -7,7 +7,7 @@ import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.ImageView
-import eu.kanade.tachiyomi.sumizuri.ReaderVideos
+import eu.kanade.tachiyomi.jssource.ReaderVideos
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.util.system.dpToPx
 import eu.kanade.tachiyomi.util.system.toast
@@ -16,7 +16,7 @@ import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
 
 /**
- * KMK: The play button over a video page in the reader (a Sumizuri page with a `videoUrl`). Tapping it plays the
+ * KMK: The play button over a video page in the reader (a JS source's page with a `videoUrl`). Tapping it plays the
  * video in the app's player; closing the player comes back to the same page.
  */
 object ReaderVideoButton {

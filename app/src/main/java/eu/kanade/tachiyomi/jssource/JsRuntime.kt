@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.sumizuri
+package eu.kanade.tachiyomi.jssource
 
 import android.content.Context
 import android.content.SharedPreferences
@@ -30,12 +30,12 @@ import java.io.File
 import java.util.concurrent.TimeUnit
 
 /**
- * KMK: Runs one Sumizuri JS / JSON source in QuickJS, the same way Sumizuri does: its prelude and standard library
+ * KMK: Runs one JS / JSON source in QuickJS: its prelude and standard library
  * first, then the source, and every host call (`sendMessage(channel, json)`) answered here with a JSON string.
  *
  * Calls are made one at a time per runtime. The console and every request also go to the app's Logs screen.
  */
-class SumizuriRuntime private constructor(
+class JsRuntime private constructor(
     private val qjs: QuickJs,
     private val host: Host,
 ) {
@@ -50,7 +50,7 @@ class SumizuriRuntime private constructor(
     /** name, lang, iconUrl, baseUrl, hasPopular, hasLatest, hasDetails, hasFilters, hasTags, hasRelated, hasCatalogs, hasPreferences, rateLimitMs, headers */
     suspend fun metadata(): JsonObject = mutex.withLock {
         val text = qjs.evaluate<String>(METADATA_SCRIPT, "<metadata>")
-        sumizuriJson.parseToJsonElement(text).jsonObject.also { meta ->
+        jsJson.parseToJsonElement(text).jsonObject.also { meta ->
             host.rateLimitMs = meta.long("rateLimitMs") ?: 0L
         }
     }
@@ -87,16 +87,16 @@ class SumizuriRuntime private constructor(
             val message = e.message.orEmpty()
             if ("__NOT_IMPLEMENTED__" in message) throw NotImplementedError("This source has no $method")
             host.log("error", "$method failed: $message")
-            throw SumizuriException(message.substringBefore("\n    at ").ifBlank { e.toString() }, e)
+            throw JsException(message.substringBefore("\n    at ").ifBlank { e.toString() }, e)
         }
-        sumizuriJson.parseToJsonElement(text ?: "null")
+        jsJson.parseToJsonElement(text ?: "null")
     }
 
     fun close() {
         runCatching { qjs.close() }
     }
 
-    class SumizuriException(message: String, cause: Throwable? = null) : Exception(message, cause)
+    class JsException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
     /** Everything the source can ask of the app */
     internal class Host(
@@ -107,7 +107,7 @@ class SumizuriRuntime private constructor(
         val testing: Boolean,
     ) {
         private val network: NetworkHelper by injectLazy()
-        private val pages = SumizuriHtmlPages()
+        private val pages = JsHtmlPages()
         val console = ArrayDeque<String>()
         var rateLimitMs: Long = 0L
         private var lastRequestAt = 0L
@@ -116,7 +116,7 @@ class SumizuriRuntime private constructor(
         var preferenceDefaults: Map<String, JsonElement> = emptyMap()
 
         // The app's connection without its Cloudflare helper: a bot check is passed in a browser page instead
-        // (SumizuriBrowserFetch), which gets through where the helper can't
+        // (JsBrowserFetch), which gets through where the helper can't
         private val client by lazy {
             network.nonCloudflareClient.newBuilder()
                 .callTimeout(60, TimeUnit.SECONDS)
@@ -138,7 +138,7 @@ class SumizuriRuntime private constructor(
         }
 
         suspend fun handle(channel: String, payloadJson: String): String {
-            val payload = runCatching { sumizuriJson.parseToJsonElement(payloadJson) as? JsonObject }.getOrNull()
+            val payload = runCatching { jsJson.parseToJsonElement(payloadJson) as? JsonObject }.getOrNull()
                 ?: JsonObject(emptyMap())
             val result: Any? = try {
                 when (channel) {
@@ -158,10 +158,10 @@ class SumizuriRuntime private constructor(
                         mapOf("ok" to true)
                     }
                     "trace" -> mapOf("ok" to true)
-                    "render" -> SumizuriRender.render(context, payload)
-                    "hash" -> mapOf("hash" to SumizuriCrypto.hash(payload.str("algorithm").orEmpty(), payload.str("input").orEmpty()))
+                    "render" -> JsRender.render(context, payload)
+                    "hash" -> mapOf("hash" to JsCrypto.hash(payload.str("algorithm").orEmpty(), payload.str("input").orEmpty()))
                     "aes" -> mapOf(
-                        "value" to SumizuriCrypto.aes(
+                        "value" to JsCrypto.aes(
                             encrypt = payload.bool("encrypt") ?: false,
                             data = payload.str("data").orEmpty(),
                             mode = payload.str("mode") ?: "cbc",
@@ -176,7 +176,7 @@ class SumizuriRuntime private constructor(
                         ),
                     )
                     "hmac" -> mapOf(
-                        "value" to SumizuriCrypto.hmac(
+                        "value" to JsCrypto.hmac(
                             payload.str("algorithm").orEmpty(),
                             payload.str("key").orEmpty(),
                             payload.str("input").orEmpty(),
@@ -209,14 +209,14 @@ class SumizuriRuntime private constructor(
                         network.cookieJar.saveFromResponse(url, listOf(cookie))
                         mapOf("ok" to true)
                     }
-                    "gzipDecode" -> bytesOp(payload, "base64", null) { SumizuriCompress.gzipDecode(it) }
-                    "gzipEncode" -> bytesOp(payload, "utf8", "base64") { SumizuriCompress.gzipEncode(it) }
+                    "gzipDecode" -> bytesOp(payload, "base64", null) { JsCompress.gzipDecode(it) }
+                    "gzipEncode" -> bytesOp(payload, "utf8", "base64") { JsCompress.gzipEncode(it) }
                     "deflateDecode" -> bytesOp(payload, "base64", null) {
-                        SumizuriCompress.deflateDecode(it, payload.bool("raw") ?: false)
+                        JsCompress.deflateDecode(it, payload.bool("raw") ?: false)
                     }
-                    "deflateEncode" -> bytesOp(payload, "utf8", "base64") { SumizuriCompress.deflateEncode(it) }
+                    "deflateEncode" -> bytesOp(payload, "utf8", "base64") { JsCompress.deflateEncode(it) }
                     "rsaEncrypt" -> mapOf(
-                        "value" to SumizuriCrypto.rsaEncrypt(
+                        "value" to JsCrypto.rsaEncrypt(
                             payload.str("data").orEmpty(),
                             payload.str("publicKeyPem").orEmpty(),
                             payload.str("padding") ?: "oaep",
@@ -226,7 +226,7 @@ class SumizuriRuntime private constructor(
                         ),
                     )
                     "rsaVerify" -> mapOf(
-                        "ok" to SumizuriCrypto.rsaVerify(
+                        "ok" to JsCrypto.rsaVerify(
                             payload.str("data").orEmpty(),
                             payload.str("signature").orEmpty(),
                             payload.str("publicKeyPem").orEmpty(),
@@ -236,14 +236,14 @@ class SumizuriRuntime private constructor(
                         ),
                     )
                     "zipEntries" -> mapOf(
-                        "entries" to SumizuriCompress.zipEntries(
-                            SumizuriBytes.decode(payload.str("data").orEmpty(), payload.str("encoding") ?: "base64"),
+                        "entries" to JsCompress.zipEntries(
+                            JsBytes.decode(payload.str("data").orEmpty(), payload.str("encoding") ?: "base64"),
                         ),
                     )
                     "zipRead" -> mapOf(
-                        "value" to SumizuriBytes.encode(
-                            SumizuriCompress.zipRead(
-                                SumizuriBytes.decode(payload.str("data").orEmpty(), payload.str("encoding") ?: "base64"),
+                        "value" to JsBytes.encode(
+                            JsCompress.zipRead(
+                                JsBytes.decode(payload.str("data").orEmpty(), payload.str("encoding") ?: "base64"),
                                 payload.str("name").orEmpty(),
                             ),
                             payload.str("output"),
@@ -265,7 +265,7 @@ class SumizuriRuntime private constructor(
                     "storageAll" -> mapOf("values" to storage())
                     "preferenceGet" -> mapOf("value" to preference(payload.str("key").orEmpty()))
                     "preferenceSet" -> {
-                        SumizuriPreferences.write(preferences, payload.str("key").orEmpty(), payload["value"])
+                        JsPreferences.write(preferences, payload.str("key").orEmpty(), payload["value"])
                         mapOf("ok" to true)
                     }
                     "preferenceAll" -> mapOf(
@@ -289,18 +289,18 @@ class SumizuriRuntime private constructor(
             outputEncoding: String?,
             op: (ByteArray) -> ByteArray,
         ): Map<String, Any?> {
-            val bytes = SumizuriBytes.decode(payload.str("data").orEmpty(), payload.str("encoding") ?: inputEncoding)
-            return mapOf("value" to SumizuriBytes.encode(op(bytes), payload.str("output") ?: outputEncoding))
+            val bytes = JsBytes.decode(payload.str("data").orEmpty(), payload.str("encoding") ?: inputEncoding)
+            return mapOf("value" to JsBytes.encode(op(bytes), payload.str("output") ?: outputEncoding))
         }
 
-        // Storage: one JSON file per source, like Sumizuri's storage.json
+        // Storage: one JSON file per source, as storage.json
 
         private val storageFile get() = File(storageDir, "storage.json")
         private var storageCache: MutableMap<String, JsonElement>? = null
 
         @Synchronized
         private fun storage(): MutableMap<String, JsonElement> = storageCache ?: runCatching {
-            (sumizuriJson.parseToJsonElement(storageFile.readText()) as JsonObject).toMutableMap()
+            (jsJson.parseToJsonElement(storageFile.readText()) as JsonObject).toMutableMap()
         }.getOrElse { mutableMapOf() }.also { storageCache = it }
 
         @Synchronized
@@ -338,15 +338,15 @@ class SumizuriRuntime private constructor(
                 lastRequestAt = System.currentTimeMillis()
             }
 
-            val origin = SumizuriBrowserFetch.originOf(url)
+            val origin = JsBrowserFetch.originOf(url)
             val plainHeaders = headers.build().toMultimap().mapValues { it.value.firstOrNull().orEmpty() }
             suspend fun viaBrowser(): Map<String, Any?> {
-                val result = SumizuriBrowserFetch.fetch(context, url, method, plainHeaders, body, binary)
+                val result = JsBrowserFetch.fetch(context, url, method, plainHeaders, body, binary)
                 if (testing) log("net", "$method $url -> ${result["statusCode"]} (through the browser)")
                 return result
             }
             // Binary replies (images, archives) never go through the browser page
-            if (!binary && origin != null && origin in SumizuriBrowserFetch.browserFirst) {
+            if (!binary && origin != null && origin in JsBrowserFetch.browserFirst) {
                 return@withContext viaBrowser()
             }
 
@@ -361,14 +361,14 @@ class SumizuriRuntime private constructor(
                 val bytes = response.body.bytes()
                 val text = if (binary) "" else String(bytes, response.body.contentType()?.charset() ?: Charsets.UTF_8)
                 if (!binary && origin != null &&
-                    SumizuriBrowserFetch.isChallenge(response.code, response.header("Server"), text)
+                    JsBrowserFetch.isChallenge(response.code, response.header("Server"), text)
                 ) {
                     null
                 } else {
                     buildMap<String, Any?> {
                         put("statusCode", response.code)
                         put("url", response.request.url.toString())
-                        if (binary) put("bodyBase64", SumizuriBytes.encode(bytes, "base64")) else put("body", text)
+                        if (binary) put("bodyBase64", JsBytes.encode(bytes, "base64")) else put("body", text)
                         put("headers", responseHeaders)
                     }
                 }
@@ -377,7 +377,7 @@ class SumizuriRuntime private constructor(
             // A bot check answered: ask from inside a browser page on the site, and keep doing so for this site
             log("warn", "A bot check answered $url: sending it from a browser page on the site instead")
             val result = viaBrowser()
-            SumizuriBrowserFetch.browserFirst += origin!!
+            JsBrowserFetch.browserFirst += origin!!
             result
         }
     }
@@ -399,10 +399,10 @@ class SumizuriRuntime private constructor(
         }
 
         private fun asset(context: Context, name: String): String =
-            context.assets.open("sumizuri/$name").bufferedReader().use { it.readText() }
+            context.assets.open("jssource/$name").bufferedReader().use { it.readText() }
 
         /**
-         * Starts a runtime for [code], a JS source or (when [json]) a JSON declarative one. Throws with Sumizuri's
+         * Starts a runtime for [code], a JS source or (when [json]) a JSON declarative one. Throws with the
          * message when the source doesn't define what a source needs.
          */
         suspend fun create(
@@ -413,12 +413,12 @@ class SumizuriRuntime private constructor(
             code: String,
             json: Boolean,
             testing: Boolean = false,
-        ): SumizuriRuntime {
+        ): JsRuntime {
             val host = Host(
                 context = context.applicationContext,
                 tag = "js:$name",
-                storageDir = File(context.filesDir, "sumizuri_storage/$key"),
-                preferences = SumizuriPreferences.of(context, sourceId),
+                storageDir = File(context.filesDir, "js_storage/$key"),
+                preferences = JsPreferences.of(context, sourceId),
                 testing = testing,
             )
             loadNativeLibrary()
@@ -442,26 +442,26 @@ class SumizuriRuntime private constructor(
                 val source = if (json) {
                     val config = stripJsonComments(code).trim()
                     // Checked here so a typo is reported as a JSON error, not a JS one
-                    sumizuriJson.parseToJsonElement(config)
+                    jsJson.parseToJsonElement(config)
                     "var __sourceConfig = $config;\n" + asset(context, "json_engine.js")
                 } else {
                     code
                 }
                 qjs.evaluate<Any?>(source, if (json) "source.json" else "source.js")
                 val problem = qjs.evaluate<String>(CONTRACT_SCRIPT, "<contract>")
-                if (problem.isNotEmpty()) throw SumizuriException(problem)
+                if (problem.isNotEmpty()) throw JsException(problem)
             } catch (e: Throwable) {
                 qjs.close()
-                throw if (e is SumizuriException) e else SumizuriException(e.message ?: e.toString(), e)
+                throw if (e is JsException) e else JsException(e.message ?: e.toString(), e)
             }
-            return SumizuriRuntime(qjs, host).also { runtime ->
+            return JsRuntime(qjs, host).also { runtime ->
                 // Defaults for host.preference.get before the user has changed anything
                 if (runtime.has("getSourcePreferences") || runCatching {
                         qjs.evaluate<Boolean>("typeof getSourcePreferences === 'function'", "<prefs>")
                     }.getOrDefault(false)
                 ) {
                     runCatching {
-                        val defs = SumizuriPreferences.parse(runtime.call("getSourcePreferences"))
+                        val defs = JsPreferences.parse(runtime.call("getSourcePreferences"))
                         host.preferenceDefaults = defs.mapNotNull { def -> def.defaultValue?.let { def.key to it } }.toMap()
                     }
                 }

@@ -9,7 +9,7 @@ import eu.kanade.tachiyomi.animeextension.model.AnimeExtension
 import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.extension.model.Extension
 import eu.kanade.tachiyomi.extension.model.InstallStep
-import eu.kanade.tachiyomi.sumizuri.SumizuriManager
+import eu.kanade.tachiyomi.jssource.JsSourceManager
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -35,7 +35,7 @@ class UnifiedExtensionsScreenModel(
     mangaStores: ExtensionStoreRepository = Injekt.get(),
     animeStores: AnimeExtensionStoreRepository = Injekt.get(),
     // KMK: JS / JSON sources for the JS tab
-    private val sumizuri: SumizuriManager = Injekt.get(),
+    private val jsSources: JsSourceManager = Injekt.get(),
 ) : StateScreenModel<UnifiedExtensionsScreenModel.State>(State()) {
 
     private val steps = MutableStateFlow(emptyMap<String, InstallStep>())
@@ -86,7 +86,7 @@ class UnifiedExtensionsScreenModel(
             preferences.enabledLanguages().changes(),
             preferences.disabledRepos().changes(),
             // KMK: APK sources switched off for a JS source with their id show as off too
-            sumizuri.apkOffFlow,
+            jsSources.apkOffFlow,
         ) { (disabled, pinned, animeDisabled), animePinned, languages, disabledRepos, apkOff ->
             val off = apkOff.map { it.toString() }.toSet()
             Prefs(disabled + off, pinned, animeDisabled + off, animePinned, languages, disabledRepos)
@@ -109,7 +109,7 @@ class UnifiedExtensionsScreenModel(
         // KMK --> the saved JS / JSON sources, listed with the other sources under a JS tag
         screenModelScope.launchIO {
             combine(
-                sumizuri.savedFlow,
+                jsSources.savedFlow,
                 preferences.disabledSources().changes(),
                 preferences.animeDisabledSources().changes(),
                 preferences.pinnedSources().changes(),
@@ -453,12 +453,12 @@ class UnifiedExtensionsScreenModel(
         // id to the other instead of hiding both
         val jsKey = source.js?.key
         if (jsKey != null) {
-            sumizuri.setEnabled(jsKey, enabled)
+            jsSources.setEnabled(jsKey, enabled)
             if (enabled) pref.set(pref.get() - id)
             return
         }
-        if (sumizuri.sharesId(source.id, source.isAnime)) {
-            sumizuri.setApkEnabled(source.id, enabled)
+        if (jsSources.sharesId(source.id, source.isAnime)) {
+            jsSources.setApkEnabled(source.id, enabled)
             if (enabled) pref.set(pref.get() - id)
             return
         }
@@ -473,7 +473,7 @@ class UnifiedExtensionsScreenModel(
     // KMK -->
     /** Removes a JS source and everything it saved; its manga stay in the library as unavailable */
     fun deleteJs(source: UnifiedSource) {
-        source.js?.let { sumizuri.delete(it.key) }
+        source.js?.let { jsSources.delete(it.key) }
     }
     // KMK <--
 

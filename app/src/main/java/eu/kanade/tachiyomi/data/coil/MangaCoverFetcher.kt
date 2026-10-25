@@ -277,7 +277,7 @@ class MangaCoverFetcher(
             when (val source = uy.kohesive.injekt.Injekt.get<eu.kanade.tachiyomi.animeextension.AnimeSourceManager>().get(id)) {
                 is eu.kanade.tachiyomi.animesource.online.AnimeHttpSource -> CoverConnection(source.client, source.headers)
                 // Code editor sources load covers like extensions do: the app's connection and the source's headers
-                is eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource -> CoverConnection(source.client, source.headers)
+                is eu.kanade.tachiyomi.jssource.JsAnimeSource -> CoverConnection(source.client, source.headers)
                 else -> null
             }
         }.getOrNull()

@@ -19,7 +19,7 @@ import eu.kanade.tachiyomi.network.BotCheckReporter
 import eu.kanade.tachiyomi.network.NetworkPreferences
 import eu.kanade.tachiyomi.source.DisabledSources
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource
+import eu.kanade.tachiyomi.jssource.JsAnimeSource
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.util.system.notificationBuilder
 import okhttp3.Headers
@@ -218,7 +218,7 @@ object BotCheckNotifier {
         if (manga is HttpSource) return SiteInfo(manga.id, manga.name, manga.baseUrl)
         return when (val anime = runCatching { Injekt.get<AnimeSourceManager>().get(sourceId) }.getOrNull()) {
             is AnimeHttpSource -> SiteInfo(anime.id, anime.name, anime.baseUrl)
-            is SumizuriAnimeSource -> SiteInfo(anime.id, anime.name, anime.baseUrl)
+            is JsAnimeSource -> SiteInfo(anime.id, anime.name, anime.baseUrl)
             else -> null
         }
     }
@@ -231,7 +231,7 @@ object BotCheckNotifier {
         }
         when (val anime = Injekt.get<AnimeSourceManager>().get(sourceId)) {
             is AnimeHttpSource -> Connection(anime.client, anime.headers)
-            is SumizuriAnimeSource -> Connection(anime.client, anime.headers)
+            is JsAnimeSource -> Connection(anime.client, anime.headers)
             else -> null
         }
     }.getOrNull()
@@ -249,7 +249,7 @@ object BotCheckNotifier {
             Injekt.get<AnimeSourceManager>().getCatalogueSources().mapNotNull {
                 when (it) {
                     is AnimeHttpSource -> SiteInfo(it.id, it.name, it.baseUrl)
-                    is SumizuriAnimeSource -> SiteInfo(it.id, it.name, it.baseUrl)
+                    is JsAnimeSource -> SiteInfo(it.id, it.name, it.baseUrl)
                     else -> null
                 }
             }

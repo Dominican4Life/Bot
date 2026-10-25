@@ -92,7 +92,7 @@ import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.data.anime.Anime
-import eu.kanade.tachiyomi.sumizuri.SumizuriTabs
+import eu.kanade.tachiyomi.jssource.JsTabs
 import eu.kanade.tachiyomi.ui.anime.AnimeScreen
 import eu.kanade.tachiyomi.ui.browse.extension.details.SourceSettingsContent
 import eu.kanade.tachiyomi.ui.browse.source.browse.SourceFilterContent
@@ -162,7 +162,7 @@ class AnimeSourceScreen(
             when {
                 !initialQuery.isNullOrBlank() -> screenModel.search(initialQuery)
                 // KMK: a source with tab catalogs already opened on one
-                initialLatest && (source as? SumizuriTabs)?.hasCatalogTabs != true ->
+                initialLatest && (source as? JsTabs)?.hasCatalogTabs != true ->
                     screenModel.setListing(AnimeSourceScreenModel.Listing.Latest)
             }
         }
@@ -236,7 +236,7 @@ class AnimeSourceScreen(
                                 },
                                 onWebViewClick = {
                                     (source as? AnimeHttpSource)?.let { openWebView(it.baseUrl, it.name) }
-                                        ?: (source as? eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource)
+                                        ?: (source as? eu.kanade.tachiyomi.jssource.JsAnimeSource)
                                             ?.let { openWebView(it.baseUrl, it.name) }
                                 },
                                 onHelpClick = {},
@@ -307,7 +307,7 @@ class AnimeSourceScreen(
                                 if (on) screenModel.openPlayerPanel() else screenModel.closePlayerPanel()
                             },
                             // KMK: a JS / JSON source's tab catalogs, as buttons
-                            tabs = source as? SumizuriTabs,
+                            tabs = source as? JsTabs,
                             onCatalog = { id ->
                                 searchQuery = null
                                 screenModel.showCatalog(id)
@@ -342,7 +342,7 @@ class AnimeSourceScreen(
                     var playToken by remember(preview.anime?.id) { mutableIntStateOf(0) }
                     // KMK: swipe left / right over the covers for the next / previous tab of the row (Popular,
                     // Latest, the Filter tab, a JS source's tabs, saved searches), as in manga Browse
-                    val tabsSource = source as? SumizuriTabs
+                    val tabsSource = source as? JsTabs
                     val listingKey = AnimeSourceScreenModel.tabKey(state.listing)
                     val swipeTabs = buildList<Pair<String, () -> Unit>> {
                         if (tabsSource?.hasCatalogTabs != true) {
@@ -477,7 +477,7 @@ class AnimeSourceScreen(
                                     val url = runCatching { httpSource.getAnimeUrl(anime.toSAnime()) }
                                         .getOrElse { httpSource.baseUrl + anime.url }
                                     openWebView(url, anime.title)
-                                } ?: (source as? eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource)?.let { js ->
+                                } ?: (source as? eu.kanade.tachiyomi.jssource.JsAnimeSource)?.let { js ->
                                     openWebView(js.getAnimeUrl(anime.toSAnime()), anime.title)
                                 }
                             },
@@ -622,7 +622,7 @@ private fun ListingChips(
     rightOn: Boolean,
     onLeftChange: (Boolean) -> Unit,
     onRightChange: (Boolean) -> Unit,
-    tabs: SumizuriTabs? = null,
+    tabs: JsTabs? = null,
     onCatalog: (String) -> Unit = {},
     // KMK: the source's saved searches, as tabs after Filter / Settings
     onSavedSearch: (Long) -> Unit = {},

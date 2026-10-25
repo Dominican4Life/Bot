@@ -678,7 +678,7 @@ private fun AnimeSourceSheet(
     }
     val http = source as? AnimeHttpSource
     // KMK: a source from the Code editor: its code opens in the editor
-    val js = source as? eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource
+    val js = source as? eu.kanade.tachiyomi.jssource.JsAnimeSource
     val baseUrl = http?.baseUrl ?: js?.baseUrl
     val urls = remember(source.id) { listOfNotNull(baseUrl?.takeIf { it.isNotBlank() }) }
     val icon = remember(source.id) { extensionManager.getAppIconForSource(source.id)?.toBitmap()?.asImageBitmap() }
@@ -732,7 +732,7 @@ private fun AnimeSourceSheet(
         } ?: js?.let {
             {
                 onDismiss()
-                Injekt.get<eu.kanade.tachiyomi.sumizuri.SumizuriManager>().delete(it.info.key)
+                Injekt.get<eu.kanade.tachiyomi.jssource.JsSourceManager>().delete(it.info.key)
             }
         },
         // A Code editor source opens its own settings, like in Extensions, and has Code editor in place of Latest
@@ -747,7 +747,7 @@ private fun AnimeSourceSheet(
         onOpenCodeEditor = js?.let {
             {
                 onDismiss()
-                navigator?.push(eu.kanade.tachiyomi.ui.sumizuri.SourceEditorScreen(it.info.key))
+                navigator?.push(eu.kanade.tachiyomi.ui.codeeditor.SourceEditorScreen(it.info.key))
             }
         },
     )

@@ -11,7 +11,7 @@ enum class ExtensionKind(val label: String) {
     MIHON("Mihon"),
     ANIYOMI("Aniyomi"),
 
-    /** Sumizuri JS / JSON sources from the Code editor; listed with the sources, not packages or repos */
+    /** JS / JSON sources from the Code editor; listed with the sources, not packages or repos */
     JS("JS"),
 }
 
@@ -116,7 +116,7 @@ data class UnifiedFilters(
 /** One JS / JSON source made in the Code editor or imported, shown with the sources under a yellow JS tag */
 @Immutable
 data class UnifiedJsSource(
-    /** The source's key in SumizuriManager */
+    /** The source's key in JsSourceManager */
     val key: String,
     val id: Long,
     val name: String,

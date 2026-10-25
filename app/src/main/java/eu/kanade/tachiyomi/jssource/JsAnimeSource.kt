@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.sumizuri
+package eu.kanade.tachiyomi.jssource
 
 import android.app.Application
 import eu.kanade.tachiyomi.animesource.AnimeCatalogueSource
@@ -24,13 +24,13 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
 /**
- * KMK: A Sumizuri JS / JSON anime source: browse, search with filters and catalogs, details, episodes (with their
+ * KMK: A JS / JSON anime source: browse, search with filters and catalogs, details, episodes (with their
  * thumbnails, summaries and seasons) and videos (headers, subtitles, dubs, intro / outro) from the source's code.
  */
-class SumizuriAnimeSource(
-    val info: SumizuriSourceInfo,
-    private val manager: SumizuriManager,
-) : AnimeCatalogueSource, ConfigurableAnimeSource, SumizuriTabs {
+class JsAnimeSource(
+    val info: JsSourceInfo,
+    private val manager: JsSourceManager,
+) : AnimeCatalogueSource, ConfigurableAnimeSource, JsTabs {
 
     override val name: String = info.name
     override val lang: String = info.displayLang
@@ -61,14 +61,14 @@ class SumizuriAnimeSource(
     @Volatile
     private var described = false
 
-    private val webUrls by lazy { SumizuriWebUrls(Injekt.get<Application>(), id, baseUrl) }
+    private val webUrls by lazy { JsWebUrls(Injekt.get<Application>(), id, baseUrl) }
 
     /** The title's page on the site, for WebView and sharing */
     fun getAnimeUrl(anime: SAnime): String = webUrls.pageFor(anime.url)
 
     fun getEpisodeUrl(episode: SEpisode): String = webUrls.pageFor(episode.url)
 
-    private suspend fun runtime(): SumizuriRuntime = manager.runtime(info).also {
+    private suspend fun runtime(): JsRuntime = manager.runtime(info).also {
         if (!described) {
             described = true
             manager.refreshDescription(info)
@@ -77,9 +77,9 @@ class SumizuriAnimeSource(
 
     private suspend fun listing(method: String, vararg args: Any?): AnimesPage {
         // A source whose tab catalogs replace Popular and Latest may leave those out: an empty list, not an error
-        val animes = SumizuriMapping.list(optionalListing(runtime(), method, *args))
+        val animes = JsMapping.list(optionalListing(runtime(), method, *args))
             .also(webUrls::remember)
-            .mapNotNull { SumizuriMapping.toSAnime(it) }
+            .mapNotNull { JsMapping.toSAnime(it) }
         return AnimesPage(animes, hasNextPage = animes.isNotEmpty())
     }
 
@@ -98,7 +98,7 @@ class SumizuriAnimeSource(
         val fresh = if (info.hasDetails) {
             (runtime().call("getDetails", anime.url) as? JsonObject)?.let {
                 webUrls.remember(listOf(JsonObject(it + ("url" to JsonPrimitive(anime.url)))))
-                SumizuriMapping.toSAnime(it, anime)
+                JsMapping.toSAnime(it, anime)
             }
         } else {
             null
@@ -107,9 +107,9 @@ class SumizuriAnimeSource(
     }
 
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> =
-        SumizuriMapping.list(runtime().call("getChapterList", anime.url))
+        JsMapping.list(runtime().call("getChapterList", anime.url))
             .also(webUrls::remember)
-            .let(SumizuriMapping::toSEpisodes)
+            .let(JsMapping::toSEpisodes)
 
     override suspend fun getSeasonList(anime: SAnime): List<SAnime> = emptyList()
 
@@ -128,19 +128,19 @@ class SumizuriAnimeSource(
 
     /** Each video of the episode with the server it names (`server`, or `hoster`), if any */
     private suspend fun serverVideos(episode: SEpisode): List<Pair<String?, Video>> =
-        SumizuriVideos.map(SumizuriMapping.list(runtime().call("getVideoList", episode.url)), baseUrl, info.headers)
+        JsVideos.map(JsMapping.list(runtime().call("getVideoList", episode.url)), baseUrl, info.headers)
 
     // Filters and catalogs
 
-    private val groups by lazy { SumizuriFilters.groups(info.filters) }
-    private val catalogs by lazy { SumizuriFilters.catalogs(info.catalogs) }
+    private val groups by lazy { JsFilters.groups(info.filters) }
+    private val catalogs by lazy { JsFilters.catalogs(info.catalogs) }
 
     // KMK: the source's tab catalogs, as buttons at the top of Browse
     override val popularName: String? get() = info.popularName
     override val latestName: String? get() = info.latestName
 
-    override val catalogTabs: List<SumizuriCatalogTab> by lazy {
-        catalogs.filter { it.tab }.map { SumizuriCatalogTab(it.id, it.name) }
+    override val catalogTabs: List<JsCatalogTab> by lazy {
+        catalogs.filter { it.tab }.map { JsCatalogTab(it.id, it.name) }
     }
 
     override fun selectCatalog(filters: Iterable<*>, id: String): Boolean {
@@ -185,7 +185,7 @@ class SumizuriAnimeSource(
 
     override fun getFilterList(): AnimeFilterList {
         // KMK: the tag boxes' suggestions are read from the site in the background, when missing or old
-        if (SumizuriFilters.flat(groups).any { it.type == SumizuriFilters.Type.AutoComplete }) manager.tags.ensure(info)
+        if (JsFilters.flat(groups).any { it.type == JsFilters.Type.AutoComplete }) manager.tags.ensure(info)
         val filters = mutableListOf<AnimeFilter<*>>()
         if (catalogs.isNotEmpty() && catalogs.all { it.tab }) {
             // KMK: every catalog is a tab button: no Catalog box in the sheet, just an invisible holder for the tab
@@ -199,17 +199,17 @@ class SumizuriAnimeSource(
         return AnimeFilterList(filters)
     }
 
-    private fun filterOf(group: SumizuriFilters.Group): AnimeFilter<*> = when (group.type) {
-        SumizuriFilters.Type.Select -> SelectFilter(group)
-        SumizuriFilters.Type.MultiSelect -> MultiFilter(group)
-        SumizuriFilters.Type.Checkbox -> CheckFilter(group)
-        SumizuriFilters.Type.Header -> AnimeFilter.Header(group.name)
-        SumizuriFilters.Type.Separator -> AnimeFilter.Separator(group.name)
-        SumizuriFilters.Type.Text -> TextFilter(group)
-        SumizuriFilters.Type.TriState -> TriFilter(group)
-        SumizuriFilters.Type.Sort -> SortFilter(group)
-        SumizuriFilters.Type.Group -> GroupFilter(group, group.children.map { filterOf(it) })
-        SumizuriFilters.Type.AutoComplete -> TagFilter(
+    private fun filterOf(group: JsFilters.Group): AnimeFilter<*> = when (group.type) {
+        JsFilters.Type.Select -> SelectFilter(group)
+        JsFilters.Type.MultiSelect -> MultiFilter(group)
+        JsFilters.Type.Checkbox -> CheckFilter(group)
+        JsFilters.Type.Header -> AnimeFilter.Header(group.name)
+        JsFilters.Type.Separator -> AnimeFilter.Separator(group.name)
+        JsFilters.Type.Text -> TextFilter(group)
+        JsFilters.Type.TriState -> TriFilter(group)
+        JsFilters.Type.Sort -> SortFilter(group)
+        JsFilters.Type.Group -> GroupFilter(group, group.children.map { filterOf(it) })
+        JsFilters.Type.AutoComplete -> TagFilter(
             group,
             manager.tags.suggestions(info.key, group.tagLists, group.options.map { it.label }),
         )
@@ -246,30 +246,30 @@ class SumizuriAnimeSource(
         var id: String? = null
     }
 
-    private class CatalogFilter(val catalogs: List<SumizuriFilters.Catalog>) :
+    private class CatalogFilter(val catalogs: List<JsFilters.Catalog>) :
         AnimeFilter.Select<String>("Catalog", (listOf("None") + catalogs.map { it.name }).toTypedArray()) {
-        fun selected(): SumizuriFilters.Catalog? = if (state == 0) null else catalogs.getOrNull(state - 1)
+        fun selected(): JsFilters.Catalog? = if (state == 0) null else catalogs.getOrNull(state - 1)
     }
 
-    private class SelectFilter(val group: SumizuriFilters.Group) :
+    private class SelectFilter(val group: JsFilters.Group) :
         AnimeFilter.Select<String>(
             group.name,
             group.options.map { it.label }.toTypedArray(),
             group.defaultIndex.coerceIn(0, (group.options.size - 1).coerceAtLeast(0)),
         )
 
-    private class OptionBox(val option: SumizuriFilters.Option) : AnimeFilter.CheckBox(option.label)
+    private class OptionBox(val option: JsFilters.Option) : AnimeFilter.CheckBox(option.label)
 
-    private class MultiFilter(val group: SumizuriFilters.Group) :
+    private class MultiFilter(val group: JsFilters.Group) :
         AnimeFilter.Group<OptionBox>(group.name, group.options.map { OptionBox(it) })
 
-    private class CheckFilter(val group: SumizuriFilters.Group) : AnimeFilter.CheckBox(group.name, group.defaultChecked)
+    private class CheckFilter(val group: JsFilters.Group) : AnimeFilter.CheckBox(group.name, group.defaultChecked)
 
-    private class TextFilter(val group: SumizuriFilters.Group) : AnimeFilter.Text(group.name, group.defaultText)
+    private class TextFilter(val group: JsFilters.Group) : AnimeFilter.Text(group.name, group.defaultText)
 
-    private class TriFilter(val group: SumizuriFilters.Group) : AnimeFilter.TriState(group.name, group.defaultState)
+    private class TriFilter(val group: JsFilters.Group) : AnimeFilter.TriState(group.name, group.defaultState)
 
-    private class SortFilter(val group: SumizuriFilters.Group) :
+    private class SortFilter(val group: JsFilters.Group) :
         AnimeFilter.Sort(
             group.name,
             group.options.map { it.label }.toTypedArray(),
@@ -278,10 +278,10 @@ class SumizuriAnimeSource(
         val start = AnimeFilter.Sort.Selection(group.startIndex, group.defaultAscending)
     }
 
-    private class GroupFilter(val group: SumizuriFilters.Group, children: List<AnimeFilter<*>>) :
+    private class GroupFilter(val group: JsFilters.Group, children: List<AnimeFilter<*>>) :
         AnimeFilter.Group<AnimeFilter<*>>(group.name, children)
 
-    private class TagFilter(val group: SumizuriFilters.Group, suggestions: List<String>) :
+    private class TagFilter(val group: JsFilters.Group, suggestions: List<String>) :
         AnimeFilter.AutoComplete(
             name = group.name,
             hint = group.hint,
@@ -293,7 +293,7 @@ class SumizuriAnimeSource(
     // Settings
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        info.preferences?.let { SumizuriPreferences.setup(screen, SumizuriPreferences.parse(it)) }
+        info.preferences?.let { JsPreferences.setup(screen, JsPreferences.parse(it)) }
         if (info.hasTags) manager.tags.addRefreshButton(screen, info)
     }
 

@@ -48,7 +48,7 @@ import eu.kanade.tachiyomi.data.coil.LocalPageThumbnail
 import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.data.download.Downloader
-import eu.kanade.tachiyomi.sumizuri.ChapterVideoDownloads
+import eu.kanade.tachiyomi.jssource.ChapterVideoDownloads
 import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
 import exh.source.MERGED_SOURCE_ID
 import kotlinx.collections.immutable.ImmutableList

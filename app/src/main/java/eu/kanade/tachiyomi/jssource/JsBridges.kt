@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.sumizuri
+package eu.kanade.tachiyomi.jssource
 
 import android.util.Base64
 import org.jsoup.Jsoup
@@ -33,10 +33,9 @@ import javax.crypto.spec.PSource
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * KMK: The host side of Sumizuri's JS bridge that needs no network: bytes, crypto, compression, archives and HTML.
- * Ported from not-akari/sumizuri-flutter (crypto_bridge, rsa_bridge, html_bridge) so sources behave the same.
+ * KMK: The host side of the JS bridge that needs no network: bytes, crypto, compression, archives and HTML.
  */
-internal object SumizuriBytes {
+internal object JsBytes {
 
     fun decode(value: String, encoding: String?): ByteArray = when ((encoding ?: "utf8").lowercase()) {
         "utf8", "utf-8" -> value.toByteArray(Charsets.UTF_8)
@@ -61,7 +60,7 @@ internal object SumizuriBytes {
     }
 }
 
-internal object SumizuriCrypto {
+internal object JsCrypto {
 
     private fun digestName(algorithm: String, what: String): String = when (algorithm.lowercase()) {
         "md5" -> "MD5"
@@ -76,7 +75,7 @@ internal object SumizuriCrypto {
     }
 
     fun hash(algorithm: String, input: String): String =
-        SumizuriBytes.encode(
+        JsBytes.encode(
             MessageDigest.getInstance(digestName(algorithm, "host.hash")).digest(input.toByteArray()),
             "hex",
         )
@@ -84,8 +83,8 @@ internal object SumizuriCrypto {
     fun hmac(algorithm: String, key: String, input: String, keyEncoding: String?, output: String?): String {
         val name = "Hmac" + digestName(algorithm, "host.crypto.hmac").replace("-", "")
         val mac = Mac.getInstance(name)
-        mac.init(SecretKeySpec(SumizuriBytes.decode(key, keyEncoding), name))
-        return SumizuriBytes.encode(mac.doFinal(input.toByteArray()), output ?: "hex")
+        mac.init(SecretKeySpec(JsBytes.decode(key, keyEncoding), name))
+        return JsBytes.encode(mac.doFinal(input.toByteArray()), output ?: "hex")
     }
 
     fun aes(
@@ -101,7 +100,7 @@ internal object SumizuriCrypto {
         output: String?,
         padding: String,
     ): String {
-        var input = SumizuriBytes.decode(data, dataEncoding ?: if (encrypt) "utf8" else "base64")
+        var input = JsBytes.decode(data, dataEncoding ?: if (encrypt) "utf8" else "base64")
         val outputEncoding = output ?: if (encrypt) "base64" else "utf8"
         val keyBytes: ByteArray
         var ivBytes: ByteArray
@@ -121,8 +120,8 @@ internal object SumizuriCrypto {
             ivBytes = derived.copyOfRange(32, 48)
         } else {
             requireNotNull(key) { "An aes call needs a key or a passphrase" }
-            keyBytes = SumizuriBytes.decode(key, keyEncoding)
-            ivBytes = if (iv == null) ByteArray(16) else SumizuriBytes.decode(iv, ivEncoding)
+            keyBytes = JsBytes.decode(key, keyEncoding)
+            ivBytes = if (iv == null) ByteArray(16) else JsBytes.decode(iv, ivEncoding)
         }
         require(keyBytes.size in listOf(16, 24, 32)) { "The AES key must be 16, 24 or 32 bytes, got ${keyBytes.size}" }
         val secret = SecretKeySpec(keyBytes, "AES")
@@ -150,9 +149,9 @@ internal object SumizuriCrypto {
             else -> throw IllegalArgumentException("Use cbc, ecb, ctr or gcm")
         }
         if (passphrase != null && encrypt) {
-            return SumizuriBytes.encode("Salted__".toByteArray() + salt!! + result, outputEncoding)
+            return JsBytes.encode("Salted__".toByteArray() + salt!! + result, outputEncoding)
         }
-        return SumizuriBytes.encode(result, outputEncoding)
+        return JsBytes.encode(result, outputEncoding)
     }
 
     private fun evpBytesToKey(password: ByteArray, salt: ByteArray, length: Int): ByteArray {
@@ -170,7 +169,7 @@ internal object SumizuriCrypto {
     // RSA (public keys only: a source never holds a site's private key)
 
     private fun publicKey(pem: String): RSAPublicKey {
-        val der = SumizuriBytes.decode(pem.replace(Regex("-----[^-]+-----"), ""), "base64")
+        val der = JsBytes.decode(pem.replace(Regex("-----[^-]+-----"), ""), "base64")
         val factory = KeyFactory.getInstance("RSA")
         return if (pem.contains("BEGIN RSA PUBLIC KEY")) {
             // PKCS#1: SEQUENCE { modulus, exponent }
@@ -216,20 +215,20 @@ internal object SumizuriCrypto {
                 init(Cipher.ENCRYPT_MODE, key, OAEPParameterSpec(digest, "MGF1", mgf, PSource.PSpecified.DEFAULT))
             }
         }
-        return SumizuriBytes.encode(cipher.doFinal(SumizuriBytes.decode(data, dataEncoding)), output ?: "base64")
+        return JsBytes.encode(cipher.doFinal(JsBytes.decode(data, dataEncoding)), output ?: "base64")
     }
 
     fun rsaVerify(data: String, signature: String, pem: String, hash: String, dataEncoding: String?, signatureEncoding: String?): Boolean {
         val name = digestName(hash, "host.crypto.rsa").replace("-", "") + "withRSA"
         return Signature.getInstance(name).run {
             initVerify(publicKey(pem))
-            update(SumizuriBytes.decode(data, dataEncoding))
-            verify(SumizuriBytes.decode(signature, signatureEncoding ?: "base64"))
+            update(JsBytes.decode(data, dataEncoding))
+            verify(JsBytes.decode(signature, signatureEncoding ?: "base64"))
         }
     }
 }
 
-internal object SumizuriCompress {
+internal object JsCompress {
 
     fun gzipDecode(bytes: ByteArray): ByteArray = GZIPInputStream(ByteArrayInputStream(bytes)).use { it.readBytes() }
 
@@ -271,7 +270,7 @@ internal object SumizuriCompress {
  * Parsed pages for host.parse(html): the 24 most recent are kept, and every element handed to JS gets a number
  * so it can be searched again from there (el.select(...)).
  */
-internal class SumizuriHtmlPages(private val maxPages: Int = 24) {
+internal class JsHtmlPages(private val maxPages: Int = 24) {
 
     private class Page(val html: String, val document: Document) {
         val elements = mutableListOf<Element>()

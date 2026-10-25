@@ -69,7 +69,7 @@ fun AnimeCoverImage(
             .crossfade(true)
             .apply {
                 val headers = (source as? AnimeHttpSource)?.headers
-                    ?: (source as? eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource)?.headers
+                    ?: (source as? eu.kanade.tachiyomi.jssource.JsAnimeSource)?.headers
                 if (headers != null) {
                     httpHeaders(
                         NetworkHeaders.Builder().apply {
@@ -180,7 +180,7 @@ fun AnimeFilterDialog(
 @Composable
 private fun FilterItem(filter: AnimeFilter<*>, onChanged: () -> Unit) {
     when (filter) {
-        // KMK: a blank header is a hidden holder (a Sumizuri source's selected tab), not a title
+        // KMK: a blank header is a hidden holder (a JS source's selected tab), not a title
         is AnimeFilter.Header -> if (filter.name.isNotBlank()) Text(
             text = filter.name,
             style = MaterialTheme.typography.titleSmall,

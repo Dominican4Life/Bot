@@ -26,7 +26,7 @@ import eu.kanade.tachiyomi.data.backup.restore.restorers.MangaRestorer
 import eu.kanade.tachiyomi.data.backup.restore.restorers.PreferenceRestorer
 import eu.kanade.tachiyomi.data.backup.restore.restorers.SavedSearchRestorer
 import eu.kanade.tachiyomi.data.notification.Notifications
-import eu.kanade.tachiyomi.sumizuri.SumizuriManager
+import eu.kanade.tachiyomi.jssource.JsSourceManager
 import eu.kanade.tachiyomi.util.system.createFileInCacheDir
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.coroutineScope
@@ -385,7 +385,7 @@ class BackupRestorer(
 
     /** Sources made in the Code editor; a source already here is only replaced by a newer copy */
     private fun CoroutineScope.restoreJsSources(sources: List<BackupJsSource>) = launch {
-        val manager = Injekt.get<SumizuriManager>()
+        val manager = Injekt.get<JsSourceManager>()
         sources.forEach { source ->
             ensureActive()
             try {

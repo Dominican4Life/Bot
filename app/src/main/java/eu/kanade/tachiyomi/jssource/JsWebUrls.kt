@@ -1,17 +1,17 @@
-package eu.kanade.tachiyomi.sumizuri
+package eu.kanade.tachiyomi.jssource
 
 import android.content.Context
 import androidx.core.content.edit
 import kotlinx.serialization.json.JsonObject
 
 /**
- * KMK: The site page of each title and chapter a Sumizuri source gave a `webUrl` for (its `url` may be an API
+ * KMK: The site page of each title and chapter a JS source gave a `webUrl` for (its `url` may be an API
  * address or just an id), kept so WebView, sharing and "Open in browser" open the real page, also after a restart.
  */
-internal class SumizuriWebUrls(context: Context, private val sourceId: Long, baseUrl: String) {
+internal class JsWebUrls(context: Context, private val sourceId: Long, baseUrl: String) {
 
     private val base = baseUrl.trimEnd('/')
-    private val preferences = context.getSharedPreferences("sumizuri_weburls_$sourceId", Context.MODE_PRIVATE)
+    private val preferences = context.getSharedPreferences("js_weburls_$sourceId", Context.MODE_PRIVATE)
 
     fun remember(items: List<JsonObject>) {
         val found = items.mapNotNull { item ->

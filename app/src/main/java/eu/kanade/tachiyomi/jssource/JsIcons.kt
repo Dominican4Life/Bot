@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.sumizuri
+package eu.kanade.tachiyomi.jssource
 
 import android.content.Context
 import android.graphics.Bitmap
@@ -28,7 +28,7 @@ import java.util.concurrent.ConcurrentHashMap
  * KMK: Each icon is also saved as "<source name>.png" in downloads/Icon, which survives a reinstall: after one
  * (or a restore) the icon is copied back from there instead of being downloaded again.
  */
-object SumizuriIcons {
+object JsIcons {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val memory = ConcurrentHashMap<Long, Bitmap>()
@@ -36,13 +36,13 @@ object SumizuriIcons {
     private val files = ConcurrentHashMap<Long, File>()
     private val lock = Mutex()
 
-    private fun fileFor(context: Context, info: SumizuriSourceInfo): File {
+    private fun fileFor(context: Context, info: JsSourceInfo): File {
         val tag = (info.iconUrl.orEmpty() + "|" + info.baseUrl).hashCode().toUInt().toString(16)
-        return File(context.filesDir, "sumizuri_sources/${info.key}/icon-$tag.img")
+        return File(context.filesDir, "js_sources/${info.key}/icon-$tag.img")
     }
 
     /** Makes sure the icon of each source is on disk, downloading the ones that aren't */
-    fun prepare(context: Context, sources: List<SumizuriSourceInfo>) {
+    fun prepare(context: Context, sources: List<JsSourceInfo>) {
         sources.forEach { info ->
             val file = fileFor(context, info)
             files[info.id] = file
@@ -97,7 +97,7 @@ object SumizuriIcons {
     fun drawable(context: Context, sourceId: Long): Drawable? =
         bitmap(sourceId)?.let { BitmapDrawable(context.resources, it) }
 
-    private fun download(info: SumizuriSourceInfo, file: File) {
+    private fun download(info: JsSourceInfo, file: File) {
         if (file.exists()) return
         val network = Injekt.get<NetworkHelper>()
         val base = info.baseUrl.trimEnd('/')
@@ -128,11 +128,11 @@ object SumizuriIcons {
         }
     }
 
-    private fun iconName(info: SumizuriSourceInfo): String =
+    private fun iconName(info: JsSourceInfo): String =
         DiskUtil.buildValidFilename(info.name.ifBlank { info.key }) + ".png"
 
     /** Copies the source's icon back from downloads/Icon. False when it isn't there */
-    private fun fromIconFolder(info: SumizuriSourceInfo, file: File): Boolean {
+    private fun fromIconFolder(info: JsSourceInfo, file: File): Boolean {
         val saved = runCatching {
             Injekt.get<StorageManager>().getIconsDirectory(create = false)?.findFile(iconName(info))
         }.getOrNull() ?: return false
@@ -149,7 +149,7 @@ object SumizuriIcons {
     }
 
     /** Saves the icon as a PNG in downloads/Icon (replacing an older one of the same source) */
-    private fun toIconFolder(info: SumizuriSourceInfo, bytes: ByteArray, replace: Boolean) {
+    private fun toIconFolder(info: JsSourceInfo, bytes: ByteArray, replace: Boolean) {
         runCatching {
             val dir = Injekt.get<StorageManager>().getIconsDirectory() ?: return
             val name = iconName(info)

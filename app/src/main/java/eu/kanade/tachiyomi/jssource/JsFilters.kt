@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.sumizuri
+package eu.kanade.tachiyomi.jssource
 
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -8,14 +8,14 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 
 /**
- * KMK: A Sumizuri source's search filters (getFilters) and catalogs (getCatalogs), read once and shown with the
+ * KMK: A JS source's search filters (getFilters) and catalogs (getCatalogs), read once and shown with the
  * app's own filter widgets. What the user picks goes back to search(query, page, { key: value }).
  */
-internal object SumizuriFilters {
+internal object JsFilters {
 
     /**
      * AutoComplete is a box the user types tags into, with suggestions from the filter's options and from the
-     * tag lists the source's getTags() gave (see [SumizuriTags]). The picked tags go to search() as an array.
+     * tag lists the source's getTags() gave (see [JsTags]). The picked tags go to search() as an array.
      */
     /**
      * The same kinds of filter an APK source has. [Header]: a line of text, no value. [Separator]: a dividing line.
@@ -57,7 +57,7 @@ internal object SumizuriFilters {
     data class Catalog(val id: String, val name: String, val tab: Boolean = false)
 
     fun groups(element: JsonElement?): List<Group> =
-        SumizuriMapping.list(element ?: return emptyList()).mapNotNull(::group)
+        JsMapping.list(element ?: return emptyList()).mapNotNull(::group)
 
     private fun group(obj: JsonObject): Group? {
         val type = when (obj.str("type")?.lowercase()) {
@@ -122,7 +122,7 @@ internal object SumizuriFilters {
         else -> null
     }
 
-    fun catalogs(element: JsonElement?): List<Catalog> = SumizuriMapping.list(element ?: return emptyList()).mapNotNull { obj ->
+    fun catalogs(element: JsonElement?): List<Catalog> = JsMapping.list(element ?: return emptyList()).mapNotNull { obj ->
         val id = obj.str("id") ?: return@mapNotNull null
         Catalog(id, obj.str("name") ?: id, tab = obj.bool("tab") == true)
     }

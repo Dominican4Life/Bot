@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.sumizuri
+package eu.kanade.tachiyomi.jssource
 
 import android.annotation.SuppressLint
 import android.content.Context
@@ -28,14 +28,14 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.resume
 
 /**
- * KMK: Requests made from inside a hidden browser page on the site, like Sumizuri does.
+ * KMK: Requests made from inside a hidden browser page on the site.
  *
  * Cloudflare often lets a real browser through while it keeps challenging the app's own connection (it tells them
  * apart by more than cookies), so the app's usual Cloudflare helper can't pass. When that happens, a source's
  * request is sent with the page's own fetch(): the browser's connection, cookies and user agent. One page is kept
  * open per site for a few minutes, so later requests are quick, and the site goes this way from then on.
  */
-internal object SumizuriBrowserFetch {
+internal object JsBrowserFetch {
 
     private const val IDLE_MS = 3 * 60_000L
     private const val CHALLENGE_WAIT_MS = 30_000L
@@ -193,7 +193,7 @@ internal object SumizuriBrowserFetch {
         while (true) {
             val raw = webView.evalString("(function(){var v=window.$id;if(v){window.$id=null;}return v||'';})()")
             if (!raw.isNullOrEmpty()) {
-                val reply = sumizuriJson.parseToJsonElement(raw).jsonObject
+                val reply = jsJson.parseToJsonElement(raw).jsonObject
                 reply.str("error")?.let { throw java.io.IOException("Browser request failed: $it") }
                 return buildMap {
                     put("statusCode", reply.int("status") ?: 0)
@@ -210,7 +210,7 @@ internal object SumizuriBrowserFetch {
     /** Runs a script and gives back the string it returned */
     private suspend fun WebView.evalString(script: String): String? = suspendCancellableCoroutine { cont ->
         evaluateJavascript(script) { raw ->
-            val value = runCatching { sumizuriJson.parseToJsonElement(raw ?: "null").jsonPrimitive.content }.getOrNull()
+            val value = runCatching { jsJson.parseToJsonElement(raw ?: "null").jsonPrimitive.content }.getOrNull()
                 ?.takeUnless { raw == "null" }
             cont.resume(value)
         }

@@ -114,7 +114,7 @@ fun SourcesScreen(
             MR.strings.source_empty_screen,
             modifier = Modifier.padding(contentPadding),
         )
-        // KMK --> sources as tiles (design from Sumizuri), grouped like before
+        // KMK --> sources as tiles, grouped like before
         else -> Column(modifier = Modifier.padding(contentPadding)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,

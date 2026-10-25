@@ -10,7 +10,7 @@ import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.data.anime.Anime
 import eu.kanade.tachiyomi.data.anime.Episode
 import eu.kanade.tachiyomi.data.anime.download.AnimeDownloadManager
-import eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource
+import eu.kanade.tachiyomi.jssource.JsAnimeSource
 import eu.kanade.tachiyomi.ui.player.controls.components.sheets.HosterState
 import eu.kanade.tachiyomi.util.subtitles.StremioSubtitleResolver
 import kotlinx.coroutines.CancellationException
@@ -51,7 +51,7 @@ class EpisodeLoader {
             return when (source) {
                 is AnimeHttpSource -> getHostersOnHttp(episode, source)
                 // KMK: Code editor sources group their videos by server themselves
-                is SumizuriAnimeSource -> withIOContext { source.getHosterList(episode.toSEpisode()) }
+                is JsAnimeSource -> withIOContext { source.getHosterList(episode.toSEpisode()) }
                 // KMK: any other anime source gives its videos directly
                 else -> withIOContext { source.getVideoList(episode.toSEpisode()).toHosterList() }
             }

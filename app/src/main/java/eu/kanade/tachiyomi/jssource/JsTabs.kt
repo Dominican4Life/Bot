@@ -1,14 +1,14 @@
-package eu.kanade.tachiyomi.sumizuri
+package eu.kanade.tachiyomi.jssource
 
 /** KMK: One of a source's catalogs marked `tab: true`, shown as a button before Filter in Browse */
-data class SumizuriCatalogTab(val id: String, val name: String)
+data class JsCatalogTab(val id: String, val name: String)
 
 /**
- * KMK: What a Sumizuri source adds to the buttons at the top of Browse: its `tab: true` catalogs as buttons. A catalog button lists that catalog the way picking it in the filter sheet
+ * KMK: What a JS source adds to the buttons at the top of Browse: its `tab: true` catalogs as buttons. A catalog button lists that catalog the way picking it in the filter sheet
  * does. A source with tab catalogs shows them instead of Popular and Latest, and opens on the one used last.
  */
-interface SumizuriTabs {
-    val catalogTabs: List<SumizuriCatalogTab>
+interface JsTabs {
+    val catalogTabs: List<JsCatalogTab>
 
     /** Picks catalog [id] in [filters], a filter list this source made. False when there is nothing to pick */
     fun selectCatalog(filters: Iterable<*>, id: String): Boolean

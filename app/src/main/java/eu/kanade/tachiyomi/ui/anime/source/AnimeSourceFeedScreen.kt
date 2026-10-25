@@ -86,7 +86,7 @@ class AnimeSourceFeedScreen(private val sourceId: Long) : Screen() {
                     },
                     onWebViewClick = (source as? AnimeHttpSource)?.let { http ->
                         { navigator.push(WebViewScreen(http.baseUrl, http.name)) }
-                    } ?: (source as? eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource)?.let { js ->
+                    } ?: (source as? eu.kanade.tachiyomi.jssource.JsAnimeSource)?.let { js ->
                         { navigator.push(WebViewScreen(js.baseUrl, js.name)) }
                     },
                     // KMK: the source's own incognito, as on its browse screen

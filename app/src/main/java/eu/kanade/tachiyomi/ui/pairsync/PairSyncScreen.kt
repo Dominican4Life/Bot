@@ -90,7 +90,7 @@ import eu.kanade.tachiyomi.pairsync.PairSync
 import eu.kanade.tachiyomi.pairsync.PairSyncPreferences
 import eu.kanade.tachiyomi.pairsync.Peer
 import eu.kanade.tachiyomi.pairsync.SyncSelection
-import eu.kanade.tachiyomi.sumizuri.SumizuriManager
+import eu.kanade.tachiyomi.jssource.JsSourceManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -541,7 +541,7 @@ private fun SelectionCard(selection: SyncSelection, onChange: (SyncSelection) ->
             runCatching { Injekt.get<GetCategories>().await().map { it.name } }.getOrDefault(emptyList())
         }
     }
-    val sources by remember { Injekt.get<SumizuriManager>().savedFlow }.collectAsState()
+    val sources by remember { Injekt.get<JsSourceManager>().savedFlow }.collectAsState()
     var chooseCategories by remember { mutableStateOf(false) }
     var chooseSources by remember { mutableStateOf(false) }
 

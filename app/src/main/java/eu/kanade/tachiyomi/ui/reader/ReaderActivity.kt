@@ -1006,9 +1006,9 @@ class ReaderActivity : BaseActivity() {
             readingModeToast = toast(SYMR.strings.eh_auto_webtoon_snack)
         } else if (readerPreferences.showReadingMode().get()) {
             // SY <--
-            // KMK: a Sumizuri chapter may turn out to be a lone video that opens in the player; show the mode
+            // KMK: a JS source's chapter may turn out to be a lone video that opens in the player; show the mode
             // only once its pages are known not to be that
-            if (manga != null && sourceManager.get(manga.source) is eu.kanade.tachiyomi.sumizuri.SumizuriMangaSource &&
+            if (manga != null && sourceManager.get(manga.source) is eu.kanade.tachiyomi.jssource.JsMangaSource &&
                 !videoChecked
             ) {
                 deferredModeToast = true
@@ -1082,7 +1082,7 @@ class ReaderActivity : BaseActivity() {
     private var handingOffVideo = false
 
     /**
-     * A chapter whose only page is a video (a Sumizuri page with a videoUrl or videoListUrl) plays straight in the
+     * A chapter whose only page is a video (a JS source's page with a videoUrl or videoListUrl) plays straight in the
      * player, like an anime episode: the reader draws nothing, stays black, and closes without an animation, so
      * back returns to the title. If the video can't start, the reader shows the page with its play button.
      * True when it took the chapter over.
@@ -1091,7 +1091,7 @@ class ReaderActivity : BaseActivity() {
         if (videoChecked) return false
         videoChecked = true
         val onlyPage = viewerChapters.currChapter.pages?.singleOrNull()
-        if (onlyPage == null || !eu.kanade.tachiyomi.sumizuri.ReaderVideos.isVideo(onlyPage.url)) {
+        if (onlyPage == null || !eu.kanade.tachiyomi.jssource.ReaderVideos.isVideo(onlyPage.url)) {
             showDeferredModeToast()
             return false
         }
@@ -1099,7 +1099,7 @@ class ReaderActivity : BaseActivity() {
         handingOffVideo = true
         lifecycleScope.launch {
             val started = try {
-                eu.kanade.tachiyomi.sumizuri.ReaderVideos.play(this@ReaderActivity, onlyPage)
+                eu.kanade.tachiyomi.jssource.ReaderVideos.play(this@ReaderActivity, onlyPage)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Throwable) {

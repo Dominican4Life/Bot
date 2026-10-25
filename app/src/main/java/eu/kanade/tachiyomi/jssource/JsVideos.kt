@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.sumizuri
+package eu.kanade.tachiyomi.jssource
 
 import eu.kanade.tachiyomi.animesource.model.ChapterType
 import eu.kanade.tachiyomi.animesource.model.TimeStamp
@@ -10,8 +10,8 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.Headers
 
-/** KMK: Turns what a Sumizuri source's `getVideoList` returned into the player's videos */
-internal object SumizuriVideos {
+/** KMK: Turns what a JS source's `getVideoList` returned into the player's videos */
+internal object JsVideos {
 
     /**
      * Each video with the server it names (`server`, or `hoster`), if any. [baseUrl] is the Referer and

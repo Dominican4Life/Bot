@@ -483,7 +483,7 @@ class PlayerViewModel @JvmOverloads constructor(
                     // KMK: not for videos inside manga chapters (played through a hidden source): they have no
                     // filler episodes, and the lookup was a wasted request to animefillerlist.com
                     if (anime != null && fillerEpisodes.isEmpty() &&
-                        anime.source != eu.kanade.tachiyomi.sumizuri.ReaderVideos.SOURCE_ID
+                        anime.source != eu.kanade.tachiyomi.jssource.ReaderVideos.SOURCE_ID
                     ) {
                         fillerEpisodes = animeFillerListFetcher.getFillerEpisodes(anime.title)
                     }
@@ -599,7 +599,7 @@ class PlayerViewModel @JvmOverloads constructor(
         val episode = currentEpisode.value ?: return null
         val source = currentSource.value ?: return null
         // KMK: Code editor sources are online too
-        return (source is AnimeHttpSource || source is eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource) &&
+        return (source is AnimeHttpSource || source is eu.kanade.tachiyomi.jssource.JsAnimeSource) &&
             !EpisodeLoader.isDownload(
                 episode.toDomainEpisode()!!,
                 anime,
@@ -2355,7 +2355,7 @@ class PlayerViewModel @JvmOverloads constructor(
      */
     private fun canRefetchFromSource(): Boolean {
         val anime = anime ?: return false
-        if (anime.source == eu.kanade.tachiyomi.sumizuri.ReaderVideos.SOURCE_ID ||
+        if (anime.source == eu.kanade.tachiyomi.jssource.ReaderVideos.SOURCE_ID ||
             anime.source == eu.kanade.tachiyomi.devicefiles.DeviceFilesIds.ANIME
         ) {
             return false

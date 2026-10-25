@@ -21,7 +21,7 @@ import eu.kanade.presentation.manga.DownloadAction
 import eu.kanade.presentation.manga.components.ChapterDownloadAction
 import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.data.coil.LocalPageThumbnail
-import eu.kanade.tachiyomi.sumizuri.ChapterVideoDownloads
+import eu.kanade.tachiyomi.jssource.ChapterVideoDownloads
 import eu.kanade.tachiyomi.data.coil.getBestColor
 import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.download.DownloadManager

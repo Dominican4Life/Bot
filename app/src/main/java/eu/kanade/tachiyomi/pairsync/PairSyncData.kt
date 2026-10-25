@@ -10,7 +10,7 @@ import eu.kanade.tachiyomi.data.backup.models.Backup
 import eu.kanade.tachiyomi.data.backup.restore.restorers.CategoriesRestorer
 import eu.kanade.tachiyomi.data.backup.restore.restorers.MangaRestorer
 import eu.kanade.tachiyomi.devicefiles.DeviceFilesIds
-import eu.kanade.tachiyomi.sumizuri.SumizuriManager
+import eu.kanade.tachiyomi.jssource.JsSourceManager
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -94,7 +94,7 @@ object PairSyncData {
 
     suspend fun export(selection: SyncSelection): ByteArray {
         val sources = if (selection.sources) {
-            val manager = Injekt.get<SumizuriManager>()
+            val manager = Injekt.get<JsSourceManager>()
             val keys = selection.sourceKeys
             manager.exportSources(keys).map { (info, code) -> SyncSource(info, code) }
         } else {
@@ -166,7 +166,7 @@ object PairSyncData {
                     .map { it.animeId }
                     .forEach { id -> if (id !in this) animeRepository.getAnime(id)?.let { put(id, it) } }
             }
-        }.values.filter { it.source != DeviceFilesIds.ANIME && it.source != eu.kanade.tachiyomi.sumizuri.ReaderVideos.SOURCE_ID }
+        }.values.filter { it.source != DeviceFilesIds.ANIME && it.source != eu.kanade.tachiyomi.jssource.ReaderVideos.SOURCE_ID }
         val backupAnime = AnimeBackupHelper().createAnime(animeList, includeHistory = animeHistory)
             .map { if (animeLibrary) it else it.copy(favorite = false) }
 
@@ -188,7 +188,7 @@ object PairSyncData {
         val payload = json.decodeFromString(SyncPayload.serializer(), String(gunzip(data)))
         var errors = 0
 
-        val manager = Injekt.get<SumizuriManager>()
+        val manager = Injekt.get<JsSourceManager>()
         val added = payload.sources.count { source ->
             runCatching { manager.importSource(source.info, source.code) }
                 .onFailure { errors++ }

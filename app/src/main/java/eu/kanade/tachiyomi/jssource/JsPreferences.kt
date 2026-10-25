@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.sumizuri
+package eu.kanade.tachiyomi.jssource
 
 import android.content.Context
 import android.content.SharedPreferences
@@ -20,10 +20,10 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 
 /**
- * KMK: A Sumizuri source's settings (getSourcePreferences), kept in the same SharedPreferences a Mihon source uses
+ * KMK: A JS source's settings (getSourcePreferences), kept in the same SharedPreferences a Mihon source uses
  * ("source_<id>"), so they show in the usual source settings screen and the editor's Source settings.
  */
-object SumizuriPreferences {
+object JsPreferences {
 
     // KMK: Category (section header), Info (text that can't be tapped) and Slider (one value or a range)
     enum class Type { Text, Switch, List, MultiList, Category, Info, Slider }
@@ -50,7 +50,7 @@ object SumizuriPreferences {
     fun of(context: Context, sourceId: Long): SharedPreferences =
         context.getSharedPreferences("source_$sourceId", Context.MODE_PRIVATE)
 
-    /** Sumizuri's shape ({key, title, type, options:[{label,value}]}) and Mangayomi's (entries / entryValues) */
+    /** The usual shape ({key, title, type, options:[{label,value}]}) and Mangayomi's (entries / entryValues) */
     fun parse(element: JsonElement): List<Definition> {
         val list = element as? JsonArray ?: return emptyList()
         return list.withIndex().mapNotNull { (index, item) ->
@@ -196,7 +196,7 @@ object SumizuriPreferences {
                     isSelectable = false
                     isPersistent = false
                 }
-                Type.Slider -> SumizuriSliderPreference(context, def.slider ?: Slider(0, 10, 1, false, "")).apply {
+                Type.Slider -> JsSliderPreference(context, def.slider ?: Slider(0, 10, 1, false, "")).apply {
                     (def.defaultValue as? JsonPrimitive)?.contentOrNull?.let { setDefaultValue(it) }
                     summary = def.summary
                 }

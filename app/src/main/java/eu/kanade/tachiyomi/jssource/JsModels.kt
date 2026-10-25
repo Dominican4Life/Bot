@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.sumizuri
+package eu.kanade.tachiyomi.jssource
 
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
@@ -13,9 +13,9 @@ import java.security.MessageDigest
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
 
-/** KMK: A saved Sumizuri source: what's known about it without running it */
+/** KMK: A saved JS / JSON source: what's known about it without running it */
 @Serializable
-data class SumizuriSourceInfo(
+data class JsSourceInfo(
     val key: String,
     val name: String,
     val lang: String = "en",
@@ -55,13 +55,13 @@ data class SumizuriSourceInfo(
     companion object {
         /** A stable source id from the source's key, the way Mihon sources get theirs from name and language */
         fun idFor(key: String): Long {
-            val bytes = MessageDigest.getInstance("MD5").digest("sumizuri/$key/1".toByteArray())
+            val bytes = MessageDigest.getInstance("MD5").digest("${JsLegacy.ID_SEED}/$key/1".toByteArray())
             return (0..7).map { bytes[it].toLong() and 0xff shl 8 * (7 - it) }.reduce(Long::or) and Long.MAX_VALUE
         }
     }
 }
 
-internal object SumizuriMapping {
+internal object JsMapping {
 
     fun list(element: JsonElement): List<JsonObject> =
         (element as? JsonArray)?.mapNotNull { it as? JsonObject }.orEmpty()
@@ -152,7 +152,7 @@ internal object SumizuriMapping {
 
     private fun numberText(number: Float) = if (number % 1f == 0f) number.toInt().toString() else number.toString()
 
-    /** Newest first, as the app lists them; Sumizuri sorts by number */
+    /** Newest first, as the app lists them */
     private fun <T> ordered(chapters: List<JsonObject>, map: (JsonObject, Int) -> T?): List<T> {
         val numbered = chapters.all { number(it) != null }
         val sorted = if (numbered) {

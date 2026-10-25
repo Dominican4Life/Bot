@@ -1447,7 +1447,7 @@ class PlayerActivity : BaseActivity() {
         if (viewModel.isEpisodeOnline() != true && video.headers == null) return
         val sourceHeaders = (viewModel.currentSource.value as? AnimeHttpSource)?.headers
             // KMK: Code editor sources send their headers too
-            ?: (viewModel.currentSource.value as? eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource)?.headers
+            ?: (viewModel.currentSource.value as? eu.kanade.tachiyomi.jssource.JsAnimeSource)?.headers
 
         // ANZ: a video's own headers are used even when the source has none
         val headers = (video.headers ?: sourceHeaders ?: return)

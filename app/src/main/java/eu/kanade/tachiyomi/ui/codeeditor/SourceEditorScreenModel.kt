@@ -1,16 +1,16 @@
-package eu.kanade.tachiyomi.ui.sumizuri
+package eu.kanade.tachiyomi.ui.codeeditor
 
 import android.app.Application
 import androidx.compose.runtime.Immutable
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
-import eu.kanade.tachiyomi.sumizuri.SumizuriFilters
-import eu.kanade.tachiyomi.sumizuri.SumizuriManager
-import eu.kanade.tachiyomi.sumizuri.SumizuriPreferences
-import eu.kanade.tachiyomi.sumizuri.SumizuriRuntime
-import eu.kanade.tachiyomi.sumizuri.SumizuriSourceInfo
-import eu.kanade.tachiyomi.sumizuri.str
-import eu.kanade.tachiyomi.sumizuri.sumizuriJson
+import eu.kanade.tachiyomi.jssource.JsFilters
+import eu.kanade.tachiyomi.jssource.JsSourceManager
+import eu.kanade.tachiyomi.jssource.JsPreferences
+import eu.kanade.tachiyomi.jssource.JsRuntime
+import eu.kanade.tachiyomi.jssource.JsSourceInfo
+import eu.kanade.tachiyomi.jssource.str
+import eu.kanade.tachiyomi.jssource.jsJson
 import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
@@ -29,12 +29,12 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
 /**
- * KMK: The Code editor: write or import a Sumizuri JS / JSON source, test it (popular, latest, search, catalogs,
+ * KMK: The Code editor: write or import a JS / JSON source, test it (popular, latest, search, catalogs,
  * filters, settings, info, and drill into a title's chapters and pages / videos), and save it as a source.
  */
 class SourceEditorScreenModel(
     initialKey: String?,
-    private val manager: SumizuriManager = Injekt.get(),
+    private val manager: JsSourceManager = Injekt.get(),
     private val context: Application = Injekt.get(),
 ) : StateScreenModel<SourceEditorScreenModel.State>(State()) {
 
@@ -55,9 +55,9 @@ class SourceEditorScreenModel(
         val console: List<String> = emptyList(),
         val message: String? = null,
         /** The source's settings, while the Source settings dialog is open */
-        val settings: List<SumizuriPreferences.Definition>? = null,
+        val settings: List<JsPreferences.Definition>? = null,
         /** Set right after a save, so the screen can offer to open the source in Browse */
-        val justSaved: SumizuriSourceInfo? = null,
+        val justSaved: JsSourceInfo? = null,
         /** Why the last save failed, shown in a dialog */
         val saveError: String? = null,
     )
@@ -84,7 +84,7 @@ class SourceEditorScreenModel(
 
     enum class Kind { Entry, Chapter, Page, Video, Other }
 
-    private var runtime: SumizuriRuntime? = null
+    private var runtime: JsRuntime? = null
     private var runtimeCode: String? = null
     private val runtimeMutex = Mutex()
     private var job: Job? = null
@@ -170,7 +170,7 @@ class SourceEditorScreenModel(
         val keys = mapOf("name" to "NAME", "lang" to "LANG", "baseUrl" to "BASE_URL", "iconUrl" to "ICON_URL")
         if (json) {
             val obj = runCatching {
-                sumizuriJson.parseToJsonElement(eu.kanade.tachiyomi.sumizuri.stripJsonComments(code)) as? JsonObject
+                jsJson.parseToJsonElement(eu.kanade.tachiyomi.jssource.stripJsonComments(code)) as? JsonObject
             }.getOrNull()
             if (obj != null) return keys.keys.mapNotNull { k -> obj.str(k)?.takeIf { it.isNotBlank() }?.let { k to it } }.toMap()
         }
@@ -235,7 +235,7 @@ class SourceEditorScreenModel(
                     code = s.code,
                     json = s.json,
                     animeHint = s.anime,
-                    overrides = SumizuriSourceInfo(
+                    overrides = JsSourceInfo(
                         key = s.key,
                         name = s.name.trim(),
                         lang = s.lang.trim(),
@@ -258,7 +258,7 @@ class SourceEditorScreenModel(
                     )
                 }
             }.onFailure { e ->
-                AppLog.add('E', "sumizuri", "Saving ${s.name.ifBlank { "a source" }} failed: $e")
+                AppLog.add('E', "js", "Saving ${s.name.ifBlank { "a source" }} failed: $e")
                 mutableState.update { it.copy(running = null, saveError = e.message ?: e.toString()) }
             }
         }
@@ -266,12 +266,12 @@ class SourceEditorScreenModel(
 
     // Testing
 
-    private suspend fun runtime(): SumizuriRuntime = runtimeMutex.withLock {
+    private suspend fun runtime(): JsRuntime = runtimeMutex.withLock {
         val s = state.value
         val current = runtime
         if (current != null && runtimeCode == s.json.toString() + s.code) return@withLock current
         current?.close()
-        SumizuriRuntime.create(
+        JsRuntime.create(
             context = context,
             key = s.key,
             sourceId = manager.idOf(s.key),
@@ -371,10 +371,10 @@ class SourceEditorScreenModel(
     }
 
     /** The source's tab catalogs ("tab": true), in the order Browse shows them; none when it has no catalogs */
-    private suspend fun tabCatalogs(): List<SumizuriFilters.Catalog> = runCatching {
+    private suspend fun tabCatalogs(): List<JsFilters.Catalog> = runCatching {
         val rt = runtime()
-        if (rt.metadata().flag("hasCatalogs") != true) return@runCatching emptyList<SumizuriFilters.Catalog>()
-        SumizuriFilters.catalogs(rt.call("getCatalogs")).filter { it.tab }
+        if (rt.metadata().flag("hasCatalogs") != true) return@runCatching emptyList<JsFilters.Catalog>()
+        JsFilters.catalogs(rt.call("getCatalogs")).filter { it.tab }
     }.getOrDefault(emptyList())
 
     private fun JsonObject.flag(key: String): Boolean? = (this[key] as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull()
@@ -396,7 +396,7 @@ class SourceEditorScreenModel(
         }
     }
 
-    private suspend fun chapters(rt: SumizuriRuntime, entryUrl: String): Result {
+    private suspend fun chapters(rt: JsRuntime, entryUrl: String): Result {
         val details = runCatching { rt.call("getDetails", entryUrl) }.getOrNull() as? JsonObject
         val list = (rt.call("getChapterList", entryUrl) as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
         val label = if (state.value.anime) "episodes" else "chapters"
@@ -426,12 +426,12 @@ class SourceEditorScreenModel(
         )
     }
 
-    private suspend fun content(rt: SumizuriRuntime, chapterUrl: String): Result {
+    private suspend fun content(rt: JsRuntime, chapterUrl: String): Result {
         if (state.value.anime) return videos(rt, chapterUrl)
         return pages(rt, chapterUrl)
     }
 
-    private suspend fun videos(rt: SumizuriRuntime, url: String): Result {
+    private suspend fun videos(rt: JsRuntime, url: String): Result {
         val videos = (rt.call("getVideoList", url) as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
         return Result(
             "",
@@ -454,7 +454,7 @@ class SourceEditorScreenModel(
         )
     }
 
-    private suspend fun pages(rt: SumizuriRuntime, chapterUrl: String): Result {
+    private suspend fun pages(rt: JsRuntime, chapterUrl: String): Result {
         val pages = (rt.call("getPageList", chapterUrl) as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
         return Result(
             "",
@@ -503,13 +503,13 @@ class SourceEditorScreenModel(
         )
     }
 
-    private fun run(title: String, block: suspend (SumizuriRuntime) -> Result) {
+    private fun run(title: String, block: suspend (JsRuntime) -> Result) {
         job?.cancel()
         job = screenModelScope.launchIO { execute(title, block) }
     }
 
     /** Runs one test, adds its result (or error) to the panel and returns it, or null when it failed */
-    private suspend fun execute(title: String, block: suspend (SumizuriRuntime) -> Result): Result? {
+    private suspend fun execute(title: String, block: suspend (JsRuntime) -> Result): Result? {
         mutableState.update { it.copy(running = title) }
         val started = System.currentTimeMillis()
         val result = try {
@@ -531,7 +531,7 @@ class SourceEditorScreenModel(
     /** Opens the Source settings dialog, with what getSourcePreferences() offers */
     fun openSettings() = run("Source settings") { rt ->
         val raw = rt.call("getSourcePreferences")
-        val defs = SumizuriPreferences.parse(raw)
+        val defs = JsPreferences.parse(raw)
         mutableState.update { it.copy(settings = defs) }
         Result("Source settings", true, 0, text = if (defs.isEmpty()) "This source has no settings" else pretty(raw))
     }
@@ -552,7 +552,7 @@ class SourceEditorScreenModel(
 
     private fun pretty(element: JsonElement): String = prettyJson.encodeToString(JsonElement.serializer(), element)
 
-    private val prettyJson = kotlinx.serialization.json.Json(from = sumizuriJson) { prettyPrint = true }
+    private val prettyJson = kotlinx.serialization.json.Json(from = jsJson) { prettyPrint = true }
 
     /** KMK: the id this source's settings are kept under (its own `id`, once saved with one) */
     fun sourceId(key: String): Long = manager.idOf(key)

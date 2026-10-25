@@ -31,7 +31,7 @@ class WebViewScreenModel(
         sourceId?.let {
             runCatching {
                 Injekt.get<eu.kanade.tachiyomi.animeextension.AnimeSourceManager>().get(it)
-                    as? eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource
+                    as? eu.kanade.tachiyomi.jssource.JsAnimeSource
             }.getOrNull()
         }?.let { source ->
             headers = source.headers.toMultimap().mapValues { it.value.getOrNull(0) ?: "" }

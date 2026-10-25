@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.sumizuri
+package eu.kanade.tachiyomi.jssource
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -12,8 +12,8 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
 
-/** KMK: Small JSON helpers shared by the Sumizuri host, sources and editor */
-internal val sumizuriJson = Json {
+/** KMK: Small JSON helpers shared by the JS host, sources and editor */
+internal val jsJson = Json {
     ignoreUnknownKeys = true
     isLenient = true
     explicitNulls = false
@@ -58,7 +58,7 @@ internal fun Any?.toJsonElement(): JsonElement = when (this) {
 internal fun String.jsQuoted(): String = JsonPrimitive(this).toString()
 
 /**
- * Removes // and /* */ comments outside strings, so a JSON source can carry notes (as Sumizuri allows).
+ * Removes // and /* */ comments outside strings, so a JSON source can carry notes.
  */
 internal fun stripJsonComments(text: String): String {
     val out = StringBuilder(text.length)
@@ -100,7 +100,7 @@ internal fun stripJsonComments(text: String): String {
 }
 
 /** KMK: [method]'s list, or an empty one when it is getPopular / getLatest and the source doesn't have it */
-internal suspend fun optionalListing(rt: SumizuriRuntime, method: String, vararg args: Any?): kotlinx.serialization.json.JsonElement =
+internal suspend fun optionalListing(rt: JsRuntime, method: String, vararg args: Any?): kotlinx.serialization.json.JsonElement =
     try {
         rt.call(method, *args)
     } catch (e: NotImplementedError) {

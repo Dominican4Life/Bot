@@ -25,8 +25,8 @@ import eu.kanade.presentation.components.AppBarActions
 import eu.kanade.presentation.components.SourcesSearchBox
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
-import eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource
-import eu.kanade.tachiyomi.sumizuri.SumizuriMangaSource
+import eu.kanade.tachiyomi.jssource.JsAnimeSource
+import eu.kanade.tachiyomi.jssource.JsMangaSource
 import kotlinx.collections.immutable.persistentListOf
 import tachiyomi.core.common.preference.getAndSet
 import tachiyomi.domain.source.service.SourceManager
@@ -58,7 +58,7 @@ class SourceCategorySourcesScreen(private val category: String) : Screen() {
         val mangaSources = remember {
             Injekt.get<SourceManager>().getVisibleOnlineSources()
                 .map { source ->
-                    val js = if (source is SumizuriMangaSource) " · JS" else ""
+                    val js = if (source is JsMangaSource) " · JS" else ""
                     Row(source.id.toString(), "${source.name} (${source.lang.uppercase()})$js")
                 }
                 .sortedBy { it.label.lowercase() }
@@ -66,7 +66,7 @@ class SourceCategorySourcesScreen(private val category: String) : Screen() {
         val animeSources = remember {
             Injekt.get<AnimeSourceManager>().getCatalogueSources()
                 .map { source ->
-                    val js = if (source is SumizuriAnimeSource) " · JS" else ""
+                    val js = if (source is JsAnimeSource) " · JS" else ""
                     Row(source.id.toString(), "${source.name} (${source.lang.uppercase()})$js")
                 }
                 .sortedBy { it.label.lowercase() }

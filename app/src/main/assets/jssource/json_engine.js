@@ -694,7 +694,7 @@
       }).join('');
       return {
         statusCode: 200,
-        body: rendered.html + '\n<div id="sumizuri-captured">' + captured + '</div>',
+        body: rendered.html + '\n<div id="captured">' + captured + '</div>',
         headers: {},
         url: rendered.url,
       };

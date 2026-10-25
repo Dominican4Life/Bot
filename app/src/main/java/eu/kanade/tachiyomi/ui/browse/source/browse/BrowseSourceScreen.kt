@@ -87,7 +87,7 @@ import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.tachiyomi.sumizuri.SumizuriTabs
+import eu.kanade.tachiyomi.jssource.JsTabs
 import eu.kanade.tachiyomi.ui.browse.BulkFavoriteScreenModel
 import eu.kanade.tachiyomi.ui.browse.extension.details.SourceSettingsContent
 import eu.kanade.tachiyomi.ui.browse.source.SourcesScreen
@@ -345,7 +345,7 @@ data class BrowseSourceScreen(
                         }
 
                         // KMK: a JS / JSON source's tab catalogs, as buttons
-                        val sourceTabs = screenModel.source as? SumizuriTabs
+                        val sourceTabs = screenModel.source as? JsTabs
                         val selectedCatalog = (state.listing as? Listing.Search)
                             ?.takeIf { it.savedSearchId == null && it.query.isNullOrBlank() }
                             ?.let { listing ->
@@ -544,7 +544,7 @@ data class BrowseSourceScreen(
                     // KMK <--
                     // KMK: swipe left / right over the covers for the next / previous button of the row (Popular,
                     // Latest, a JS source's tabs, saved searches)
-                    val tabsSource = screenModel.source as? SumizuriTabs
+                    val tabsSource = screenModel.source as? JsTabs
                     val currentCatalog = (state.listing as? Listing.Search)
                         ?.takeIf { it.savedSearchId == null && it.query.isNullOrBlank() }
                         ?.let { l -> tabsSource?.let { runCatching { it.selectedCatalog(l.filters) }.getOrNull() } }

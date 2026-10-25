@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.ui.sumizuri
+package eu.kanade.tachiyomi.ui.codeeditor
 
 import android.content.Context
 import android.net.Uri
@@ -95,7 +95,7 @@ import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import coil3.compose.AsyncImage
 import eu.kanade.presentation.util.Screen
-import eu.kanade.tachiyomi.sumizuri.SumizuriPreferences
+import eu.kanade.tachiyomi.jssource.JsPreferences
 import eu.kanade.tachiyomi.ui.anime.source.AnimeSourceScreen
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreen
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
@@ -109,7 +109,7 @@ import tachiyomi.domain.source.interactor.GetRemoteManga
 import tachiyomi.presentation.core.components.material.Scaffold
 
 /**
- * KMK: The Code editor, opened from the code button in Browse. Write a Sumizuri-style source as JavaScript or as a
+ * KMK: The Code editor, opened from the code button in Browse. Write a source as JavaScript or as a
  * JSON declaration (tabs at the top), test it in the side panel (Details / Test / Console) and save it: it then
  * shows in Browse with the other sources. Existing .js / .json sources can be imported and exported.
  */
@@ -375,7 +375,7 @@ private fun MenuItem(text: String, icon: androidx.compose.ui.graphics.vector.Ima
     DropdownMenuItem(text = { Text(text) }, leadingIcon = { Icon(icon, contentDescription = null) }, onClick = onClick)
 }
 
-/** "JS extension | JSON declarative", at the top like Sumizuri's first editor */
+/** "JS extension | JSON declarative", at the top */
 @Composable
 private fun KindTabs(json: Boolean, onJson: (Boolean) -> Unit, modifier: Modifier = Modifier) {
     SecondaryTabRow(selectedTabIndex = if (json) 1 else 0, modifier = modifier) {
@@ -715,12 +715,12 @@ private fun SavedSourcesDialog(
 /** The source's own settings (getSourcePreferences), saved where Browse's source settings read them */
 @Composable
 private fun SourceSettingsDialog(
-    definitions: List<SumizuriPreferences.Definition>,
+    definitions: List<JsPreferences.Definition>,
     sourceId: Long,
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
-    val preferences = remember(sourceId) { SumizuriPreferences.of(context, sourceId) }
+    val preferences = remember(sourceId) { JsPreferences.of(context, sourceId) }
     var version by remember { mutableIntStateOf(0) }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -733,13 +733,13 @@ private fun SourceSettingsDialog(
                 if (definitions.isEmpty()) Text("This source has no settings.")
                 definitions.forEach { def ->
                     // Read again after every change
-                    val current = remember(version, def.key) { SumizuriPreferences.current(preferences, def) }
+                    val current = remember(version, def.key) { JsPreferences.current(preferences, def) }
                     fun set(value: kotlinx.serialization.json.JsonElement?) {
-                        SumizuriPreferences.write(preferences, def.key, value)
+                        JsPreferences.write(preferences, def.key, value)
                         version++
                     }
                     // KMK: a section header
-                    if (def.type == SumizuriPreferences.Type.Category) {
+                    if (def.type == JsPreferences.Type.Category) {
                         Text(
                             def.title,
                             style = MaterialTheme.typography.labelLarge,
@@ -755,16 +755,16 @@ private fun SourceSettingsDialog(
                         }
                         when (def.type) {
                             // KMK -->
-                            SumizuriPreferences.Type.Category, SumizuriPreferences.Type.Info -> Unit
-                            SumizuriPreferences.Type.Slider -> {
-                                val slider = def.slider ?: SumizuriPreferences.Slider(0, 10, 1, false, "")
-                                val saved = SumizuriPreferences.sliderValues((current as? JsonPrimitive)?.contentOrNull, slider)
+                            JsPreferences.Type.Category, JsPreferences.Type.Info -> Unit
+                            JsPreferences.Type.Slider -> {
+                                val slider = def.slider ?: JsPreferences.Slider(0, 10, 1, false, "")
+                                val saved = JsPreferences.sliderValues((current as? JsonPrimitive)?.contentOrNull, slider)
                                 var dragging by remember(def.key, version) { mutableStateOf<Pair<Int, Int>?>(null) }
                                 val shown = dragging ?: saved
                                 val bounds = slider.min.toFloat()..slider.max.toFloat()
                                 val stops = ((slider.max - slider.min) / slider.step - 1).coerceAtLeast(0)
                                 val save = {
-                                    dragging?.let { (a, b) -> set(JsonPrimitive(SumizuriPreferences.sliderText(a, b, slider))) }
+                                    dragging?.let { (a, b) -> set(JsonPrimitive(JsPreferences.sliderText(a, b, slider))) }
                                     dragging = null
                                 }
                                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -790,18 +790,18 @@ private fun SourceSettingsDialog(
                                         )
                                     }
                                     Text(
-                                        SumizuriPreferences.sliderLabel(shown.first, shown.second, slider),
+                                        JsPreferences.sliderLabel(shown.first, shown.second, slider),
                                         style = MaterialTheme.typography.bodyMedium,
                                         modifier = Modifier.padding(start = 12.dp),
                                     )
                                 }
                             }
                             // KMK <--
-                            SumizuriPreferences.Type.Switch -> Switch(
+                            JsPreferences.Type.Switch -> Switch(
                                 checked = (current as? JsonPrimitive)?.booleanOrNull ?: false,
                                 onCheckedChange = { set(JsonPrimitive(it)) },
                             )
-                            SumizuriPreferences.Type.List -> def.options.forEach { option ->
+                            JsPreferences.Type.List -> def.options.forEach { option ->
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.fillMaxWidth().clickable { set(JsonPrimitive(option.value)) },
@@ -813,7 +813,7 @@ private fun SourceSettingsDialog(
                                     Text(option.label)
                                 }
                             }
-                            SumizuriPreferences.Type.MultiList -> {
+                            JsPreferences.Type.MultiList -> {
                                 val selected = (current as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.orEmpty().toSet()
                                 def.options.forEach { option ->
                                     val checked = option.value in selected
@@ -830,7 +830,7 @@ private fun SourceSettingsDialog(
                                     }
                                 }
                             }
-                            SumizuriPreferences.Type.Text -> {
+                            JsPreferences.Type.Text -> {
                                 var text by remember(def.key) { mutableStateOf((current as? JsonPrimitive)?.contentOrNull.orEmpty()) }
                                 OutlinedTextField(
                                     value = text,

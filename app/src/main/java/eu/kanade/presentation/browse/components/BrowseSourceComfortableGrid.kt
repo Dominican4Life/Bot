@@ -136,7 +136,7 @@ internal fun BrowseSourceComfortableGridItem(
     // KMK <--
     MangaComfortableGridItem(
         // KMK: with the badge a JS source gave the entry, if any (Browse only)
-        title = eu.kanade.tachiyomi.sumizuri.SumizuriListBadges.browseTitle(manga.source, manga.url, manga.title),
+        title = eu.kanade.tachiyomi.jssource.JsListBadges.browseTitle(manga.source, manga.url, manga.title),
         coverData = MangaCover(
             mangaId = manga.id,
             sourceId = manga.source,

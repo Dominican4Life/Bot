@@ -426,9 +426,9 @@ class Downloader(
             // Do after download completes
 
             // KMK: save the videos of a chapter's video pages next to their pictures
-            if (pageList.any { eu.kanade.tachiyomi.sumizuri.ReaderVideos.isVideo(it.url) }) {
+            if (pageList.any { eu.kanade.tachiyomi.jssource.ReaderVideos.isVideo(it.url) }) {
                 val digitCount = pageList.size.toString().length.coerceAtLeast(3)
-                eu.kanade.tachiyomi.sumizuri.ChapterVideoDownloads.saveAll(
+                eu.kanade.tachiyomi.jssource.ChapterVideoDownloads.saveAll(
                     pageList,
                     tmpDir,
                     { page -> "%0${digitCount}d".format(Locale.ENGLISH, page.number) },
@@ -500,7 +500,7 @@ class Downloader(
         // Try to find the image file
         val imageFile = tmpDir.listFiles()?.firstOrNull {
             // KMK: a saved chapter video (NNN.video.*) isn't the page's picture
-            !eu.kanade.tachiyomi.sumizuri.ChapterVideoDownloads.isVideoFile(it.name) &&
+            !eu.kanade.tachiyomi.jssource.ChapterVideoDownloads.isVideoFile(it.name) &&
                 (it.name!!.startsWith("$filename.") || it.name!!.startsWith("${filename}__001"))
         }
 
@@ -652,7 +652,7 @@ class Downloader(
                 fileName in listOf(COMIC_INFO_FILE, NOMEDIA_FILE) -> false
                 fileName.endsWith(".tmp") -> false
                 // KMK: saved chapter videos aren't pages
-                eu.kanade.tachiyomi.sumizuri.ChapterVideoDownloads.isVideoFile(fileName) -> false
+                eu.kanade.tachiyomi.jssource.ChapterVideoDownloads.isVideoFile(fileName) -> false
                 // Only count the first split page and not the others
                 fileName.contains("__") && !fileName.endsWith("__001.jpg") -> false
                 else -> true

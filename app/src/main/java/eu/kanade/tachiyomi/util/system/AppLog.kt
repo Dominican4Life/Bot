@@ -17,7 +17,7 @@ import logcat.LogcatLogger
 import java.io.File
 
 /**
- * KMK: The app's own log, shown in the Logs screen (debug button on the navigation rail), like Sumizuri's.
+ * KMK: The app's own log, shown in the Logs screen (debug button on the navigation rail).
  *
  * Everything logged through logcat, XLog and the crash handler lands here with its time, level and tag. The last
  * [MAX_LINES] lines are kept on disk, so lines from earlier runs are still there after a restart (they show with a

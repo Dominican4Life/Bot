@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.sumizuri
+package eu.kanade.tachiyomi.jssource
 
 import java.util.concurrent.ConcurrentHashMap
 
@@ -7,7 +7,7 @@ import java.util.concurrent.ConcurrentHashMap
  * the name ("Byoru · 272"), and only there: it's kept in memory while the app runs, refreshed each time the list
  * loads, and never saved, so the library, downloads and backups only ever see the plain name.
  */
-object SumizuriListBadges {
+object JsListBadges {
 
     private val badges = ConcurrentHashMap<String, String>()
 

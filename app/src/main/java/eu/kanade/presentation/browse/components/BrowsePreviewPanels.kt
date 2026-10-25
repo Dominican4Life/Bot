@@ -74,7 +74,7 @@ import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.tachiyomi.sumizuri.ReaderVideos
+import eu.kanade.tachiyomi.jssource.ReaderVideos
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowsePreviewScreenModel
 import java.text.DateFormat
 import java.util.Date

@@ -10,7 +10,7 @@ import eu.kanade.tachiyomi.data.anime.Anime
 import eu.kanade.tachiyomi.data.anime.AnimeRepository
 import eu.kanade.presentation.anime.toMangaFilterList
 import eu.kanade.presentation.anime.writeBackToAnime
-import eu.kanade.tachiyomi.sumizuri.SumizuriTabs
+import eu.kanade.tachiyomi.jssource.JsTabs
 import eu.kanade.tachiyomi.ui.anime.AnimeIncognito
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
@@ -242,7 +242,7 @@ class AnimeSourceScreenModel(
     /** Lists one of a JS / JSON source's catalogs, the way picking it in the filter sheet with no search does */
     fun showCatalog(id: String) {
         val source = source ?: return
-        val tabs = source as? SumizuriTabs ?: return
+        val tabs = source as? JsTabs ?: return
         val filters = source.getFilterList()
         if (runCatching { tabs.selectCatalog(filters, id) }.getOrNull() != true) return
         runCatching { tabs.rememberTab(id) }
@@ -251,7 +251,7 @@ class AnimeSourceScreenModel(
 
     /** For a source with tab catalogs: opens the one used last (or the first). False when it has none */
     fun showHomeTab(): Boolean {
-        val id = runCatching { (source as? SumizuriTabs)?.homeTab() }.getOrNull() ?: return false
+        val id = runCatching { (source as? JsTabs)?.homeTab() }.getOrNull() ?: return false
         showCatalog(id)
         return true
     }

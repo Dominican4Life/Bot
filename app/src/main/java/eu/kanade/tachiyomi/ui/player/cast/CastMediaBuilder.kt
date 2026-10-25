@@ -10,7 +10,7 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.data.torrentServer.service.TorrentServerService
 import eu.kanade.tachiyomi.network.NetworkHelper
-import eu.kanade.tachiyomi.sumizuri.SumizuriAnimeSource
+import eu.kanade.tachiyomi.jssource.JsAnimeSource
 import eu.kanade.tachiyomi.torrentServer.TorrentServerApi
 import eu.kanade.tachiyomi.torrentServer.TorrentServerUtils
 import eu.kanade.tachiyomi.ui.player.PlayerActivity
@@ -163,7 +163,7 @@ class CastMediaBuilder(
         if (TorrentServerUtils.isTorrentServerUrl(videoUrl)) return null
         val source = viewModel.currentSource.value
         val sourceHeaders = (source as? AnimeHttpSource)?.headers
-            ?: (source as? SumizuriAnimeSource)?.headers
+            ?: (source as? JsAnimeSource)?.headers
         val base = video.headers ?: sourceHeaders
         val builder = base?.newBuilder() ?: Headers.Builder()
         if (base?.get("Cookie") == null) {

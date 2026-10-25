@@ -82,9 +82,9 @@ class AnimeExtensionManager(
 
     fun getAppIconForSource(sourceId: Long): Drawable? {
         // KMK: a Code editor source shows its own icon, even when it took an extension's id
-        eu.kanade.tachiyomi.sumizuri.SumizuriIcons.drawable(context, sourceId)?.let { return it }
+        eu.kanade.tachiyomi.jssource.JsIcons.drawable(context, sourceId)?.let { return it }
         val pkgName = getExtensionPackage(sourceId)
-            ?: return eu.kanade.tachiyomi.sumizuri.SumizuriIcons.drawable(context, sourceId)
+            ?: return eu.kanade.tachiyomi.jssource.JsIcons.drawable(context, sourceId)
         return iconMap[pkgName] ?: installedExtensionMapFlow.value[pkgName]?.icon?.also { iconMap[pkgName] = it }
     }
 

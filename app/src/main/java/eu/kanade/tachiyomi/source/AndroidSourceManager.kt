@@ -72,7 +72,7 @@ class AndroidSourceManager(
     // SY <--
     // KMK -->
     private val getMergedReferencesById: GetMergedReferencesById by injectLazy()
-    private val sumizuriManager: eu.kanade.tachiyomi.sumizuri.SumizuriManager by lazy { Injekt.get() }
+    private val jsSourceManager: eu.kanade.tachiyomi.jssource.JsSourceManager by lazy { Injekt.get() }
     // KMK <--
 
     init {
@@ -87,9 +87,9 @@ class AndroidSourceManager(
                     exhPreferences.isHentaiEnabled().changes(),
                 ) { (a, b), c -> Triple(a, b, c) }
                 // Sources made in the Code editor join the manga sources
-                .combine(sumizuriManager.mangaSourcesFlow) { triple, jsSources -> triple to jsSources }
+                .combine(jsSourceManager.mangaSourcesFlow) { triple, jsSources -> triple to jsSources }
                 // APK sources switched off in favour of a JS source with their id
-                .combine(sumizuriManager.apkOffFlow) { pair, apkOff -> Triple(pair.first, pair.second, apkOff) }
+                .combine(jsSourceManager.apkOffFlow) { pair, apkOff -> Triple(pair.first, pair.second, apkOff) }
                 // KMK <--
                 // SY <--
                 .collectLatest { (triple, jsSources, apkOff) ->
