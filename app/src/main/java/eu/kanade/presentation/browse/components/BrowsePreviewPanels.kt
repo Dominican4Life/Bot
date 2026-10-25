@@ -507,10 +507,18 @@ private fun PageThumbnailBox(
             .aspectRatio(0.7f)
             .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+            // KMK: the tile picked by holding and sliding is outlined, like the reader's current page
+            .then(
+                if (playing) {
+                    Modifier.border(BorderStroke(3.dp, MaterialTheme.colorScheme.primary), shape)
+                } else {
+                    Modifier
+                },
+            )
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        // KMK: tile-sized, and animating only while on screen
+        // KMK: a still picture; plays while it's the picked tile
         AnimatedThumbnail(model = model, playing = playing, modifier = Modifier.fillMaxSize())
         // KMK: the reader's play button look (dark circle, white ring, white arrow); tapping opens the reader there
         if (isVideo) {

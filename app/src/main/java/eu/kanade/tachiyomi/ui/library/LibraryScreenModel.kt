@@ -732,6 +732,21 @@ class LibraryScreenModel(
     }
 
     private fun getLibraryItemPreferencesFlow(): Flow<ItemPreferences> {
+        // KMK: the badge settings are read again when asked (after a restore): a restore could leave the covers
+        // with the badges of before, while the settings showed the restored ones
+        return kotlinx.coroutines.flow.combine(libraryItemPreferenceChanges(), LibraryRefresh.tick) { prefs, _ ->
+            prefs.copy(
+                downloadBadge = libraryPreferences.downloadBadge().get(),
+                unreadBadge = libraryPreferences.unreadBadge().get(),
+                localBadge = libraryPreferences.localBadge().get(),
+                languageBadge = libraryPreferences.languageBadge().get(),
+                sourceBadge = libraryPreferences.sourceBadge().get(),
+                useLangIcon = libraryPreferences.useLangIcon().get(),
+            )
+        }.distinctUntilChanged()
+    }
+
+    private fun libraryItemPreferenceChanges(): Flow<ItemPreferences> {
         return combine(
             libraryPreferences.downloadBadge().changes(),
             libraryPreferences.unreadBadge().changes(),

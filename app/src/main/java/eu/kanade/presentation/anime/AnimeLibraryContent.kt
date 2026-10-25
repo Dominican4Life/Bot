@@ -177,7 +177,8 @@ fun rememberAnimeLibraryState(searchQuery: String?): AnimeLibraryState {
     val sortAscending by remember { AnimeLibraryPrefs.sortAscending() }.collectAsState()
     val randomSeed by remember { AnimeLibraryPrefs.randomSeed() }.collectAsState()
     val groupType by remember { AnimeLibraryPrefs.groupType() }.collectAsState()
-    val showDownloadBadge by remember { AnimeLibraryPrefs.downloadBadge() }.collectAsState()
+    val restoreTick by eu.kanade.tachiyomi.ui.library.LibraryRefresh.tick.collectAsState()
+    val showDownloadBadge by remember(restoreTick) { AnimeLibraryPrefs.downloadBadge() }.collectAsState()
     val showCategoryTabs by remember { libraryPreferences.categoryTabs() }.collectAsState()
     val showItemCount by remember { libraryPreferences.categoryNumberOfItems() }.collectAsState()
 
@@ -675,13 +676,15 @@ private data class AnimeBadgeSettings(
 
 @Composable
 private fun rememberAnimeBadgeSettings(): AnimeBadgeSettings {
-    val downloaded by remember { AnimeLibraryPrefs.downloadBadge() }.collectAsState()
-    val unseen by remember { AnimeLibraryPrefs.unseenBadge() }.collectAsState()
-    val language by remember { AnimeLibraryPrefs.languageBadge() }.collectAsState()
-    val useLangIcon by remember { AnimeLibraryPrefs.useLangIcon() }.collectAsState()
-    val source by remember { AnimeLibraryPrefs.sourceBadge() }.collectAsState()
-    val continueButton by remember { AnimeLibraryPrefs.continueButton() }.collectAsState()
-    val local by remember { AnimeLibraryPrefs.localBadge() }.collectAsState()
+    // KMK: read again after a restore (see LibraryRefresh), so the covers match the restored settings
+    val tick by eu.kanade.tachiyomi.ui.library.LibraryRefresh.tick.collectAsState()
+    val downloaded by remember(tick) { AnimeLibraryPrefs.downloadBadge() }.collectAsState()
+    val unseen by remember(tick) { AnimeLibraryPrefs.unseenBadge() }.collectAsState()
+    val language by remember(tick) { AnimeLibraryPrefs.languageBadge() }.collectAsState()
+    val useLangIcon by remember(tick) { AnimeLibraryPrefs.useLangIcon() }.collectAsState()
+    val source by remember(tick) { AnimeLibraryPrefs.sourceBadge() }.collectAsState()
+    val continueButton by remember(tick) { AnimeLibraryPrefs.continueButton() }.collectAsState()
+    val local by remember(tick) { AnimeLibraryPrefs.localBadge() }.collectAsState()
     return AnimeBadgeSettings(downloaded, unseen, language, useLangIcon, source, continueButton, local)
 }
 

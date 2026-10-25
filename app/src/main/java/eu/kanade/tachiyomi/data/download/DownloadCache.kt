@@ -498,6 +498,9 @@ class DownloadCache(
                 // KMK: skipped for an empty library: try again in a minute rather than after the usual wait
                 if (libraryWasEmpty && renewInterval > 60_000L) lastRenew -= renewInterval - 60_000L
                 notifyChanges()
+                // KMK: the libraries count downloads again now the folders were looked at (after a restore, the
+                // download badges stayed empty until the setting was switched off and on)
+                eu.kanade.tachiyomi.ui.library.LibraryRefresh.request()
             }
         }
 

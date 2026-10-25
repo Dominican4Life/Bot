@@ -319,6 +319,10 @@ private fun PageGridContent(
         // KMK: the tiles on screen; only those animate
         // KMK: the one tile picked by holding and sliding plays; the rest stay still
         var active by remember { mutableStateOf<Int?>(null) }
+        // Reading on to another page hands the highlight back to the page being read
+        LaunchedEffect(currentPage) {
+            if (active != null && active != currentPage - 1) active = null
+        }
         LazyVerticalGrid(
             columns = GridCells.Fixed(3),
             state = gridState,
@@ -334,9 +338,13 @@ private fun PageGridContent(
                 PageThumbnail(
                     page = page,
                     chapter = chapter,
-                    isCurrent = page.number == currentPage,
+                    // KMK: the highlight follows the tile picked by holding and sliding
+                    isCurrent = if (active != null) index == active else page.number == currentPage,
                     playing = index == active,
-                    onClick = { onClickPage(page.index) },
+                    onClick = {
+                        active = index
+                        onClickPage(page.index)
+                    },
                 )
             }
         }

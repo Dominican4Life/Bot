@@ -1,5 +1,7 @@
 package eu.kanade.presentation.components
 
+import android.graphics.drawable.Animatable
+import android.graphics.drawable.Drawable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -8,12 +10,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.LazyGridState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Animation
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -28,8 +29,12 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import coil3.asDrawable
 import coil3.compose.AsyncImage
+import coil3.compose.AsyncImagePainter
 import coil3.decode.BitmapFactoryDecoder
 import coil3.request.ImageRequest
 import coil3.request.crossfade
@@ -71,8 +76,10 @@ fun AnimatedThumbnail(
         }
         return
     }
-    val animated = remember(f) { PageThumbFiles.kindOf(f) != PageThumbFiles.Kind.STILL }
+    val kind = remember(f) { PageThumbFiles.kindOf(f) }
+    val animated = kind != PageThumbFiles.Kind.STILL
     val play = animated && playing
+    var drawable by remember(f, play) { mutableStateOf<Drawable?>(null) }
     Box(modifier = modifier) {
         AsyncImage(
             model = remember(f, play) {
@@ -81,6 +88,9 @@ fun AnimatedThumbnail(
                     .size(THUMB_WIDTH_PX, THUMB_HEIGHT_PX)
                     .precision(Precision.INEXACT)
                     .crossfade(!play)
+                    // The still and the playing picture are kept apart in memory; otherwise the still one came
+                    // back from memory when the tile was told to play, and it never moved
+                    .memoryCacheKeyExtra("thumb_play", play.toString())
                     .apply {
                         // Not playing: the first frame only, as a plain picture
                         if (!play) decoderFactory(BitmapFactoryDecoder.Factory())
@@ -90,27 +100,37 @@ fun AnimatedThumbnail(
             contentDescription = null,
             contentScale = ContentScale.Crop,
             alignment = Alignment.TopCenter,
+            onState = { state ->
+                drawable = (state as? AsyncImagePainter.State.Success)?.result?.image?.asDrawable(context.resources)
+            },
             modifier = Modifier.matchParentSize(),
         )
-        // Animated pages say so, until they play
+        // Started by hand: the animation doesn't always start on its own
+        val animatable = drawable as? Animatable
+        LaunchedEffect(animatable, play) {
+            animatable ?: return@LaunchedEffect
+            if (play) animatable.start() else if (animatable.isRunning) animatable.stop()
+        }
+        DisposableEffect(animatable) {
+            onDispose { if (animatable?.isRunning == true) animatable.stop() }
+        }
+        // Animated pages say what they are (GIF, WEBP), until they play
         if (animated && !play) {
-            Box(
-                contentAlignment = Alignment.Center,
+            Text(
+                text = if (kind == PageThumbFiles.Kind.GIF) "GIF" else "WEBP",
+                color = Color.White,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.ExtraBold,
+                letterSpacing = 0.5.sp,
+                maxLines = 1,
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .padding(6.dp)
-                    .size(26.dp)
-                    .clip(CircleShape)
+                    .clip(RoundedCornerShape(7.dp))
                     .background(Color.Black.copy(alpha = 0.65f))
-                    .border(1.dp, Color.White.copy(alpha = 0.7f), CircleShape),
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.Animation,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(16.dp),
-                )
-            }
+                    .border(1.dp, Color.White.copy(alpha = 0.7f), RoundedCornerShape(7.dp))
+                    .padding(horizontal = 6.dp, vertical = 1.dp),
+            )
         }
     }
 }
