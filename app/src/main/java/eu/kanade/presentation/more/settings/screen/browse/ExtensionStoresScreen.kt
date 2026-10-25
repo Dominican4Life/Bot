@@ -74,12 +74,24 @@ class ExtensionStoresScreen(
             is ExtensionStoreDialog.Create -> {
                 ExtensionStoreCreateDialog(
                     onDismissRequest = screenModel::dismissDialog,
-                    onCreate = { screenModel.createRepo(it) },
+                    onCreate = { text, kind -> screenModel.createRepo(text, kind) },
                     storeIndexUrls = successState.stores.map { it.indexUrl }.toSet(),
                     processing = dialog.processing,
                     errorMessage = dialog.errorMessage,
                 )
             }
+            // KMK -->
+            is ExtensionStoreDialog.Preview -> {
+                eu.kanade.presentation.more.settings.screen.browse.components.ExtensionStorePreviewDialog(
+                    found = dialog.found,
+                    kind = dialog.kind,
+                    processing = dialog.processing,
+                    errorMessage = dialog.errorMessage,
+                    onDismissRequest = screenModel::dismissDialog,
+                    onConfirm = { screenModel.confirmRepo(dialog.found, it) },
+                )
+            }
+            // KMK <--
             is ExtensionStoreDialog.Delete -> {
                 ExtensionStoreDeleteDialog(
                     onDismissRequest = screenModel::dismissDialog,

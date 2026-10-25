@@ -232,10 +232,19 @@ fun unifiedExtensionsTab(
             when (val dialog = success?.dialog) {
                 is ExtensionStoreDialog.Create -> ExtensionStoreCreateDialog(
                     onDismissRequest = mangaStores::dismissDialog,
-                    onCreate = { mangaStores.createRepo(it) },
+                    onCreate = { text, kind -> mangaStores.createRepo(text, kind) },
                     storeIndexUrls = state.allRepos.map { it.indexUrl }.toSet(),
                     processing = dialog.processing,
                     errorMessage = dialog.errorMessage,
+                )
+                // KMK: what was found, before it's added
+                is ExtensionStoreDialog.Preview -> eu.kanade.presentation.more.settings.screen.browse.components.ExtensionStorePreviewDialog(
+                    found = dialog.found,
+                    kind = dialog.kind,
+                    processing = dialog.processing,
+                    errorMessage = dialog.errorMessage,
+                    onDismissRequest = mangaStores::dismissDialog,
+                    onConfirm = { mangaStores.confirmRepo(dialog.found, it) },
                 )
                 is ExtensionStoreDialog.Confirm -> ExtensionStoreConfirmDialog(
                     onDismissRequest = mangaStores::dismissDialog,

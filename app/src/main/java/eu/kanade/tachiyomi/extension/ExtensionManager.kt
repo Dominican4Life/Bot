@@ -198,21 +198,28 @@ class ExtensionManager(
             return
         }
 
-        // KMK: Aniyomi repos added as manga repos can't install anything here; move them to the anime repos
+        // KMK: anime packages in a manga repo: the repo is added to the anime repos too (and leaves the manga repos
+        // when it has nothing for manga), so they show up and install as anime extensions
         val (animeExtensions, extensions) = allExtensions.partition { it.pkgName.contains(".animeextension.") }
-        val animeStores = animeExtensions.map { it.store }.distinctBy { it.indexUrl }
-            .filter { store -> extensions.none { it.store.indexUrl == store.indexUrl } }
-        if (animeStores.isNotEmpty()) {
+        val animeStoreUrls = animeExtensions.map { it.store }.distinctBy { it.indexUrl }
+        if (animeStoreUrls.isNotEmpty()) {
             val mangaStores = Injekt.get<mihon.domain.extension.repository.ExtensionStoreRepository>()
             val animeStoreRepo = Injekt.get<mihon.domain.extension.repository.AnimeExtensionStoreRepository>()
-            animeStores.forEach { store ->
+            val inAnime = runCatching { animeStoreRepo.getAll().map { it.indexUrl }.toSet() }.getOrDefault(emptySet())
+            var moved = false
+            animeStoreUrls.forEach { store ->
                 runCatching {
-                    animeStoreRepo.insert(store.indexUrl).getOrThrow()
-                    mangaStores.remove(store.indexUrl)
-                }.onFailure { logcat(LogPriority.WARN, it) { "Couldn't move anime repo ${store.indexUrl}" } }
+                    if (store.indexUrl !in inAnime) {
+                        animeStoreRepo.insert(store.indexUrl).getOrThrow()
+                        moved = true
+                    }
+                    if (extensions.none { it.store.indexUrl == store.indexUrl }) mangaStores.remove(store.indexUrl)
+                }.onFailure { logcat(LogPriority.WARN, it) { "Couldn't add anime repo ${store.indexUrl}" } }
             }
-            Injekt.get<eu.kanade.tachiyomi.animeextension.AnimeExtensionManager>().findAvailableExtensions()
-            withUIContext { context.toast(tachiyomi.i18n.kmk.KMR.strings.anime_repo_moved) }
+            if (moved) {
+                Injekt.get<eu.kanade.tachiyomi.animeextension.AnimeExtensionManager>().findAvailableExtensions()
+                withUIContext { context.toast(tachiyomi.i18n.kmk.KMR.strings.anime_repo_moved) }
+            }
         }
 
         enableAdditionalSubLanguages(extensions)

@@ -112,6 +112,8 @@ class AnimeExtensionManager(
                 storeRepository.refreshAll()
                 val disabledRepos = preferences.disabledRepos().get()
                 storeRepository.fetchExtensions(disabledRepos)
+                    // KMK: manga packages of a repo that has both are listed on the manga side
+                    .filterNot { it.pkgName.contains(".tachiyomi.extension.") }
                     .map { it.copy(name = it.name.substringAfter("Aniyomi: ")) }
             }
         } catch (e: Exception) {

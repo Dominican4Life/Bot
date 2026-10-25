@@ -106,6 +106,9 @@ data class UnifiedRepo(
     val packageCount: Int,
     val installedCount: Int,
     val enabled: Boolean,
+    // KMK: when its packages were last read, or why that failed
+    val lastSuccess: Long? = null,
+    val lastError: String? = null,
 )
 
 @Immutable

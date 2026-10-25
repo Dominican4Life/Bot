@@ -11,6 +11,9 @@ import eu.kanade.tachiyomi.extension.model.Extension
 import eu.kanade.tachiyomi.extension.model.InstallStep
 import eu.kanade.tachiyomi.jssource.JsSourceManager
 import eu.kanade.tachiyomi.util.system.AppLog
+import kotlinx.coroutines.launch
+import mihon.data.extension.service.ExtensionStoreStatus
+import mihon.data.extension.service.ExtensionStoreUrls
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -37,7 +40,12 @@ class UnifiedExtensionsScreenModel(
     animeStores: AnimeExtensionStoreRepository = Injekt.get(),
     // KMK: JS / JSON sources for the JS tab
     private val jsSources: JsSourceManager = Injekt.get(),
-) : StateScreenModel<UnifiedExtensionsScreenModel.State>(State()) {
+) : StateScreenModel<UnifiedExtensionsScreenModel.State>(
+    // KMK: what was shown last time, until the lists are read again
+    lastBuilt?.let { (packages, sources, repos) ->
+        State(isLoading = false, allPackages = packages, allSources = sources, allRepos = repos)
+    } ?: State(),
+) {
 
     private val steps = MutableStateFlow(emptyMap<String, InstallStep>())
 
@@ -94,9 +102,9 @@ class UnifiedExtensionsScreenModel(
         }
 
         screenModelScope.launchIO {
-            combine(mangaFlow, animeFlow, prefsFlow, steps) { manga, anime, prefs, steps ->
+            combine(mangaFlow, animeFlow, prefsFlow, steps, ExtensionStoreStatus.entries) { manga, anime, prefs, steps, status ->
                 // KMK: a failed rebuild is logged and skipped, so later changes (like a switch) still show
-                runCatching { build(manga, anime, prefs, steps) }
+                runCatching { build(manga, anime, prefs, steps, status) }
                     .onFailure { AppLog.add('E', "extensions", "Rebuilding the extension list failed: ${it.message}") }
                     .getOrNull()
             }.collectLatest { built ->
@@ -109,6 +117,8 @@ class UnifiedExtensionsScreenModel(
                         allRepos = built.third,
                     )
                 }
+                // KMK: kept for the next time the screen opens, so it shows at once
+                lastBuilt = built
             }
         }
         // KMK --> the saved JS / JSON sources, listed with the other sources under a JS tag
@@ -162,6 +172,7 @@ class UnifiedExtensionsScreenModel(
         anime: AnimeData,
         prefs: Prefs,
         steps: Map<String, InstallStep>,
+        status: Map<String, ExtensionStoreStatus.Entry> = emptyMap(),
     ): Triple<List<UnifiedPackage>, List<UnifiedSource>, List<UnifiedRepo>> {
         val showNsfw = preferences.showNsfwSource().get()
         val packages = mutableListOf<UnifiedPackage>()
@@ -224,7 +235,8 @@ class UnifiedExtensionsScreenModel(
         manga.available
             .filter { it.pkgName !in mangaTaken }
             .filter { showNsfw || !it.isNsfw }
-            .filter { ext -> ext.sources.any { it.lang in prefs.languages } || ext.lang in prefs.languages }
+            // KMK: every package of every repo is listed (anime ones weren't filtered by language either); the
+            // language setting still decides which sources show in Browse
             .forEach { ext -> packages += availablePackage(ExtensionKind.MIHON, ext, steps).copy(manga = ext) }
 
         // Aniyomi (anime) extensions
@@ -288,8 +300,13 @@ class UnifiedExtensionsScreenModel(
 
         // Repositories
         fun repos(kind: ExtensionKind, stores: List<ExtensionStore>) = stores.map { store ->
-            val inRepo = packages.filter { it.kind == kind && it.repoUrl == store.indexUrl }
+            // KMK: by repository, not exact address (a refresh can rewrite it)
+            val storeKey = ExtensionStoreUrls.key(store.indexUrl)
+            val inRepo = packages.filter { it.kind == kind && it.repoUrl?.let(ExtensionStoreUrls::key) == storeKey }
+            val st = status[store.indexUrl]
             UnifiedRepo(
+                lastSuccess = st?.lastSuccess,
+                lastError = st?.lastError,
                 kind = kind,
                 indexUrl = store.indexUrl,
                 name = store.name,
@@ -386,6 +403,92 @@ class UnifiedExtensionsScreenModel(
     }
 
     // Actions
+
+    /** KMK: Reads one kind of repository again (the refresh button on a repository's row) */
+    fun refreshRepos(kind: ExtensionKind) {
+        screenModelScope.launchIO {
+            mutableState.update { it.copy(isRefreshing = true) }
+            if (kind == ExtensionKind.ANIYOMI) {
+                runCatching { animeManager.findAvailableExtensions() }
+            } else {
+                runCatching { Injekt.get<ExtensionStoreRepository>().refreshAll() }
+                runCatching { mangaManager.findAvailableExtensions() }
+            }
+            mutableState.update { it.copy(isRefreshing = false) }
+        }
+    }
+
+    // KMK --> picking several sources at once
+    fun toggleSelection(source: UnifiedSource) = mutableState.update {
+        val key = selectionKey(source)
+        it.copy(selected = if (key in it.selected) it.selected - key else it.selected + key)
+    }
+
+    fun selectAll(sources: List<UnifiedSource>) = mutableState.update {
+        it.copy(selected = it.selected + sources.map(::selectionKey))
+    }
+
+    fun clearSelection() = mutableState.update { it.copy(selected = emptySet()) }
+
+    fun selectedSources(): List<UnifiedSource> = state.value.let { st ->
+        (st.allSources + st.allJsSources).filter { selectionKey(it) in st.selected }
+    }
+
+    fun setSelectedEnabled(enabled: Boolean) {
+        selectedSources().forEach { setSourceEnabled(it, enabled) }
+        clearSelection()
+    }
+
+    fun setSelectedPinned(pinned: Boolean) {
+        selectedSources().filter { it.pinned != pinned }.forEach { togglePin(it) }
+        clearSelection()
+    }
+
+    /** Removes the selected JS / JSON sources (APK sources are removed by uninstalling their package) */
+    fun deleteSelectedJs() {
+        selectedSources().forEach { deleteJs(it) }
+        clearSelection()
+    }
+
+    // KMK --> testing whether sources work: each one's first popular page, four at a time
+    private var testJob: kotlinx.coroutines.Job? = null
+
+    fun testSources(sources: List<UnifiedSource>) {
+        testJob?.cancel()
+        val list = sources.distinctBy(::selectionKey)
+        mutableState.update { it.copy(tests = list.associate { s -> selectionKey(s) to SourceTest.Running }, testing = true) }
+        testJob = screenModelScope.launchIO {
+            val gate = kotlinx.coroutines.sync.Semaphore(4)
+            kotlinx.coroutines.coroutineScope {
+                list.forEach { source ->
+                    launch {
+                        gate.acquire()
+                        try {
+                            val result = SourceTester.test(source)
+                            mutableState.update { it.copy(tests = it.tests + (selectionKey(source) to result)) }
+                        } finally {
+                            gate.release()
+                        }
+                    }
+                }
+            }
+            val failed = state.value.tests.values.count { it is SourceTest.Failed }
+            AppLog.add('I', "extensions", "Tested ${list.size} sources: ${list.size - failed} working, $failed failed")
+            mutableState.update { it.copy(testing = false) }
+        }
+    }
+
+    fun stopTests() {
+        testJob?.cancel()
+        mutableState.update { st ->
+            st.copy(testing = false, tests = st.tests.filterValues { it !is SourceTest.Running })
+        }
+    }
+
+    fun clearTests() = mutableState.update { it.copy(tests = emptyMap(), failedOnly = false) }
+
+    fun toggleFailedOnly() = mutableState.update { it.copy(failedOnly = !it.failedOnly) }
+    // KMK <--
 
     fun refresh() {
         screenModelScope.launchIO {
@@ -525,6 +628,12 @@ class UnifiedExtensionsScreenModel(
         // KMK
         val allJsSources: List<UnifiedSource> = emptyList(),
         val filters: UnifiedFilters = UnifiedFilters(),
+        // KMK: sources picked for a bulk action ("kind_id")
+        val selected: Set<String> = emptySet(),
+        // KMK: source test results by "kind_id"
+        val tests: Map<String, SourceTest> = emptyMap(),
+        val testing: Boolean = false,
+        val failedOnly: Boolean = false,
     ) {
         private fun matchesQuery(vararg text: String?): Boolean {
             val query = filters.query.trim()
@@ -545,10 +654,13 @@ class UnifiedExtensionsScreenModel(
         val sources: List<UnifiedSource>
             // KMK: JS sources join the list, under their own kind chip
             get() = (allSources + allJsSources).filter { s ->
-                matchesKind(s.kind) &&
+                (!failedOnly || tests[selectionKey(s)] is SourceTest.Failed) &&
+                    matchesKind(s.kind) &&
                     (filters.repoUrl == null || s.repoUrl == filters.repoUrl) &&
                     matchesQuery(s.name, s.packageName)
             }
+
+        val selectionMode: Boolean get() = selected.isNotEmpty()
 
         val repos: List<UnifiedRepo>
             get() = allRepos.filter { r -> matchesKind(r.kind) && matchesQuery(r.name, r.indexUrl) }
@@ -557,3 +669,11 @@ class UnifiedExtensionsScreenModel(
             get() = allPackages.count { it.state == PackageState.UPDATE_AVAILABLE }
     }
 }
+
+// KMK --> the lists as last built, for opening the screen at once next time (this run of the app)
+@Volatile
+private var lastBuilt: Triple<List<UnifiedPackage>, List<UnifiedSource>, List<UnifiedRepo>>? = null
+
+/** How a source is told apart in selections and tests */
+fun selectionKey(source: UnifiedSource): String = "${source.kind}_${source.id}"
+// KMK <--

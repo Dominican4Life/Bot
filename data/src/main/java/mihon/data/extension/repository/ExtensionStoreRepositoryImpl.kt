@@ -90,7 +90,7 @@ class ExtensionStoreRepositoryImpl(
                     // KMK <--
                     .map { store ->
                         async {
-                            service.getExtensions(store).onFailure {
+                            service.getExtensions(store).also { mihon.data.extension.service.ExtensionStoreStatus.record(store.indexUrl, it) }.onFailure {
                                 this@ExtensionStoreRepositoryImpl.logcat(LogPriority.ERROR, it) {
                                     "Failed to fetch extensions for store '${store.name} (${store.indexUrl})'"
                                 }
