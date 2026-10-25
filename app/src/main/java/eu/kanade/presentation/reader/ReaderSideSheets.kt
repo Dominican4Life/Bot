@@ -72,6 +72,7 @@ import coil3.request.ImageRequest
 import coil3.request.crossfade
 import eu.kanade.presentation.components.AnimatedThumbnail
 import eu.kanade.presentation.manga.components.ChapterDownloadAction
+import eu.kanade.tachiyomi.data.coil.PageFlipbooks
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.jssource.ReaderVideos
 import eu.kanade.tachiyomi.ui.reader.chapter.ReaderChapterItem
@@ -348,14 +349,20 @@ private fun PageThumbnail(
     playing: Boolean,
     onClick: () -> Unit,
 ) {
+    val context = LocalContext.current
     val status by page.statusFlow.collectAsState()
     val progress by page.progressFlow.collectAsState()
+    // KMK: a page captured before shows from its flipbook straight away, without loading the page again
+    val saved = remember(page) {
+        PageFlipbooks.keyOf(page)?.let { PageFlipbooks.has(context, it) } == true
+    }
 
-    // Ask the chapter's loader for this page while the thumbnail is on screen.
-    // For online chapters this queues the download; leaving the screen cancels it.
-    LaunchedEffect(page) {
+    // Ask the chapter's loader for this page while the thumbnail is on screen (just this page: preloading the
+    // next ones for every tile downloaded far more than was shown). Leaving the screen cancels it.
+    LaunchedEffect(page, saved) {
+        if (saved) return@LaunchedEffect
         val loader = chapter.pageLoader ?: return@LaunchedEffect
-        if (!loader.isRecycled) loader.loadPage(page)
+        if (!loader.isRecycled) loader.loadPageOnly(page)
     }
 
     val shape = RoundedCornerShape(10.dp)
@@ -375,10 +382,15 @@ private fun PageThumbnail(
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        when (val s = status) {
+        when (val s = if (saved) Page.State.Ready else status) {
             Page.State.Ready -> {
                 // KMK: tile-sized, and animating only while on screen, so the page being read keeps its frame rate
-                AnimatedThumbnail(model = page, playing = playing, modifier = Modifier.fillMaxSize())
+                AnimatedThumbnail(
+                    model = page,
+                    playing = playing,
+                    canMake = status == Page.State.Ready,
+                    modifier = Modifier.fillMaxSize(),
+                )
             }
             is Page.State.Error -> {
                 Icon(

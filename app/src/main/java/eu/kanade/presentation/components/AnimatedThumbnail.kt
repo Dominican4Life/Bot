@@ -1,80 +1,76 @@
 package eu.kanade.presentation.components
 
-import android.graphics.drawable.Animatable
-import android.graphics.drawable.Drawable
+import androidx.compose.foundation.Image
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import coil3.asDrawable
-import coil3.compose.AsyncImage
-import coil3.compose.AsyncImagePainter
-import coil3.request.ImageRequest
-import coil3.request.crossfade
-import coil3.size.Precision
-import kotlinx.coroutines.Dispatchers
+import eu.kanade.tachiyomi.data.coil.PageFlipbooks
+import kotlinx.coroutines.delay
 
 /**
- * KMK: A page thumbnail for the page grids (the reader's Pages panel and the Browse preview window).
+ * KMK: A page thumbnail for the page grids (the reader's Pages panel and the Browse preview window), drawn from
+ * the page's flipbook ([PageFlipbooks]): small frames captured once, so a grid of animated pages costs almost
+ * nothing to play and the page being read keeps its frame rate.
  *
- * Animated pages keep animating, but cheaply:
- * - decoded at tile size, so each frame costs a small part of a full page's;
- * - playing only while [playing] (on screen in the grid), paused on the frame they were on otherwise, and picked
- *   up again from there;
- * - loaded two at a time, so opening the grid doesn't take the device away from the page being read or watched.
+ * It flips while [playing] (on screen in the grid), stays on its frame otherwise and goes on from there. [canMake]
+ * false only shows a flipbook made before (the reader's panel waits until the page is loaded to make one).
  */
 @Composable
 fun AnimatedThumbnail(
     model: Any,
     playing: Boolean,
     modifier: Modifier = Modifier,
+    canMake: Boolean = true,
 ) {
     val context = LocalContext.current
-    var drawable by remember(model) { mutableStateOf<Drawable?>(null) }
-    AsyncImage(
-        model = remember(model) {
-            ImageRequest.Builder(context)
-                .data(model)
-                .size(THUMB_WIDTH_PX, THUMB_HEIGHT_PX)
-                .precision(Precision.INEXACT)
-                .crossfade(false)
-                .fetcherCoroutineContext(thumbnailDispatcher)
-                .decoderCoroutineContext(thumbnailDispatcher)
-                .build()
-        },
+    val key = remember(model) { PageFlipbooks.keyOf(model) } ?: return
+    var frames by remember(key) {
+        mutableStateOf(PageFlipbooks.inMemory(key)?.frames?.map { it.asImageBitmap() })
+    }
+    var frameMs by remember(key) { mutableStateOf(100L) }
+    LaunchedEffect(key, canMake) {
+        if (frames != null) return@LaunchedEffect
+        val book = PageFlipbooks.load(context, key)
+            ?: if (canMake) PageFlipbooks.make(context, key, model) else null
+        if (book != null) {
+            frameMs = book.frameMs
+            frames = book.frames.map { it.asImageBitmap() }
+        }
+    }
+    val list = frames
+    if (list.isNullOrEmpty()) {
+        // While it's being captured: its first frame, as soon as there is one
+        val first by PageFlipbooks.firstFrames.collectAsState()
+        val bitmap: ImageBitmap? = remember(first[key]) { first[key]?.asImageBitmap() }
+        bitmap?.let {
+            Image(it, null, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter, modifier = modifier)
+        }
+        return
+    }
+    var index by remember(key) { mutableIntStateOf(0) }
+    LaunchedEffect(list, playing) {
+        if (!playing || list.size < 2) return@LaunchedEffect
+        while (true) {
+            delay(frameMs)
+            index = (index + 1) % list.size
+        }
+    }
+    Image(
+        bitmap = list[index.coerceIn(0, list.lastIndex)],
         contentDescription = null,
         contentScale = ContentScale.Crop,
         alignment = Alignment.TopCenter,
-        onState = { state ->
-            drawable = (state as? AsyncImagePainter.State.Success)?.result?.image?.asDrawable(context.resources)
-        },
         modifier = modifier,
     )
-    val animatable = drawable as? Animatable
-    LaunchedEffect(animatable, playing) {
-        animatable ?: return@LaunchedEffect
-        if (playing) {
-            if (!animatable.isRunning) animatable.start()
-        } else if (animatable.isRunning) {
-            animatable.stop()
-        }
-    }
-    DisposableEffect(animatable) {
-        onDispose { if (animatable?.isRunning == true) animatable.stop() }
-    }
 }
-
-/** Big enough to look sharp in a three-across grid on a tablet, small enough to be cheap to animate */
-private const val THUMB_WIDTH_PX = 360
-private const val THUMB_HEIGHT_PX = 520
-
-/** Two thumbnails load at a time */
-@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-private val thumbnailDispatcher = Dispatchers.IO.limitedParallelism(2)

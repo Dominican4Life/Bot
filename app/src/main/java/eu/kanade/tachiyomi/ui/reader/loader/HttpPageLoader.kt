@@ -110,7 +110,12 @@ internal class HttpPageLoader(
     /**
      * Loads a page through the queue. Handles re-enqueueing pages if they were evicted from the cache.
      */
-    override suspend fun loadPage(page: ReaderPage) = withIOContext {
+    override suspend fun loadPage(page: ReaderPage) = load(page, preload = true)
+
+    // KMK
+    override suspend fun loadPageOnly(page: ReaderPage) = load(page, preload = false)
+
+    private suspend fun load(page: ReaderPage, preload: Boolean): Unit = withIOContext {
         val imageUrl = page.imageUrl
 
         // Check if the image has been deleted
@@ -127,7 +132,7 @@ internal class HttpPageLoader(
         if (page.status == Page.State.Queue) {
             queuedPages += PriorityPage(page, 1).also { queue.offer(it) }
         }
-        queuedPages += preloadNextPages(page, preloadSize)
+        if (preload) queuedPages += preloadNextPages(page, preloadSize)
 
         suspendCancellableCoroutine<Nothing> { continuation ->
             continuation.invokeOnCancellation {
