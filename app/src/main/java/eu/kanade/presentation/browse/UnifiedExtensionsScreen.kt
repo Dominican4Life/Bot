@@ -8,6 +8,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -26,15 +28,19 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Checklist
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Extension
+import androidx.compose.material.icons.outlined.NetworkCheck
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilterChip
@@ -66,10 +72,12 @@ import eu.kanade.tachiyomi.extension.model.InstallStep
 import eu.kanade.tachiyomi.ui.browse.extension.unified.ExtensionKind
 import eu.kanade.tachiyomi.ui.browse.extension.unified.PackageState
 import eu.kanade.tachiyomi.ui.browse.extension.unified.PackageStatusFilter
+import eu.kanade.tachiyomi.ui.browse.extension.unified.SourceTest
 import eu.kanade.tachiyomi.ui.browse.extension.unified.UnifiedExtensionsScreenModel
 import eu.kanade.tachiyomi.ui.browse.extension.unified.UnifiedPackage
 import eu.kanade.tachiyomi.ui.browse.extension.unified.UnifiedRepo
 import eu.kanade.tachiyomi.ui.browse.extension.unified.UnifiedSource
+import eu.kanade.tachiyomi.ui.browse.extension.unified.selectionKey
 import kotlinx.coroutines.launch
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
@@ -115,6 +123,19 @@ fun UnifiedExtensionsContent(
     onJsEdit: (UnifiedSource) -> Unit,
     onJsDelete: (UnifiedSource) -> Unit,
     onJsNew: () -> Unit,
+    // KMK <--
+    // KMK --> picking several sources, testing sources, refreshing one kind of repository
+    onSourceSelect: (UnifiedSource) -> Unit = {},
+    onSelectAll: (List<UnifiedSource>) -> Unit = {},
+    onClearSelection: () -> Unit = {},
+    onSelectedEnabled: (Boolean) -> Unit = {},
+    onSelectedPinned: (Boolean) -> Unit = {},
+    onSelectedDelete: () -> Unit = {},
+    onTestSources: (List<UnifiedSource>) -> Unit = {},
+    onStopTests: () -> Unit = {},
+    onClearTests: () -> Unit = {},
+    onFailedOnly: () -> Unit = {},
+    onRepoRefresh: (UnifiedRepo) -> Unit = {},
     // KMK <--
 ) {
     val scope = rememberCoroutineScope()
@@ -168,6 +189,17 @@ fun UnifiedExtensionsContent(
             when (page) {
                 UNIFIED_TAB_SOURCES -> SourceList(
                     sources = sources,
+                    state = state,
+                    onSelect = onSourceSelect,
+                    onSelectAll = onSelectAll,
+                    onClearSelection = onClearSelection,
+                    onSelectedEnabled = onSelectedEnabled,
+                    onSelectedPinned = onSelectedPinned,
+                    onSelectedDelete = onSelectedDelete,
+                    onTest = onTestSources,
+                    onStopTests = onStopTests,
+                    onClearTests = onClearTests,
+                    onFailedOnly = onFailedOnly,
                     padding = listPadding,
                     emptyKinds = state.filters.kinds,
                     onEnabled = onSourceEnabled,
@@ -188,6 +220,8 @@ fun UnifiedExtensionsContent(
                     onEnabled = onRepoEnabled,
                     onDelete = onRepoDelete,
                     onOpen = onRepoOpen,
+                    onRefresh = onRepoRefresh,
+                    refreshing = state.isRefreshing,
                 )
                 else -> PackageList(
                     packages = packages,
@@ -355,9 +389,23 @@ private fun EmptyState(text: String) {
 @Suppress("UNUSED_PARAMETER")
 private fun emptyText(kinds: Set<ExtensionKind>, default: String): String = default
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun SourceList(
     sources: List<UnifiedSource>,
+    // KMK -->
+    state: UnifiedExtensionsScreenModel.State,
+    onSelect: (UnifiedSource) -> Unit,
+    onSelectAll: (List<UnifiedSource>) -> Unit,
+    onClearSelection: () -> Unit,
+    onSelectedEnabled: (Boolean) -> Unit,
+    onSelectedPinned: (Boolean) -> Unit,
+    onSelectedDelete: () -> Unit,
+    onTest: (List<UnifiedSource>) -> Unit,
+    onStopTests: () -> Unit,
+    onClearTests: () -> Unit,
+    onFailedOnly: () -> Unit,
+    // KMK <--
     padding: PaddingValues,
     emptyKinds: Set<ExtensionKind>,
     onEnabled: (UnifiedSource, Boolean) -> Unit,
@@ -383,7 +431,36 @@ private fun SourceList(
             return@LazyColumn
         }
         item(key = "actions") {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (state.selectionMode) {
+                // KMK: what to do with the picked sources
+                val picked = state.selected.size
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    AssistChip(
+                        onClick = onClearSelection,
+                        leadingIcon = { Icon(Icons.Outlined.Close, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                        label = { Text("$picked picked") },
+                    )
+                    AssistChip(onClick = { onSelectAll(sources) }, label = { Text("Pick all shown") })
+                    AssistChip(onClick = { onSelectedEnabled(true) }, label = { Text(stringResource(MR.strings.action_enable_all)) })
+                    AssistChip(onClick = { onSelectedEnabled(false) }, label = { Text(stringResource(MR.strings.action_disable_all)) })
+                    AssistChip(onClick = { onSelectedPinned(true) }, label = { Text(stringResource(MR.strings.action_pin)) })
+                    AssistChip(onClick = { onSelectedPinned(false) }, label = { Text(stringResource(MR.strings.action_unpin)) })
+                    AssistChip(
+                        onClick = { onTest(sources.filter { selectionKey(it) in state.selected }) },
+                        label = { Text("Test") },
+                    )
+                    val jsPicked = sources.count { it.js != null && selectionKey(it) in state.selected }
+                    if (jsPicked > 0) {
+                        AssistChip(
+                            onClick = onSelectedDelete,
+                            leadingIcon = { Icon(Icons.Outlined.Delete, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                            label = { Text("Delete $jsPicked JS / JSON") },
+                        )
+                    }
+                }
+                return@item
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 // KMK -->
                 if (showNewJs) {
                     AssistChip(
@@ -401,6 +478,36 @@ private fun SourceList(
                     onClick = { onAllEnabled(sources, false) },
                     label = { Text(stringResource(MR.strings.action_disable_all)) },
                 )
+                // KMK --> pick several, test, show only the failed ones
+                AssistChip(
+                    onClick = { sources.firstOrNull()?.let(onSelect) },
+                    leadingIcon = { Icon(Icons.Outlined.Checklist, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                    label = { Text("Select") },
+                )
+                if (state.testing) {
+                    val done = state.tests.values.count { it !is SourceTest.Running }
+                    AssistChip(
+                        onClick = onStopTests,
+                        leadingIcon = { CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp) },
+                        label = { Text("Testing $done / ${state.tests.size} · Stop") },
+                    )
+                } else {
+                    AssistChip(
+                        onClick = { onTest(sources.filter { it.enabled }) },
+                        leadingIcon = { Icon(Icons.Outlined.NetworkCheck, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                        label = { Text("Test sources") },
+                    )
+                }
+                if (state.tests.isNotEmpty() && !state.testing) {
+                    val failed = state.tests.values.count { it is SourceTest.Failed }
+                    FilterChip(
+                        selected = state.failedOnly,
+                        onClick = onFailedOnly,
+                        label = { Text("Failed only ($failed)") },
+                    )
+                    AssistChip(onClick = onClearTests, label = { Text("Clear results") })
+                }
+                // KMK <--
             }
         }
         // KMK
@@ -416,9 +523,15 @@ private fun SourceList(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .combinedClickable(onClick = { onClick(source) }, onLongClick = { onSettings(source) })
+                        .combinedClickable(
+                            onClick = { if (state.selectionMode) onSelect(source) else onClick(source) },
+                            onLongClick = { onSelect(source) },
+                        )
                         .padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
                 ) {
+                    if (state.selectionMode) {
+                        Checkbox(checked = selectionKey(source) in state.selected, onCheckedChange = { onSelect(source) })
+                    }
                     PackageIcon(source.icon, source.js?.iconUrl)
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
@@ -439,6 +552,8 @@ private fun SourceList(
                             }
                             Tag(langLabel(source.lang))
                             if (source.isNsfw) Tag(stringResource(MR.strings.ext_nsfw_short), warning = true)
+                            // KMK: the last test of this source
+                            state.tests[selectionKey(source)]?.let { TestBadge(it) }
                             source.repoName?.let {
                                 Text(
                                     text = it,
@@ -490,6 +605,9 @@ private fun RepoList(
     onEnabled: (UnifiedRepo, Boolean) -> Unit,
     onDelete: (UnifiedRepo) -> Unit,
     onOpen: (UnifiedRepo) -> Unit,
+    // KMK
+    onRefresh: (UnifiedRepo) -> Unit = {},
+    refreshing: Boolean = false,
 ) {
     LazyColumn(
         contentPadding = padding,
@@ -543,6 +661,28 @@ private fun RepoList(
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.padding(top = 2.dp),
                         )
+                        // KMK: when its packages were last read, or why that failed
+                        val status = when {
+                            repo.lastError != null -> "Last check failed: ${repo.lastError}"
+                            repo.lastSuccess != null -> "Updated " + android.text.format.DateUtils.getRelativeTimeSpanString(
+                                repo.lastSuccess,
+                                System.currentTimeMillis(),
+                                android.text.format.DateUtils.MINUTE_IN_MILLIS,
+                            )
+                            else -> null
+                        }
+                        status?.let {
+                            Text(
+                                text = it,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (repo.lastError != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                    IconButton(onClick = { onRefresh(repo) }, enabled = !refreshing) {
+                        Icon(Icons.Outlined.Refresh, contentDescription = stringResource(MR.strings.action_webview_refresh))
                     }
                     IconButton(onClick = { onDelete(repo) }) {
                         Icon(Icons.Outlined.Delete, contentDescription = stringResource(MR.strings.action_delete))
@@ -734,4 +874,22 @@ private fun langLabel(lang: String): String = when (lang) {
     "all", "multi", "mul", "" -> "ALL"
     "other" -> "?"
     else -> lang.uppercase()
+}
+
+// KMK: a source's last test: green with its time, red with why it failed
+@Composable
+private fun TestBadge(test: SourceTest) {
+    val (text, color) = when (test) {
+        SourceTest.Running -> "Testing…" to MaterialTheme.colorScheme.onSurfaceVariant
+        is SourceTest.Working -> "OK %.1f s".format(test.millis / 1000.0) to androidx.compose.ui.graphics.Color(0xFF22A06B)
+        is SourceTest.Failed -> test.reason to MaterialTheme.colorScheme.error
+    }
+    Text(
+        text = text,
+        color = color,
+        style = MaterialTheme.typography.labelSmall,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.widthIn(max = 220.dp),
+    )
 }

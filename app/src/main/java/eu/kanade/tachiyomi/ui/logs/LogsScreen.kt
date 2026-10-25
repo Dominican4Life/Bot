@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.logs
 
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -15,7 +16,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -24,6 +27,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -64,7 +68,12 @@ class LogsScreen : Screen() {
         val version by AppLog.version.collectAsState()
         var filter by rememberSaveable { mutableStateOf(Filter.All) }
         var query by rememberSaveable { mutableStateOf("") }
-        val all = remember(version) { AppLog.snapshot().asReversed() }
+        // KMK: the lines as they were when opened (or last refreshed). New lines don't redraw the list as they come:
+        // the app writes many a second, and rebuilding everything each time froze the screen
+        var shownVersion by remember { mutableIntStateOf(AppLog.version.value) }
+        var selecting by rememberSaveable { mutableStateOf(false) }
+        val all = remember(shownVersion) { AppLog.snapshot().asReversed() }
+        val waiting = (version - shownVersion).coerceAtLeast(0)
         val shown = remember(all, filter, query) {
             all.filter { line ->
                 when (filter) {
@@ -128,7 +137,20 @@ class LogsScreen : Screen() {
                                 }.onFailure { context.toast(it.message ?: "Couldn't share the logs") }
                             },
                         ) { Icon(Icons.Outlined.Share, contentDescription = "Share") }
-                        IconButton(onClick = AppLog::clear) {
+                        // KMK: select across lines (the newest ones) in Android's own text box
+                        IconButton(onClick = { selecting = !selecting }) {
+                            Icon(
+                                Icons.Outlined.SelectAll,
+                                contentDescription = "Select text",
+                                tint = if (selecting) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        IconButton(
+                            onClick = {
+                                AppLog.clear()
+                                shownVersion = AppLog.version.value
+                            },
+                        ) {
                             Icon(Icons.Outlined.Delete, contentDescription = "Clear")
                         }
                     }
@@ -147,8 +169,19 @@ class LogsScreen : Screen() {
                             modifier = Modifier.weight(1f),
                         )
                     }
-                    // KMK: Android's own text view: selecting across many lines with Compose's selection froze the app
-                    SelectableLogText(lines = shown, modifier = Modifier.fillMaxSize())
+                    if (waiting > 0) {
+                        AssistChip(
+                            onClick = { shownVersion = AppLog.version.value },
+                            label = { Text("$waiting new lines · tap to show") },
+                            modifier = Modifier.align(Alignment.CenterHorizontally),
+                        )
+                    }
+                    if (selecting) {
+                        // KMK: Android's own text view, with the newest lines only so it stays quick
+                        SelectableLogText(lines = remember(shown) { shown.take(SELECT_LIMIT) }, modifier = Modifier.fillMaxSize())
+                    } else {
+                        LogLineList(lines = shown, modifier = Modifier.fillMaxSize())
+                    }
                 }
             }
         }
@@ -157,6 +190,60 @@ class LogsScreen : Screen() {
 
 /** Lines shown at most in the selectable text (Copy and Share still take everything) */
 private const val SHOWN_LIMIT = 4000
+
+/** Lines put in the select-text box: more made it slow to lay out */
+private const val SELECT_LIMIT = 300
+
+/**
+ * KMK: The log as a list: only the lines on screen are drawn. A long line (a stack trace) shows its first lines
+ * until tapped; holding a line copies it.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun LogLineList(lines: List<AppLog.Line>, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    val error = MaterialTheme.colorScheme.error
+    val warn = MaterialTheme.colorScheme.tertiary
+    val info = MaterialTheme.colorScheme.onSurface
+    val debug = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+    var expanded by remember { mutableStateOf(emptySet<Long>()) }
+    LazyColumn(
+        modifier = modifier,
+        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 24.dp),
+    ) {
+        items(lines.size, key = { index -> "${lines[index].time}_${index}" }) { index ->
+            val line = lines[index]
+            val text = remember(line) { AppLog.format(line) }
+            val id = line.time * 31 + index
+            val open = id in expanded
+            Text(
+                text = text,
+                color = when (line.level) {
+                    'E' -> error
+                    'W' -> warn
+                    'I' -> info
+                    else -> debug
+                },
+                fontFamily = FontFamily.Monospace,
+                fontSize = 12.sp,
+                lineHeight = 15.sp,
+                maxLines = if (open) Int.MAX_VALUE else 6,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .combinedClickable(
+                        onClick = { expanded = if (open) expanded - id else expanded + id },
+                        onLongClick = {
+                            clipboard.setText(AnnotatedString(text.take(CLIPBOARD_LIMIT)))
+                            context.toast("Line copied")
+                        },
+                    )
+                    .padding(vertical = 3.dp),
+            )
+        }
+    }
+}
 
 @Composable
 private fun SelectableLogText(lines: List<AppLog.Line>, modifier: Modifier = Modifier) {

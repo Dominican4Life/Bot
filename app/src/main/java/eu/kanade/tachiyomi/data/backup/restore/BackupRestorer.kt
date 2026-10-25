@@ -113,8 +113,10 @@ class BackupRestorer(
         val backup = options.categoryKeys?.let { keys ->
             val orderToName = decoded.backupCategories.associate { it.order to it.name }
             decoded.copy(
+                // KMK: titles only in your history (not in the library) count as "No category" now; they used to
+                // all come back whatever was picked, which looked like a full restore
                 backupManga = decoded.backupManga.filter { manga ->
-                    !manga.favorite || CategoryChoice.keepManga(keys, manga.categories.mapNotNull { orderToName[it] })
+                    CategoryChoice.keepManga(keys, manga.categories.mapNotNull { orderToName[it] })
                 },
                 backupAnime = decoded.backupAnime.filter { CategoryChoice.keepAnime(keys, it.categories) },
                 backupAnimeCategories = decoded.backupAnimeCategories.filter { CategoryChoice.anime(it.name) in keys },
@@ -156,7 +158,12 @@ class BackupRestorer(
 
         coroutineScope {
             if (options.categories) {
-                restoreCategories(backup.backupCategories)
+                // KMK: only the picked manga categories are made (titles still map to them by the whole list)
+                restoreCategories(
+                    options.categoryKeys?.let { keys ->
+                        backup.backupCategories.filter { CategoryChoice.manga(it.name) in keys }
+                    } ?: backup.backupCategories,
+                )
             }
             // SY -->
             if (options.savedSearchesFeeds) {

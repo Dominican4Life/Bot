@@ -1,6 +1,10 @@
 package eu.kanade.presentation.more.settings.screen.data
 
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.lazy.LazyItemScope
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -49,6 +53,8 @@ fun LazyItemScope.CategoryChoiceCard(
     picked: Set<String>,
     enabled: Boolean,
     onToggle: (String, Boolean) -> Unit,
+    /** Pick only this one (restore); null hides the button */
+    onOnly: ((String) -> Unit)? = null,
 ) {
     SectionCard(KMR.strings.backup_categories_title) {
         Text(
@@ -58,12 +64,18 @@ fun LazyItemScope.CategoryChoiceCard(
         )
         entries.forEach { entry ->
             val kind = stringResource(if (entry.anime) KMR.strings.backup_category_anime else MR.strings.manga)
-            LabeledCheckbox(
-                label = "$kind · " + (entry.name ?: stringResource(KMR.strings.backup_no_category)),
-                checked = entry.key in picked,
-                onCheckedChange = { onToggle(entry.key, it) },
-                enabled = enabled,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                LabeledCheckbox(
+                    label = "$kind · " + (entry.name ?: stringResource(KMR.strings.backup_no_category)),
+                    checked = entry.key in picked,
+                    onCheckedChange = { onToggle(entry.key, it) },
+                    enabled = enabled,
+                    modifier = Modifier.weight(1f),
+                )
+                if (onOnly != null) {
+                    TextButton(onClick = { onOnly(entry.key) }, enabled = enabled) { Text("Only this") }
+                }
+            }
         }
     }
 }

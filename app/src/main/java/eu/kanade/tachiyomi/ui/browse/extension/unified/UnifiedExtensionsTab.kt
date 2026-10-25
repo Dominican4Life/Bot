@@ -87,6 +87,8 @@ fun unifiedExtensionsTab(
             var deleteJs by remember { mutableStateOf<UnifiedSource?>(null) }
 
             BackHandler(enabled = state.filters.query.isNotEmpty()) { screenModel.search("") }
+            // KMK: back leaves picking sources first
+            BackHandler(enabled = state.selectionMode) { screenModel.clearSelection() }
 
             fun openDetails(kind: ExtensionKind, pkgName: String) {
                 if (kind == ExtensionKind.ANIYOMI) {
@@ -158,6 +160,19 @@ fun unifiedExtensionsTab(
                 onJsEdit = { source -> source.js?.let { navigator.push(SourceEditorScreen(it.key)) } },
                 onJsDelete = { deleteJs = it },
                 onJsNew = { navigator.push(SourceEditorScreen()) },
+                // KMK <--
+                // KMK -->
+                onSourceSelect = screenModel::toggleSelection,
+                onSelectAll = screenModel::selectAll,
+                onClearSelection = screenModel::clearSelection,
+                onSelectedEnabled = screenModel::setSelectedEnabled,
+                onSelectedPinned = screenModel::setSelectedPinned,
+                onSelectedDelete = screenModel::deleteSelectedJs,
+                onTestSources = screenModel::testSources,
+                onStopTests = screenModel::stopTests,
+                onClearTests = screenModel::clearTests,
+                onFailedOnly = screenModel::toggleFailedOnly,
+                onRepoRefresh = { repo -> screenModel.refreshRepos(repo.kind) },
                 // KMK <--
             )
 

@@ -55,6 +55,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -489,6 +490,8 @@ private fun PageThumbnailBox(
         modifier = Modifier
             .fillMaxWidth()
             .aspectRatio(0.7f)
+            // KMK: its own drawing layer, so an animated page redraws only itself, not the whole grid, each frame
+            .graphicsLayer()
             .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceContainerHighest)
             .clickable(onClick = onClick),
@@ -498,7 +501,11 @@ private fun PageThumbnailBox(
             model = remember(model) {
                 ImageRequest.Builder(context)
                     .data(model)
-                    .crossfade(true)
+                    // KMK: decoded at tile size (animated pages too: smaller frames to play), and no fade, which kept
+                    // animated pages redrawing through a second layer
+                    .size(PreviewTileWidthPx, PreviewTileHeightPx)
+                    .precision(coil3.size.Precision.INEXACT)
+                    .crossfade(false)
                     .build()
             },
             contentDescription = null,
@@ -550,3 +557,7 @@ private fun CenteredBox(content: @Composable () -> Unit) {
         content()
     }
 }
+
+// KMK: about a third of a tablet panel, at high density: sharp enough for a tile, small enough for many animations
+private const val PreviewTileWidthPx = 420
+private const val PreviewTileHeightPx = 600

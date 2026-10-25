@@ -66,7 +66,7 @@ class RestoreBackupScreen(
             LazyColumnWithAction(
                 contentPadding = contentPadding,
                 actionLabel = stringResource(MR.strings.action_restore),
-                actionEnabled = state.canRestore && state.options.canRestore(),
+                actionEnabled = state.canRestore && state.options.canRestore() && state.categoriesLoaded,
                 onClickAction = {
                     model.startRestore()
                     navigator.pop()
@@ -102,6 +102,7 @@ class RestoreBackupScreen(
                             picked = state.pickedCategories,
                             enabled = state.options.libraryEntries,
                             onToggle = model::toggleCategory,
+                            onOnly = model::onlyCategory,
                         )
                     }
                 }
@@ -193,7 +194,11 @@ private class RestoreBackupScreenModel(
                 backupCategoryChoices(BackupDecoder(context).decode(uri.toUri()))
             }.getOrDefault(emptyList())
             mutableState.update {
-                it.copy(categoryEntries = entries, pickedCategories = entries.map { entry -> entry.key }.toSet())
+                it.copy(
+                    categoryEntries = entries,
+                    pickedCategories = entries.map { entry -> entry.key }.toSet(),
+                    categoriesLoaded = true,
+                )
             }
         }
     }
@@ -201,8 +206,34 @@ private class RestoreBackupScreenModel(
     // KMK -->
     fun toggleCategory(key: String, picked: Boolean) {
         mutableState.update {
-            it.copy(pickedCategories = if (picked) it.pickedCategories + key else it.pickedCategories - key)
+            pickSome(it, if (picked) it.pickedCategories + key else it.pickedCategories - key)
         }
+    }
+
+    /** Just this category's titles: every other row unticked */
+    fun onlyCategory(key: String) {
+        mutableState.update { pickSome(it, setOf(key)) }
+    }
+
+    /**
+     * The first time only some categories are picked, the parts that aren't per title (settings, repos, feeds, JS
+     * sources) are unticked too, so restoring one category doesn't bring everything else back. They can be ticked
+     * again.
+     */
+    private fun pickSome(state: State, picked: Set<String>): State {
+        val some = picked.size < state.categoryEntries.size
+        val options = if (some && !state.trimmedOthers) {
+            state.options.copy(
+                appSettings = false,
+                extensionStores = false,
+                sourceSettings = false,
+                savedSearchesFeeds = false,
+                jsSources = false,
+            )
+        } else {
+            state.options
+        }
+        return state.copy(pickedCategories = picked, options = options, trimmedOthers = state.trimmedOthers || some)
     }
     // KMK <--
 
@@ -264,6 +295,9 @@ private class RestoreBackupScreenModel(
         // KMK -->
         val categoryEntries: List<CategoryChoiceEntry> = emptyList(),
         val pickedCategories: Set<String> = emptySet(),
+        /** The backup's categories have been read (Restore waits for them: before, it restored everything) */
+        val categoriesLoaded: Boolean = false,
+        val trimmedOthers: Boolean = false,
         // KMK <--
     )
 }
