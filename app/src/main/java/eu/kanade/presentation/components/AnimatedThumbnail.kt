@@ -3,6 +3,7 @@ package eu.kanade.presentation.components
 import android.graphics.drawable.Drawable
 import android.os.Handler
 import android.os.Looper
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -21,6 +22,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
@@ -59,10 +61,21 @@ fun AnimatedThumbnail(
             .onFailure { AppLog.add('W', "thumbs", "Couldn't keep page ${key}: ${it.message}") }
             .getOrNull()
     }
-    // Nothing until the copy is there (the reader's panel shows its loading circle meanwhile)
-    val f = file ?: return
+    // A loading circle until the copy is there
+    val f = file
+    if (f == null) {
+        androidx.compose.foundation.layout.Box(modifier = modifier, contentAlignment = Alignment.Center) {
+            androidx.compose.material3.CircularProgressIndicator(
+                modifier = androidx.compose.ui.Modifier.size(24.dp),
+                strokeWidth = 2.dp,
+            )
+        }
+        return
+    }
     val kind = remember(f) { PageThumbFiles.kindOf(f) }
-    if (kind == PageThumbFiles.Kind.STILL) {
+    // KMK: pages the small decoder couldn't play are shown with Android's own
+    var useAndroid by remember(f) { mutableStateOf(key != null && key in AndroidDecoded.keys) }
+    if (kind == PageThumbFiles.Kind.STILL || useAndroid) {
         AsyncImage(
             model = remember(f) {
                 ImageRequest.Builder(context)
@@ -78,20 +91,38 @@ fun AnimatedThumbnail(
             modifier = modifier,
         )
     } else {
-        AnimatedPage(f, kind, playing, modifier)
+        AnimatedPage(f, kind, playing, modifier) { reason ->
+            if (key != null) AndroidDecoded.keys += key
+            AppLog.add('W', "thumbs", "Page $key plays with Android's decoder instead: $reason")
+            useAndroid = true
+        }
     }
 }
 
+/** KMK: Pages whose animation the small decoder couldn't play (this run of the app) */
+private object AndroidDecoded {
+    val keys: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+}
+
 @Composable
-private fun AnimatedPage(file: File, kind: PageThumbFiles.Kind, playing: Boolean, modifier: Modifier) {
+private fun AnimatedPage(
+    file: File,
+    kind: PageThumbFiles.Kind,
+    playing: Boolean,
+    modifier: Modifier,
+    onFailed: (String) -> Unit,
+) {
+    var error by remember(file) { mutableStateOf<String?>(null) }
     val drawable = remember(file) {
         runCatching {
             val loader = FileLoader(file.path)
             val d: FrameAnimationDrawable<*> = if (kind == PageThumbFiles.Kind.GIF) GifDrawable(loader) else WebPDrawable(loader)
             d.setAutoPlay(false)
             d
-        }.getOrNull()
-    } ?: return
+        }.onFailure { error = it.message ?: it.javaClass.simpleName }.getOrNull()
+    }
+    LaunchedEffect(error) { error?.let(onFailed) }
+    drawable ?: return
     // Each new frame redraws this tile only
     var frame by remember(drawable) { mutableIntStateOf(0) }
     DisposableEffect(drawable) {
@@ -116,6 +147,12 @@ private fun AnimatedPage(file: File, kind: PageThumbFiles.Kind, playing: Boolean
     }
     // The tile's size sets the decoder's (smaller) frame size, before it starts
     var tile by remember(drawable) { mutableStateOf(IntSize.Zero) }
+    // No first frame in a few seconds of being shown: this page goes to Android's decoder
+    LaunchedEffect(drawable, tile, playing) {
+        if (tile == IntSize.Zero || !playing || frame > 0) return@LaunchedEffect
+        kotlinx.coroutines.delay(FIRST_FRAME_WAIT_MS)
+        if (frame == 0) onFailed("no frame after ${FIRST_FRAME_WAIT_MS / 1000} s")
+    }
     LaunchedEffect(drawable, tile) {
         if (tile == IntSize.Zero) return@LaunchedEffect
         // Fill the tile, top kept (like the still thumbnails' crop)
@@ -146,6 +183,8 @@ private fun AnimatedPage(file: File, kind: PageThumbFiles.Kind, playing: Boolean
             },
     )
 }
+
+private const val FIRST_FRAME_WAIT_MS = 2500L
 
 /** Big enough to look sharp in a three-across grid, small enough to be cheap */
 private const val THUMB_WIDTH_PX = 360

@@ -23,8 +23,8 @@ object PageThumbFiles {
 
     private const val MAX_BYTES = 600L * 1024 * 1024
 
-    /** Two pages are copied at a time, so the grid doesn't take the network and disk from the page being read */
-    private val gate = Semaphore(2)
+    /** Three pages are copied at a time, so the grid doesn't take the network and disk from the page being read */
+    private val gate = Semaphore(3)
 
     /** What a page goes by here, or null when it can't be told apart from others */
     fun keyOf(model: Any): String? = when (model) {

@@ -116,7 +116,7 @@ fun MangaCompactGridItem(
                     MangaCoverHide.Book(
                         modifier = Modifier
                             .fillMaxWidth(),
-                        bgColor = bgColor ?: MaterialTheme.colorScheme.surface.takeIf { isSelected },
+                        bgColor = bgColor,
                         tint = onBgColor,
                     )
                 } else {
@@ -129,8 +129,8 @@ fun MangaCompactGridItem(
                             .fillMaxWidth(),
                         data = coverData,
                         // KMK -->
-                        alpha = if (isSelected) GRID_SELECTED_COVER_ALPHA else coverAlpha,
-                        bgColor = bgColor ?: MaterialTheme.colorScheme.surface.takeIf { isSelected },
+                        alpha = coverAlpha,
+                        bgColor = bgColor,
                         tint = onBgColor,
                         // KMK <--
                     )
@@ -270,7 +270,7 @@ fun MangaComfortableGridItem(
                         MangaCoverHide.Book(
                             modifier = Modifier
                                 .fillMaxWidth(),
-                            bgColor = bgColor ?: MaterialTheme.colorScheme.surface.takeIf { isSelected },
+                            bgColor = bgColor,
                             tint = onBgColor,
                         )
                     } else {
@@ -284,8 +284,8 @@ fun MangaComfortableGridItem(
                                     // KMK <--
                                 data = coverData,
                                 // KMK -->
-                                alpha = if (isSelected) GRID_SELECTED_COVER_ALPHA else coverAlpha,
-                                bgColor = bgColor ?: MaterialTheme.colorScheme.surface.takeIf { isSelected },
+                                alpha = coverAlpha,
+                                bgColor = bgColor,
                                 tint = onBgColor,
                                 // A wide cover is exactly as tall as the covers beside it (see wideCoverHeight)
                                 keepRatio = !doubleWide,
@@ -306,9 +306,9 @@ fun MangaComfortableGridItem(
                                     .fillMaxWidth(),
                                 data = coverData,
                                 // KMK -->
-                                alpha = if (isSelected) GRID_SELECTED_COVER_ALPHA else coverAlpha,
+                                alpha = coverAlpha,
                                 // Color fill: the cover's own color around a wide cover
-                                bgColor = fillColor ?: bgColor ?: MaterialTheme.colorScheme.surface.takeIf { isSelected }
+                                bgColor = fillColor ?: bgColor
                                     ?: MaterialTheme.colorScheme.surfaceContainerHighest.takeIf { showWide },
                                 tint = onBgColor,
                                 onCoverLoaded = { _, result ->
@@ -483,27 +483,13 @@ private fun GridItemSelectable(
             .selectedOutline(isSelected = isSelected, color = MaterialTheme.colorScheme.secondary)
             .padding(4.dp),
     ) {
-        val contentColor = if (isSelected) {
-            MaterialTheme.colorScheme.onSecondary
-        } else {
-            LocalContentColor.current
-        }
-        val tint = MaterialTheme.colorScheme.secondary
+        // KMK: a picked cover keeps its look: only a border shows it's picked
+        val contentColor = LocalContentColor.current
         CompositionLocalProvider(LocalContentColor provides contentColor) {
-            // KMK: a picked cover is coloured over, not only outlined
-            Box(
-                modifier = Modifier.drawWithContent {
-                    drawContent()
-                    if (isSelected) drawRect(color = tint.copy(alpha = SELECTED_TINT_ALPHA))
-                },
-            ) {
-                content()
-            }
+            content()
         }
     }
 }
-
-private const val SELECTED_TINT_ALPHA = 0.35f
 
 /**
  * @see GridItemSelectable
@@ -511,7 +497,19 @@ private const val SELECTED_TINT_ALPHA = 0.35f
 private fun Modifier.selectedOutline(
     isSelected: Boolean,
     color: Color,
-) = drawBehind { if (isSelected) drawRect(color = color) }
+) = drawBehind {
+    // KMK: an outline around the item, not a filled block behind it
+    if (isSelected) {
+        val stroke = 3.dp.toPx()
+        drawRoundRect(
+            color = color,
+            topLeft = androidx.compose.ui.geometry.Offset(stroke / 2, stroke / 2),
+            size = androidx.compose.ui.geometry.Size(size.width - stroke, size.height - stroke),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(4.dp.toPx()),
+            style = androidx.compose.ui.graphics.drawscope.Stroke(width = stroke),
+        )
+    }
+}
 
 /**
  * Layout of list item.
@@ -550,7 +548,7 @@ fun MangaListItem(
             MangaCoverHide.Square(
                 modifier = Modifier
                     .fillMaxHeight(),
-                bgColor = bgColor ?: MaterialTheme.colorScheme.surface.takeIf { isSelected },
+                bgColor = bgColor,
                 tint = onBgColor,
             )
         } else {
@@ -564,7 +562,7 @@ fun MangaListItem(
                 data = coverData,
                 // KMK -->
                 alpha = coverAlpha,
-                bgColor = bgColor ?: MaterialTheme.colorScheme.surface.takeIf { isSelected },
+                bgColor = bgColor,
                 tint = onBgColor,
                 size = MangaCover.Size.Big,
                 // KMK <--

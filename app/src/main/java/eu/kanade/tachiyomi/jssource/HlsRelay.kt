@@ -4,6 +4,7 @@ import android.net.Uri
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.util.system.AppLog
 import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 import uy.kohesive.injekt.Injekt
@@ -96,7 +97,13 @@ object HlsRelay {
                 return
             }
             val request = Request.Builder().url(target).headers(headers).build()
-            var call = network.client.newCall(request).execute()
+            var call = try {
+                execute(request)
+            } catch (e: java.io.IOException) {
+                AppLog.add('W', "hls", "Couldn't reach ${target.toHttpUrlOrNull()?.host ?: target}: ${e.message}")
+                respond(out, 502, "text/plain", ByteArray(0))
+                return
+            }
             // KMK: pieces kept on another site (some hosts put them on image servers) may refuse the source's
             // Referer / Origin: asked again with only the browser's user agent
             if (!call.isSuccessful && kind == "s") {
@@ -106,7 +113,13 @@ object HlsRelay {
                     headers["User-Agent"]?.let { add("User-Agent", it) }
                     add("Accept", "*/*")
                 }.build()
-                call = network.client.newCall(Request.Builder().url(target).headers(plain).build()).execute()
+                call = try {
+                    execute(Request.Builder().url(target).headers(plain).build())
+                } catch (e: java.io.IOException) {
+                    AppLog.add('W', "hls", "Couldn't reach ${target.toHttpUrlOrNull()?.host ?: target}: ${e.message}")
+                    respond(out, 502, "text/plain", ByteArray(0))
+                    return
+                }
                 AppLog.add(
                     if (call.isSuccessful) 'D' else 'W',
                     "hls",
@@ -136,6 +149,63 @@ object HlsRelay {
             }
         }
     }
+
+    // KMK --> a host whose address comes back as 0.0.0.0 (what ad blockers and filtering DNS answer for blocked
+    // names; some video hosts keep their pieces on ad servers) is looked up again with Cloudflare's and Google's DNS
+    private val bypassClient by lazy {
+        val bootstrap = network.client.newBuilder().dns(okhttp3.Dns.SYSTEM).build()
+        val resolvers = listOf(
+            "https://cloudflare-dns.com/dns-query" to listOf("1.1.1.1", "1.0.0.1"),
+            "https://dns.google/dns-query" to listOf("8.8.8.8", "8.8.4.4"),
+        ).map { (url, hosts) ->
+            okhttp3.dnsoverhttps.DnsOverHttps.Builder().client(bootstrap)
+                .url(url.toHttpUrl())
+                .bootstrapDnsHosts(hosts.map { InetAddress.getByName(it) })
+                .build()
+        }
+        network.client.newBuilder().dns(
+            object : okhttp3.Dns {
+                override fun lookup(hostname: String): List<InetAddress> {
+                    var last: Exception? = null
+                    for (resolver in resolvers) {
+                        try {
+                            val found = resolver.lookup(hostname).filterNot { it.isAnyLocalAddress || it.isLoopbackAddress }
+                            if (found.isNotEmpty()) return found
+                        } catch (e: Exception) {
+                            last = e
+                        }
+                    }
+                    throw java.net.UnknownHostException("$hostname: no address from Cloudflare or Google DNS (${last?.message})")
+                }
+            },
+        ).build()
+    }
+
+    private val bypassedHosts = ConcurrentHashMap.newKeySet<String>()
+
+    /** The request through the app's client, or around a DNS that blocked its host */
+    private fun execute(request: Request): okhttp3.Response {
+        val host = request.url.host
+        if (host in bypassedHosts) return bypassClient.newCall(request).execute()
+        return try {
+            network.client.newCall(request).execute()
+        } catch (e: java.io.IOException) {
+            val blocked = e.message?.contains("/0.0.0.0") == true || e.message?.contains("/127.0.0.1:") == true ||
+                runCatching { InetAddress.getAllByName(host).all { it.isAnyLocalAddress || it.isLoopbackAddress } }
+                    .getOrDefault(false)
+            if (!blocked) throw e
+            AppLog.add(
+                'W',
+                "hls",
+                "$host is blocked by this device's DNS or ad blocker (it answers 0.0.0.0); asking Cloudflare / Google DNS instead",
+            )
+            val response = bypassClient.newCall(request).execute()
+            bypassedHosts += host
+            AppLog.add('I', "hls", "$host reached through Cloudflare / Google DNS (${response.code})")
+            response
+        }
+    }
+    // KMK <--
 
     /** Points every playlist, piece, key and map of a playlist at the relay (keys go direct) */
     private fun rewrite(id: String, base: String, playlist: String): String {

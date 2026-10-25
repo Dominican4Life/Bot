@@ -655,7 +655,7 @@ private fun VideoSettings(
         modifier = Modifier.padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        // View: filtered / original / split, plus hold-to-compare
+        // View: filtered / original / split
         SettingsGroup(stringResource(KMR.strings.anime_preview_view), "view") {
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -672,24 +672,6 @@ private fun VideoSettings(
                     label = { Text(stringResource(label)) },
                 )
             }
-        }
-        OutlinedButton(
-            onClick = {},
-            modifier = Modifier
-                .fillMaxWidth()
-                .pointerInput(Unit) {
-                    detectTapGestures(
-                        onPress = {
-                            onComparePressed(true)
-                            tryAwaitRelease()
-                            onComparePressed(false)
-                        },
-                    )
-                },
-        ) {
-            Icon(Icons.Outlined.Compare, contentDescription = null)
-            Spacer(Modifier.width(8.dp))
-            Text(stringResource(KMR.strings.anime_preview_hold_compare))
         }
         }
 
