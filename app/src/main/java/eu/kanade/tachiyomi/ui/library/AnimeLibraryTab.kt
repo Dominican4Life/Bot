@@ -17,6 +17,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.Navigator
 import cafe.adriel.voyager.navigator.currentOrThrow
@@ -85,7 +86,7 @@ data object AnimeLibraryTab : Tab {
         val scope = rememberCoroutineScope()
         val snackbarHostState = remember { SnackbarHostState() }
         // KMK: the anime Browse preview panels, in the library too
-        val preview = cafe.adriel.voyager.core.model.rememberScreenModel { AnimeLibraryPreviewModel() }
+        val preview = rememberScreenModel { AnimeLibraryPreviewModel() }
         val previewOpen by preview.preview.collectAsState()
         androidx.activity.compose.BackHandler(enabled = previewOpen.anime != null) { preview.clear() }
 
