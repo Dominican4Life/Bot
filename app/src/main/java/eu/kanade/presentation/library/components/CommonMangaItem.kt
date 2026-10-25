@@ -33,7 +33,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
@@ -116,7 +115,7 @@ fun MangaCompactGridItem(
                     MangaCoverHide.Book(
                         modifier = Modifier
                             .fillMaxWidth(),
-                        bgColor = bgColor,
+                        bgColor = bgColor ?: MaterialTheme.colorScheme.surface.takeIf { isSelected },
                         tint = onBgColor,
                     )
                 } else {
@@ -129,8 +128,8 @@ fun MangaCompactGridItem(
                             .fillMaxWidth(),
                         data = coverData,
                         // KMK -->
-                        alpha = coverAlpha,
-                        bgColor = bgColor,
+                        alpha = if (isSelected) GRID_SELECTED_COVER_ALPHA else coverAlpha,
+                        bgColor = bgColor ?: MaterialTheme.colorScheme.surface.takeIf { isSelected },
                         tint = onBgColor,
                         // KMK <--
                     )
@@ -270,7 +269,7 @@ fun MangaComfortableGridItem(
                         MangaCoverHide.Book(
                             modifier = Modifier
                                 .fillMaxWidth(),
-                            bgColor = bgColor,
+                            bgColor = bgColor ?: MaterialTheme.colorScheme.surface.takeIf { isSelected },
                             tint = onBgColor,
                         )
                     } else {
@@ -284,8 +283,8 @@ fun MangaComfortableGridItem(
                                     // KMK <--
                                 data = coverData,
                                 // KMK -->
-                                alpha = coverAlpha,
-                                bgColor = bgColor,
+                                alpha = if (isSelected) GRID_SELECTED_COVER_ALPHA else coverAlpha,
+                                bgColor = bgColor ?: MaterialTheme.colorScheme.surface.takeIf { isSelected },
                                 tint = onBgColor,
                                 // A wide cover is exactly as tall as the covers beside it (see wideCoverHeight)
                                 keepRatio = !doubleWide,
@@ -306,9 +305,9 @@ fun MangaComfortableGridItem(
                                     .fillMaxWidth(),
                                 data = coverData,
                                 // KMK -->
-                                alpha = coverAlpha,
+                                alpha = if (isSelected) GRID_SELECTED_COVER_ALPHA else coverAlpha,
                                 // Color fill: the cover's own color around a wide cover
-                                bgColor = fillColor ?: bgColor
+                                bgColor = fillColor ?: bgColor ?: MaterialTheme.colorScheme.surface.takeIf { isSelected }
                                     ?: MaterialTheme.colorScheme.surfaceContainerHighest.takeIf { showWide },
                                 tint = onBgColor,
                                 onCoverLoaded = { _, result ->
@@ -483,8 +482,11 @@ private fun GridItemSelectable(
             .selectedOutline(isSelected = isSelected, color = MaterialTheme.colorScheme.secondary)
             .padding(4.dp),
     ) {
-        // KMK: a picked cover keeps its look: only a border shows it's picked
-        val contentColor = LocalContentColor.current
+        val contentColor = if (isSelected) {
+            MaterialTheme.colorScheme.onSecondary
+        } else {
+            LocalContentColor.current
+        }
         CompositionLocalProvider(LocalContentColor provides contentColor) {
             content()
         }
@@ -497,19 +499,7 @@ private fun GridItemSelectable(
 private fun Modifier.selectedOutline(
     isSelected: Boolean,
     color: Color,
-) = drawBehind {
-    // KMK: an outline around the item, not a filled block behind it
-    if (isSelected) {
-        val stroke = 3.dp.toPx()
-        drawRoundRect(
-            color = color,
-            topLeft = androidx.compose.ui.geometry.Offset(stroke / 2, stroke / 2),
-            size = androidx.compose.ui.geometry.Size(size.width - stroke, size.height - stroke),
-            cornerRadius = androidx.compose.ui.geometry.CornerRadius(4.dp.toPx()),
-            style = androidx.compose.ui.graphics.drawscope.Stroke(width = stroke),
-        )
-    }
-}
+) = drawBehind { if (isSelected) drawRect(color = color) }
 
 /**
  * Layout of list item.
@@ -548,7 +538,7 @@ fun MangaListItem(
             MangaCoverHide.Square(
                 modifier = Modifier
                     .fillMaxHeight(),
-                bgColor = bgColor,
+                bgColor = bgColor ?: MaterialTheme.colorScheme.surface.takeIf { isSelected },
                 tint = onBgColor,
             )
         } else {
@@ -562,7 +552,7 @@ fun MangaListItem(
                 data = coverData,
                 // KMK -->
                 alpha = coverAlpha,
-                bgColor = bgColor,
+                bgColor = bgColor ?: MaterialTheme.colorScheme.surface.takeIf { isSelected },
                 tint = onBgColor,
                 size = MangaCover.Size.Big,
                 // KMK <--

@@ -181,6 +181,7 @@ class AnimeBackupHelper(
                 seasonNumber = backup.seasonNumber,
                 seasonSourceOrder = backup.seasonSourceOrder,
             ),
+            categories = backup.categories,
         )
         repository.restoreEpisodes(
             anime = anime,
@@ -206,7 +207,6 @@ class AnimeBackupHelper(
             },
             history = backup.history.associate { it.episodeUrl to it.lastSeen },
         )
-        if (backup.categories.isNotEmpty()) repository.restoreCategories(anime.id, backup.categories)
         restoreExtras(anime.id, backup)
     }
 

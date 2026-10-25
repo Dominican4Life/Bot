@@ -55,6 +55,8 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -71,6 +73,7 @@ import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import eu.kanade.presentation.components.AnimatedThumbnail
+import eu.kanade.presentation.components.holdToPlay
 import eu.kanade.presentation.manga.components.ChapterDownloadAction
 import eu.kanade.tachiyomi.data.coil.PageThumbFiles
 import eu.kanade.tachiyomi.source.model.Page
@@ -314,16 +317,15 @@ private fun PageGridContent(
             if (!shown) gridState.animateScrollToItem(index)
         }
         // KMK: the tiles on screen; only those animate
-        val onScreen by remember {
-            derivedStateOf { gridState.layoutInfo.visibleItemsInfo.map { it.index }.toSet() }
-        }
+        // KMK: the one tile picked by holding and sliding plays; the rest stay still
+        var active by remember { mutableStateOf<Int?>(null) }
         LazyVerticalGrid(
             columns = GridCells.Fixed(3),
             state = gridState,
             contentPadding = PaddingValues(12.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().holdToPlay(gridState) { active = it },
         ) {
             itemsIndexed(
                 items = pages,
@@ -333,7 +335,7 @@ private fun PageGridContent(
                     page = page,
                     chapter = chapter,
                     isCurrent = page.number == currentPage,
-                    playing = index in onScreen,
+                    playing = index == active,
                     onClick = { onClickPage(page.index) },
                 )
             }

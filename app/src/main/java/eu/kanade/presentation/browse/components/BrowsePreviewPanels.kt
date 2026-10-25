@@ -67,6 +67,7 @@ import coil3.request.ImageRequest
 import coil3.request.crossfade
 import eu.kanade.domain.manga.model.chaptersFiltered
 import eu.kanade.presentation.components.AnimatedThumbnail
+import eu.kanade.presentation.components.holdToPlay
 import eu.kanade.presentation.manga.DownloadAction
 import eu.kanade.presentation.manga.components.ChapterDownloadAction
 import eu.kanade.presentation.manga.components.ChapterDownloadIndicator
@@ -404,21 +405,22 @@ fun BrowsePagePanel(
             // KMK: downloaded chapters show their pages from the files, even without the source
             chapter != null && localPages != null -> key(chapter.id, "local") {
                 val gridState = rememberLazyGridState()
-                val onScreen by remember { derivedStateOf { gridState.layoutInfo.visibleItemsInfo.map { it.index }.toSet() } }
+                // KMK: the one tile picked by holding and sliding plays; the rest stay still
+                var active by remember { mutableStateOf<Int?>(null) }
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(3),
                     state = gridState,
                     contentPadding = PaddingValues(12.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().holdToPlay(gridState) { active = it },
                 ) {
                     itemsIndexed(items = localPages, key = { index, _ -> "local-page-$index" }) { index, page ->
                         PageThumbnailBox(
                             model = page,
                             number = index + 1,
                             isVideo = page.isVideo,
-                            playing = index in onScreen,
+                            playing = index == active,
                             onClick = { onOpenPage(chapter, index) },
                         )
                     }
@@ -446,21 +448,22 @@ fun BrowsePagePanel(
             }
             else -> key(chapter.id) {
                 val gridState = rememberLazyGridState()
-                val onScreen by remember { derivedStateOf { gridState.layoutInfo.visibleItemsInfo.map { it.index }.toSet() } }
+                // KMK: the one tile picked by holding and sliding plays; the rest stay still
+                var active by remember { mutableStateOf<Int?>(null) }
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(3),
                     state = gridState,
                     contentPadding = PaddingValues(12.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().holdToPlay(gridState) { active = it },
                 ) {
                     itemsIndexed(items = pages, key = { index, _ -> "page-$index" }) { index, page ->
                         SourcePageThumbnailItem(
                             source = source,
                             chapterUrl = chapter.url,
                             page = page,
-                            playing = index in onScreen,
+                            playing = index == active,
                             onClick = { onOpenPage(chapter, index) },
                         )
                     }

@@ -631,7 +631,11 @@ class AnimeRepository(
     // Backup
 
     /** Inserts or updates a backed up anime and returns it */
-    suspend fun restoreAnime(backup: Anime): Anime {
+    /**
+     * [categories] are linked in the same step that adds the anime to the library, so a restored anime never
+     * shows in Default for a moment (that made the library jump between tabs while restoring).
+     */
+    suspend fun restoreAnime(backup: Anime, categories: List<String> = emptyList()): Anime {
         val existing = getAnimeByUrl(backup.url, backup.source)
         val id = if (existing == null) {
             handler.await(inTransaction = true) {
@@ -654,7 +658,15 @@ class AnimeRepository(
         } else {
             existing.id
         }
-        handler.await {
+        handler.await(inTransaction = true) {
+            categories.forEach { name ->
+                val known = anime_categoriesQueries.getAll(::AnimeCategory).executeAsList()
+                val categoryId = known.find { it.name.equals(name, ignoreCase = true) }?.id ?: run {
+                    anime_categoriesQueries.insert(name, (known.maxOfOrNull { it.order } ?: -1) + 1)
+                    animesQueries.selectLastInsertedRowId().executeAsOne()
+                }
+                anime_categoriesQueries.link(id, categoryId)
+            }
             animesQueries.setFavorite(backup.favorite || existing?.favorite == true, backup.dateAdded, id)
             animesQueries.setEpisodeFlags(backup.episodeFlags, id)
             // KMK: how this anime's seasons are shown
