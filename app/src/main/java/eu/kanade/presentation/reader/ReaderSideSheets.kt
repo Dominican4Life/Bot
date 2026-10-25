@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -50,6 +51,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
@@ -68,6 +70,7 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
+import eu.kanade.presentation.components.AnimatedThumbnail
 import eu.kanade.presentation.manga.components.ChapterDownloadAction
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.jssource.ReaderVideos
@@ -309,6 +312,10 @@ private fun PageGridContent(
                 visibleItems.last().index != index
             if (!shown) gridState.animateScrollToItem(index)
         }
+        // KMK: the tiles on screen; only those animate
+        val onScreen by remember {
+            derivedStateOf { gridState.layoutInfo.visibleItemsInfo.map { it.index }.toSet() }
+        }
         LazyVerticalGrid(
             columns = GridCells.Fixed(3),
             state = gridState,
@@ -317,14 +324,15 @@ private fun PageGridContent(
             verticalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxSize(),
         ) {
-            items(
+            itemsIndexed(
                 items = pages,
-                key = { "page-${it.index}" },
-            ) { page ->
+                key = { _, page -> "page-${page.index}" },
+            ) { index, page ->
                 PageThumbnail(
                     page = page,
                     chapter = chapter,
                     isCurrent = page.number == currentPage,
+                    playing = index in onScreen,
                     onClick = { onClickPage(page.index) },
                 )
             }
@@ -337,9 +345,9 @@ private fun PageThumbnail(
     page: ReaderPage,
     chapter: ReaderChapter,
     isCurrent: Boolean,
+    playing: Boolean,
     onClick: () -> Unit,
 ) {
-    val context = LocalContext.current
     val status by page.statusFlow.collectAsState()
     val progress by page.progressFlow.collectAsState()
 
@@ -369,18 +377,8 @@ private fun PageThumbnail(
     ) {
         when (val s = status) {
             Page.State.Ready -> {
-                AsyncImage(
-                    model = remember(page) {
-                        ImageRequest.Builder(context)
-                            .data(page)
-                            .crossfade(true)
-                            .build()
-                    },
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    alignment = Alignment.TopCenter,
-                    modifier = Modifier.fillMaxSize(),
-                )
+                // KMK: tile-sized, and animating only while on screen, so the page being read keeps its frame rate
+                AnimatedThumbnail(model = page, playing = playing, modifier = Modifier.fillMaxSize())
             }
             is Page.State.Error -> {
                 Icon(

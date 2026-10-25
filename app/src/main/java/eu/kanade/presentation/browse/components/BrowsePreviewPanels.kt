@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -45,6 +46,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -55,7 +57,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -65,6 +66,7 @@ import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import eu.kanade.domain.manga.model.chaptersFiltered
+import eu.kanade.presentation.components.AnimatedThumbnail
 import eu.kanade.presentation.manga.DownloadAction
 import eu.kanade.presentation.manga.components.ChapterDownloadAction
 import eu.kanade.presentation.manga.components.ChapterDownloadIndicator
@@ -401,8 +403,11 @@ fun BrowsePagePanel(
         when {
             // KMK: downloaded chapters show their pages from the files, even without the source
             chapter != null && localPages != null -> key(chapter.id, "local") {
+                val gridState = rememberLazyGridState()
+                val onScreen by remember { derivedStateOf { gridState.layoutInfo.visibleItemsInfo.map { it.index }.toSet() } }
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(3),
+                    state = gridState,
                     contentPadding = PaddingValues(12.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -413,6 +418,7 @@ fun BrowsePagePanel(
                             model = page,
                             number = index + 1,
                             isVideo = page.isVideo,
+                            playing = index in onScreen,
                             onClick = { onOpenPage(chapter, index) },
                         )
                     }
@@ -439,8 +445,11 @@ fun BrowsePagePanel(
                 if (state.pagesLoading || state.chaptersLoading) CircularProgressIndicator()
             }
             else -> key(chapter.id) {
+                val gridState = rememberLazyGridState()
+                val onScreen by remember { derivedStateOf { gridState.layoutInfo.visibleItemsInfo.map { it.index }.toSet() } }
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(3),
+                    state = gridState,
                     contentPadding = PaddingValues(12.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -451,6 +460,7 @@ fun BrowsePagePanel(
                             source = source,
                             chapterUrl = chapter.url,
                             page = page,
+                            playing = index in onScreen,
                             onClick = { onOpenPage(chapter, index) },
                         )
                     }
@@ -465,9 +475,11 @@ private fun SourcePageThumbnailItem(
     source: HttpSource,
     chapterUrl: String,
     page: Page,
+    playing: Boolean,
     onClick: () -> Unit,
 ) {
     PageThumbnailBox(
+        playing = playing,
         model = remember(source.id, chapterUrl, page.index) { SourcePageThumbnail(source, chapterUrl, page) },
         number = page.number,
         // KMK: the same check as the reader's Pages panel
@@ -482,37 +494,21 @@ private fun PageThumbnailBox(
     model: Any,
     number: Int,
     isVideo: Boolean,
+    playing: Boolean,
     onClick: () -> Unit,
 ) {
-    val context = LocalContext.current
     val shape = RoundedCornerShape(10.dp)
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .aspectRatio(0.7f)
-            // KMK: its own drawing layer, so an animated page redraws only itself, not the whole grid, each frame
-            .graphicsLayer()
             .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceContainerHighest)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        AsyncImage(
-            model = remember(model) {
-                ImageRequest.Builder(context)
-                    .data(model)
-                    // KMK: decoded at tile size (animated pages too: smaller frames to play), and no fade, which kept
-                    // animated pages redrawing through a second layer
-                    .size(PreviewTileWidthPx, PreviewTileHeightPx)
-                    .precision(coil3.size.Precision.INEXACT)
-                    .crossfade(false)
-                    .build()
-            },
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            alignment = Alignment.TopCenter,
-            modifier = Modifier.fillMaxSize(),
-        )
+        // KMK: tile-sized, and animating only while on screen
+        AnimatedThumbnail(model = model, playing = playing, modifier = Modifier.fillMaxSize())
         // KMK: the reader's play button look (dark circle, white ring, white arrow); tapping opens the reader there
         if (isVideo) {
             Box(
@@ -557,7 +553,3 @@ private fun CenteredBox(content: @Composable () -> Unit) {
         content()
     }
 }
-
-// KMK: about a third of a tablet panel, at high density: sharp enough for a tile, small enough for many animations
-private const val PreviewTileWidthPx = 420
-private const val PreviewTileHeightPx = 600

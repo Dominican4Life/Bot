@@ -10,7 +10,6 @@ import coil3.key.Keyer
 import coil3.request.Options
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
-import kotlinx.coroutines.sync.withPermit
 import tachiyomi.core.common.util.lang.withIOContext
 
 /**
@@ -33,8 +32,7 @@ class SourcePageFetcher(
         if (page.imageUrl.isNullOrEmpty()) {
             page.imageUrl = data.source.getImageUrl(page)
         }
-        // KMK: a few at a time, so loading more pages doesn't starve the ones already showing (and playing)
-        val response = gate.withPermit { data.source.getImage(page) }
+        val response = data.source.getImage(page)
         val body = checkNotNull(response.body) { "Empty response for page ${page.number}" }
         SourceFetchResult(
             source = ImageSource(
@@ -44,10 +42,6 @@ class SourcePageFetcher(
             mimeType = body.contentType()?.toString(),
             dataSource = DataSource.NETWORK,
         )
-    }
-
-    companion object {
-        private val gate = kotlinx.coroutines.sync.Semaphore(3)
     }
 
     class Factory : Fetcher.Factory<SourcePageThumbnail> {
