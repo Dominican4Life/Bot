@@ -893,20 +893,9 @@ private fun formatLabel(format: String?): String = when (format) {
     else -> AniListLabels.format(format)
 }
 
-private fun formatIcon(format: String?): ImageVector = when (format) {
-    "MOVIE" -> LucideIcons.Film
-    "MUSIC" -> LucideIcons.Music
-    "SPECIAL", "OVA" -> LucideIcons.Disc
-    "ONA" -> LucideIcons.Globe
-    "MANGA" -> LucideIcons.BookOpen
-    "ONE_SHOT" -> LucideIcons.File
-    "NOVEL" -> LucideIcons.BookText
-    else -> LucideIcons.Tv
-}
-
 /**
- * Along the bottom of a cover, like Shiru: a calendar and the year on the left, the format and its icon on the
- * right, over a dark fade so they read on any picture
+ * Along the bottom of a cover, like Shiru: a calendar and the year on the left, the format and the Format
+ * button's TV icon (the same for every format) on the right, over a dark fade so they read on any picture
  */
 @Composable
 private fun androidx.compose.foundation.layout.BoxScope.CoverFooter(media: AniListMedia) {
@@ -940,7 +929,7 @@ private fun androidx.compose.foundation.layout.BoxScope.CoverFooter(media: AniLi
                 maxLines = 1,
             )
             Spacer(modifier = Modifier.width(3.dp))
-            Icon(formatIcon(media.format), contentDescription = null, tint = Color.White, modifier = Modifier.size(13.dp))
+            Icon(LucideIcons.Tv, contentDescription = null, tint = Color.White, modifier = Modifier.size(13.dp))
         }
     }
 }
