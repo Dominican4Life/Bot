@@ -36,16 +36,28 @@ object BrowseTabCache {
         key: String,
         create: () -> Flow<PagingData<Pair<Manga, RaisedSearchMetadata?>>>,
     ): Flow<PagingData<Pair<Manga, RaisedSearchMetadata?>>> {
-        return entries.getOrPut(key) {
+        val entry = entries.getOrPut(key) {
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
             Entry(scope, create().cachedIn(scope))
-        }.flow
+        }
+        // KMK: the MAX_TABS most recently used tabs are kept; older ones load from page 1 again. Every tab of every
+        // source browsed was kept until the app closed, which added up over a long session
+        used[key] = System.nanoTime()
+        if (entries.size > MAX_TABS) {
+            entries.keys.filter { it != key }.sortedBy { used[it] ?: 0L }.take(entries.size - MAX_TABS)
+                .forEach { drop(it) }
+        }
+        return entry.flow
     }
+
+    private val used = ConcurrentHashMap<String, Long>()
+    private const val MAX_TABS = 10
 
     /** Forgets the list and scroll position of [key], so it loads from page 1 the next time */
     fun drop(key: String) {
         entries.remove(key)?.scope?.cancel()
         scrolls.remove(key)
+        used.remove(key)
     }
 
     /** Where [key]'s list was scrolled to: first visible item and its offset */

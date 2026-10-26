@@ -656,11 +656,22 @@ private fun RepoList(
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
-                            text = stringResource(KMR.strings.ext_repo_counts, repo.packageCount, repo.installedCount),
+                            text = stringResource(KMR.strings.ext_repo_counts, repo.packageCount, repo.installedCount) +
+                                // KMK: say why a repo looks emptier than it is
+                                if (repo.hiddenNsfw > 0) " · ${repo.hiddenNsfw} hidden by Show NSFW" else "",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.padding(top = 2.dp),
                         )
+                        if (repo.noFingerprint) {
+                            Text(
+                                text = "No signing fingerprint: its extensions can't be checked against the repo",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.tertiary,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                         // KMK: when its packages were last read, or why that failed
                         val status = when {
                             repo.lastError != null -> "Last check failed: ${repo.lastError}"

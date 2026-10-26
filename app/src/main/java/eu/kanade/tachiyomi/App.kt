@@ -119,6 +119,8 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
     override fun onCreate() {
         super<Application>.onCreate()
         patchInjekt()
+        // KMK: memory use in Logs every few minutes
+        eu.kanade.tachiyomi.util.system.MemoryLog.start()
         TelemetryConfig.init(
             applicationContext,
             isPreviewBuildType,

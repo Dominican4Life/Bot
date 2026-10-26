@@ -109,6 +109,10 @@ data class UnifiedRepo(
     // KMK: when its packages were last read, or why that failed
     val lastSuccess: Long? = null,
     val lastError: String? = null,
+    // KMK: packages of this repo left out because they're NSFW and Show NSFW is off
+    val hiddenNsfw: Int = 0,
+    // KMK: the repo gives no real signing fingerprint (no repo.json, or a placeholder in it)
+    val noFingerprint: Boolean = false,
 )
 
 @Immutable

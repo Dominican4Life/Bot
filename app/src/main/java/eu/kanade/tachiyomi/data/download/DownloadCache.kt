@@ -408,6 +408,41 @@ class DownloadCache(
         }
 
         renewalJob = scope.launchIO {
+            // KMK: running out of memory while listing the folders stops this listing (tried again later) instead
+            // of closing the app
+            try {
+                renew()
+            } catch (e: OutOfMemoryError) {
+                // What was listed before stays
+                System.gc()
+                eu.kanade.tachiyomi.util.system.AppLog.add(
+                    'E',
+                    "DownloadCache",
+                    "Ran out of memory listing the download folders; trying again later",
+                )
+                _isInitializing.emit(false)
+            }
+        }.also {
+            it.invokeOnCompletion(onCancelling = true) { exception ->
+                if (exception != null && exception !is CancellationException) {
+                    logcat(LogPriority.ERROR, exception) { "DownloadCache: failed to create cache" }
+                }
+                lastRenew = System.currentTimeMillis()
+                // KMK: skipped for an empty library: try again in a minute rather than after the usual wait
+                if (libraryWasEmpty && renewInterval > 60_000L) lastRenew -= renewInterval - 60_000L
+                notifyChanges()
+                // KMK: the libraries count downloads again now the folders were looked at (after a restore, the
+                // download badges stayed empty until the setting was switched off and on)
+                eu.kanade.tachiyomi.ui.library.LibraryRefresh.request()
+            }
+        }
+
+        // Mainly to notify the indexing notifier UI
+        notifyChanges()
+    }
+
+    private suspend fun renew() = kotlinx.coroutines.coroutineScope {
+        run {
             if (lastRenew == 0L) {
                 _isInitializing.emit(true)
             }
@@ -430,7 +465,7 @@ class DownloadCache(
             }.getOrDefault(false)
             if (libraryWasEmpty) {
                 _isInitializing.emit(false)
-                return@launchIO
+                return@run
             }
 
             // KMK: a folder belongs to a source by name whatever its tag, (EN), (JS), (ALL), and numbered copies too
@@ -452,8 +487,12 @@ class DownloadCache(
                 val folders = bySource.mapValues { (_, list) -> list.sortedBy { it.second }.map { it.first } }
                 updatedRootDir.sourceDirs = folders.mapValues { (_, dirs) -> SourceDirectory(dirs.first()) }
 
+                // KMK: three sources at a time: listing every source at once needed a lot of memory together
+                val gate = kotlinx.coroutines.sync.Semaphore(3)
                 updatedRootDir.sourceDirs.map { (sourceId, sourceDir) ->
                     async {
+                        gate.acquire()
+                        try {
                         // Titles from every folder of the source; the best folder wins when a title is in two
                         val mangaDirs = LinkedHashMap<String, MangaDirectory>()
                         folders[sourceId].orEmpty().forEach { folder ->
@@ -481,6 +520,9 @@ class DownloadCache(
 
                             mangaDir.chapterDirs = chapterDirs
                         }
+                        } finally {
+                            gate.release()
+                        }
                     }
                 }
                     .awaitAll()
@@ -489,23 +531,7 @@ class DownloadCache(
             }
 
             _isInitializing.emit(false)
-        }.also {
-            it.invokeOnCompletion(onCancelling = true) { exception ->
-                if (exception != null && exception !is CancellationException) {
-                    logcat(LogPriority.ERROR, exception) { "DownloadCache: failed to create cache" }
-                }
-                lastRenew = System.currentTimeMillis()
-                // KMK: skipped for an empty library: try again in a minute rather than after the usual wait
-                if (libraryWasEmpty && renewInterval > 60_000L) lastRenew -= renewInterval - 60_000L
-                notifyChanges()
-                // KMK: the libraries count downloads again now the folders were looked at (after a restore, the
-                // download badges stayed empty until the setting was switched off and on)
-                eu.kanade.tachiyomi.ui.library.LibraryRefresh.request()
-            }
         }
-
-        // Mainly to notify the indexing notifier UI
-        notifyChanges()
     }
 
     // KMK

@@ -60,6 +60,7 @@ object CoverFolders {
 
     private const val COVER_NAME = "cover.jpg"
     private const val LISTING_TTL_MS = 2 * 60_000L
+    private const val MAX_LISTINGS = 64
     private const val SOURCES_WAIT_MS = 20_000L
     private const val PREVIEWS = "previews"
     private const val ADD_DELAY_MS = 3_000L
@@ -279,6 +280,13 @@ object CoverFolders {
         val now = System.currentTimeMillis()
         listings[key]?.let { (at, map) -> if (now - at < LISTING_TTL_MS) return map }
         val map = dir.listFiles().orEmpty().mapNotNull { file -> file.name?.let { it.lowercase() to file } }.toMap()
+        // KMK: listings past their time are let go, and at most MAX_LISTINGS are kept. They were never thrown away
+        // before: after a restore (every title's folder listed) they held hundreds of thousands of files in memory
+        listings.entries.removeIf { now - it.value.first >= LISTING_TTL_MS }
+        if (listings.size >= MAX_LISTINGS) {
+            listings.entries.sortedBy { it.value.first }.take(listings.size - MAX_LISTINGS + 1)
+                .forEach { listings.remove(it.key) }
+        }
         listings[key] = now to map
         return map
     }

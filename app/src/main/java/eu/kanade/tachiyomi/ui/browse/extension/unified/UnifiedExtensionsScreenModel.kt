@@ -234,6 +234,7 @@ class UnifiedExtensionsScreenModel(
         val mangaTaken = manga.installed.map { it.pkgName }.toSet() + manga.untrusted.map { it.pkgName }
         manga.available
             .filter { it.pkgName !in mangaTaken }
+            .distinctBy { it.pkgName to ExtensionStoreUrls.key(it.store.indexUrl) }
             .filter { showNsfw || !it.isNsfw }
             // KMK: every package of every repo is listed (anime ones weren't filtered by language either); the
             // language setting still decides which sources show in Browse
@@ -294,7 +295,9 @@ class UnifiedExtensionsScreenModel(
         val animeTaken = anime.installed.map { it.pkgName }.toSet() + anime.untrusted.map { it.pkgName }
         anime.available
             .filter { it.pkgName !in animeTaken }
-            .distinctBy { it.pkgName }
+            // KMK: one per package and repository: a package two repos both have is listed under each (like
+            // Kototoro). Keeping only the first made a repo show 0 packages when another repo had them too
+            .distinctBy { it.pkgName to ExtensionStoreUrls.key(it.store.indexUrl) }
             .filter { showNsfw || !it.isNsfw }
             .forEach { ext -> packages += availablePackage(ExtensionKind.ANIYOMI, ext, steps).copy(animeOther = ext) }
 
@@ -304,7 +307,12 @@ class UnifiedExtensionsScreenModel(
             val storeKey = ExtensionStoreUrls.key(store.indexUrl)
             val inRepo = packages.filter { it.kind == kind && it.repoUrl?.let(ExtensionStoreUrls::key) == storeKey }
             val st = status[store.indexUrl]
+            val offered = (if (kind == ExtensionKind.MIHON) manga.available else anime.available)
+                .filter { ExtensionStoreUrls.key(it.store.indexUrl) == storeKey }
+                .distinctBy { it.pkgName }
             UnifiedRepo(
+                hiddenNsfw = if (showNsfw) 0 else offered.count { it.isNsfw },
+                noFingerprint = !store.signingKey.matches(FINGERPRINT),
                 lastSuccess = st?.lastSuccess,
                 lastError = st?.lastError,
                 kind = kind,
@@ -331,7 +339,8 @@ class UnifiedExtensionsScreenModel(
     }
 
     private fun availablePackage(kind: ExtensionKind, ext: Extension.Available, steps: Map<String, InstallStep>): UnifiedPackage {
-        val key = key(kind, ext.pkgName)
+        // KMK: with its repository, as the same package can be offered by more than one
+        val key = key(kind, ext.pkgName) + "@" + ExtensionStoreUrls.key(ext.store.indexUrl)
         return UnifiedPackage(
             key = key,
             kind = kind,
@@ -379,6 +388,9 @@ class UnifiedExtensionsScreenModel(
     }
 
     private fun key(kind: ExtensionKind, pkgName: String) = "${kind.name}:$pkgName"
+
+    // KMK: a real signing fingerprint: SHA-256 as hex, with or without colons
+    private val FINGERPRINT = Regex("^[0-9A-Fa-f]{2}(:?[0-9A-Fa-f]{2}){31}$")
 
     // Filters
 
