@@ -29,6 +29,18 @@ class ChildFirstPathClassLoader(
             } catch (_: ClassNotFoundException) {}
         }
 
+        // KMK: what the app and its extensions pass to each other (Kotlin itself, coroutines, the source API and the
+        // libraries in its signatures) always comes from the app. An extension that packed its own copy of, say,
+        // kotlin.coroutines.Continuation otherwise failed to load with a LinkageError: its getAnimeDetails took
+        // its own Continuation, not the app's, so it no longer matched the app's source interface.
+        if (c == null && name != null && SHARED_PREFIXES.any { name.startsWith(it) }) {
+            c = try {
+                parent.loadClass(name)
+            } catch (_: ClassNotFoundException) {
+                null
+            }
+        }
+
         if (c == null) {
             c = try {
                 findClass(name)
@@ -84,3 +96,19 @@ class ChildFirstPathClassLoader(
         }
     }
 }
+
+// KMK: packages always taken from the app (when the app has the class), never from an extension's own copy
+private val SHARED_PREFIXES = listOf(
+    "kotlin.",
+    "kotlinx.coroutines.",
+    "kotlinx.serialization.",
+    "eu.kanade.tachiyomi.source.",
+    "eu.kanade.tachiyomi.animesource.",
+    "eu.kanade.tachiyomi.network.",
+    "eu.kanade.tachiyomi.util.",
+    "okhttp3.",
+    "okio.",
+    "org.jsoup.",
+    "rx.",
+    "uy.kohesive.injekt.",
+)
