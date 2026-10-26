@@ -83,18 +83,28 @@ class BackupRestorer(
 
     suspend fun restore(uri: Uri, options: RestoreOptions) {
         val startTime = System.currentTimeMillis()
+        // KMK: the libraries hold off on their own work (like looking at every download folder) until the end
+        eu.kanade.tachiyomi.ui.library.LibraryRefresh.restoring.value = true
+        try {
+            restoreFromFile(uri, options)
 
-        restoreFromFile(uri, options)
-
-        // KMK: library covers that aren't on the device come back from the titles' download folders
-        if (options.libraryEntries) eu.kanade.tachiyomi.data.cache.CoverFolders.fillMissingAfterRestore()
-        // KMK: then look at the download folders again (Reindex downloads), so the downloads already on the device
-        // show up in the restored library
-        if (options.libraryEntries) {
-            runCatching { Injekt.get<eu.kanade.tachiyomi.data.download.DownloadCache>().invalidateCache() }
+            // KMK: library covers that aren't on the device come back from the titles' download folders
+            if (options.libraryEntries) {
+                val started = System.currentTimeMillis()
+                eu.kanade.tachiyomi.data.cache.CoverFolders.fillMissingAfterRestore()
+                timing("Covers from download folders", started)
+            }
+            // KMK: then look at the download folders again (Reindex downloads), so the downloads already on the
+            // device show up in the restored library
+            if (options.libraryEntries) {
+                runCatching { Injekt.get<eu.kanade.tachiyomi.data.download.DownloadCache>().invalidateCache() }
+            }
+        } finally {
+            eu.kanade.tachiyomi.ui.library.LibraryRefresh.restoring.value = false
         }
         // KMK: the libraries work out their badges again with what was restored
         eu.kanade.tachiyomi.ui.library.LibraryRefresh.request()
+        timing("Whole restore", startTime)
 
         val time = System.currentTimeMillis() - startTime
 
@@ -110,7 +120,9 @@ class BackupRestorer(
     }
 
     private suspend fun restoreFromFile(uri: Uri, options: RestoreOptions) {
+        val decodeStarted = System.currentTimeMillis()
         val decoded = BackupDecoder(context).decode(uri)
+        timing("Reading the backup file", decodeStarted)
         // KMK: only library titles in the chosen categories
         val backup = options.categoryKeys?.let { keys ->
             val orderToName = decoded.backupCategories.associate { it.order to it.name }
@@ -258,27 +270,37 @@ class BackupRestorer(
         backupMangas: List<BackupManga>,
         backupCategories: List<BackupCategory>,
     ) = launch {
+        // KMK: titles go in groups, each in one database transaction, so the libraries reload once per group
+        // instead of once per title (that made big restores slower and slower as the library filled up). A group
+        // with a failing title is done again one title at a time, as before, so only that title is left out.
+        val started = System.currentTimeMillis()
         mangaRestorer.sortByNew(backupMangas)
-            .forEach {
+            .chunked(RESTORE_GROUP_SIZE)
+            .forEach { group ->
                 ensureActive()
-
-                try {
-                    mangaRestorer.restore(it, backupCategories)
-                } catch (e: Exception) {
-                    val sourceName = sourceMapping[it.source] ?: it.source.toString()
-                    errors.add(Date() to "${it.title} [$sourceName]: ${e.message}")
+                if (!mangaRestorer.restoreGroup(group, backupCategories)) {
+                    group.forEach {
+                        ensureActive()
+                        try {
+                            mangaRestorer.restore(it, backupCategories)
+                        } catch (e: Exception) {
+                            val sourceName = sourceMapping[it.source] ?: it.source.toString()
+                            errors.add(Date() to "${it.title} [$sourceName]: ${e.message}")
+                        }
+                    }
                 }
 
-                restoreProgress += 1
+                restoreProgress += group.size
                 // KMK: a few times a second at most; posting it for every title slowed big restores down
                 if (progressDue()) {
                     with(notifier) {
-                        showRestoreProgress(it.title, restoreProgress, restoreAmount, isSync)
+                        showRestoreProgress(group.last().title, restoreProgress, restoreAmount, isSync)
                             .show(Notifications.ID_RESTORE_PROGRESS)
                     }
                 }
                 // KMK <--
             }
+        timing("Manga (${backupMangas.size})", started)
     }
 
     private fun CoroutineScope.restoreAppPreferences(
@@ -366,21 +388,39 @@ class BackupRestorer(
             } catch (e: Exception) {
                 errors.add(Date() to "Anime categories: ${e.message}")
             }
-            backupAnime.forEach {
+            // KMK: in groups, each in one database transaction, like the manga; a group with a failing anime is
+            // done again one anime at a time
+            val started = System.currentTimeMillis()
+            val database = Injekt.get<tachiyomi.data.DatabaseHandler>()
+            backupAnime.chunked(RESTORE_GROUP_SIZE).forEach { group ->
                 ensureActive()
-                try {
-                    helper.restoreAnime(it)
+                val groupDone = try {
+                    database.await(inTransaction = true) { group.forEach { helper.restoreAnime(it) } }
+                    true
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
                 } catch (e: Exception) {
-                    errors.add(Date() to "${it.title} [anime]: ${e.message}")
+                    false
                 }
-                restoreProgress += 1
+                if (!groupDone) {
+                    group.forEach {
+                        ensureActive()
+                        try {
+                            helper.restoreAnime(it)
+                        } catch (e: Exception) {
+                            errors.add(Date() to "${it.title} [anime]: ${e.message}")
+                        }
+                    }
+                }
+                restoreProgress += group.size
                 if (progressDue()) {
                     with(notifier) {
-                        showRestoreProgress(it.title, restoreProgress, restoreAmount, isSync)
+                        showRestoreProgress(group.last().title, restoreProgress, restoreAmount, isSync)
                             .show(Notifications.ID_RESTORE_PROGRESS)
                     }
                 }
             }
+            timing("Anime (${backupAnime.size})", started)
             // Seasons find their parent once every anime is in
             backupAnime.filter { it.parentUrl != null }.forEach {
                 ensureActive()
@@ -439,6 +479,12 @@ class BackupRestorer(
     }
     // KMK <--
 
+    /** KMK: how long a step took, in the app's Logs (Restore), to see where the time of a slow restore goes */
+    private fun timing(step: String, startedAt: Long) {
+        val seconds = (System.currentTimeMillis() - startedAt) / 1000.0
+        eu.kanade.tachiyomi.util.system.AppLog.add('I', "Restore", "$step: ${"%.1f".format(Locale.US, seconds)} s")
+    }
+
     private fun writeErrorLog(): File {
         try {
             if (errors.isNotEmpty()) {
@@ -461,3 +507,6 @@ class BackupRestorer(
 
 // KMK
 private const val PROGRESS_EVERY_MS = 300L
+
+// KMK: titles restored per database transaction
+private const val RESTORE_GROUP_SIZE = 50

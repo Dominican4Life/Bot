@@ -188,8 +188,10 @@ fun rememberAnimeLibraryState(searchQuery: String?): AnimeLibraryState {
     // KMK: asked again after a restore (see LibraryRefresh), and when anime sources finish loading
     val refreshTick by eu.kanade.tachiyomi.ui.library.LibraryRefresh.tick.collectAsState()
     // Look at each anime's download folder once, when downloads matter
-    LaunchedEffect(favorites?.size, needDownloads, refreshTick) {
-        if (needDownloads) favorites?.forEach { downloadManager.refresh(it) }
+    // KMK: not while restoring: it looked at every anime's folder again for each anime added
+    val restoring by eu.kanade.tachiyomi.ui.library.LibraryRefresh.restoring.collectAsState()
+    LaunchedEffect(favorites?.size, needDownloads, refreshTick, restoring) {
+        if (needDownloads && !restoring) favorites?.forEach { downloadManager.refresh(it) }
     }
     val downloaded = remember(favorites, downloadChanges, needDownloads, refreshTick) {
         if (!needDownloads) {

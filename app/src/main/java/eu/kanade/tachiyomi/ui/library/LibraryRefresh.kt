@@ -15,4 +15,7 @@ object LibraryRefresh {
     val tick: StateFlow<Int> = _tick.asStateFlow()
 
     fun request() = _tick.update { it + 1 }
+
+    /** True while a restore runs: the libraries leave out work that would be redone for every restored title */
+    val restoring = MutableStateFlow(false)
 }

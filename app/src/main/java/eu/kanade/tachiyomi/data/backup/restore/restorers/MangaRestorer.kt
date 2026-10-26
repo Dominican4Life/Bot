@@ -60,7 +60,11 @@ class MangaRestorer(
         currentFetchWindow = fetchInterval.getWindow(now)
     }
 
+    // KMK: the categories on the device, read once per restore instead of once per title
+    private var dbCategoriesCache: List<tachiyomi.domain.category.model.Category>? = null
+
     suspend fun sortByNew(backupMangas: List<BackupManga>): List<BackupManga> {
+        dbCategoriesCache = null
         val urlsBySource = handler.awaitList { mangasQueries.getAllMangaSourceAndUrl() }
             .groupBy({ it.source }, { it.url })
 
@@ -72,6 +76,24 @@ class MangaRestorer(
                     .then(compareBy { it.url in urlsBySource[it.source].orEmpty() })
                     .then(compareByDescending { it.lastModifiedAt }),
             )
+    }
+
+    /**
+     * KMK: Restores [group] in one go (one database transaction), so the library reloads once for the group
+     * instead of once per title. False when any title failed: nothing of the group was kept then, and the caller
+     * restores them one by one, as before.
+     */
+    suspend fun restoreGroup(group: List<BackupManga>, backupCategories: List<BackupCategory>): Boolean {
+        return try {
+            handler.await(inTransaction = true) {
+                group.forEach { restore(it, backupCategories) }
+            }
+            true
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            false
+        }
     }
 
     /**
@@ -386,7 +408,7 @@ class MangaRestorer(
         categories: List<Long>,
         backupCategories: List<BackupCategory>,
     ) {
-        val dbCategories = getCategories.await()
+        val dbCategories = dbCategoriesCache ?: getCategories.await().also { dbCategoriesCache = it }
         val dbCategoriesByName = dbCategories.associateBy { it.name }
 
         val backupCategoriesByOrder = backupCategories.associateBy { it.order }
@@ -410,25 +432,20 @@ class MangaRestorer(
     }
 
     private suspend fun restoreHistory(manga: Manga, backupHistory: List<BackupHistory>) {
+        if (backupHistory.isEmpty()) return
+        // KMK: the title's chapters and history read once, instead of one or two lookups per history entry
+        val chapterIdByUrl = getChaptersByMangaId.await(manga.id).associate { it.url to it.id }
+        val dbHistoryByChapterId = handler.awaitList { historyQueries.getHistoryByMangaId(manga.id) }
+            .associateBy { it.chapter_id }
         val toUpdate = backupHistory.mapNotNull { history ->
-            // KMK -->
-            val dbHistory = handler.awaitList { historyQueries.getHistoryByChapterUrl(manga.id, history.url) }
-                .firstOrNull()
-            // KMK <--
+            // Chapter doesn't exist; skip
+            val chapterId = chapterIdByUrl[history.url] ?: return@mapNotNull null
+            val dbHistory = dbHistoryByChapterId[chapterId]
             val item = history.getHistoryImpl()
 
             if (dbHistory == null) {
-                // KMK -->
-                val chapter = handler.awaitList { chaptersQueries.getChapterByUrlAndMangaId(history.url, manga.id) }
-                    .firstOrNull()
-                // KMK <--
-                return@mapNotNull if (chapter == null) {
-                    // Chapter doesn't exist; skip
-                    null
-                } else {
-                    // New history entry
-                    item.copy(chapterId = chapter._id)
-                }
+                // New history entry
+                return@mapNotNull item.copy(chapterId = chapterId)
             }
 
             // Update history entry

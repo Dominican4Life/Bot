@@ -36,8 +36,11 @@ class MangaBackupCreator(
 ) {
 
     suspend operator fun invoke(mangas: List<Manga>, options: BackupOptions): List<BackupManga> {
-        return mangas.map {
-            backupManga(it, options)
+        // KMK: read in one database transaction, instead of each of the many lookups taking turns on its own
+        return handler.await(inTransaction = true) {
+            mangas.map {
+                backupManga(it, options)
+            }
         }
     }
 
@@ -107,9 +110,18 @@ class MangaBackupCreator(
         if (options.history) {
             val historyByMangaId = getHistory.await(manga.id)
             if (historyByMangaId.isNotEmpty()) {
-                val history = historyByMangaId.map { history ->
-                    val chapter = handler.awaitOne { chaptersQueries.getChapterById(history.chapterId) }
-                    BackupHistory(chapter.url, history.readAt?.time ?: 0L, history.readDuration)
+                // KMK: the title's chapter addresses read once, instead of one lookup per history entry
+                val urlById = handler.awaitList {
+                    chaptersQueries.getChaptersByMangaId(
+                        mangaId = manga.id,
+                        applyFilter = 0, // false
+                        Manga.CHAPTER_SHOW_NOT_BOOKMARKED,
+                        Manga.CHAPTER_SHOW_BOOKMARKED,
+                    )
+                }.associate { it._id to it.url }
+                val history = historyByMangaId.mapNotNull { history ->
+                    val url = urlById[history.chapterId] ?: return@mapNotNull null
+                    BackupHistory(url, history.readAt?.time ?: 0L, history.readDuration)
                 }
                 if (history.isNotEmpty()) {
                     mangaObject.history = history
