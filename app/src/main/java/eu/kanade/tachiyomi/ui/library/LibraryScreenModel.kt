@@ -796,7 +796,8 @@ class LibraryScreenModel(
 
     private fun getFavoritesFlow(): Flow<List<LibraryItem>> {
         return combine(
-            getLibraryManga.subscribe(),
+            // KMK: not read again for every title while a restore runs
+            LibraryRefresh.pausedWhileRestoring(getLibraryManga.subscribe()),
             getLibraryItemPreferencesFlow(),
             downloadCache.changes,
             // KMK: again when sources finish loading (their languages) and when asked (after a restore)

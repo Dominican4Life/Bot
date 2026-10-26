@@ -79,24 +79,6 @@ class MangaRestorer(
     }
 
     /**
-     * KMK: Restores [group] in one go (one database transaction), so the library reloads once for the group
-     * instead of once per title. False when any title failed: nothing of the group was kept then, and the caller
-     * restores them one by one, as before.
-     */
-    suspend fun restoreGroup(group: List<BackupManga>, backupCategories: List<BackupCategory>): Boolean {
-        return try {
-            handler.await(inTransaction = true) {
-                group.forEach { restore(it, backupCategories) }
-            }
-            true
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            false
-        }
-    }
-
-    /**
      * Restore a single manga
      */
     suspend fun restore(

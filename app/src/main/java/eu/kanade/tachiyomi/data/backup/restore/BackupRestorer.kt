@@ -270,31 +270,26 @@ class BackupRestorer(
         backupMangas: List<BackupManga>,
         backupCategories: List<BackupCategory>,
     ) = launch {
-        // KMK: titles go in groups, each in one database transaction, so the libraries reload once per group
-        // instead of once per title (that made big restores slower and slower as the library filled up). A group
-        // with a failing title is done again one title at a time, as before, so only that title is left out.
+        // KMK: one title at a time, each in its own transaction (restoring 50 per transaction got stuck). The
+        // libraries stop reading the database while a restore runs (see LibraryRefresh.restoring), which is where
+        // most of the time went: they reloaded the whole library after every title.
         val started = System.currentTimeMillis()
         mangaRestorer.sortByNew(backupMangas)
-            .chunked(RESTORE_GROUP_SIZE)
-            .forEach { group ->
+            .forEach {
                 ensureActive()
-                if (!mangaRestorer.restoreGroup(group, backupCategories)) {
-                    group.forEach {
-                        ensureActive()
-                        try {
-                            mangaRestorer.restore(it, backupCategories)
-                        } catch (e: Exception) {
-                            val sourceName = sourceMapping[it.source] ?: it.source.toString()
-                            errors.add(Date() to "${it.title} [$sourceName]: ${e.message}")
-                        }
-                    }
+
+                try {
+                    mangaRestorer.restore(it, backupCategories)
+                } catch (e: Exception) {
+                    val sourceName = sourceMapping[it.source] ?: it.source.toString()
+                    errors.add(Date() to "${it.title} [$sourceName]: ${e.message}")
                 }
 
-                restoreProgress += group.size
+                restoreProgress += 1
                 // KMK: a few times a second at most; posting it for every title slowed big restores down
                 if (progressDue()) {
                     with(notifier) {
-                        showRestoreProgress(group.last().title, restoreProgress, restoreAmount, isSync)
+                        showRestoreProgress(it.title, restoreProgress, restoreAmount, isSync)
                             .show(Notifications.ID_RESTORE_PROGRESS)
                     }
                 }
@@ -388,34 +383,18 @@ class BackupRestorer(
             } catch (e: Exception) {
                 errors.add(Date() to "Anime categories: ${e.message}")
             }
-            // KMK: in groups, each in one database transaction, like the manga; a group with a failing anime is
-            // done again one anime at a time
             val started = System.currentTimeMillis()
-            val database = Injekt.get<tachiyomi.data.DatabaseHandler>()
-            backupAnime.chunked(RESTORE_GROUP_SIZE).forEach { group ->
+            backupAnime.forEach {
                 ensureActive()
-                val groupDone = try {
-                    database.await(inTransaction = true) { group.forEach { helper.restoreAnime(it) } }
-                    true
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
+                try {
+                    helper.restoreAnime(it)
                 } catch (e: Exception) {
-                    false
+                    errors.add(Date() to "${it.title} [anime]: ${e.message}")
                 }
-                if (!groupDone) {
-                    group.forEach {
-                        ensureActive()
-                        try {
-                            helper.restoreAnime(it)
-                        } catch (e: Exception) {
-                            errors.add(Date() to "${it.title} [anime]: ${e.message}")
-                        }
-                    }
-                }
-                restoreProgress += group.size
+                restoreProgress += 1
                 if (progressDue()) {
                     with(notifier) {
-                        showRestoreProgress(group.last().title, restoreProgress, restoreAmount, isSync)
+                        showRestoreProgress(it.title, restoreProgress, restoreAmount, isSync)
                             .show(Notifications.ID_RESTORE_PROGRESS)
                     }
                 }
@@ -507,6 +486,3 @@ class BackupRestorer(
 
 // KMK
 private const val PROGRESS_EVERY_MS = 300L
-
-// KMK: titles restored per database transaction
-private const val RESTORE_GROUP_SIZE = 50

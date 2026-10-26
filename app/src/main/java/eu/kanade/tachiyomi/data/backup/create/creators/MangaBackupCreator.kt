@@ -36,11 +36,8 @@ class MangaBackupCreator(
 ) {
 
     suspend operator fun invoke(mangas: List<Manga>, options: BackupOptions): List<BackupManga> {
-        // KMK: read in one database transaction, instead of each of the many lookups taking turns on its own
-        return handler.await(inTransaction = true) {
-            mangas.map {
-                backupManga(it, options)
-            }
+        return mangas.map {
+            backupManga(it, options)
         }
     }
 

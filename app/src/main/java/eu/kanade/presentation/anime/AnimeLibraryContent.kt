@@ -167,10 +167,10 @@ fun rememberAnimeLibraryState(searchQuery: String?): AnimeLibraryState {
     val repository = remember { Injekt.get<AnimeRepository>() }
     val sourceManager = remember { Injekt.get<AnimeSourceManager>() }
     val libraryPreferences = remember { Injekt.get<LibraryPreferences>() }
-    val favorites by remember { repository.subscribeFavorites() }.collectAsState(initial = null)
-    val stats by remember { repository.subscribeLibraryStats() }.collectAsState(initial = emptyMap())
+    val favorites by remember { eu.kanade.tachiyomi.ui.library.LibraryRefresh.pausedWhileRestoring(repository.subscribeFavorites()) }.collectAsState(initial = null)
+    val stats by remember { eu.kanade.tachiyomi.ui.library.LibraryRefresh.pausedWhileRestoring(repository.subscribeLibraryStats()) }.collectAsState(initial = emptyMap())
     val categories by remember { repository.subscribeCategories() }.collectAsState(initial = emptyList())
-    val links by remember { repository.subscribeCategoryLinks() }.collectAsState(initial = emptyMap())
+    val links by remember { eu.kanade.tachiyomi.ui.library.LibraryRefresh.pausedWhileRestoring(repository.subscribeCategoryLinks()) }.collectAsState(initial = emptyMap())
 
     val filters = rememberAnimeLibraryFilters()
     val sortMode by remember { AnimeLibraryPrefs.sort() }.collectAsState()
