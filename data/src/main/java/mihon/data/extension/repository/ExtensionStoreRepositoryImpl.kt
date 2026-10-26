@@ -90,7 +90,14 @@ class ExtensionStoreRepositoryImpl(
                     // KMK <--
                     .map { store ->
                         async {
-                            service.getExtensions(store).also { mihon.data.extension.service.ExtensionStoreStatus.record(store.indexUrl, it) }.onFailure {
+                            service.getExtensions(store).also { mihon.data.extension.service.ExtensionStoreStatus.record(store.indexUrl, it) }
+                                // KMK: one line per repo in Logs, to see where a package goes missing
+                                .onSuccess { list ->
+                                    this@ExtensionStoreRepositoryImpl.logcat(LogPriority.INFO) {
+                                        "Repo ${store.name}: ${list.size} packages read (${store.indexUrl})"
+                                    }
+                                }
+                                .onFailure {
                                 this@ExtensionStoreRepositoryImpl.logcat(LogPriority.ERROR, it) {
                                     "Failed to fetch extensions for store '${store.name} (${store.indexUrl})'"
                                 }

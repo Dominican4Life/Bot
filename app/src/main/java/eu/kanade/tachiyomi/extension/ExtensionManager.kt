@@ -279,6 +279,10 @@ class ExtensionManager(
                     // KMK <--
                     it.pkgName == pkgName
             }
+                // KMK: a repo with no signing fingerprint can only be matched by package name
+                ?: availableExtensions.find {
+                    it.pkgName == pkgName && !mihon.data.extension.service.ExtensionStoreUrls.hasFingerprint(it.signatureHash)
+                }
 
             if (availableExt == null &&
                 (!extension.isObsolete || /* KMK --> */ extension.hasUpdate /* KMK <-- */)

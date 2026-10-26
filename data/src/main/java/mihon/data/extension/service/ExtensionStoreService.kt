@@ -250,6 +250,14 @@ object ExtensionStoreUrls {
 
     /** One address for each repository, for telling whether two addresses are the same one */
     fun key(url: String): String = repositoryBase(url).lowercase()
+
+    private val FINGERPRINT = Regex("^[0-9A-Fa-f]{2}(:?[0-9A-Fa-f]{2}){31}$")
+
+    /**
+     * KMK: True when [signingKey] is a real signing fingerprint (SHA-256 as hex). Repos without one (no repo.json,
+     * or a placeholder like "no-info" in it) can't have their packages matched by signature, only by package name.
+     */
+    fun hasFingerprint(signingKey: String?): Boolean = signingKey != null && FINGERPRINT.matches(signingKey)
         .removePrefix("https://").removePrefix("http://")
         .replace("raw.githubusercontent.com/", "github.com/")
         .replace("/raw/", "/").replace("/refs/heads/", "/")

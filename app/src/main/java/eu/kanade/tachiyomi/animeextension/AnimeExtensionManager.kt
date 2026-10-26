@@ -133,6 +133,10 @@ class AnimeExtensionManager(
             val availableExt = availableExtensions.find {
                 it.signatureHash == extension.signatureHash && it.pkgName == pkgName
             }
+                // KMK: a repo with no signing fingerprint can only be matched by package name
+                ?: availableExtensions.find {
+                    it.pkgName == pkgName && !mihon.data.extension.service.ExtensionStoreUrls.hasFingerprint(it.signatureHash)
+                }
             if (availableExt == null) {
                 if (!extension.isObsolete || extension.hasUpdate) {
                     installedExtensionsMap[pkgName] = extension.copy(isObsolete = true, hasUpdate = false)

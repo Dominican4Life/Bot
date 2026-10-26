@@ -121,6 +121,17 @@ class UnifiedExtensionsScreenModel(
                 lastBuilt = built
             }
         }
+        // KMK: repos that were never read this session (after a restore, say) are read when the screen opens, so
+        // they don't sit at 0 packages until a refresh
+        screenModelScope.launchIO {
+            val read = ExtensionStoreStatus.entries.value.keys
+            if (mangaStores.getAll().any { it.indexUrl !in read }) {
+                runCatching { mangaManager.findAvailableExtensions() }
+            }
+            if (animeStores.getAll().any { it.indexUrl !in read }) {
+                runCatching { animeManager.findAvailableExtensions() }
+            }
+        }
         // KMK --> the saved JS / JSON sources, listed with the other sources under a JS tag
         screenModelScope.launchIO {
             combine(
@@ -229,7 +240,8 @@ class UnifiedExtensionsScreenModel(
             }
         }
         manga.untrusted.forEach { ext ->
-            packages += untrustedPackage(ExtensionKind.MIHON, ext, steps).copy(manga = ext)
+            packages += untrustedPackage(ExtensionKind.MIHON, ext, steps, offeredBy(manga.available, ext.pkgName))
+                .copy(manga = ext)
         }
         val mangaTaken = manga.installed.map { it.pkgName }.toSet() + manga.untrusted.map { it.pkgName }
         manga.available
@@ -290,7 +302,8 @@ class UnifiedExtensionsScreenModel(
             }
         }
         anime.untrusted.forEach { ext ->
-            packages += untrustedPackage(ExtensionKind.ANIYOMI, ext, steps).copy(animeOther = ext)
+            packages += untrustedPackage(ExtensionKind.ANIYOMI, ext, steps, offeredBy(anime.available, ext.pkgName))
+                .copy(animeOther = ext)
         }
         val animeTaken = anime.installed.map { it.pkgName }.toSet() + anime.untrusted.map { it.pkgName }
         anime.available
@@ -312,7 +325,7 @@ class UnifiedExtensionsScreenModel(
                 .distinctBy { it.pkgName }
             UnifiedRepo(
                 hiddenNsfw = if (showNsfw) 0 else offered.count { it.isNsfw },
-                noFingerprint = !store.signingKey.matches(FINGERPRINT),
+                noFingerprint = !ExtensionStoreUrls.hasFingerprint(store.signingKey),
                 lastSuccess = st?.lastSuccess,
                 lastError = st?.lastError,
                 kind = kind,
@@ -363,7 +376,21 @@ class UnifiedExtensionsScreenModel(
         )
     }
 
-    private fun untrustedPackage(kind: ExtensionKind, ext: Extension.Untrusted, steps: Map<String, InstallStep>): UnifiedPackage {
+    /**
+     * KMK: The repo an installed but untrusted package belongs to: one with the same signature, or else one with
+     * no signing fingerprint that offers that package (it can only be matched by name)
+     */
+    private fun offeredBy(available: List<Extension.Available>, pkgName: String): Extension.Available? {
+        val offers = available.filter { it.pkgName == pkgName }
+        return offers.firstOrNull { !ExtensionStoreUrls.hasFingerprint(it.signatureHash) } ?: offers.firstOrNull()
+    }
+
+    private fun untrustedPackage(
+        kind: ExtensionKind,
+        ext: Extension.Untrusted,
+        steps: Map<String, InstallStep>,
+        offeredBy: Extension.Available? = null,
+    ): UnifiedPackage {
         val key = key(kind, ext.pkgName)
         return UnifiedPackage(
             key = key,
@@ -374,8 +401,8 @@ class UnifiedExtensionsScreenModel(
             installedVersionName = null,
             lang = ext.lang.orEmpty(),
             isNsfw = ext.isNsfw,
-            repoUrl = null,
-            repoName = ext.storeName,
+            repoUrl = offeredBy?.store?.indexUrl,
+            repoName = offeredBy?.store?.name ?: ext.storeName,
             state = PackageState.UNTRUSTED,
             installStep = steps[key] ?: InstallStep.Idle,
             icon = null,
@@ -388,9 +415,6 @@ class UnifiedExtensionsScreenModel(
     }
 
     private fun key(kind: ExtensionKind, pkgName: String) = "${kind.name}:$pkgName"
-
-    // KMK: a real signing fingerprint: SHA-256 as hex, with or without colons
-    private val FINGERPRINT = Regex("^[0-9A-Fa-f]{2}(:?[0-9A-Fa-f]{2}){31}$")
 
     // Filters
 
