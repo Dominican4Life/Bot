@@ -82,6 +82,8 @@ fun unifiedExtensionsTab(
             val pagerState = rememberPagerState { UNIFIED_TAB_COUNT }
             var trustItem by remember { mutableStateOf<UnifiedPackage?>(null) }
             var removeItem by remember { mutableStateOf<UnifiedPackage?>(null) }
+            // KMK: another repo's copy is installed: it has to go before this one can go on
+            var replaceItem by remember { mutableStateOf<UnifiedPackage?>(null) }
             var deleteRepo by remember { mutableStateOf<UnifiedRepo?>(null) }
             // KMK
             var deleteJs by remember { mutableStateOf<UnifiedSource?>(null) }
@@ -143,9 +145,15 @@ fun unifiedExtensionsTab(
                 },
                 onUpdateAll = screenModel::updateAll,
                 onPackagePrimary = { item ->
-                    if (item.state == PackageState.UNTRUSTED) trustItem = item else screenModel.primaryAction(item)
+                    when {
+                        item.state == PackageState.UNTRUSTED -> trustItem = item
+                        item.state == PackageState.AVAILABLE && item.otherInstalledFrom != null -> replaceItem = item
+                        else -> screenModel.primaryAction(item)
+                    }
                 },
-                onPackageSideload = { item -> screenModel.install(item, sideload = true) },
+                onPackageSideload = { item ->
+                    if (item.otherInstalledFrom != null) replaceItem = item else screenModel.install(item, sideload = true)
+                },
                 onPackageCancel = screenModel::cancel,
                 onPackageRemove = { item ->
                     if (context.isPackageInstalled(item.pkgName)) screenModel.uninstall(item) else removeItem = item
@@ -209,6 +217,40 @@ fun unifiedExtensionsTab(
                         trustItem = null
                     },
                     onDismissRequest = { trustItem = null },
+                )
+            }
+
+            replaceItem?.let { item ->
+                val installed = state.allPackages.firstOrNull {
+                    it.kind == item.kind && it.pkgName == item.pkgName && it.state.isInstalled
+                }
+                AlertDialog(
+                    onDismissRequest = { replaceItem = null },
+                    title = { Text(item.name) },
+                    text = {
+                        Text(
+                            "The ${item.otherInstalledFrom} version of ${item.name} is installed. Android won't put " +
+                                "a copy signed by someone else over it, so remove that one first, then install this " +
+                                "one from ${item.repoName ?: "this repo"}.",
+                        )
+                    },
+                    confirmButton = {
+                        if (installed != null) {
+                            TextButton(
+                                onClick = {
+                                    if (context.isPackageInstalled(installed.pkgName)) {
+                                        screenModel.uninstall(installed)
+                                    } else {
+                                        removeItem = installed
+                                    }
+                                    replaceItem = null
+                                },
+                            ) { Text(stringResource(MR.strings.ext_remove)) }
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { replaceItem = null }) { Text(stringResource(MR.strings.action_cancel)) }
+                    },
                 )
             }
 

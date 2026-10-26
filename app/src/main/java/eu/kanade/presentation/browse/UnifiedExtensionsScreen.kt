@@ -833,6 +833,8 @@ private fun PackageRow(
                 if (item.lang.isNotBlank()) Tag(langLabel(item.lang))
                 item.installedVersionName?.let { Tag(stringResource(KMR.strings.ext_installed_version, it)) }
                 if (item.isNsfw) Tag(stringResource(MR.strings.ext_nsfw_short), warning = true)
+                // KMK: another repo's copy is the one installed
+                item.otherInstalledFrom?.let { Tag("$it version installed") }
             }
             if (item.sourceNames.isNotEmpty() && item.sourceNames != listOf(item.name)) {
                 Text(

@@ -117,7 +117,25 @@ class AnimeExtensionManager(
     /**
      * Finds the extensions available in the anime repos.
      */
+    // KMK: one read of the repos at a time: a read asked for while one runs waits for it and uses what it found
+    // (opening Extensions, a restore and a refresh each read every repo, at the same moment)
+    private val findLock = kotlinx.coroutines.sync.Mutex()
+
     suspend fun findAvailableExtensions() {
+        if (findLock.isLocked) {
+            findLock.lock()
+            findLock.unlock()
+            return
+        }
+        findLock.lock()
+        try {
+            findAvailableExtensionsNow()
+        } finally {
+            findLock.unlock()
+        }
+    }
+
+    private suspend fun findAvailableExtensionsNow() {
         val extensions: List<Extension.Available> = try {
             withIOContext {
                 // Keep the store index up to date (name, signing key)

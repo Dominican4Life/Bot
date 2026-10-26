@@ -203,7 +203,25 @@ class ExtensionManager(
     /**
      * Finds the available extensions in the [api] and updates [availableExtensionMapFlow].
      */
+    // KMK: one read of the repos at a time: a read asked for while one runs waits for it and uses what it found
+    // (opening Extensions, a restore and a refresh each read every repo, at the same moment)
+    private val findLock = kotlinx.coroutines.sync.Mutex()
+
     suspend fun findAvailableExtensions() {
+        if (findLock.isLocked) {
+            findLock.lock()
+            findLock.unlock()
+            return
+        }
+        findLock.lock()
+        try {
+            findAvailableExtensionsNow()
+        } finally {
+            findLock.unlock()
+        }
+    }
+
+    private suspend fun findAvailableExtensionsNow() {
         val allExtensions: List<Extension.Available> = try {
             api.findExtensions()
         } catch (e: Exception) {

@@ -74,6 +74,8 @@ data class UnifiedPackage(
     val animeOther: Extension? = null,
     // KMK: installed by sideloading (kept by the app and in its Sideloaded folder)
     val sideloaded: Boolean = false,
+    // KMK: another repo's copy of this package is installed (its name): this one can't go on over it
+    val otherInstalledFrom: String? = null,
 )
 
 /** One source of an installed package */

@@ -244,14 +244,24 @@ class UnifiedExtensionsScreenModel(
             packages += untrustedPackage(ExtensionKind.MIHON, ext, steps, offeredBy(manga.available, ext.pkgName))
                 .copy(manga = ext)
         }
-        val mangaTaken = manga.installed.map { it.pkgName }.toSet() + manga.untrusted.map { it.pkgName }
+        // KMK: what's on the device, by package: which repo it's from and its signature. Another repo's copy of
+        // an installed package is listed too (like Anizen), marked as such; only the copy that is the installed one
+        // is left out
+        val mangaHere = manga.installed.map { Here(it.pkgName, it.store, it.storeName, it.signatureHash) } +
+            manga.untrusted.map { u ->
+                val by = offeredBy(manga.available, u.pkgName)
+                Here(u.pkgName, by?.store, by?.store?.name ?: u.storeName, u.signatureHash)
+            }
         manga.available
-            .filter { it.pkgName !in mangaTaken }
             .distinctBy { it.pkgName to ExtensionStoreUrls.key(it.store.indexUrl) }
             .filter { showNsfw || !it.isNsfw }
+            .mapNotNull { ext -> otherCopy(ext, mangaHere)?.let { ext to it } }
             // KMK: every package of every repo is listed (anime ones weren't filtered by language either); the
             // language setting still decides which sources show in Browse
-            .forEach { ext -> packages += availablePackage(ExtensionKind.MIHON, ext, steps).copy(manga = ext) }
+            .forEach { (ext, other) ->
+                packages += availablePackage(ExtensionKind.MIHON, ext, steps)
+                    .copy(manga = ext, otherInstalledFrom = other.takeIf { it.isNotEmpty() })
+            }
 
         // Aniyomi (anime) extensions
         val animeAvailable = anime.available.associateBy { it.pkgName }
@@ -307,14 +317,21 @@ class UnifiedExtensionsScreenModel(
             packages += untrustedPackage(ExtensionKind.ANIYOMI, ext, steps, offeredBy(anime.available, ext.pkgName))
                 .copy(animeOther = ext)
         }
-        val animeTaken = anime.installed.map { it.pkgName }.toSet() + anime.untrusted.map { it.pkgName }
+        val animeHere = anime.installed.map { Here(it.pkgName, it.store, it.storeName, it.signatureHash) } +
+            anime.untrusted.map { u ->
+                val by = offeredBy(anime.available, u.pkgName)
+                Here(u.pkgName, by?.store, by?.store?.name ?: u.storeName, u.signatureHash)
+            }
         anime.available
-            .filter { it.pkgName !in animeTaken }
             // KMK: one per package and repository: a package two repos both have is listed under each (like
             // Kototoro). Keeping only the first made a repo show 0 packages when another repo had them too
             .distinctBy { it.pkgName to ExtensionStoreUrls.key(it.store.indexUrl) }
             .filter { showNsfw || !it.isNsfw }
-            .forEach { ext -> packages += availablePackage(ExtensionKind.ANIYOMI, ext, steps).copy(animeOther = ext) }
+            .mapNotNull { ext -> otherCopy(ext, animeHere)?.let { ext to it } }
+            .forEach { (ext, other) ->
+                packages += availablePackage(ExtensionKind.ANIYOMI, ext, steps)
+                    .copy(animeOther = ext, otherInstalledFrom = other.takeIf { it.isNotEmpty() })
+            }
 
         // Repositories
         fun repos(kind: ExtensionKind, stores: List<ExtensionStore>) = stores.map { store ->
@@ -376,6 +393,27 @@ class UnifiedExtensionsScreenModel(
             totalSources = ext.sources.size,
             signatureHash = ext.signatureHash,
         )
+    }
+
+    /** KMK: a package on the device: the repo it came from (when known) and its signature */
+    private data class Here(
+        val pkgName: String,
+        val store: mihon.domain.extension.model.ExtensionStore?,
+        val storeName: String?,
+        val signatureHash: String,
+    )
+
+    /**
+     * KMK: How [ext] (a repo's copy) stands against what's on the device: null when it IS the installed copy (left
+     * out, the installed row stands for it), "" when the package isn't on the device, else the name of the repo
+     * the installed copy came from ("another repo" when unknown)
+     */
+    private fun otherCopy(ext: Extension.Available, here: List<Here>): String? {
+        val installed = here.firstOrNull { it.pkgName == ext.pkgName } ?: return ""
+        val sameRepo = installed.store != null &&
+            ExtensionStoreUrls.key(installed.store.indexUrl) == ExtensionStoreUrls.key(ext.store.indexUrl)
+        if (sameRepo || installed.signatureHash == ext.signatureHash) return null
+        return installed.storeName ?: installed.store?.name ?: "another repo"
     }
 
     /**
