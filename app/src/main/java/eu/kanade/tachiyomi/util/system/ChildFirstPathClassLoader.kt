@@ -23,6 +23,18 @@ class ChildFirstPathClassLoader(
     override fun loadClass(name: String?, resolve: Boolean): Class<*> {
         var c = findLoadedClass(name)
 
+        // KMK: the pieces the app and an extension pass between them always come from the app. An extension that
+        // packs its own Kotlin (Continuation, Unit, Function...) or its own copy of the source API otherwise got
+        // those from its APK, and Android refused it: "LinkageError ... resolves differently in interface
+        // AnimeSource: Parameter 1 type mismatch". Anything the app doesn't have still comes from the extension.
+        if (c == null && name != null && SHARED_PREFIXES.any { name.startsWith(it) }) {
+            c = try {
+                parent.loadClass(name)
+            } catch (_: ClassNotFoundException) {
+                null
+            }
+        }
+
         if (c == null && systemClassLoader != null) {
             try {
                 c = systemClassLoader.loadClass(name)
@@ -95,20 +107,19 @@ class ChildFirstPathClassLoader(
             return null
         }
     }
-}
 
-// KMK: packages always taken from the app (when the app has the class), never from an extension's own copy
-private val SHARED_PREFIXES = listOf(
-    "kotlin.",
-    "kotlinx.coroutines.",
-    "kotlinx.serialization.",
-    "eu.kanade.tachiyomi.source.",
-    "eu.kanade.tachiyomi.animesource.",
-    "eu.kanade.tachiyomi.network.",
-    "eu.kanade.tachiyomi.util.",
-    "okhttp3.",
-    "okio.",
-    "org.jsoup.",
-    "rx.",
-    "uy.kohesive.injekt.",
-)
+    private companion object {
+        val SHARED_PREFIXES = listOf(
+            "kotlin.",
+            "kotlinx.coroutines.",
+            "eu.kanade.tachiyomi.source.",
+            "eu.kanade.tachiyomi.animesource.",
+            "eu.kanade.tachiyomi.network.",
+            "okhttp3.",
+            "okio.",
+            "rx.",
+            "uy.kohesive.injekt.",
+            "androidx.preference.",
+        )
+    }
+}
