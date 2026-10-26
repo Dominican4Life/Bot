@@ -27,7 +27,8 @@ class BasePreferences(
         LEGACY(MR.strings.ext_installer_legacy, true),
         PACKAGEINSTALLER(MR.strings.ext_installer_packageinstaller, true),
         SHIZUKU(MR.strings.ext_installer_shizuku, false),
-        PRIVATE(MR.strings.ext_installer_private, false),
+        // KMK: shown as Sideload
+        PRIVATE(tachiyomi.i18n.kmk.KMR.strings.ext_installer_sideload, false),
     }
 
     fun displayProfile() = preferenceStore.getString("pref_display_profile_key", "")

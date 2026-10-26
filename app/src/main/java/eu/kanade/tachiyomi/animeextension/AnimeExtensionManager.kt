@@ -60,6 +60,9 @@ class AnimeExtensionManager(
         .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     private val availableExtensionMapFlow = MutableStateFlow(emptyMap<String, Extension.Available>())
+    /** KMK: the packages the repos offer, as last read */
+    fun availableNow(): List<Extension.Available> = availableExtensionMapFlow.value.values.toList()
+
     val availableExtensionsFlow: StateFlow<List<Extension.Available>> = availableExtensionMapFlow
         .map { it.values.toList() }
         .stateIn(scope, SharingStarted.Eagerly, emptyList())
@@ -70,7 +73,16 @@ class AnimeExtensionManager(
         .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     init {
-        scope.launchIO { initExtensions() }
+        scope.launchIO {
+            // KMK: the Sideloaded folder and the app made to agree first, so what it put back loads now
+            runCatching {
+                eu.kanade.tachiyomi.extension.util.SideloadFolder.sync(
+                    context,
+                    eu.kanade.tachiyomi.extension.util.SideloadFolder.Kind.ANIME,
+                )
+            }
+            initExtensions()
+        }
         AnimeExtensionInstallReceiver(InstallationListener()).register(context)
     }
 
@@ -155,14 +167,21 @@ class AnimeExtensionManager(
         if (changed) installedExtensionMapFlow.value = installedExtensionsMap
     }
 
-    fun installExtension(extension: Extension.Available): Flow<InstallStep> {
-        return installer.downloadAndInstall(extension.apkUrl, extension)
+    // KMK: [sideload] true/false from the Sideload / Install buttons, null as set in the installer setting
+    fun installExtension(extension: Extension.Available, sideload: Boolean? = null): Flow<InstallStep> {
+        return installer.downloadAndInstall(extension.apkUrl, extension, sideload)
     }
 
     fun updateExtension(extension: AnimeExtension): Flow<InstallStep> {
         val availableExt = availableExtensionMapFlow.value[extension.pkgName + "_${extension.signatureHash}"]
+            // KMK: a repo with no signing fingerprint is matched by package name
+            ?: availableExtensionMapFlow.value.values.firstOrNull {
+                it.pkgName == extension.pkgName &&
+                    !mihon.data.extension.service.ExtensionStoreUrls.hasFingerprint(it.signatureHash)
+            }
             ?: return emptyFlow()
-        return installExtension(availableExt)
+        // KMK: updated the way it was installed: sideloaded stays sideloaded
+        return installExtension(availableExt, sideload = !extension.isShared)
     }
 
     fun cancelInstallUpdateExtension(pkgName: String, signatureHash: String) {

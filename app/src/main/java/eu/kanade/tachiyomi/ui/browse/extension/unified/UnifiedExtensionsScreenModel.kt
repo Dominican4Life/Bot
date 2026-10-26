@@ -221,6 +221,7 @@ class UnifiedExtensionsScreenModel(
                 totalSources = ext.sources.size,
                 signatureHash = ext.signatureHash,
                 manga = ext,
+                sideloaded = !ext.isShared,
             )
             ext.sources.forEach { source ->
                 sources += UnifiedSource(
@@ -283,6 +284,7 @@ class UnifiedExtensionsScreenModel(
                 totalSources = ext.sources.size,
                 signatureHash = ext.signatureHash,
                 anime = ext,
+                sideloaded = !ext.isShared,
             )
             ext.sources.forEach { source ->
                 sources += UnifiedSource(
@@ -545,13 +547,14 @@ class UnifiedExtensionsScreenModel(
         }
     }
 
-    fun install(item: UnifiedPackage) {
+    /** [sideload]: the Sideload button; Install leaves it to the installer setting (never sideloading) */
+    fun install(item: UnifiedPackage, sideload: Boolean = false) {
         when (val ext = item.manga ?: item.animeOther) {
             is Extension.Available -> {
                 if (item.kind == ExtensionKind.ANIYOMI) {
-                    animeManager.installExtension(ext).track(item.key)
+                    animeManager.installExtension(ext, sideload).track(item.key)
                 } else {
-                    mangaManager.installExtension(ext).track(item.key)
+                    mangaManager.installExtension(ext, sideload).track(item.key)
                 }
             }
             else -> Unit

@@ -116,6 +116,8 @@ fun UnifiedExtensionsContent(
     onRepoOpen: (UnifiedRepo) -> Unit,
     onUpdateAll: () -> Unit,
     onPackagePrimary: (UnifiedPackage) -> Unit,
+    // KMK: Sideload, next to Install
+    onPackageSideload: (UnifiedPackage) -> Unit = {},
     onPackageCancel: (UnifiedPackage) -> Unit,
     onPackageRemove: (UnifiedPackage) -> Unit,
     onPackageDetails: (UnifiedPackage) -> Unit,
@@ -230,6 +232,7 @@ fun UnifiedExtensionsContent(
                     emptyKinds = state.filters.kinds,
                     onUpdateAll = onUpdateAll,
                     onPrimary = onPackagePrimary,
+                    onSideload = onPackageSideload,
                     onCancel = onPackageCancel,
                     onRemove = onPackageRemove,
                     onDetails = onPackageDetails,
@@ -713,6 +716,7 @@ private fun PackageList(
     emptyKinds: Set<ExtensionKind>,
     onUpdateAll: () -> Unit,
     onPrimary: (UnifiedPackage) -> Unit,
+    onSideload: (UnifiedPackage) -> Unit,
     onCancel: (UnifiedPackage) -> Unit,
     onRemove: (UnifiedPackage) -> Unit,
     onDetails: (UnifiedPackage) -> Unit,
@@ -763,6 +767,7 @@ private fun PackageList(
             PackageRow(
                 item = item,
                 onPrimary = { onPrimary(item) },
+                onSideload = { onSideload(item) },
                 onCancel = { onCancel(item) },
                 onRemove = { onRemove(item) },
                 onDetails = { onDetails(item) },
@@ -775,6 +780,7 @@ private fun PackageList(
 private fun PackageRow(
     item: UnifiedPackage,
     onPrimary: () -> Unit,
+    onSideload: () -> Unit,
     onCancel: () -> Unit,
     onRemove: () -> Unit,
     onDetails: () -> Unit,
@@ -804,6 +810,8 @@ private fun PackageRow(
                         )
                         Tag(item.kind.label, color = kindColor(item.kind))
                         stateLabel(item.state)?.let { (text, warning) -> Tag(text, warning = warning) }
+                        // KMK: kept by the app and in its Sideloaded folder, not installed in Android
+                        if (item.sideloaded) Tag(stringResource(KMR.strings.ext_sideloaded))
                     }
                     Text(
                         text = buildString {
@@ -851,7 +859,13 @@ private fun PackageRow(
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 when (item.state) {
-                    PackageState.AVAILABLE -> ActionChip(stringResource(MR.strings.ext_install), onPrimary)
+                    PackageState.AVAILABLE -> {
+                        // KMK: Install (Android's installer) or Sideload (kept by the app and in its folder)
+                        ActionChip(stringResource(MR.strings.ext_install), onPrimary)
+                        if (item.kind == ExtensionKind.MIHON || item.kind == ExtensionKind.ANIYOMI) {
+                            ActionChip(stringResource(KMR.strings.ext_installer_sideload), onSideload)
+                        }
+                    }
                     PackageState.UPDATE_AVAILABLE -> ActionChip(stringResource(MR.strings.ext_update), onPrimary)
                     PackageState.UNTRUSTED -> ActionChip(stringResource(MR.strings.ext_trust), onPrimary)
                     PackageState.INSTALLING -> ActionChip(stringResource(MR.strings.action_cancel), onCancel)

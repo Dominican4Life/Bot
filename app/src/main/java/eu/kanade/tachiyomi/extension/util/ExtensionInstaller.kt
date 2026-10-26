@@ -54,7 +54,8 @@ internal class ExtensionInstaller(
      * @param url The url of the apk.
      * @param extension The extension to install.
      */
-    fun downloadAndInstall(url: String, extension: Extension): Flow<InstallStep> {
+    /** [sideload]: true to sideload (app's storage + Sideloaded folder), false for the system installer, null as set */
+    fun downloadAndInstall(url: String, extension: Extension, sideload: Boolean? = null): Flow<InstallStep> {
         val pkgName = extension.pkgName +
             // KMK -->
             "_${extension.signatureHash}"
@@ -88,7 +89,7 @@ internal class ExtensionInstaller(
                     }
 
                 step.value = InstallStep.Installing
-                installApk(downloadId, tmpFile)
+                installApk(downloadId, tmpFile, sideload, extension.pkgName)
             } catch (e: Exception) {
                 if (e is InterruptedException) {
                     // Canceled
@@ -117,8 +118,15 @@ internal class ExtensionInstaller(
      *
      * @param tempFile The file of the extension to install. Delete after use.
      */
-    private fun installApk(downloadId: Long, tempFile: File) {
-        when (val installer = extensionInstaller.get()) {
+    private fun installApk(downloadId: Long, tempFile: File, sideload: Boolean? = null, pkgName: String? = null) {
+        // KMK: Sideload / Install buttons pick the way; otherwise the setting does (Install never means sideload)
+        val installer = when (sideload) {
+            true -> BasePreferences.ExtensionInstaller.PRIVATE
+            false -> extensionInstaller.get().takeIf { it != BasePreferences.ExtensionInstaller.PRIVATE }
+                ?: BasePreferences.ExtensionInstaller.PACKAGEINSTALLER
+            null -> extensionInstaller.get()
+        }
+        when (installer) {
             BasePreferences.ExtensionInstaller.LEGACY -> {
                 val intent = Intent(context, ExtensionInstallActivity::class.java)
                     .setDataAndType(tempFile.getUriCompat(context), APK_MIME)
@@ -130,6 +138,8 @@ internal class ExtensionInstaller(
             BasePreferences.ExtensionInstaller.PRIVATE -> {
                 try {
                     if (ExtensionLoader.installPrivateExtensionFile(context, tempFile)) {
+                        // KMK: and into the Sideloaded folder, the copy that outlasts a reinstall
+                        pkgName?.let { SideloadFolder.save(SideloadFolder.Kind.MANGA, it, tempFile) }
                         updateInstallStep(downloadId, InstallStep.Installed)
                     } else {
                         updateInstallStep(downloadId, InstallStep.Error)
@@ -174,6 +184,8 @@ internal class ExtensionInstaller(
             context.startActivity(intent)
         } else {
             ExtensionLoader.uninstallPrivateExtension(context, pkgName)
+            // KMK: and its APK out of the Sideloaded folder
+            SideloadFolder.remove(SideloadFolder.Kind.MANGA, pkgName)
             ExtensionInstallReceiver.notifyRemoved(context, pkgName)
         }
     }

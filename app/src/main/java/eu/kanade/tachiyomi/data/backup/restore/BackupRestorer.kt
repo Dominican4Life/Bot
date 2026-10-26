@@ -104,6 +104,12 @@ class BackupRestorer(
         }
         // KMK: the libraries work out their badges again with what was restored
         eu.kanade.tachiyomi.ui.library.LibraryRefresh.request()
+        // KMK: sideloaded extensions come back from the Sideloaded folder, or from their repos when not there
+        if (options.appSettings || options.extensionStores) {
+            val started = System.currentTimeMillis()
+            runCatching { eu.kanade.tachiyomi.extension.util.SideloadFolder.afterRestore(context) }
+            timing("Sideloaded extensions", started)
+        }
         timing("Whole restore", startTime)
 
         val time = System.currentTimeMillis() - startTime

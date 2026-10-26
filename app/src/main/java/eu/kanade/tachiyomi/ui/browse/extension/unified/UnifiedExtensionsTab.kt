@@ -145,6 +145,7 @@ fun unifiedExtensionsTab(
                 onPackagePrimary = { item ->
                     if (item.state == PackageState.UNTRUSTED) trustItem = item else screenModel.primaryAction(item)
                 },
+                onPackageSideload = { item -> screenModel.install(item, sideload = true) },
                 onPackageCancel = screenModel::cancel,
                 onPackageRemove = { item ->
                     if (context.isPackageInstalled(item.pkgName)) screenModel.uninstall(item) else removeItem = item

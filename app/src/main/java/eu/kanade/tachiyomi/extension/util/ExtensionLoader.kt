@@ -73,6 +73,16 @@ internal object ExtensionLoader {
 
     private fun getPrivateExtensionDir(context: Context) = File(context.filesDir, "exts")
 
+    // KMK: whether the app has its own (sideloaded) copy of [pkgName]
+    fun hasPrivateExtension(context: Context, pkgName: String): Boolean =
+        File(getPrivateExtensionDir(context), "$pkgName.$PRIVATE_EXTENSION_EXTENSION").exists()
+
+    // KMK: the packages the app has its own (sideloaded) copy of
+    fun privateExtensionPackages(context: Context): List<String> =
+        getPrivateExtensionDir(context).listFiles().orEmpty()
+            .filter { it.isFile && it.extension == PRIVATE_EXTENSION_EXTENSION }
+            .map { it.nameWithoutExtension }
+
     fun installPrivateExtensionFile(context: Context, file: File): Boolean {
         val extension = context.packageManager.getPackageArchiveInfo(file.absolutePath, PACKAGE_FLAGS)
             ?.takeIf { isPackageAnExtension(it) } ?: return false

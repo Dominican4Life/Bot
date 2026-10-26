@@ -72,6 +72,8 @@ data class UnifiedPackage(
     val manga: Extension? = null,
     val anime: AnimeExtension? = null,
     val animeOther: Extension? = null,
+    // KMK: installed by sideloading (kept by the app and in its Sideloaded folder)
+    val sideloaded: Boolean = false,
 )
 
 /** One source of an installed package */

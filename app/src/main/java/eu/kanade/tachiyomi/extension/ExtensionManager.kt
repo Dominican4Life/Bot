@@ -22,6 +22,7 @@ import exh.source.EXHENTAI_EXT_SOURCES
 import exh.source.ExhPreferences
 import exh.source.MERGED_SOURCE_ID
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,6 +32,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import logcat.LogPriority
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
@@ -76,6 +78,9 @@ class ExtensionManager(
     private val availableExtensionMapFlow = MutableStateFlow(emptyMap<String, Extension.Available>())
 
     // SY -->
+    /** KMK: the packages the repos offer, as last read */
+    fun availableNow(): List<Extension.Available> = availableExtensionMapFlow.value.values.toList()
+
     val availableExtensionsFlow = availableExtensionMapFlow.map { it.filterNotBlacklisted().values.toList() }
         .stateIn(scope, SharingStarted.Lazily, availableExtensionMapFlow.value.values.toList())
     // SY <--
@@ -84,6 +89,15 @@ class ExtensionManager(
     val untrustedExtensionsFlow = untrustedExtensionMapFlow.mapExtensions(scope)
 
     init {
+        // KMK: the Sideloaded folder and the app made to agree (an APK put back after a reinstall, one deleted)
+        scope.launch(Dispatchers.IO) {
+            runCatching {
+                eu.kanade.tachiyomi.extension.util.SideloadFolder.sync(
+                    context,
+                    eu.kanade.tachiyomi.extension.util.SideloadFolder.Kind.MANGA,
+                )
+            }
+        }
         initExtensions()
         ExtensionInstallReceiver(InstallationListener()).register(context)
     }
@@ -328,8 +342,9 @@ class ExtensionManager(
      *
      * @param extension The extension to be installed.
      */
-    fun installExtension(extension: Extension.Available): Flow<InstallStep> {
-        return installer.downloadAndInstall(extension.apkUrl, extension)
+    // KMK: [sideload] true/false from the Sideload / Install buttons, null as set in the installer setting
+    fun installExtension(extension: Extension.Available, sideload: Boolean? = null): Flow<InstallStep> {
+        return installer.downloadAndInstall(extension.apkUrl, extension, sideload)
     }
 
     /**
@@ -345,8 +360,15 @@ class ExtensionManager(
                 // KMK -->
                 "_${extension.signatureHash}",
             // KMK <--
-        ] ?: return emptyFlow()
-        return installExtension(availableExt)
+        ]
+            // KMK: a repo with no signing fingerprint is matched by package name
+            ?: availableExtensionMapFlow.value.values.firstOrNull {
+                it.pkgName == extension.pkgName &&
+                    !mihon.data.extension.service.ExtensionStoreUrls.hasFingerprint(it.signatureHash)
+            }
+            ?: return emptyFlow()
+        // KMK: updated the way it was installed: sideloaded stays sideloaded
+        return installExtension(availableExt, sideload = !extension.isShared)
     }
 
     fun cancelInstallUpdateExtension(extension: Extension) {

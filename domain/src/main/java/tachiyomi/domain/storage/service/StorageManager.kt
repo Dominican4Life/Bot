@@ -91,6 +91,13 @@ class StorageManager(
     fun getIconsDirectory(create: Boolean = true): UniFile? =
         getDownloadsDirectory()?.let { childDirectory(it, "Icon", create) }
 
+    /**
+     * Sideloaded extensions' APKs: Sideloaded/Manga or Sideloaded/Anime ([kind]) in the app's folder. The app runs
+     * its own copy (Android only runs code from the app's storage); this is the one that outlasts a reinstall.
+     */
+    fun getSideloadedDirectory(kind: String, create: Boolean = true): UniFile? =
+        baseDir?.let { childDirectory(it, "Sideloaded", create) }?.let { childDirectory(it, kind, create) }
+
     /** A folder inside [parent], upper or lower case not mattering (SD cards don't tell them apart) */
     private fun childDirectory(parent: UniFile, name: String, create: Boolean): UniFile? {
         parent.findFile(name)?.takeIf { it.isDirectory }?.let { return it }
