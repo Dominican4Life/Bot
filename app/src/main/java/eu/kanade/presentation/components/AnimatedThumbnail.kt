@@ -66,6 +66,8 @@ fun AnimatedThumbnail(
 ) {
     val context = LocalContext.current
     val key = remember(model) { thumbKeyOf(model) }
+    // Animated or not, read from the file's first bytes while it decodes (remembered per page)
+    var animated by remember(model) { mutableStateOf(key?.let { kinds[it] }?.animated) }
     var drawable by remember(model) { mutableStateOf<Drawable?>(null) }
     // The copies r66–r70 kept of shown pages aren't used any more: cleared once, to give the space back
     LaunchedEffect(Unit) {
@@ -73,13 +75,22 @@ fun AnimatedThumbnail(
             withContext(Dispatchers.IO) { File(context.cacheDir, "page_thumbs").deleteRecursively() }
         }
     }
+    LaunchedEffect(animated) {
+        animated?.let(onAnimated)
+    }
+    // Only the playing tile decodes the moving picture (it keeps the whole file in memory while shown); every other
+    // tile is the first frame as a small plain picture. Kept apart in memory, so a still one isn't reused to play.
+    val play = playing && animated == true
     Box(modifier = modifier) {
         AsyncImage(
-            model = remember(model) {
+            model = remember(model, play) {
                 ImageRequest.Builder(context)
                     .data(model)
-                    .crossfade(true)
-                    .decoderFactory(KindDecoderFactory(key))
+                    .crossfade(!play)
+                    .memoryCacheKeyExtra("thumb_play", play.toString())
+                    .decoderFactory(
+                        KindDecoderFactory(key, animate = play) { kind -> animated = kind.animated },
+                    )
                     .build()
             },
             contentDescription = null,
@@ -91,18 +102,14 @@ fun AnimatedThumbnail(
             modifier = Modifier.matchParentSize(),
         )
         val animatable = drawable as? Animatable
-        LaunchedEffect(drawable) {
-            if (drawable != null) onAnimated(animatable != null)
-        }
-        // Still unless picked; picked plays from where it stopped
-        LaunchedEffect(animatable, playing) {
+        LaunchedEffect(animatable, play) {
             animatable ?: return@LaunchedEffect
-            if (playing) animatable.start() else animatable.stop()
+            if (play) animatable.start() else animatable.stop()
         }
         DisposableEffect(animatable) {
             onDispose { animatable?.stop() }
         }
-        if (animatable != null && !playing) {
+        if (animated == true && !play) {
             // The reader's video play button (dark circle, white ring, white arrow), smaller
             Box(
                 contentAlignment = Alignment.Center,
@@ -127,7 +134,11 @@ fun AnimatedThumbnail(
 
 private val oldCopiesCleared = AtomicBoolean(false)
 
-private enum class Kind { GIF, WEBP, OTHER }
+private enum class Kind(val animated: Boolean) {
+    GIF(true),
+    ANIMATED_WEBP(true),
+    STILL(false),
+}
 
 /** What each page turned out to be, so the label is right when the picture comes back from memory */
 private val kinds = ConcurrentHashMap<String, Kind>()
@@ -139,28 +150,42 @@ private fun thumbKeyOf(model: Any): String? = when (model) {
     else -> null
 }
 
+/** From the first bytes: a GIF, an animated WebP (VP8X with its animation flag), or a still picture */
 private fun kindOf(source: BufferedSource): Kind {
     val peek = source.peek()
-    if (!peek.request(21)) return Kind.OTHER
+    if (!peek.request(21)) return Kind.STILL
     val head = peek.readByteArray(21)
     if (head[0] == 'G'.code.toByte() && head[1] == 'I'.code.toByte() && head[2] == 'F'.code.toByte()) return Kind.GIF
-    if (String(head, 0, 4, Charsets.US_ASCII) == "RIFF" && String(head, 8, 4, Charsets.US_ASCII) == "WEBP") {
-        return Kind.WEBP
+    if (String(head, 0, 4, Charsets.US_ASCII) == "RIFF" && String(head, 8, 4, Charsets.US_ASCII) == "WEBP" &&
+        String(head, 12, 4, Charsets.US_ASCII) == "VP8X" && (head[20].toInt() and 0x02) != 0
+    ) {
+        return Kind.ANIMATED_WEBP
     }
-    return Kind.OTHER
+    return Kind.STILL
 }
 
-/** The app's usual decoders, in the usual order, noting on the way whether the page is a GIF or a WebP */
-private class KindDecoderFactory(private val key: String?) : Decoder.Factory {
+/**
+ * The app's usual decoders, noting on the way what the page is. [animate] false (a still tile) decodes only the
+ * first frame as a plain picture at tile size; true (the playing tile) decodes the moving picture.
+ */
+private class KindDecoderFactory(
+    private val key: String?,
+    private val animate: Boolean,
+    private val onKind: (Kind) -> Unit,
+) : Decoder.Factory {
     override fun create(result: SourceFetchResult, options: Options, imageLoader: ImageLoader): Decoder? {
-        key?.let { k -> runCatching { kinds[k] = kindOf(result.source.source()) } }
-        val animated: Decoder.Factory = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            AnimatedImageDecoder.Factory()
-        } else {
-            GifDecoder.Factory()
+        val kind = runCatching { kindOf(result.source.source()) }.getOrDefault(Kind.STILL)
+        key?.let { kinds[it] = kind }
+        onKind(kind)
+        TachiyomiImageDecoder.Factory().create(result, options, imageLoader)?.let { return it }
+        if (animate && kind.animated) {
+            val moving: Decoder.Factory = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                AnimatedImageDecoder.Factory()
+            } else {
+                GifDecoder.Factory()
+            }
+            moving.create(result, options, imageLoader)?.let { return it }
         }
-        return TachiyomiImageDecoder.Factory().create(result, options, imageLoader)
-            ?: animated.create(result, options, imageLoader)
-            ?: BitmapFactoryDecoder.Factory().create(result, options, imageLoader)
+        return BitmapFactoryDecoder.Factory().create(result, options, imageLoader)
     }
 }
