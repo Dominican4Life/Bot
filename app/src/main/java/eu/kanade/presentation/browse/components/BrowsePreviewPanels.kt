@@ -44,6 +44,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -92,9 +93,6 @@ import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.selectedBackground
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import eu.kanade.presentation.components.AnimatedThumbnail
-import eu.kanade.presentation.components.holdToPlay
 
 /**
  * KMK: Left panel on the browse source screen with the chapters of the selected cover.
@@ -403,24 +401,23 @@ fun BrowsePagePanel(
         when {
             // KMK: downloaded chapters show their pages from the files, even without the source
             chapter != null && localPages != null -> key(chapter.id, "local") {
-                val gridState = rememberLazyGridState()
-                // KMK: the tile picked by holding and sliding plays and is outlined
-                var active by remember { mutableStateOf<Int?>(null) }
+                // KMK: the first tap on an animated page plays it (framed), the second opens it
+                val tap = rememberAnimatedTap { index -> onOpenPage(chapter, index) }
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(3),
-                    state = gridState,
                     contentPadding = PaddingValues(12.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxSize().holdToPlay(gridState) { active = it },
+                    modifier = Modifier.fillMaxSize(),
                 ) {
                     itemsIndexed(items = localPages, key = { index, _ -> "local-page-$index" }) { index, page ->
                         PageThumbnailBox(
                             model = page,
                             number = index + 1,
                             isVideo = page.isVideo,
-                            playing = index == active,
-                            onClick = { onOpenPage(chapter, index) },
+                            playing = tap.active == index,
+                            onAnimated = { tap.animated[index] = it },
+                            onClick = { tap.onTap(index) },
                         )
                     }
                 }
@@ -446,25 +443,38 @@ fun BrowsePagePanel(
                 if (state.pagesLoading || state.chaptersLoading) CircularProgressIndicator()
             }
             else -> key(chapter.id) {
-                val gridState = rememberLazyGridState()
-                // KMK: the tile picked by holding and sliding plays and is outlined
-                var active by remember { mutableStateOf<Int?>(null) }
+                val tap = rememberAnimatedTap { index -> onOpenPage(chapter, index) }
+                val previews = state.previewModels
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(3),
-                    state = gridState,
                     contentPadding = PaddingValues(12.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxSize().holdToPlay(gridState) { active = it },
+                    modifier = Modifier.fillMaxSize(),
                 ) {
                     itemsIndexed(items = pages, key = { index, _ -> "page-$index" }) { index, page ->
-                        SourcePageThumbnailItem(
-                            source = source,
-                            chapterUrl = chapter.url,
-                            page = page,
-                            playing = index == active,
-                            onClick = { onOpenPage(chapter, index) },
-                        )
+                        val preview = previews?.getOrNull(index)
+                        if (preview != null) {
+                            // KMK: the source's small preview (SY's page previews, or a JS getPagePreviews)
+                            PageThumbnailBox(
+                                model = preview,
+                                number = index + 1,
+                                isVideo = false,
+                                playing = tap.active == index,
+                                onAnimated = { tap.animated[index] = it },
+                                onClick = { tap.onTap(index) },
+                                plain = preview is eu.kanade.domain.manga.model.PagePreview,
+                            )
+                        } else {
+                            SourcePageThumbnailItem(
+                                source = source,
+                                chapterUrl = chapter.url,
+                                page = page,
+                                playing = tap.active == index,
+                                onAnimated = { tap.animated[index] = it },
+                                onClick = { tap.onTap(index) },
+                            )
+                        }
                     }
                 }
             }
@@ -478,16 +488,37 @@ private fun SourcePageThumbnailItem(
     chapterUrl: String,
     page: Page,
     playing: Boolean,
+    onAnimated: (Boolean) -> Unit,
     onClick: () -> Unit,
 ) {
     PageThumbnailBox(
-        playing = playing,
         model = remember(source.id, chapterUrl, page.index) { SourcePageThumbnail(source, chapterUrl, page) },
         number = page.number,
         // KMK: the same check as the reader's Pages panel
         isVideo = ReaderVideos.isVideo(page.url),
+        playing = playing,
+        onAnimated = onAnimated,
         onClick = onClick,
     )
+}
+
+/**
+ * KMK: Taps on a page grid: the first tap on an animated page plays it (and frames it), a second tap on it opens
+ * it; any other tap opens the page straight away. One page plays at a time.
+ */
+private class AnimatedTap(private val open: (Int) -> Unit) {
+    var active by mutableStateOf<Int?>(null)
+    val animated = mutableStateMapOf<Int, Boolean>()
+
+    fun onTap(index: Int) {
+        if (animated[index] == true && active != index) active = index else open(index)
+    }
+}
+
+@Composable
+private fun rememberAnimatedTap(open: (Int) -> Unit): AnimatedTap {
+    val current by androidx.compose.runtime.rememberUpdatedState(open)
+    return remember { AnimatedTap { current(it) } }
 }
 
 /** One page tile: the image (from the source or a download) with its number in the corner, and ▶ on a video */
@@ -496,9 +527,13 @@ private fun PageThumbnailBox(
     model: Any,
     number: Int,
     isVideo: Boolean,
-    playing: Boolean,
     onClick: () -> Unit,
+    // KMK: an animated page plays while [playing], framed; [plain] shows the image as r63 did (SY's previews)
+    playing: Boolean = false,
+    onAnimated: (Boolean) -> Unit = {},
+    plain: Boolean = false,
 ) {
+    val context = LocalContext.current
     val shape = RoundedCornerShape(10.dp)
     Box(
         modifier = Modifier
@@ -506,7 +541,6 @@ private fun PageThumbnailBox(
             .aspectRatio(0.7f)
             .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceContainerHighest)
-            // KMK: the tile picked by holding and sliding is outlined, like the reader's current page
             .then(
                 if (playing) {
                     Modifier.border(BorderStroke(3.dp, MaterialTheme.colorScheme.primary), shape)
@@ -517,8 +551,27 @@ private fun PageThumbnailBox(
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        // KMK: animated pages hold still unless picked
-        AnimatedThumbnail(model = model, playing = playing, modifier = Modifier.fillMaxSize())
+        if (plain) {
+            AsyncImage(
+                model = remember(model) {
+                    ImageRequest.Builder(context)
+                        .data(model)
+                        .crossfade(true)
+                        .build()
+                },
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                alignment = Alignment.TopCenter,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            eu.kanade.presentation.components.AnimatedThumbnail(
+                model = model,
+                playing = playing,
+                onAnimated = onAnimated,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
         // KMK: the reader's play button look (dark circle, white ring, white arrow); tapping opens the reader there
         if (isVideo) {
             Box(

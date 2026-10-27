@@ -85,9 +85,8 @@ import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.i18n.stringResource
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.setValue
-import eu.kanade.presentation.components.AnimatedThumbnail
-import eu.kanade.presentation.components.holdToPlay
 
 /**
  * KMK: Reader panels that slide in from the side of the screen, like Usagi.
@@ -314,9 +313,10 @@ private fun PageGridContent(
                 visibleItems.last().index != index
             if (!shown) gridState.animateScrollToItem(index)
         }
-        // KMK: the tile picked by holding and sliding plays and has the highlight; reading on to another page
-        // hands the highlight back to the page being read
+        // KMK: the first tap on an animated page plays it and moves the frame to it, the second opens it; reading
+        // on to another page hands the frame back to the page being read
         var active by remember { mutableStateOf<Int?>(null) }
+        val animated = remember { mutableStateMapOf<Int, Boolean>() }
         LaunchedEffect(currentPage) {
             if (active != null && active != currentPage - 1) active = null
         }
@@ -326,7 +326,7 @@ private fun PageGridContent(
             contentPadding = PaddingValues(12.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxSize().holdToPlay(gridState) { active = it },
+            modifier = Modifier.fillMaxSize(),
         ) {
             itemsIndexed(
                 items = pages,
@@ -337,9 +337,14 @@ private fun PageGridContent(
                     chapter = chapter,
                     isCurrent = if (active != null) index == active else page.number == currentPage,
                     playing = index == active,
+                    onAnimated = { animated[index] = it },
                     onClick = {
-                        active = index
-                        onClickPage(page.index)
+                        if (animated[index] == true && active != index) {
+                            active = index
+                        } else {
+                            active = index.takeIf { animated[index] == true }
+                            onClickPage(page.index)
+                        }
                     },
                 )
             }
@@ -353,6 +358,7 @@ private fun PageThumbnail(
     chapter: ReaderChapter,
     isCurrent: Boolean,
     playing: Boolean,
+    onAnimated: (Boolean) -> Unit,
     onClick: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -385,8 +391,13 @@ private fun PageThumbnail(
     ) {
         when (val s = status) {
             Page.State.Ready -> {
-                // KMK: animated pages hold still unless picked
-                AnimatedThumbnail(model = page, playing = playing, modifier = Modifier.fillMaxSize())
+                // KMK: animated pages hold still with a small play button until tapped
+                eu.kanade.presentation.components.AnimatedThumbnail(
+                    model = page,
+                    playing = playing,
+                    onAnimated = onAnimated,
+                    modifier = Modifier.fillMaxSize(),
+                )
             }
             is Page.State.Error -> {
                 Icon(

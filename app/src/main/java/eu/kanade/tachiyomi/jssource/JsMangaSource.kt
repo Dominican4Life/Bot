@@ -158,6 +158,19 @@ class JsMangaSource(
                 Page(index, imageUrl = image)
             }
 
+    /**
+     * KMK: Small previews of a chapter's pages from the source's optional `getPagePreviews(chapterUrl)` (the
+     * preview panels show these instead of the full pages, like TachiyomiSY's), or null when it has none
+     */
+    suspend fun pagePreviews(chapterUrl: String): List<Page>? {
+        val rt = runtime()
+        if (!rt.has("getPagePreviews")) return null
+        return JsMapping.list(rt.call("getPagePreviews", chapterUrl))
+            .sortedBy { it.int("index") ?: 0 }
+            .mapIndexedNotNull { index, page -> page.str("imageUrl")?.let { Page(index, imageUrl = it) } }
+            .ifEmpty { null }
+    }
+
     /** The headers a video page plays with unless it names its own: the site as Referer, then the source's headers */
     private fun videoHeaders(): Map<String, String> = buildMap {
         if (baseUrl.isNotBlank()) put("Referer", "$baseUrl/")

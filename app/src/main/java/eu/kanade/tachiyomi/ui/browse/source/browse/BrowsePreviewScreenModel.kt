@@ -30,6 +30,7 @@ import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
+import exh.source.getMainSource
 import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
 import eu.kanade.tachiyomi.util.system.getBitmapOrNull
 import kotlinx.coroutines.CancellationException
@@ -246,6 +247,7 @@ class BrowsePreviewScreenModel(
                 pages = null,
                 pagesLoading = true,
                 pagesError = null,
+                previewModels = null,
             )
         }
         val httpSource = httpSource
@@ -272,9 +274,31 @@ class BrowsePreviewScreenModel(
                 }
                 return@launchIO
             }
-            mutableState.update { it.copy(localPages = null) }
+            mutableState.update { it.copy(localPages = null, previewModels = null) }
             if (httpSource == null) {
                 mutableState.update { it.copy(pagesLoading = false) }
+                return@launchIO
+            }
+            // KMK: small previews when the source has them (E-Hentai, NHentai, Lanraragi, or a JS source's
+            // getPagePreviews), like TachiyomiSY: a few small images instead of every full page
+            val previews = runCatching { previewModels(chapter, httpSource) }
+                .onFailure {
+                    if (it is CancellationException) throw it
+                    logcat(LogPriority.WARN, it) { "Page previews failed, loading the pages" }
+                }
+                .getOrNull()
+            if (!previews.isNullOrEmpty()) {
+                mutableState.update {
+                    if (it.selectedChapterId != chapter.id) {
+                        it
+                    } else {
+                        it.copy(
+                            pages = previews.indices.map { index -> Page(index) },
+                            previewModels = previews,
+                            pagesLoading = false,
+                        )
+                    }
+                }
                 return@launchIO
             }
             try {
@@ -303,6 +327,40 @@ class BrowsePreviewScreenModel(
                 }
             }
         }
+    }
+
+    /**
+     * KMK: The small previews of [chapter]'s pages, as image models, or null when the source has none: a JS
+     * source's getPagePreviews, or SY's page previews (E-Hentai, NHentai, Lanraragi) for a one-chapter title
+     */
+    private suspend fun previewModels(chapter: Chapter, httpSource: HttpSource): List<Any>? {
+        (source as? eu.kanade.tachiyomi.jssource.JsMangaSource)?.let { js ->
+            val pages = js.pagePreviews(chapter.url) ?: return null
+            return pages.map {
+                eu.kanade.tachiyomi.data.coil.SourcePageThumbnail(httpSource, "preview:" + chapter.url, it)
+            }
+        }
+        val manga = state.value.manga ?: return null
+        if (source.getMainSource<eu.kanade.tachiyomi.source.PagePreviewSource>() == null) return null
+        // Previews are of the title, so only for a title with one chapter (a gallery)
+        if (state.value.allChapters.size != 1) return null
+        val getPagePreviews = Injekt.get<eu.kanade.domain.manga.interactor.GetPagePreviews>()
+        val out = mutableListOf<Any>()
+        var page = 1
+        while (page <= MAX_PREVIEW_PAGES) {
+            when (val result = getPagePreviews.await(manga, source, page)) {
+                is eu.kanade.domain.manga.interactor.GetPagePreviews.Result.Success -> {
+                    out += result.pagePreviews
+                    if (!result.hasNextPage) break
+                }
+                is eu.kanade.domain.manga.interactor.GetPagePreviews.Result.Error -> {
+                    if (out.isEmpty()) throw result.error else break
+                }
+                else -> return null
+            }
+            page++
+        }
+        return out.ifEmpty { null }
     }
 
     // Chapter actions
@@ -543,6 +601,8 @@ class BrowsePreviewScreenModel(
         val localPages: List<LocalPageThumbnail>? = null,
         val pagesLoading: Boolean = false,
         val pagesError: String? = null,
+        /** KMK: set when the source's small previews are shown instead of the pages: one image model per page */
+        val previewModels: List<Any>? = null,
     ) {
         val selectedChapter: Chapter?
             get() = allChapters.firstOrNull { it.chapter.id == selectedChapterId }?.chapter
@@ -551,3 +611,6 @@ class BrowsePreviewScreenModel(
             get() = excludedScanlators.intersect(availableScanlators).isNotEmpty()
     }
 }
+
+// KMK: at most this many pages of previews are read (E-Hentai gives 20 or 40 per page)
+private const val MAX_PREVIEW_PAGES = 30

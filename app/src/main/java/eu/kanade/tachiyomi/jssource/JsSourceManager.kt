@@ -44,6 +44,9 @@ class JsSourceManager(private val context: Application) {
     val tags = JsTags(context, ::code)
 
     private val runtimes = HashMap<String, JsRuntime>()
+
+    /** KMK: how many JS sources are running now (for the memory lines in Logs) */
+    val runningCount: Int get() = runtimes.size
     private val runtimeLock = Mutex()
 
     // Only the sources switched on: one switched off is left out, so an APK with the same id is used instead

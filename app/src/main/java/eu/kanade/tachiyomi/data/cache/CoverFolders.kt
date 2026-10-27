@@ -275,6 +275,12 @@ object CoverFolders {
     /** Folder contents by lower-case name, kept for a short while so a folder isn't listed twice in a row */
     private val listings = ConcurrentHashMap<String, Pair<Long, Map<String, UniFile>>>()
 
+    /** KMK: folder listings kept now (for the memory lines in Logs) */
+    val listingCount: Int get() = listings.size
+
+    /** KMK: lets go of the kept folder listings (memory running low) */
+    fun dropListings() = listings.clear()
+
     private fun children(dir: UniFile): Map<String, UniFile> {
         val key = dir.uri.toString()
         val now = System.currentTimeMillis()

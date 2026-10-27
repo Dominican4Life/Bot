@@ -31,6 +31,14 @@ object BrowseTabCache {
     val filterTabs = ConcurrentHashMap<String, Any>()
     private val scrolls = ConcurrentHashMap<String, Pair<Int, Int>>()
 
+    /** KMK: Browse tabs kept now (for the memory lines in Logs) */
+    val size: Int get() = entries.size
+
+    /** KMK: drops all but the [keep] most recently used tabs (memory running low) */
+    fun trim(keep: Int) {
+        entries.keys.sortedByDescending { used[it] ?: 0L }.drop(keep).forEach { drop(it) }
+    }
+
     /** The kept list for [key], made with [create] the first time */
     fun pager(
         key: String,

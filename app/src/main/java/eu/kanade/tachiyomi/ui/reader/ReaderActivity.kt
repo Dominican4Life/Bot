@@ -547,6 +547,8 @@ class ReaderActivity : BaseActivity() {
         updateDiscordRPC(exitingReader = true)
         // <-- AM (DISCORD)
 
+        // KMK: memory lines in Logs
+        eu.kanade.tachiyomi.util.system.MemoryLog.reader(open = false)
         super.onPause()
     }
 
@@ -557,6 +559,8 @@ class ReaderActivity : BaseActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.restartReadTimer()
+        // KMK: memory lines in Logs say Reader while it's open
+        eu.kanade.tachiyomi.util.system.MemoryLog.reader(open = true)
 
         // AM (DISCORD) -->
         updateDiscordRPC(exitingReader = false)
