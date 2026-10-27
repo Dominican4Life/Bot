@@ -350,7 +350,7 @@ class BrowsePreviewScreenModel(
         while (page <= MAX_PREVIEW_PAGES) {
             when (val result = getPagePreviews.await(manga, source, page)) {
                 is eu.kanade.domain.manga.interactor.GetPagePreviews.Result.Success -> {
-                    out += result.pagePreviews
+                    out.addAll(result.pagePreviews)
                     if (!result.hasNextPage) break
                 }
                 is eu.kanade.domain.manga.interactor.GetPagePreviews.Result.Error -> {

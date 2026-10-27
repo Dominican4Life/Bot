@@ -125,6 +125,8 @@ fun AnimatedThumbnail(
     }
 }
 
+private val oldCopiesCleared = AtomicBoolean(false)
+
 private enum class Kind { GIF, WEBP, OTHER }
 
 /** What each page turned out to be, so the label is right when the picture comes back from memory */
