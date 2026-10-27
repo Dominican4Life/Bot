@@ -49,7 +49,7 @@ class GetExhSavedSearch(
             id = search.id,
             name = search.name,
             query = search.query?.nullIfBlank(),
-            filterList = filters?.let { deserializeFilters(it, originalFilters) },
+            filterList = filters?.let { deserializeFilters(it, originalFilters, "Saved search \"${search.name}\"") },
         )
     }
 
@@ -61,9 +61,9 @@ class GetExhSavedSearch(
         }.getOrNull()
     }
 
-    private fun deserializeFilters(filters: JsonArray, originalFilters: FilterList): FilterList? {
+    private fun deserializeFilters(filters: JsonArray, originalFilters: FilterList, label: String): FilterList? {
         return runCatching {
-            filterSerializer.deserialize(originalFilters, filters)
+            filterSerializer.deserialize(originalFilters, filters, label)
             originalFilters
         }.onFailure {
             xLogE("Failed to load saved search!", it)

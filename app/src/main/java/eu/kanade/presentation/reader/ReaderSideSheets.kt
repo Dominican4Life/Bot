@@ -372,6 +372,25 @@ private fun PageThumbnail(
         if (!loader.isRecycled) loader.loadPage(page)
     }
 
+    // KMK: how long a page took to arrive, written to Logs when slow (with the tile timings of the image loader)
+    var waitingSince by remember(page) { mutableStateOf(0L) }
+    LaunchedEffect(page, status) {
+        val now = android.os.SystemClock.uptimeMillis()
+        when (status) {
+            Page.State.Ready -> if (waitingSince > 0) {
+                val took = now - waitingSince
+                waitingSince = 0L
+                if (took >= 1500) {
+                    logcat.logcat("pages", logcat.LogPriority.INFO) {
+                        "Page ${page.number} downloaded for the Pages panel in ${took / 1000.0} s"
+                    }
+                }
+            }
+            is Page.State.Error -> waitingSince = 0L
+            else -> if (waitingSince == 0L) waitingSince = now
+        }
+    }
+
     val shape = RoundedCornerShape(10.dp)
     Box(
         modifier = Modifier

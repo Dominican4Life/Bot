@@ -319,6 +319,8 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
             // KMK <--
 
             // Coil spawns a new thread for every image load by default
+            // KMK: covers that couldn't be shown, and slow page tiles, are written to Logs
+            eventListenerFactory(eu.kanade.tachiyomi.data.coil.ImageEvents)
             fetcherCoroutineContext(Dispatchers.IO.limitedParallelism(8))
             decoderCoroutineContext(Dispatchers.IO.limitedParallelism(3))
         }

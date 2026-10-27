@@ -16,7 +16,6 @@ import kotlinx.serialization.json.long
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 import logcat.LogPriority
-import logcat.asLog
 import tachiyomi.core.common.util.system.logcat
 import kotlin.reflect.KMutableProperty1
 import kotlin.reflect.full.isSubclassOf
@@ -70,19 +69,37 @@ class FilterSerializer {
             } ?: throw IllegalArgumentException("Cannot serialize this Filter object!")
     }
 
-    fun deserialize(filters: FilterList, json: JsonArray) {
-        filters.filterIsInstance<Filter<Any?>>().zip(json).forEach { (filter, obj) ->
-            // KMK -->
+    /**
+     * KMK: Puts the saved values back into [filters]. A saved value that doesn't fit the filter at its place (the
+     * source's filters changed since, or another source with the same id is installed) is left at its default.
+     * Those are counted and written to Logs as one short line per saved set, once, instead of a full error for each
+     * filter every time. [label] names the saved set in that line. Returns how many didn't fit.
+     */
+    fun deserialize(filters: FilterList, json: JsonArray, label: String? = null): Int {
+        var failed = 0
+        var first: Exception? = null
+        val pairs = filters.filterIsInstance<Filter<Any?>>().zip(json)
+        pairs.forEach { (filter, obj) ->
             try {
-                // KMK <--
                 deserialize(filter, obj.jsonObject)
-                // KMK -->
             } catch (e: Exception) {
-                logcat(LogPriority.ERROR) { e.asLog() }
+                failed++
+                if (first == null) first = e
             }
-            // KMK <--
         }
+        if (failed > 0 && reported.add("${label.orEmpty()}#${json.hashCode()}")) {
+            val reason = first?.let { "${it.javaClass.simpleName}: ${it.message}" }.orEmpty()
+            logcat(LogPriority.WARN) {
+                "${label ?: "Saved filters"}: $failed of ${pairs.size} saved filters don't fit this source's filters " +
+                    "now (it changed, or another source with the same id is installed); left at their defaults. " +
+                    "First: $reason"
+            }
+        }
+        return failed
     }
+
+    /** KMK: saved sets already reported in Logs this run */
+    private val reported = java.util.Collections.synchronizedSet(HashSet<String>())
 
     fun deserialize(filter: Filter<Any?>, json: JsonObject) {
         val serializer = serializers

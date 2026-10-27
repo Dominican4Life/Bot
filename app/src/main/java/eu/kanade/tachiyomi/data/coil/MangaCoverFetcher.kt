@@ -197,6 +197,30 @@ class MangaCoverFetcher(
             ) {
                 return fileLoader(libraryCoverCacheFile)
             }
+
+            // A cover outside the library is downloaded once into the image cache, however many covers on screen ask
+            // for it at the same time (Popular and Latest share titles, Browse keeps several tabs, a wide cover is
+            // loaded again in its wide shape); they all show the saved copy. Two at once used to clash: the second
+            // couldn't save, read the download while the cover-colour reader read it too, and showed a broken cover
+            // (then downloaded it again next time)
+            if (libraryCoverCacheFile == null &&
+                imageLoader.diskCache != null &&
+                options.diskCachePolicy.readEnabled &&
+                options.diskCachePolicy.writeEnabled &&
+                options.networkCachePolicy.readEnabled
+            ) {
+                SharedCoverDownloads.obtain(diskCacheKey) { downloadIntoDiskCache() }.await()
+                val saved = readFromDiskCache()
+                if (saved != null) {
+                    snapshot = saved
+                    setRatioAndColorsInScope(mangaCover, bufferedSource = saved.toImageSource().source())
+                    return SourceFetchResult(
+                        source = saved.toImageSource(),
+                        mimeType = "image/*",
+                        dataSource = DataSource.NETWORK,
+                    )
+                }
+            }
             // KMK <--
 
             // Fetch from network
@@ -225,17 +249,15 @@ class MangaCoverFetcher(
                 }
 
                 // KMK -->
-                setRatioAndColorsInScope(
-                    mangaCover,
-                    bufferedSource = ImageSource(
-                        source = responseBody.source(),
-                        fileSystem = FileSystem.SYSTEM,
-                    ).source(),
-                )
+                // Read whole first: the cover-colour reader gets its own copy, so the two never read one download
+                // and spoil each other's bytes (a broken cover)
+                val bytes = okio.Buffer()
+                responseBody.source().use { bytes.writeAll(it) }
+                setRatioAndColorsInScope(mangaCover, bufferedSource = bytes.copy())
                 // KMK <--
                 // Read from response if cache is unused or unusable
                 return SourceFetchResult(
-                    source = ImageSource(source = responseBody.source(), fileSystem = FileSystem.SYSTEM),
+                    source = ImageSource(source = bytes, fileSystem = FileSystem.SYSTEM),
                     mimeType = "image/*",
                     dataSource = if (response.cacheResponse != null) DataSource.DISK else DataSource.NETWORK,
                 )
@@ -303,6 +325,7 @@ class MangaCoverFetcher(
             throw e
         } catch (e: Exception) {
             coverFailed(sourceId, "${e.javaClass.simpleName}: ${e.message}")
+            ImageEvents.markLogged(e)
             throw e
         }
         // KMK <--
@@ -314,11 +337,11 @@ class MangaCoverFetcher(
             if (blocked != null) {
                 BotCheckReporter.report(response.request.url.toString(), blocked, sourceId)
                 response.close()
-                throw SiteBlockedException(blocked, response.message)
+                throw SiteBlockedException(blocked, response.message).also { ImageEvents.markLogged(it) }
             }
             // KMK <--
             response.close()
-            throw IOException(response.message)
+            throw IOException(response.message).also { ImageEvents.markLogged(it) }
         }
         return response
     }
@@ -403,6 +426,57 @@ class MangaCoverFetcher(
             null
         }
     }
+
+    // KMK -->
+    /** Downloads the cover into the image cache, unless it's there already (an earlier download saved it) */
+    private suspend fun downloadIntoDiskCache() {
+        val diskCache = imageLoader.diskCache ?: return
+        diskCache.openSnapshot(diskCacheKey)?.let {
+            it.close()
+            return
+        }
+        val response = executeNetworkRequest()
+        response.use {
+            val editor = diskCache.openEditor(diskCacheKey) ?: return
+            try {
+                diskCache.fileSystem.write(editor.data) {
+                    response.body.source().readAll(this)
+                }
+                editor.commit()
+            } catch (e: Exception) {
+                runCatching { editor.abort() }
+                throw e
+            }
+        }
+    }
+
+    /** One download per cover outside the library at a time; it finishes even when the cover scrolls away */
+    private object SharedCoverDownloads {
+        private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        private val gate = Semaphore(PARALLEL_DOWNLOADS)
+        private val inFlight = ConcurrentHashMap<String, Deferred<Unit>>()
+
+        fun obtain(key: String, block: suspend () -> Unit): Deferred<Unit> {
+            inFlight[key]?.let { return it }
+            val job = scope.async(start = CoroutineStart.LAZY) {
+                try {
+                    gate.withPermit { block() }
+                } finally {
+                    inFlight.remove(key)
+                }
+            }
+            val existing = inFlight.putIfAbsent(key, job)
+            if (existing != null) {
+                job.cancel()
+                return existing
+            }
+            job.start()
+            return job
+        }
+
+        private const val PARALLEL_DOWNLOADS = 8
+    }
+    // KMK <--
 
     private fun writeToDiskCache(
         response: Response,

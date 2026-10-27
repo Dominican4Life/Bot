@@ -115,6 +115,10 @@ internal class HttpPageLoader(
 
         // Check if the image has been deleted
         if (page.status == Page.State.Ready && imageUrl != null && !chapterCache.isImageInCache(imageUrl)) {
+            // KMK: written to Logs, as it means downloading the page again
+            logcat.logcat("pages", logcat.LogPriority.INFO) {
+                "Page ${page.number}: its file is no longer in the reader cache, downloading it again"
+            }
             page.status = Page.State.Queue
         }
 

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -35,6 +36,7 @@ import coil3.decode.Decoder
 import coil3.fetch.SourceFetchResult
 import coil3.gif.AnimatedImageDecoder
 import coil3.gif.GifDecoder
+import coil3.memory.MemoryCache
 import coil3.request.ImageRequest
 import coil3.request.Options
 import coil3.request.crossfade
@@ -69,6 +71,8 @@ fun AnimatedThumbnail(
     // Animated or not, read from the file's first bytes while it decodes (remembered per page)
     var animated by remember(model) { mutableStateOf(key?.let { kinds[it] }?.animated) }
     var drawable by remember(model) { mutableStateOf<Drawable?>(null) }
+    // KMK: the still frame's place in memory, shown under the frame while the moving picture loads (no blank tile)
+    var stillKey by remember(model) { mutableStateOf<MemoryCache.Key?>(null) }
     // The copies r66–r70 kept of shown pages aren't used any more: cleared once, to give the space back
     LaunchedEffect(Unit) {
         if (oldCopiesCleared.compareAndSet(false, true)) {
@@ -88,6 +92,7 @@ fun AnimatedThumbnail(
                     .data(model)
                     .crossfade(!play)
                     .memoryCacheKeyExtra("thumb_play", play.toString())
+                    .apply { if (play) placeholderMemoryCacheKey(stillKey) }
                     .decoderFactory(
                         KindDecoderFactory(key, animate = play) { kind -> animated = kind.animated },
                     )
@@ -97,7 +102,9 @@ fun AnimatedThumbnail(
             contentScale = ContentScale.Crop,
             alignment = Alignment.TopCenter,
             onState = { state ->
-                drawable = (state as? AsyncImagePainter.State.Success)?.result?.image?.asDrawable(context.resources)
+                val success = state as? AsyncImagePainter.State.Success
+                drawable = success?.result?.image?.asDrawable(context.resources)
+                if (success != null && !play) stillKey = success.result.memoryCacheKey
             },
             modifier = Modifier.matchParentSize(),
         )
@@ -113,6 +120,17 @@ fun AnimatedThumbnail(
                 animatable?.stop()
                 if (animatable != null) AnimatedTiles.count.decrementAndGet()
             }
+        }
+        if (play && animatable == null) {
+            // KMK: the moving picture is still loading: a small circle over the still frame
+            CircularProgressIndicator(
+                color = Color.White,
+                trackColor = Color.Black.copy(alpha = 0.4f),
+                strokeWidth = 2.5.dp,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .size(28.dp),
+            )
         }
         if (animated == true && !play) {
             // The reader's video play button (dark circle, white ring, white arrow), smaller
