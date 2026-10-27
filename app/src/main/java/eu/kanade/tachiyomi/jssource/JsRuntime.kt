@@ -94,6 +94,8 @@ class JsRuntime private constructor(
 
     fun close() {
         runCatching { qjs.close() }
+        // KMK: and its parsed pages go with it (a tag download's copy kept up to 24 big pages after it finished)
+        runCatching { host.clearPages() }
     }
 
     class JsException(message: String, cause: Throwable? = null) : Exception(message, cause)
@@ -108,6 +110,9 @@ class JsRuntime private constructor(
     ) {
         private val network: NetworkHelper by injectLazy()
         private val pages = JsHtmlPages()
+
+        /** KMK: lets go of the parsed pages (the runtime shutting down) */
+        fun clearPages() = pages.clear()
         val console = ArrayDeque<String>()
         var rateLimitMs: Long = 0L
         private var lastRequestAt = 0L

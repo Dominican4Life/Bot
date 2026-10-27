@@ -272,6 +272,30 @@ internal object JsCompress {
  */
 internal class JsHtmlPages(private val maxPages: Int = 24) {
 
+    init {
+        synchronized(live) { live[this] = true }
+    }
+
+    /** KMK: lets go of every kept page (the source's copy shutting down) */
+    @Synchronized
+    fun clear() {
+        pages.clear()
+        idByHtml.clear()
+    }
+
+    @Synchronized
+    private fun stats(): Pair<Int, Long> = pages.size to pages.values.sumOf { it.html.length.toLong() * 2 }
+
+    companion object {
+        private val live = java.util.WeakHashMap<JsHtmlPages, Boolean>()
+
+        /** KMK: parsed pages kept by every JS source right now, and the size of their page text (for Logs) */
+        fun totals(): Pair<Int, Long> {
+            val all = synchronized(live) { live.keys.toList() }
+            return all.fold(0 to 0L) { (n, b), p -> p.stats().let { (pn, pb) -> n + pn to b + pb } }
+        }
+    }
+
     private class Page(val html: String, val document: Document) {
         val elements = mutableListOf<Element>()
         val ids = IdentityHashMap<Element, Int>()

@@ -105,6 +105,11 @@ object MemoryLog {
         runCatching { add("Browse tabs ${BrowseTabCache.size}") }
         runCatching { add("folder listings ${CoverFolders.listingCount}") }
         runCatching { add("JS sources running ${Injekt.get<JsSourceManager>().runningCount}") }
+        runCatching {
+            val (pages, bytes) = eu.kanade.tachiyomi.jssource.JsHtmlPages.totals()
+            add("JS parsed pages $pages (page text ${bytes / MB} MB)")
+        }
+        runCatching { add("animated tiles ${eu.kanade.presentation.components.AnimatedTiles.count.get()}") }
     }.joinToString(", ")
 
     /** Memory running low: let go of what can be loaded again */

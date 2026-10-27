@@ -107,7 +107,12 @@ fun AnimatedThumbnail(
             if (play) animatable.start() else animatable.stop()
         }
         DisposableEffect(animatable) {
-            onDispose { animatable?.stop() }
+            // KMK: counted for the memory lines in Logs (each holds its whole animated file)
+            if (animatable != null) AnimatedTiles.count.incrementAndGet()
+            onDispose {
+                animatable?.stop()
+                if (animatable != null) AnimatedTiles.count.decrementAndGet()
+            }
         }
         if (animated == true && !play) {
             // The reader's video play button (dark circle, white ring, white arrow), smaller
@@ -133,6 +138,11 @@ fun AnimatedThumbnail(
 }
 
 private val oldCopiesCleared = AtomicBoolean(false)
+
+/** KMK: page tiles showing a moving picture right now (for the memory lines in Logs) */
+object AnimatedTiles {
+    val count = java.util.concurrent.atomic.AtomicInteger(0)
+}
 
 private enum class Kind(val animated: Boolean) {
     GIF(true),
