@@ -26,7 +26,8 @@ import java.util.concurrent.ConcurrentHashMap
  * KMK: Tag lists for a source's autocomplete filters, from its `getTags()`.
  *
  * getTags() is run in the background, in a runtime of its own so Browse isn't held up while it reads the site, and
- * what it returns is kept on the device and read again after [MAX_AGE_MS]. The filter boxes read the lists through
+ * what it returns is kept on the device. It's read once: only "Refresh tag list" in the source's settings reads it
+ * again. The filter boxes read the lists through
  * [suggestions], which follows the lists as they arrive: a box made before the download finished still gets them.
  *
  * getTags() returns `{ listName: ["tag", ...], ... }`. A plain array is one list every box uses.
@@ -61,7 +62,7 @@ class JsTags(
             ?.also { cache[key] = it }
     }.getOrNull()
 
-    /** Gets the tag lists ready: reads them from the site in the background when they're missing or old */
+    /** Gets the tag lists ready: reads them from the site in the background when there are none yet */
     fun ensure(info: JsSourceInfo) {
         if (!info.hasTags) return
         val failed = failedAt[info.key]
@@ -88,8 +89,8 @@ class JsTags(
         val asked = System.currentTimeMillis()
         return locks.getOrPut(info.key) { Mutex() }.withLock {
             val saved = cached(info.key)
-            // Fresh enough, or someone else read the site while this waited
-            if (saved != null && (saved.at >= asked || (!force && asked - saved.at < MAX_AGE_MS))) {
+            // Already read (only Refresh reads again), or someone else read the site while this waited
+            if (saved != null && (saved.at >= asked || !force)) {
                 return@withLock saved.count
             }
             eu.kanade.tachiyomi.util.system.MemoryLog.event("${info.name}: tag download started")
@@ -148,8 +149,6 @@ class JsTags(
     }
 
     companion object {
-        /** Tag lists are read from the site again after this long */
-        const val MAX_AGE_MS = 7L * 24 * 60 * 60 * 1000
         private const val RETRY_AFTER_FAILURE_MS = 60L * 60 * 1000
         private const val MAX_PER_LIST = 100_000
 
@@ -179,7 +178,7 @@ class JsTags(
         const val SHARED = "*"
     }
 
-    /** "Refresh tag list" in the source's settings */
+    /** "Refresh tag list" in the source's settings, inside the source's tag section when it has one */
     fun addRefreshButton(screen: PreferenceScreen, info: JsSourceInfo) {
         val button = Preference(screen.context).apply {
             key = "js_refresh_tags"
@@ -199,13 +198,16 @@ class JsTags(
             }
             true
         }
-        screen.addPreference(button)
+        val tagSection = (0 until screen.preferenceCount).map { screen.getPreference(it) }
+            .filterIsInstance<androidx.preference.PreferenceCategory>()
+            .lastOrNull { it.title?.contains("tag", ignoreCase = true) == true }
+        (tagSection ?: screen).addPreference(button)
     }
 
     private fun summaryOf(cached: Cached?): String =
         if (cached == null || cached.at == 0L) {
             "Suggestions for the tag boxes in Filter. Not read yet"
         } else {
-            "${cached.count} tags, read ${DateUtils.getRelativeTimeSpanString(cached.at)}. Read again every week"
+            "${cached.count} tags, read ${DateUtils.getRelativeTimeSpanString(cached.at)}. Press to read them again"
         }
 }
