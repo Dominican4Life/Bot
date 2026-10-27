@@ -336,6 +336,9 @@ class BrowsePreviewScreenModel(
     private suspend fun previewModels(chapter: Chapter, httpSource: HttpSource): List<Any>? {
         (source as? eu.kanade.tachiyomi.jssource.JsMangaSource)?.let { js ->
             val pages = js.pagePreviews(chapter.url) ?: return null
+            eu.kanade.tachiyomi.util.system.MemoryLog.event(
+                "previews: ${source.name}, ${pages.size} from getPagePreviews",
+            )
             return pages.map {
                 eu.kanade.tachiyomi.data.coil.SourcePageThumbnail(httpSource, "preview:" + chapter.url, it)
             }
@@ -345,6 +348,7 @@ class BrowsePreviewScreenModel(
         // Previews are of the title, so only for a title with one chapter (a gallery)
         if (state.value.allChapters.size != 1) return null
         val getPagePreviews = Injekt.get<eu.kanade.domain.manga.interactor.GetPagePreviews>()
+        eu.kanade.tachiyomi.util.system.MemoryLog.event("previews started: ${source.name}, ${manga.title.take(60)}")
         val out = mutableListOf<Any>()
         var page = 1
         while (page <= MAX_PREVIEW_PAGES) {
@@ -360,6 +364,9 @@ class BrowsePreviewScreenModel(
             }
             page++
         }
+        eu.kanade.tachiyomi.util.system.MemoryLog.event(
+            "previews done: ${out.size} previews from ${minOf(page, MAX_PREVIEW_PAGES)} preview page(s)",
+        )
         return out.ifEmpty { null }
     }
 

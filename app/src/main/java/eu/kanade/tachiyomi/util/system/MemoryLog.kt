@@ -15,7 +15,8 @@ import uy.kohesive.injekt.api.get
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * KMK: Writes how much of the app's memory is in use to Logs ("Memory") every minute, and when the reader opens or
+ * KMK: Writes how much of the app's memory is in use to Logs ("Memory") every minute (every 10 s while it climbs
+ * fast or is high), at screen changes and heavy jobs ([event]), and when the reader opens or
  * closes, with the screen shown and what the app's own caches hold, so a session that runs out of memory shows what
  * kept growing.
  *
@@ -33,11 +34,43 @@ object MemoryLog {
     fun start() {
         if (!started.compareAndSet(false, true)) return
         CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
+            var lastLineAt = 0L
+            var lastLogged = 0L
             while (true) {
-                delay(EVERY_MS)
-                check()
+                delay(SAMPLE_MS)
+                runCatching {
+                    val (used, max) = usage()
+                    val now = System.currentTimeMillis()
+                    // Every minute, and every 10 seconds while memory climbs fast or is high
+                    val climbing = used - lastLogged >= CLIMB_MB
+                    val high = used * 100 / max.coerceAtLeast(1) >= HIGH_PERCENT
+                    if (now - lastLineAt >= EVERY_MS || climbing || high) {
+                        line(if (climbing) "climbing +${used - lastLogged} MB" else null)
+                        lastLineAt = now
+                        lastLogged = used
+                    }
+                    if (used >= max * TRIM_AT) trim(used, max)
+                }
             }
         }
+    }
+
+    /**
+     * A heavy job starting or ending (gallery previews, a tag download, a page opened…), with the memory in use at
+     * that moment, so a jump in the memory lines can be matched to what was running
+     */
+    fun event(what: String) {
+        runCatching {
+            val (used, max) = usage()
+            AppLog.add('I', "Memory", "$what · $used / $max MB in use")
+        }
+    }
+
+    /** The screen changed: one short line, so the memory lines can be matched to screens */
+    fun screen(name: String) {
+        if (name == currentScreen) return
+        currentScreen = name
+        event("screen: $name")
     }
 
     /** The reader opened (true) or closed: a line right away, labelled Reader while it's open */
@@ -51,14 +84,6 @@ object MemoryLog {
             currentScreen = beforeReader
         }
         runCatching { line(if (open) "reader opened" else "reader closed") }
-    }
-
-    private fun check() {
-        runCatching {
-            val (used, max) = usage()
-            line(null)
-            if (used >= max * TRIM_AT) trim(used, max)
-        }
     }
 
     private fun usage(): Pair<Long, Long> {
@@ -96,6 +121,9 @@ object MemoryLog {
     fun nameOf(key: String): String = key.substringAfterLast('#').substringAfterLast('.')
 
     private const val EVERY_MS = 60_000L
+    private const val SAMPLE_MS = 10_000L
+    private const val CLIMB_MB = 40L
+    private const val HIGH_PERCENT = 60L
     private const val MB = 1024L * 1024L
     private const val TRIM_AT = 0.75
 }

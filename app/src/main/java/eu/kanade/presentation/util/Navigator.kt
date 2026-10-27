@@ -95,8 +95,9 @@ fun ScreenTransition(
         label = "screen-transition",
     ) { screen ->
         // KMK: for the memory lines in Logs
-        eu.kanade.tachiyomi.util.system.MemoryLog.currentScreen =
-            eu.kanade.tachiyomi.util.system.MemoryLog.nameOf(screen.key)
+        eu.kanade.tachiyomi.util.system.MemoryLog.screen(
+            eu.kanade.tachiyomi.util.system.MemoryLog.nameOf(screen.key),
+        )
         if (isPreviewBuildType) {
             logcat(LogPriority.ERROR) { "ScreenTransition: ${screen.key}" }
         }

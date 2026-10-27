@@ -92,8 +92,10 @@ class JsTags(
             if (saved != null && (saved.at >= asked || (!force && asked - saved.at < MAX_AGE_MS))) {
                 return@withLock saved.count
             }
+            eu.kanade.tachiyomi.util.system.MemoryLog.event("${info.name}: tag download started")
             try {
                 val fresh = Cached(System.currentTimeMillis(), fetch(info))
+                eu.kanade.tachiyomi.util.system.MemoryLog.event("${info.name}: tag download done (${fresh.count} tags)")
                 cache[info.key] = fresh
                 file(info.key).writeText(jsJson.encodeToString(Cached.serializer(), fresh))
                 failedAt.remove(info.key)
@@ -101,6 +103,7 @@ class JsTags(
                 fresh.count
             } catch (e: Throwable) {
                 failedAt[info.key] = System.currentTimeMillis()
+                eu.kanade.tachiyomi.util.system.MemoryLog.event("${info.name}: tag download stopped")
                 AppLog.add('W', "js", "${info.name}: getTags failed: ${e.message}")
                 throw e
             }
