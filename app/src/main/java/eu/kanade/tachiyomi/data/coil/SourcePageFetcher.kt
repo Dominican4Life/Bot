@@ -25,15 +25,65 @@ data class SourcePageThumbnail(
 class SourcePageFetcher(
     private val data: SourcePageThumbnail,
     private val options: Options,
+    // KMK: kept in the image disk cache, so a page shown once loads from the tablet after that
+    private val imageLoader: ImageLoader,
 ) : Fetcher {
 
+    private val diskCacheKey: String
+        get() = "source-page;${data.source.id};${data.chapterUrl};${data.page.index}"
+
     override suspend fun fetch(): FetchResult = withIOContext {
+        val diskCache = imageLoader.diskCache
+        // KMK: a page downloaded before (for its still picture) plays from the copy on the tablet: before, tapping
+        // an animated page downloaded the whole file again (5-20 s for a big one)
+        diskCache?.openSnapshot(diskCacheKey)?.let { snapshot ->
+            return@withIOContext SourceFetchResult(
+                source = ImageSource(
+                    file = snapshot.data,
+                    fileSystem = diskCache.fileSystem,
+                    diskCacheKey = diskCacheKey,
+                    closeable = snapshot,
+                ),
+                mimeType = null,
+                dataSource = DataSource.DISK,
+            )
+        }
         val page = data.page
         if (page.imageUrl.isNullOrEmpty()) {
             page.imageUrl = data.source.getImageUrl(page)
         }
         val response = data.source.getImage(page)
         val body = checkNotNull(response.body) { "Empty response for page ${page.number}" }
+        val editor = diskCache?.openEditor(diskCacheKey)
+        if (diskCache != null && editor != null) {
+            val snapshot = try {
+                diskCache.fileSystem.write(editor.data) { body.source().use { writeAll(it) } }
+                editor.commitAndOpenSnapshot()
+            } catch (e: Exception) {
+                runCatching { editor.abort() }
+                throw e
+            } finally {
+                runCatching { response.close() }
+            }
+            if (snapshot != null) {
+                return@withIOContext SourceFetchResult(
+                    source = ImageSource(
+                        file = snapshot.data,
+                        fileSystem = diskCache.fileSystem,
+                        diskCacheKey = diskCacheKey,
+                        closeable = snapshot,
+                    ),
+                    mimeType = body.contentType()?.toString(),
+                    dataSource = DataSource.NETWORK,
+                )
+            }
+            // The copy couldn't be opened again: load it once more, straight
+            return@withIOContext SourceFetchResult(
+                source = ImageSource(source = data.source.getImage(page).body.source(), fileSystem = options.fileSystem),
+                mimeType = body.contentType()?.toString(),
+                dataSource = DataSource.NETWORK,
+            )
+        }
         SourceFetchResult(
             source = ImageSource(
                 source = body.source(),
@@ -46,7 +96,7 @@ class SourcePageFetcher(
 
     class Factory : Fetcher.Factory<SourcePageThumbnail> {
         override fun create(data: SourcePageThumbnail, options: Options, imageLoader: ImageLoader): Fetcher {
-            return SourcePageFetcher(data, options)
+            return SourcePageFetcher(data, options, imageLoader)
         }
     }
 }
