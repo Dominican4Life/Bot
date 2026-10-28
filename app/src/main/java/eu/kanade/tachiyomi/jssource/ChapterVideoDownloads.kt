@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.jssource
 import android.app.Application
 import android.net.Uri
 import com.arthenica.ffmpegkit.FFmpegKit
+import com.arthenica.ffmpegkit.LogCallback
 import com.arthenica.ffmpegkit.StatisticsCallback
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.animesource.model.Video
@@ -40,6 +41,7 @@ import kotlin.coroutines.resumeWithException
 object ChapterVideoDownloads {
 
     private const val MARK = ".video."
+    private val DURATION = Regex("""Duration: (\d+):(\d{2}):(\d{2}(?:\.\d+)?)""")
     private const val TMP = ".tmp"
     private const val MAX_TRIES = 3
     private const val BUFFER = 64 * 1024
@@ -87,10 +89,21 @@ object ChapterVideoDownloads {
     }
 
     /** Saves every video page of a chapter; failures are logged and skipped */
-    suspend fun saveAll(pages: List<Page>, dir: UniFile, filenameOf: (Page) -> String, chapterName: String) {
-        pages.filter { ReaderVideos.isVideo(it.url) }.forEach { page ->
+    suspend fun saveAll(
+        pages: List<Page>,
+        dir: UniFile,
+        filenameOf: (Page) -> String,
+        chapterName: String,
+        // KMK: 0-100 over all the chapter's videos, for the download's progress
+        onPercent: (Int) -> Unit = {},
+    ) {
+        val videoPages = pages.filter { ReaderVideos.isVideo(it.url) }
+        videoPages.forEachIndexed { index, page ->
+            onPercent(index * 100 / videoPages.size)
             try {
-                save(page, dir, filenameOf(page))
+                save(page, dir, filenameOf(page)) { percent ->
+                    onPercent((index * 100 + percent.coerceIn(0, 100)) / videoPages.size)
+                }
                 logcat(LogPriority.INFO) { "Chapter video saved: $chapterName, page ${page.number}" }
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
@@ -99,6 +112,7 @@ object ChapterVideoDownloads {
                 }
             }
         }
+        onPercent(100)
     }
 
     private fun isStream(video: Video): Boolean {
@@ -146,12 +160,13 @@ object ChapterVideoDownloads {
     }
 
     private suspend fun ffmpegSave(stream: Video, headers: Headers, dir: UniFile, prefix: String, onPercent: (Int) -> Unit) {
-        // KMK: a stream holding several qualities is saved in one (the preferred), not all of them in one file
+        // KMK: a stream holding several qualities is saved in one (the best), not all of them in one file
         val video = eu.kanade.tachiyomi.ui.player.loader.HlsVariants.forDownload(stream)
         val headerBlock = headers.joinToString("") { (name, value) -> "$name: $value\r\n" }
         // ffmpeg writes to app storage first, then the file is copied into the chapter folder
         val workDir = File(context.cacheDir, "chapter_video_download").apply { mkdirs() }
         val out = File(workDir, "${System.currentTimeMillis()}.mkv")
+        val durationMs = java.util.concurrent.atomic.AtomicLong(0L)
         val args = buildList {
             if (headerBlock.isNotEmpty()) {
                 add("-headers")
@@ -176,8 +191,19 @@ object ChapterVideoDownloads {
                             continuation.resumeWithException(IllegalStateException("ffmpeg failed: $tail"))
                         }
                     },
-                    null,
-                    StatisticsCallback { stats -> onPercent((stats.time / 1000).toInt()) },
+                    // KMK: the length ffmpeg reads ("Duration: 00:24:01.50") turns its time into a percent
+                    LogCallback { log ->
+                        if (durationMs.get() <= 0L) {
+                            DURATION.find(log.message.orEmpty())?.destructured?.let { (h, m, sec) ->
+                                val ms = (h.toLong() * 3600 + m.toLong() * 60) * 1000 + (sec.toDouble() * 1000).toLong()
+                                durationMs.set(ms)
+                            }
+                        }
+                    },
+                    StatisticsCallback { stats ->
+                        val total = durationMs.get()
+                        if (total > 0L) onPercent((stats.time * 100 / total).toInt().coerceIn(0, 99))
+                    },
                 )
                 continuation.invokeOnCancellation { session.cancel() }
             }

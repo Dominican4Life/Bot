@@ -52,7 +52,8 @@ data class Download(
         }
 
         val progressFlows = pages!!.map(Page::progressFlow)
-        emitAll(combine(progressFlows) { it.average().toInt() })
+        val pagesFlow = combine(progressFlows) { it.average() }
+        emitAll(combine(pagesFlow, videoProgressFlow) { pages, video -> overall(pages, video) })
     }
         .distinctUntilChanged()
         .debounce(50)
@@ -60,8 +61,23 @@ data class Download(
     val progress: Int
         get() {
             val pages = pages ?: return 0
-            return pages.map(Page::progress).average().toInt()
+            return overall(pages.map(Page::progress).average(), videoProgressFlow.value)
         }
+
+    /**
+     * KMK: a chapter with video pages saves their videos after its pictures. Its pictures fill the first half of
+     * the progress and the videos the rest, so it doesn't look done while a video is still downloading.
+     */
+    @Transient
+    @Volatile
+    var hasVideos = false
+
+    /** KMK: 0-100 over the chapter's videos (see [hasVideos]) */
+    @Transient
+    val videoProgressFlow = MutableStateFlow(0)
+
+    private fun overall(pages: Double, video: Int): Int =
+        if (hasVideos) (pages / 2 + video.coerceIn(0, 100) / 2.0).toInt() else pages.toInt()
 
     enum class State(val value: Int) {
         NOT_DOWNLOADED(0),

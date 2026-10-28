@@ -21,7 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -251,7 +251,9 @@ private fun computeFlatVideoLazyIndex(
         if (hosterIdx == targetHosterIndex) {
             if (hoster !is HosterState.Ready) return -1
             if (expandedState.getOrNull(hosterIdx) != true) return -1
-            return lazyIndex + 1 + targetVideoIndex
+            // KMK: the menu shows the videos in QualityOrder
+            val position = QualityOrder.of(hoster.videoList).indexOf(targetVideoIndex)
+            return if (position < 0) -1 else lazyIndex + 1 + position
         }
         lazyIndex++
         if (hoster is HosterState.Ready && expandedState.getOrNull(hosterIdx) == true) {
@@ -322,7 +324,8 @@ fun QualitySheetVideoContent(
     }
     val scrollTarget = remember(defaultVideoIndex) {
         if (defaultVideoIndex >= 0) {
-            DefaultScrollTarget(hosterIndex = -1, videoIndex = defaultVideoIndex)
+            // KMK: scrolled to by its place in the menu (QualityOrder)
+            DefaultScrollTarget(hosterIndex = -1, videoIndex = QualityOrder.of(videoList).indexOf(defaultVideoIndex))
         } else {
             null
         }
@@ -338,14 +341,17 @@ fun QualitySheetVideoContent(
         onEnsureHosterExpanded = {},
     )
 
+    // KMK: highest quality first
+    val menuOrder = remember(videoList) { QualityOrder.of(videoList) }
     LazyColumn(
         state = listState,
         modifier = modifier.fillMaxWidth(),
     ) {
-        itemsIndexed(
-            items = videoList,
-            key = { index, video -> "video-$index-${video.url.hashCode()}" },
-        ) { videoIdx, video ->
+        items(
+            items = menuOrder,
+            key = { videoIdx -> "video-$videoIdx-${videoList[videoIdx].url.hashCode()}" },
+        ) { videoIdx ->
+            val video = videoList[videoIdx]
             VideoTrack(
                 video = video,
                 videoState = videoState[videoIdx],
@@ -483,15 +489,17 @@ internal fun LazyListScope.hosterContent(
         }
 
         if (hoster is HosterState.Ready && isExpanded) {
-            itemsIndexed(
-                items = hoster.videoList,
-                key = { videoIdx, video -> "video-$hosterIdx-$videoIdx-${video.videoUrl.hashCode()}" },
-            ) { videoIdx, video ->
+            // KMK: highest quality first; videoIdx stays the list's own
+            items(
+                items = QualityOrder.of(hoster.videoList),
+                key = { videoIdx -> "video-$hosterIdx-$videoIdx-${hoster.videoList[videoIdx].videoUrl.hashCode()}" },
+            ) { videoIdx ->
+                val video = hoster.videoList[videoIdx]
                 VideoTrack(
                     video = video,
                     videoState = hoster.videoState[videoIdx],
                     selected = selectedVideoIndex == Pair(hosterIdx, videoIdx),
-                                      defaultSelected = highlightDefaultStream && videoIdx == defaultVideoIdx,
+                    defaultSelected = highlightDefaultStream && videoIdx == defaultVideoIdx,
                     onClick = { onClickVideo(hosterIdx, videoIdx) },
                     noHoster = false,
                 )

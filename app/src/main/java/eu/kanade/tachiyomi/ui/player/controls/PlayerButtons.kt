@@ -62,6 +62,7 @@ import eu.kanade.tachiyomi.ui.player.VideoAspect
 import eu.kanade.tachiyomi.ui.player.controls.components.AutoPlaySwitch
 import eu.kanade.tachiyomi.ui.player.controls.components.ControlsButton
 import eu.kanade.tachiyomi.ui.player.controls.components.CurrentChapter
+import eu.kanade.tachiyomi.ui.player.controls.components.sheets.HosterState
 import eu.kanade.tachiyomi.ui.player.controls.components.sheets.toFixed
 import eu.kanade.tachiyomi.ui.player.getIcon
 import tachiyomi.i18n.ank.AMR
@@ -168,7 +169,10 @@ fun RenderPlayerButton(
             )
         }
         PlayerButton.QualityTracks -> {
-            if (isEpisodeOnline == true) {
+            // KMK: also for a downloaded video that holds several qualities
+            val hosters by viewModel.hosterState.collectAsState()
+            val severalVideos = hosters.sumOf { (it as? HosterState.Ready)?.videoList?.size ?: 0 } > 1
+            if (isEpisodeOnline == true || severalVideos) {
                 ControlsButton(
                     icon = button.getIcon(),
                     onClick = { viewModel.showSheet(Sheets.QualityTracks) },

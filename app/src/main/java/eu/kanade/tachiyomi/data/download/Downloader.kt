@@ -386,6 +386,9 @@ class Downloader(
                 download.pages = reIndexedPages
                 reIndexedPages
             }
+            // KMK: its videos count in the progress (Download.hasVideos)
+            download.hasVideos = pageList.any { eu.kanade.tachiyomi.jssource.ReaderVideos.isVideo(it.url) }
+            download.videoProgressFlow.value = 0
 
             val dataSaver = if (sourcePreferences.dataSaverDownloader().get()) {
                 DataSaver(download.source, sourcePreferences)
@@ -426,14 +429,14 @@ class Downloader(
             // Do after download completes
 
             // KMK: save the videos of a chapter's video pages next to their pictures
-            if (pageList.any { eu.kanade.tachiyomi.jssource.ReaderVideos.isVideo(it.url) }) {
+            if (download.hasVideos) {
                 val digitCount = pageList.size.toString().length.coerceAtLeast(3)
                 eu.kanade.tachiyomi.jssource.ChapterVideoDownloads.saveAll(
                     pageList,
                     tmpDir,
                     { page -> "%0${digitCount}d".format(Locale.ENGLISH, page.number) },
                     "${download.manga.title} · ${download.chapter.name}",
-                )
+                ) { percent -> download.videoProgressFlow.value = percent }
             }
 
             if (!isDownloadSuccessful(download, tmpDir)) {

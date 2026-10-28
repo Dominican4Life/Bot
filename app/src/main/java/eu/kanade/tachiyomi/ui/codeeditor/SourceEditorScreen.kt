@@ -45,6 +45,7 @@ import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.FileDownload
@@ -191,6 +192,31 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
         }
 
         var findOpen by remember { mutableStateOf(false) }
+        var pasteText by remember { mutableStateOf<String?>(null) }
+        pasteText?.let { text ->
+            val lines = text.count { it == '\n' } + 1
+            AlertDialog(
+                onDismissRequest = { pasteText = null },
+                title = { Text("Replace all code?") },
+                text = {
+                    Text(
+                        "Everything in the editor is replaced with what's on the clipboard " +
+                            "($lines ${if (lines == 1) "line" else "lines"}). It isn't saved until you tap Save.",
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            model.setCode(text)
+                            pasteText = null
+                        },
+                    ) { Text("Replace") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pasteText = null }) { Text("Cancel") }
+                },
+            )
+        }
         Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { padding ->
             BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(padding)) {
                 val wide = maxWidth >= 840.dp
@@ -224,6 +250,23 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
                         if (wide) {
                             KindTabs(json = state.json, onJson = model::setJson, modifier = Modifier.width(380.dp))
                             Spacer(Modifier.weight(0.65f))
+                        }
+                        // KMK: copy the whole code, or replace it with the clipboard's
+                        IconButton(
+                            onClick = {
+                                saveClipboard.setText(AnnotatedString(state.code))
+                                context.toast("Code copied")
+                            },
+                        ) {
+                            Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy all code")
+                        }
+                        IconButton(
+                            onClick = {
+                                val text = saveClipboard.getText()?.text.orEmpty()
+                                if (text.isBlank()) context.toast("The clipboard is empty") else pasteText = text
+                            },
+                        ) {
+                            Icon(Icons.Outlined.ContentPaste, contentDescription = "Replace code with the clipboard")
                         }
                         // KMK: find in the code, like a browser's find in page
                         IconButton(onClick = { findOpen = !findOpen }) {

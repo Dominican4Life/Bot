@@ -56,11 +56,11 @@ object HlsVariants {
     }
 
     /**
-     * For a download: the one quality to save (the preferred one, or the best below it) of a stream that holds
-     * several, so the file has one picture and one sound instead of all of them; else [video] as it is.
+     * For a download: the one quality to save (the best) of a stream that holds several, so the file has one
+     * picture and one sound instead of all of them; else [video] as it is.
      */
     suspend fun forDownload(video: Video): Video {
-        val chosen = expand(video, preferredHeight()).first()
+        val chosen = expand(video, Int.MAX_VALUE).first()
         return if (chosen.videoUrl != video.videoUrl) chosen else video
     }
 
@@ -173,11 +173,11 @@ object HlsVariants {
 
     private fun heightLabel(variant: Variant): String = variant.height?.let { "${it}p" } ?: "?"
 
-    private fun isPlaylist(video: Video): Boolean {
-        val path = video.videoUrl.substringBefore('?').lowercase()
-        return path.endsWith(".m3u8") || path.contains(".m3u8") ||
+    // Anywhere in the address: a stream played through the app's relay (HlsRelay) reads
+    // "http://127.0.0.1:…/p/…?u=…&x=list.m3u8", with the name after the "?"
+    private fun isPlaylist(video: Video): Boolean =
+        video.videoUrl.contains("m3u8", ignoreCase = true) ||
             video.mimeType?.contains("mpegurl", ignoreCase = true) == true
-    }
 
     private suspend fun read(video: Video): List<Variant>? {
         val request = Request.Builder().url(video.videoUrl).apply {
