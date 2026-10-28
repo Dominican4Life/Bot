@@ -53,6 +53,7 @@ import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Save
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
@@ -189,6 +190,7 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
             }
         }
 
+        var findOpen by remember { mutableStateOf(false) }
         Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { padding ->
             BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(padding)) {
                 val wide = maxWidth >= 840.dp
@@ -222,6 +224,10 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
                         if (wide) {
                             KindTabs(json = state.json, onJson = model::setJson, modifier = Modifier.width(380.dp))
                             Spacer(Modifier.weight(0.65f))
+                        }
+                        // KMK: find in the code, like a browser's find in page
+                        IconButton(onClick = { findOpen = !findOpen }) {
+                            Icon(Icons.Outlined.Search, contentDescription = "Find in code")
                         }
                         IconButton(onClick = { model.runAll(query) }) {
                             Icon(Icons.Outlined.PlayArrow, contentDescription = "Run all", tint = MaterialTheme.colorScheme.primary)
@@ -265,7 +271,15 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
                     }
 
                     val editor = @Composable { modifier: Modifier ->
-                        CodeEditor(code = state.code, onCodeChange = model::setCode, json = state.json, modifier = modifier)
+                        CodeEditor(
+                            code = state.code,
+                            onCodeChange = model::setCode,
+                            json = state.json,
+                            modifier = modifier,
+                            findOpen = findOpen,
+                            onOpenFind = { findOpen = true },
+                            onCloseFind = { findOpen = false },
+                        )
                     }
                     if (wide) {
                         Row(modifier = Modifier.fillMaxSize()) {
