@@ -372,7 +372,8 @@ fun BrowsePagePanel(
     source: HttpSource?,
     onClose: () -> Unit,
     onRetry: () -> Unit,
-    onOpenPage: (Chapter, Int) -> Unit,
+    /** KMK: the chapter, the page, and whether it's a video tile (it plays straight away) */
+    onOpenPage: (Chapter, Int, Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     SlidingSidePanel(
@@ -402,7 +403,7 @@ fun BrowsePagePanel(
             // KMK: downloaded chapters show their pages from the files, even without the source
             chapter != null && localPages != null -> key(chapter.id, "local") {
                 // KMK: the first tap on an animated page plays it (framed), the second opens it
-                val tap = rememberAnimatedTap { index -> onOpenPage(chapter, index) }
+                val tap = rememberAnimatedTap { index -> onOpenPage(chapter, index, false) }
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(3),
                     contentPadding = PaddingValues(12.dp),
@@ -417,7 +418,8 @@ fun BrowsePagePanel(
                             isVideo = page.isVideo,
                             playing = tap.active == index,
                             onAnimated = { tap.animated[index] = it },
-                            onClick = { tap.onTap(index) },
+                            // KMK: a video plays straight away
+                            onClick = { if (page.isVideo) onOpenPage(chapter, index, true) else tap.onTap(index) },
                         )
                     }
                 }
@@ -443,7 +445,7 @@ fun BrowsePagePanel(
                 if (state.pagesLoading || state.chaptersLoading) CircularProgressIndicator()
             }
             else -> key(chapter.id) {
-                val tap = rememberAnimatedTap { index -> onOpenPage(chapter, index) }
+                val tap = rememberAnimatedTap { index -> onOpenPage(chapter, index, false) }
                 val previews = state.previewModels
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(3),
@@ -473,6 +475,7 @@ fun BrowsePagePanel(
                                 playing = tap.active == index,
                                 onAnimated = { tap.animated[index] = it },
                                 onClick = { tap.onTap(index) },
+                                onVideo = { onOpenPage(chapter, index, true) },
                             )
                         }
                     }
@@ -490,15 +493,17 @@ private fun SourcePageThumbnailItem(
     playing: Boolean,
     onAnimated: (Boolean) -> Unit,
     onClick: () -> Unit,
+    onVideo: () -> Unit,
 ) {
+    // KMK: the same check as the reader's Pages panel; a video plays straight away
+    val isVideo = ReaderVideos.isVideo(page.url)
     PageThumbnailBox(
         model = remember(source.id, chapterUrl, page.index) { SourcePageThumbnail(source, chapterUrl, page) },
         number = page.number,
-        // KMK: the same check as the reader's Pages panel
-        isVideo = ReaderVideos.isVideo(page.url),
+        isVideo = isVideo,
         playing = playing,
         onAnimated = onAnimated,
-        onClick = onClick,
+        onClick = if (isVideo) onVideo else onClick,
     )
 }
 

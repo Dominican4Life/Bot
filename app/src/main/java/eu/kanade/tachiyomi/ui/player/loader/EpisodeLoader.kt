@@ -167,7 +167,8 @@ class EpisodeLoader {
                 videos
             }
 
-            return sortedVideos.resolveSubtitles()
+            // KMK: a stream holding several qualities becomes one video per quality (quality menu, quick start)
+            return HlsVariants.split(sortedVideos.resolveSubtitles())
         }
 
         private suspend fun List<Video>.resolveSubtitles(): List<Video> {

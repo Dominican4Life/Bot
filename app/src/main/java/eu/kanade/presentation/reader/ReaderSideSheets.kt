@@ -317,6 +317,8 @@ private fun PageGridContent(
         // on to another page hands the frame back to the page being read
         var active by remember { mutableStateOf<Int?>(null) }
         val animated = remember { mutableStateMapOf<Int, Boolean>() }
+        val tileContext = LocalContext.current
+        val tileScope = rememberCoroutineScope()
         LaunchedEffect(currentPage) {
             if (active != null && active != currentPage - 1) active = null
         }
@@ -339,7 +341,18 @@ private fun PageGridContent(
                     playing = index == active,
                     onAnimated = { animated[index] = it },
                     onClick = {
-                        if (animated[index] == true && active != index) {
+                        if (ReaderVideos.isVideo(page.url)) {
+                            // KMK: a video tile plays straight away, the whole tile and not only its ▶
+                            tileScope.launch {
+                                try {
+                                    ReaderVideos.play(tileContext, page)
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Throwable) {
+                                    tileContext.toast("Couldn't play this video: ${e.message}")
+                                }
+                            }
+                        } else if (animated[index] == true && active != index) {
                             active = index
                         } else {
                             active = index.takeIf { animated[index] == true }

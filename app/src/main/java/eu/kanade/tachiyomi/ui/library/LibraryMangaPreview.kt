@@ -183,8 +183,10 @@ fun LibraryMangaPreview.Panels(scope: BoxScope) {
             source = model.httpSource,
             onClose = model::closePagePanel,
             onRetry = { state.selectedChapter?.let(model::selectChapter) },
-            onOpenPage = { chapter, pageIndex ->
-                context.startActivity(ReaderActivity.newIntent(context, chapter.mangaId, chapter.id, pageIndex))
+            onOpenPage = { chapter, pageIndex, video ->
+                context.startActivity(
+                    ReaderActivity.newIntent(context, chapter.mangaId, chapter.id, pageIndex, playVideo = video),
+                )
             },
         )
     }

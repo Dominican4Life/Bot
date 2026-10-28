@@ -84,6 +84,9 @@ class AnimeScreenModel(
     // KMK --> season grouping (Headers / Tabs), like AniZen
     private val lastSeasonPref = AnimeEpisodeDefaults.lastSelectedSeason(animeId)
 
+    // KMK: the AniList episode info lookup (declared before init, which can start it)
+    private var episodeInfoJob: kotlinx.coroutines.Job? = null
+
     /** Sets the shown episodes and, when they're grouped, which season each one is in */
     private fun State.withEpisodes(anime: Anime, shown: List<Episode>): State {
         val grouping = AnimeEpisodeDefaults.seasonGrouping(anime)
@@ -248,6 +251,10 @@ class AnimeScreenModel(
                         isLoaded = true,
                     )
                     anime?.let { updated.withEpisodes(it, filterAndSort(it, episodes, excluded)) } ?: updated
+                }
+                // KMK: AniList episode info, once per page, when pictures or summaries are shown
+                if (anime != null && (anime.showPreviews || anime.showSummaries) && episodes.isNotEmpty()) {
+                    loadEpisodeInfo()
                 }
             }
         }
@@ -445,6 +452,33 @@ class AnimeScreenModel(
     private fun updateEpisodeFlags(transform: (Long) -> Long) {
         val anime = state.value.anime ?: return
         screenModelScope.launchIO { repository.setEpisodeFlags(anime, transform(anime.episodeFlags)) }
+    }
+
+    /** Looks the anime's AniList episode info up, once (again after [changeEpisodeInfo]) */
+    private fun loadEpisodeInfo(force: Boolean = false) {
+        if (!force && (episodeInfoJob != null)) return
+        val anime = state.value.anime ?: return
+        val numbers = state.value.allEpisodes.map { it.episodeNumber }
+        episodeInfoJob?.cancel()
+        episodeInfoJob = screenModelScope.launchIO {
+            mutableState.update { it.copy(episodeInfoLoading = true) }
+            val info = eu.kanade.tachiyomi.ui.anime.anilist.AniListEpisodeMatch.load(anime, numbers)
+            mutableState.update { it.copy(episodeInfo = info, episodeInfoLoading = false, episodeInfoChecked = true) }
+        }
+    }
+
+    /** "Change": [anilistId] is this anime's AniList entry for the episode info; null to use none */
+    fun changeEpisodeInfo(anilistId: Int?) {
+        eu.kanade.tachiyomi.ui.anime.anilist.AniListEpisodeMatch.set(animeId, anilistId)
+        mutableState.update { it.copy(episodeInfo = null) }
+        loadEpisodeInfo(force = true)
+    }
+
+    /** "Change" › search again by title on its own */
+    fun resetEpisodeInfo() {
+        eu.kanade.tachiyomi.ui.anime.anilist.AniListEpisodeMatch.clear(animeId)
+        mutableState.update { it.copy(episodeInfo = null) }
+        loadEpisodeInfo(force = true)
     }
 
     fun setShowPreviews(show: Boolean) = updateEpisodeFlags {
@@ -815,6 +849,11 @@ class AnimeScreenModel(
     @Immutable
     data class State(
         val anime: Anime? = null,
+        // KMK: episode pictures / titles / summaries from the app's AniList data, when the display options are on
+        val episodeInfo: eu.kanade.tachiyomi.ui.anime.anilist.AniListEpisodeInfo? = null,
+        val episodeInfoLoading: Boolean = false,
+        /** True once looked up (found or not), so "Change" knows there was no match */
+        val episodeInfoChecked: Boolean = false,
         val episodes: List<Episode> = emptyList(),
         /** Seasons after the season filters and sort */
         val seasons: List<Anime> = emptyList(),

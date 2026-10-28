@@ -154,14 +154,23 @@ import androidx.compose.ui.graphics.Color as ComposeColor
 class ReaderActivity : BaseActivity() {
 
     companion object {
+        private const val EXTRA_PLAY_VIDEO = "play_video"
 
-        fun newIntent(context: Context, mangaId: Long?, chapterId: Long?/* SY --> */, page: Int? = null/* SY <-- */): Intent {
+        fun newIntent(
+            context: Context,
+            mangaId: Long?,
+            chapterId: Long?, /* SY --> */
+            page: Int? = null, /* SY <-- */
+            // KMK: [page] is a video tapped in a page grid: it goes straight to the player, like a lone video
+            playVideo: Boolean = false,
+        ): Intent {
             return Intent(context, ReaderActivity::class.java).apply {
                 putExtra("manga", mangaId)
                 putExtra("chapter", chapterId)
                 // SY -->
                 putExtra("page", page)
                 // SY <--
+                putExtra(EXTRA_PLAY_VIDEO, playVideo)
                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
             }
         }
@@ -1094,7 +1103,14 @@ class ReaderActivity : BaseActivity() {
     private fun handOffLoneVideo(viewerChapters: ViewerChapters): Boolean {
         if (videoChecked) return false
         videoChecked = true
-        val onlyPage = viewerChapters.currChapter.pages?.singleOrNull()
+        val pages = viewerChapters.currChapter.pages
+        // A video tapped in a page grid (Browse preview, library preview) plays straight away too
+        val tapped = if (intent.getBooleanExtra(EXTRA_PLAY_VIDEO, false)) {
+            intent.extras?.getInt("page", -1)?.takeIf { it >= 0 }?.let { pages?.getOrNull(it) }
+        } else {
+            null
+        }
+        val onlyPage = tapped ?: pages?.singleOrNull()
         if (onlyPage == null || !eu.kanade.tachiyomi.jssource.ReaderVideos.isVideo(onlyPage.url)) {
             showDeferredModeToast()
             return false

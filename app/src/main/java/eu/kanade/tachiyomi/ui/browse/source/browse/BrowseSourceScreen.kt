@@ -725,9 +725,15 @@ data class BrowseSourceScreen(
                             source = previewScreenModel.httpSource,
                             onClose = previewScreenModel::closePagePanel,
                             onRetry = { previewState.selectedChapter?.let(previewScreenModel::selectChapter) },
-                            onOpenPage = { chapter, pageIndex ->
+                            onOpenPage = { chapter, pageIndex, video ->
                                 context.startActivity(
-                                    ReaderActivity.newIntent(context, chapter.mangaId, chapter.id, pageIndex),
+                                    ReaderActivity.newIntent(
+                                        context,
+                                        chapter.mangaId,
+                                        chapter.id,
+                                        pageIndex,
+                                        playVideo = video,
+                                    ),
                                 )
                             },
                         )

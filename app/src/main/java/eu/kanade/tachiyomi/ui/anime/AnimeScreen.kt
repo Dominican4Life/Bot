@@ -312,6 +312,7 @@ class AnimeScreen(private val animeId: Long) : Screen() {
             onCoverClick = { dialog = AnimeDialog.Cover },
             onMigrate = { mihon.feature.migration.anime.AnimeMigrationStart.open(listOf(animeId)) },
             onSeasonSelected = screenModel::selectSeason,
+            onChangeEpisodeInfo = { dialog = AnimeDialog.EpisodeInfo },
         )
 
         CoverSeedTheme(seedColor = state.seedColor) {
@@ -345,6 +346,19 @@ class AnimeScreen(private val animeId: Long) : Screen() {
                     excludedScanlators = state.excludedScanlators.toImmutableSet(),
                     onDismissRequest = { dialog = AnimeDialog.Settings },
                     onConfirm = screenModel::setExcludedScanlators,
+                )
+                AnimeDialog.EpisodeInfo -> EpisodeInfoDialog(
+                    animeTitle = anime.title,
+                    current = state.episodeInfo,
+                    onDismissRequest = { dialog = null },
+                    onPick = { id ->
+                        dialog = null
+                        screenModel.changeEpisodeInfo(id)
+                    },
+                    onAuto = {
+                        dialog = null
+                        screenModel.resetEpisodeInfo()
+                    },
                 )
                 AnimeDialog.Notes -> AnimeNotesDialog(
                     notes = state.notes,
@@ -475,6 +489,8 @@ private enum class AnimeDialog {
     EditInfo,
     Cover,
     SetDefault,
+    // KMK: which AniList entry gives the episode pictures and summaries
+    EpisodeInfo,
 }
 
 /** Everything the details page can do, passed down to both layouts */
@@ -519,6 +535,8 @@ private class AnimeActions(
     val onMigrate: (() -> Unit)?,
     // KMK: season tab picked (season grouping set to Tabs)
     val onSeasonSelected: (String) -> Unit,
+    // KMK: "Change" on the AniList line above the episodes
+    val onChangeEpisodeInfo: () -> Unit,
 )
 
 @Composable
@@ -984,7 +1002,7 @@ private fun AnimeScreenSmall(
                         )
                     }
                     relatedItems(state, related, uppercaseTitle = false, dividerAbove = true, actions)
-                    episodeItems(state, anime, source, actions, seasonColumns)
+                    episodeItems(state, anime, source, actions, seasonColumns, episodeColumns = 1)
                 }
             }
         }
@@ -1063,7 +1081,7 @@ private fun AnimeScreenLarge(
                         ) {
                             // Same spot as the manga page: related titles above the episode list
                             relatedItems(state, related, uppercaseTitle = true, dividerAbove = false, actions)
-                            episodeItems(state, anime, source, actions, seasonColumns)
+                            episodeItems(state, anime, source, actions, seasonColumns, episodeColumns = 2)
                         }
                     }
                 },
@@ -1152,6 +1170,8 @@ private fun LazyListScope.episodeItems(
     source: eu.kanade.tachiyomi.animesource.AnimeSource?,
     actions: AnimeActions,
     seasonColumns: Int,
+    /** KMK: episode cards per line when pictures or summaries are shown (two beside the info on a tablet) */
+    episodeColumns: Int,
 ) {
     // KMK: seasons saved in the database, shown as a row, grid or list (season settings)
     if (state.hasSeasons) {
@@ -1184,6 +1204,43 @@ private fun LazyListScope.episodeItems(
                 .clickable(onClick = actions.onFilter)
                 .padding(horizontal = 16.dp, vertical = 12.dp),
         )
+    }
+    // KMK: pictures or summaries on: cards like the AniList page, with its episode info when the anime is found there
+    if (anime.showPreviews || anime.showSummaries) {
+        item(key = "episode_info_line") { EpisodeInfoLine(state, actions.onChangeEpisodeInfo) }
+        val groups = mutableListOf<Pair<String?, MutableList<Episode>>>()
+        episodes.forEach { episode ->
+            val season = state.episodeSeasons[episode.id].takeIf { state.showSeasonHeaders }
+            if (groups.isEmpty() || groups.last().first != season) groups += season to mutableListOf()
+            groups.last().second += episode
+        }
+        groups.forEachIndexed { groupIndex, (season, list) ->
+            if (season != null) {
+                item(key = "ep-card-season-$season-$groupIndex", contentType = "season_header") {
+                    ListGroupHeader(text = episodeSeasonLabel(season), modifier = Modifier.fillMaxWidth())
+                }
+            }
+            list.chunked(episodeColumns).forEach { line ->
+                item(key = "ep-card-${line.first().id}", contentType = "episode_card_line") {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        line.forEach { episode ->
+                            EpisodeCardItem(
+                                state = state,
+                                anime = anime,
+                                episode = episode,
+                                actions = actions,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        repeat(episodeColumns - line.size) { Spacer(modifier = Modifier.weight(1f)) }
+                    }
+                }
+            }
+        }
+        return
     }
     // KMK: season grouping set to Headers: a header where each season starts (AniZen)
     var lastSeason: String? = null
@@ -1218,6 +1275,102 @@ private fun EpisodeRow(state: AnimeScreenModel.State, anime: Anime, episode: Epi
         onToggleBookmark = { actions.onToggleBookmark(episode) },
         selected = episode.id in actions.selection,
         onLongClick = { actions.onEpisodeLongClick(episode) },
+    )
+}
+
+@Composable
+private fun EpisodeInfoLine(state: AnimeScreenModel.State, onChange: () -> Unit) {
+    AniListEpisodeInfoLine(
+        info = state.episodeInfo,
+        loading = state.episodeInfoLoading,
+        checked = state.episodeInfoChecked,
+        onChange = onChange,
+    )
+}
+
+/**
+ * KMK: An episode as a card (pictures or summaries on): the AniList episode's picture, title, summary, minutes, ★ and
+ * filler mark when the anime was found there, else the source's own picture and summary.
+ */
+@Composable
+private fun EpisodeCardItem(
+    state: AnimeScreenModel.State,
+    anime: Anime,
+    episode: Episode,
+    actions: AnimeActions,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val uiPreferences = remember { Injekt.get<UiPreferences>() }
+    val relativeTime by uiPreferences.relativeTime().collectAsState()
+    val dateFormat by uiPreferences.dateFormat().collectAsState()
+    val aniList = state.episodeInfo?.of(episode.episodeNumber)
+    val sourceDate = remember(episode.dateUpload, relativeTime, dateFormat) {
+        episode.dateUpload.takeIf { it > 0L }?.let {
+            LocalDate.ofInstant(Instant.ofEpochMilli(it), ZoneId.systemDefault())
+                .toRelativeString(context, relativeTime, UiPreferences.dateFormat(dateFormat))
+        }
+    }
+    val date = aniList?.airDate ?: sourceDate
+    val progress = if (!episode.seen && episode.lastSecondSeen > 0) {
+        stringResource(KMR.strings.anime_watched_until, formatTime(episode.lastSecondSeen))
+    } else {
+        null
+    }
+    val number = episode.episodeNumber
+    val numberText = when {
+        number < 0 -> null
+        number % 1.0 == 0.0 -> number.toLong().toString()
+        else -> number.toString()
+    }
+    val name = aniList?.title?.takeIf { it.isNotBlank() }
+        ?: episode.name.takeIf { it.isNotBlank() && !it.startsWith("ep", ignoreCase = true) }
+            ?.let { if (": " in it) it.substringAfter(": ") else it }
+    val title = when {
+        numberText == null -> episode.name
+        name == null -> stringResource(KMR.strings.anime_episode_number, numberText)
+        else -> "$numberText. $name"
+    }
+    val image: Any? = if (anime.showPreviews) {
+        aniList?.image ?: episode.previewUrl?.takeIf { it.isNotBlank() }?.let { url ->
+            eu.kanade.tachiyomi.data.coil.EpisodePreview(
+                animeId = episode.animeId,
+                key = eu.kanade.tachiyomi.data.coil.episodePreviewKey(episode.episodeNumber, episode.url),
+                url = url,
+                inLibrary = anime.favorite,
+            )
+        }
+    } else {
+        null
+    }
+    val summary = if (anime.showSummaries) {
+        aniList?.summary?.takeIf { it.isNotBlank() } ?: episode.summary?.takeIf { it.isNotBlank() }
+    } else {
+        null
+    }
+    val info = listOfNotNull(
+        date,
+        progress,
+        state.memberSources[episode.animeId],
+        episode.scanlator?.takeIf { it.isNotBlank() },
+    ).joinToString(" • ").ifEmpty { null }
+    AnimeEpisodeCard(
+        title = title,
+        image = image,
+        minutes = aniList?.minutes,
+        rating = aniList?.rating,
+        summary = summary,
+        info = info,
+        filler = aniList?.filler == true || episode.fillermark,
+        seen = episode.seen,
+        bookmark = episode.bookmark,
+        selected = episode.id in actions.selection,
+        downloadState = state.downloadState(episode),
+        downloadProgress = state.downloadProgress(episode),
+        onDownload = { action -> actions.onEpisodeDownload(episode, action) },
+        onClick = { actions.onEpisodeClick(episode) },
+        onLongClick = { actions.onEpisodeLongClick(episode) },
+        modifier = modifier,
     )
 }
 

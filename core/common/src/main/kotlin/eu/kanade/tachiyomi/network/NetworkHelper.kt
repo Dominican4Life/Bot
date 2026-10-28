@@ -102,6 +102,14 @@ import kotlin.random.Random
             PREF_DOH_SHECAN -> builder.dohShecan()
             else -> builder
         }
+        // KMK: IPv4 addresses tried first. On networks where IPv6 doesn't get through, a site that also has an IPv6
+        // address used to wait out the connect timeout on it first (jikan.moe: 5 s, then failed)
+        val resolver = builder.build().dns
+        builder.dns(
+            okhttp3.Dns { host ->
+                resolver.lookup(host).sortedBy { if (it is java.net.Inet4Address) 0 else 1 }
+            },
+        )
     }
 
     // KMK --> used by anime extensions

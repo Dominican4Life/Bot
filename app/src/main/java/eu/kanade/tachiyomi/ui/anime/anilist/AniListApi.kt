@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.network.jsonMime
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -38,6 +39,9 @@ object AniListApi {
     private const val ANILIST_URL = "https://graphql.anilist.co"
     private val json = Json { ignoreUnknownKeys = true }
     private val client: OkHttpClient get() = Injekt.get<NetworkHelper>().client
+
+    /** KMK: the most an extra episode lookup (ani.zip, filler list) may take */
+    private const val EXTRA_LOOKUP_MS = 6_000L
 
     private val detailsCache = ConcurrentHashMap<Int, AniListDetails>()
     private val episodesCache = ConcurrentHashMap<Int, List<AniListEpisode>>()
@@ -170,6 +174,15 @@ object AniListApi {
           }
         }
     """.trimIndent()
+
+    /** KMK: the AniList id of a MyAnimeList id, for anime tracked on MyAnimeList */
+    suspend fun idForMal(malId: Int): Int? {
+        val data = query(
+            "query (${'$'}mal: Int) { Media(idMal: ${'$'}mal, type: ANIME) { id } }",
+            buildJsonObject { put("mal", malId) },
+        )
+        return data.alObj("Media")?.alInt("id")
+    }
 
     suspend fun details(id: Int, refresh: Boolean = false): AniListDetails {
         if (!refresh) detailsCache[id]?.let { return it }
@@ -315,10 +328,12 @@ object AniListApi {
     suspend fun episodes(details: AniListDetails, refresh: Boolean = false): List<AniListEpisode> = withIOContext {
         val card = details.card
         if (!refresh) episodesCache[card.id]?.let { return@withIOContext it }
-        val aniZip = runCatching { aniZip(card.id, card.idMal) }.getOrNull()
+        // KMK: each extra lookup gets a time limit, so a slow or unreachable site never holds the list up
+        val aniZip = runCatching { withTimeoutOrNull(EXTRA_LOOKUP_MS) { aniZip(card.id, card.idMal) } }.getOrNull()
         val zipEpisodes = aniZip?.alObj("episodes")
         val malId = card.idMal ?: aniZip?.alObj("mappings")?.alInt("mal_id")
-        val fillers = malId?.let { runCatching { fillerEpisodes(it) }.getOrNull() }.orEmpty()
+        val fillers = malId?.let { runCatching { withTimeoutOrNull(EXTRA_LOOKUP_MS) { fillerEpisodes(it) } }.getOrNull() }
+            .orEmpty()
 
         val count = card.episodes
             ?: card.nextAiring?.episode?.minus(1)?.takeIf { it > 0 }

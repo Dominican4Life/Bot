@@ -186,7 +186,10 @@ class AniyomiMPVView(context: Context, attributes: AttributeSet?) : BaseMPVView(
      */
     fun applyVideoProfile() {
         val settings = decoderPreferences.effectiveVideoSettings()
-        mpv?.setOptionString("hwdec", if (settings.hardwareDecoding) "auto" else "no")
+        // KMK: "mediacodec-copy" straight away. "auto" picks plain "mediacodec" first, which can't draw through the
+        // app's video output (gpu / gpu-next): mpv waited 5-10 s on it ("Both surface and native_window are NULL")
+        // before falling back to the copy mode on every video
+        mpv?.setOptionString("hwdec", if (settings.hardwareDecoding) "mediacodec-copy" else "no")
 
         val isHighQuality = settings.highQualityScaling
         val scaler = if (isHighQuality) "spline36" else "bilinear"
