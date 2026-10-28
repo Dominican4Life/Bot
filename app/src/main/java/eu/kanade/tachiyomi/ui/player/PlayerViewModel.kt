@@ -385,15 +385,17 @@ class PlayerViewModel @JvmOverloads constructor(
         .flowOn(Dispatchers.Default)
         // ANZ <--
 
-    val audioTracks = mpv.propFlow<MPVNode>("track-list")
-        .map { node ->
-            (
-                node?.toObject<List<TrackNode>>(json)
-                    ?.filter { it.isAudio }
-                    ?.filterNot { it.title?.startsWith(VideoTrack.TRACK_TITLE_TAG) == true }
-                    ?: persistentListOf()
-                ).toImmutableList()
-        }
+    val audioTracks = combine(mpv.propFlow<MPVNode>("track-list"), currentVideo) { node, video ->
+        // KMK: a downloaded quality (see HlsVariants) lists only its own sound, not every quality's
+        val own = eu.kanade.tachiyomi.ui.player.loader.HlsVariants.soundTrackOf(video)
+        (
+            node?.toObject<List<TrackNode>>(json)
+                ?.filter { it.isAudio }
+                ?.filterNot { it.title?.startsWith(VideoTrack.TRACK_TITLE_TAG) == true }
+                ?.filter { own == null || it.id == own }
+                ?: persistentListOf()
+            ).toImmutableList()
+    }
         // ANZ -->
         .flowOn(Dispatchers.Default)
         // ANZ <--
@@ -762,7 +764,10 @@ class PlayerViewModel @JvmOverloads constructor(
             selectSub(preferredSubtitle)
         }
 
-        val preferredAudio = trackSelect.getPreferredTrackIndex(
+        // KMK: a downloaded quality plays with its own sound (see HlsVariants)
+        val ownSound = eu.kanade.tachiyomi.ui.player.loader.HlsVariants.soundTrackOf(currentVideo.value)
+            ?.let { id -> embeddedAudio.firstOrNull { it.id == id } }
+        val preferredAudio = ownSound?.let { VideoTrack.Internal(it) } ?: trackSelect.getPreferredTrackIndex(
             tracks = embeddedAudio.map { VideoTrack.Internal(it) } + externalAudio,
             subtitle = false,
         )

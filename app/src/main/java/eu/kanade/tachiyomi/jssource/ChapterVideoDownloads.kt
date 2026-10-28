@@ -145,7 +145,9 @@ object ChapterVideoDownloads {
         }
     }
 
-    private suspend fun ffmpegSave(video: Video, headers: Headers, dir: UniFile, prefix: String, onPercent: (Int) -> Unit) {
+    private suspend fun ffmpegSave(stream: Video, headers: Headers, dir: UniFile, prefix: String, onPercent: (Int) -> Unit) {
+        // KMK: a stream holding several qualities is saved in one (the preferred), not all of them in one file
+        val video = eu.kanade.tachiyomi.ui.player.loader.HlsVariants.forDownload(stream)
         val headerBlock = headers.joinToString("") { (name, value) -> "$name: $value\r\n" }
         // ffmpeg writes to app storage first, then the file is copied into the chapter folder
         val workDir = File(context.cacheDir, "chapter_video_download").apply { mkdirs() }

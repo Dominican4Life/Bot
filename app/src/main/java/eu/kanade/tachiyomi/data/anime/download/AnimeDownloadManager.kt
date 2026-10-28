@@ -386,12 +386,14 @@ class AnimeDownloadManager(
     }
 
     private suspend fun ffmpegDownload(
-        video: Video,
+        stream: Video,
         headers: Headers,
         dir: UniFile,
         base: String,
         onPercent: (Int) -> Unit,
     ) {
+        // KMK: a stream holding several qualities is saved in one (the preferred), not all of them in one file
+        val video = eu.kanade.tachiyomi.ui.player.loader.HlsVariants.forDownload(stream)
         val headerBlock = headers.joinToString("") { (name, value) -> "$name: $value\r\n" }
         val duration = probeDuration(video.videoUrl, headerBlock)
         // ffmpeg writes to app storage first, then the file is copied into the downloads folder
