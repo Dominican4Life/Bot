@@ -1,9 +1,11 @@
 package eu.kanade.tachiyomi.data.anime
 
+import app.cash.sqldelight.db.SqlDriver
 import eu.kanade.tachiyomi.animesource.AnimeSource
 import eu.kanade.tachiyomi.animesource.model.FetchType
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
+import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -11,6 +13,8 @@ import kotlinx.coroutines.launch
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.data.DatabaseHandler
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import java.time.Instant
 
 /**
@@ -369,14 +373,19 @@ class AnimeRepository(
         var newCount = 0
         val now = Instant.now().toEpochMilli()
         val existing = getEpisodes(anime.id).associateBy { it.url }
-        val seenUrls = HashSet<String>()
+        val distinct = sourceEpisodes.distinctBy { it.url }
+        val sourceUrls = distinct.mapTo(HashSet()) { it.url }
+        val removed = existing.values.filter { it.url !in sourceUrls }
+        // KMK (r87): the source changed its episode URLs. Watch state of a removed row moves to the new row with the
+        // same episode number (only when exactly one old and one new row have it), like Mihon's chapter sync.
+        val carryFrom = carryOverMatches(removed, distinct.filter { existing[it.url] == null })
         handler.await(inTransaction = true) {
-            sourceEpisodes.distinctBy { it.url }.forEachIndexed { index, ep ->
-                seenUrls += ep.url
+            distinct.forEachIndexed { index, ep ->
                 val old = existing[ep.url]
-                val number = ep.episode_number.toDouble().takeIf { it >= 0 } ?: -1.0
+                val number = episodeNumberOf(ep)
                 if (old == null) {
-                    newCount++
+                    val from = carryFrom[ep.url]
+                    if (from == null) newCount++
                     episodesQueries.insert(
                         animeId = anime.id,
                         url = ep.url,
@@ -387,9 +396,22 @@ class AnimeRepository(
                         fillermark = ep.fillermark,
                         episodeNumber = number,
                         sourceOrder = index.toLong(),
-                        dateFetch = now,
+                        // KMK (r87): a moved episode keeps its fetch date, so it doesn't show as new in Updates
+                        dateFetch = from?.dateFetch ?: now,
                         dateUpload = ep.date_upload,
                     )
+                    if (from != null) {
+                        val newId = animesQueries.selectLastInsertedRowId().executeAsOne()
+                        episodesQueries.updatePartial(
+                            seen = from.seen,
+                            bookmark = from.bookmark,
+                            fillermark = from.fillermark || ep.fillermark,
+                            lastSecondSeen = from.lastSecondSeen,
+                            totalSeconds = from.totalSeconds,
+                            id = newId,
+                        )
+                        moveHistory(from.id, newId)
+                    }
                 } else {
                     episodesQueries.updateFromSource(
                         name = ep.name,
@@ -404,9 +426,49 @@ class AnimeRepository(
                     )
                 }
             }
-            existing.values.filter { it.url !in seenUrls }.forEach { episodesQueries.deleteById(it.id) }
+            // The history rows of moved episodes were moved above, so the cascade only drops the others'
+            removed.forEach { episodesQueries.deleteById(it.id) }
         }
         return newCount
+    }
+
+    private fun episodeNumberOf(ep: SEpisode): Double = ep.episode_number.toDouble().takeIf { it >= 0 } ?: -1.0
+
+    /**
+     * KMK (r87): new episode URL to the removed episode whose watch state it takes over. Only episode numbers (≥ 0)
+     * that exactly one removed and exactly one new episode have.
+     */
+    private fun carryOverMatches(removed: List<Episode>, added: List<SEpisode>): Map<String, Episode> {
+        if (removed.isEmpty() || added.isEmpty()) return emptyMap()
+        val oldByNumber = removed.filter { it.episodeNumber >= 0 }.groupBy { it.episodeNumber }
+        val newByNumber = added.groupBy { episodeNumberOf(it) }.filterKeys { it >= 0 }
+        val result = HashMap<String, Episode>()
+        oldByNumber.forEach { (number, olds) ->
+            val news = newByNumber[number] ?: return@forEach
+            if (olds.size != 1 || news.size != 1) return@forEach
+            result[news.single().url] = olds.single()
+        }
+        return result
+    }
+
+    /**
+     * KMK (r87): moves the history row (last seen and watch time) of episode [fromId] to [toId], which has none yet.
+     * Runs inside syncEpisodes' transaction, before [fromId] is deleted (its history would cascade away).
+     * No generated query does this and the .sq files stay unchanged this round, so it's plain SQL.
+     */
+    private fun moveHistory(fromId: Long, toId: Long) {
+        runCatching {
+            Injekt.get<SqlDriver>().execute(
+                identifier = null,
+                sql = "UPDATE anime_history SET episode_id = ? WHERE episode_id = ?",
+                parameters = 2,
+            ) {
+                bindLong(0, toId)
+                bindLong(1, fromId)
+            }
+        }.onFailure { e ->
+            logcat(LogPriority.WARN, e, tag = "anime") { "Couldn't move the history of episode $fromId" }
+        }
     }
 
     /**
@@ -463,6 +525,7 @@ class AnimeRepository(
             logcat(LogPriority.WARN, e, tag = "anime") { "${anime.title}: details failed" }
         }.exceptionOrNull()
         val fresh = getAnime(anime.id) ?: anime
+        var keptSaved = false
         val count = if (fresh.fetchType == FetchType.Episodes) {
             val episodes = source.getAnimeEpisodeUpdate(
                 fresh.toSAnime(),
@@ -476,7 +539,21 @@ class AnimeRepository(
                     "${episodes.count { !it.summary.isNullOrBlank() }} with summaries, " +
                     "${episodes.count { !it.scanlator.isNullOrBlank() }} with Sub/Dub"
             }
-            syncEpisodes(fresh, episodes)
+            // KMK (r87): an empty answer (bot check, a JS error returning [], a site hiccup) is far more likely than
+            // every episode gone. Syncing it deleted all saved episodes, and their history with them (cascade).
+            // Like syncSeasons: keep what's saved, delete nothing, and report it as an error.
+            val saved = if (episodes.isEmpty()) getEpisodes(fresh.id).size else 0
+            if (saved > 0) {
+                keptSaved = true
+                AppLog.add(
+                    'W',
+                    "anime",
+                    "${anime.title}: the source returned no episodes; kept the $saved saved ones",
+                )
+                0
+            } else {
+                syncEpisodes(fresh, episodes)
+            }
         } else {
             // KMK: an anime made of seasons saves them as anime linked to it, like Anikku
             val seasons = source.getAnimeSeasonUpdate(
@@ -489,9 +566,15 @@ class AnimeRepository(
             syncSeasons(fresh, seasons, source.id)
             0
         }
+        if (keptSaved) {
+            throw NoEpisodesException().also { e -> detailsError?.let { e.addSuppressed(it) } }
+        }
         detailsError?.let { throw it }
         return count
     }
+
+    /** KMK (r87): the source answered with no episodes while some were saved; they were kept. Shown by the UI. */
+    class NoEpisodesException : Exception("The source returned no episodes; kept the saved ones")
 
     // Seasons (KMK)
 

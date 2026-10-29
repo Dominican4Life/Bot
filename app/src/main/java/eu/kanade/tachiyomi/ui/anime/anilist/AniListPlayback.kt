@@ -136,8 +136,16 @@ object AniListPlayback {
         val repository = Injekt.get<AnimeRepository>()
         val anime = repository.getAnime(animeId) ?: return Outcome.Failed("?")
         val source = Injekt.get<AnimeSourceManager>().get(anime.source) ?: return Outcome.OpenPage
-        val loadError = withIOContext {
-            runCatching { repository.refreshFromSource(anime, source) }.exceptionOrNull()
+        // KMK (r87): every Watch now / episode tap reloaded the whole list. Not again within 60 s of the last load,
+        // when what's saved already has the episode asked for
+        val ago = System.currentTimeMillis() - repository.lastRefreshed(animeId)
+        val saved = if (ago < RELOAD_AFTER_MS) repository.getEpisodes(animeId) else emptyList()
+        val skip = saved.isNotEmpty() &&
+            (episode == null || saved.any { floor(it.episodeNumber).toInt() == episode })
+        val loadError = if (skip) {
+            null
+        } else {
+            withIOContext { runCatching { repository.refreshFromSource(anime, source) }.exceptionOrNull() }
         }
         val fresh = repository.getAnime(animeId) ?: anime
         if (fresh.fetchType != FetchType.Episodes) return Outcome.OpenPage
@@ -155,6 +163,8 @@ object AniListPlayback {
         withUIContext { context.startActivity(PlayerActivity.newIntent(context, animeId, target.id)) }
         return Outcome.Started
     }
+
+    private const val RELOAD_AFTER_MS = 60_000L
 
     /** The manga's chapters from its source, oldest first */
     suspend fun mangaChapters(mangaId: Long, refresh: Boolean = true): List<Chapter> = withIOContext {

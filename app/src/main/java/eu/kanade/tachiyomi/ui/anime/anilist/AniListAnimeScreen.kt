@@ -454,6 +454,18 @@ class AniListAnimeScreenModel(initialId: Int, val manga: Boolean) :
     private var loadJob: Job? = null
     private val loadedTabs = HashSet<AniListTab>()
 
+    // KMK (r87): the relations / themes / chapters loads, cancelled when the page switches titles. Untracked, an old
+    // title's diagram could land on the new one, and then the `graph != null` guard blocked the right load.
+    private val tabJobs = HashMap<AniListTab, Job>()
+
+    /** KMK (r87): true when a load finished for a title that is no longer shown */
+    private fun isStale(id: Int): Boolean = state.value.currentId != id
+
+    private fun launchTab(tab: AniListTab, block: suspend () -> Unit) {
+        tabJobs.remove(tab)?.cancel()
+        tabJobs[tab] = screenModelScope.launch { block() }
+    }
+
     init {
         load(initialId, refresh = false)
     }
@@ -476,6 +488,8 @@ class AniListAnimeScreenModel(initialId: Int, val manga: Boolean) :
 
     private fun load(id: Int, refresh: Boolean) {
         loadJob?.cancel()
+        tabJobs.values.forEach { it.cancel() }
+        tabJobs.clear()
         loadedTabs.clear()
         mutableState.update {
             it.copy(
@@ -483,14 +497,20 @@ class AniListAnimeScreenModel(initialId: Int, val manga: Boolean) :
                 switching = it.details != null,
                 canGoBack = history.isNotEmpty(),
                 link = AniListLinks.get(id, manga),
-                // The diagram stays when the new title is in it, like Hayase
-                graph = it.graph?.takeIf { graph -> !refresh && graph.nodes.any { node -> node.id == id } },
+                // The diagram stays when the new title is in it, like Hayase (KMK r87: not a half-loaded one)
+                graph = it.graph?.takeIf { graph ->
+                    !refresh && !it.graphLoading && graph.nodes.any { node -> node.id == id }
+                },
+                graphLoading = false,
+                themesLoading = false,
+                chaptersLoading = false,
             )
         }
         loadJob = screenModelScope.launch {
             try {
                 val details = AniListApi.details(id, refresh)
                 mutableState.update {
+                    if (it.currentId != id) return@update it
                     it.copy(
                         details = details,
                         error = null,
@@ -503,11 +523,16 @@ class AniListAnimeScreenModel(initialId: Int, val manga: Boolean) :
                 }
                 if (!manga) {
                     val episodes = runCatching { AniListApi.episodes(details, refresh) }.getOrDefault(emptyList())
-                    mutableState.update { it.copy(episodes = episodes, episodesLoading = false) }
+                    // KMK (r87): runCatching also catches the cancel of a switch, so check the title is still shown
+                    if (isStale(id)) return@launch
+                    mutableState.update {
+                        if (it.currentId != id) it else it.copy(episodes = episodes, episodesLoading = false)
+                    }
                 }
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
                 mutableState.update {
+                    if (it.currentId != id) return@update it
                     it.copy(error = e.message ?: e.javaClass.simpleName, episodesLoading = false, switching = false)
                 }
             }
@@ -519,24 +544,31 @@ class AniListAnimeScreenModel(initialId: Int, val manga: Boolean) :
         val details = state.value.details ?: return
         if (details.card.id != state.value.currentId) return
         if (!loadedTabs.add(tab)) return
+        // KMK (r87): results are written only while this title is still the one shown
+        val id = details.card.id
         when (tab) {
             AniListTab.RELATIONS -> {
                 if (state.value.graph != null) return
-                screenModelScope.launch {
+                launchTab(tab) {
                     mutableState.update { it.copy(graphLoading = true) }
                     try {
-                        AniListApi.relationsGraph(details) { graph -> mutableState.update { it.copy(graph = graph) } }
+                        AniListApi.relationsGraph(details) { graph ->
+                            mutableState.update { if (it.currentId != id) it else it.copy(graph = graph) }
+                        }
                     } catch (e: Throwable) {
                         if (e is CancellationException) throw e
                     } finally {
-                        mutableState.update { it.copy(graphLoading = false) }
+                        if (!isStale(id)) {
+                            mutableState.update { if (it.currentId != id) it else it.copy(graphLoading = false) }
+                        }
                     }
                 }
             }
-            AniListTab.THEMES -> screenModelScope.launch {
+            AniListTab.THEMES -> launchTab(tab) {
                 mutableState.update { it.copy(themesLoading = true) }
-                val themes = runCatching { AniListApi.themes(details.card.id) }.getOrDefault(emptyList())
-                mutableState.update { it.copy(themes = themes, themesLoading = false) }
+                val themes = runCatching { AniListApi.themes(id) }.getOrDefault(emptyList())
+                if (isStale(id)) return@launchTab
+                mutableState.update { if (it.currentId != id) it else it.copy(themes = themes, themesLoading = false) }
             }
             AniListTab.CHAPTERS -> loadChapters()
             else -> {}
@@ -552,13 +584,19 @@ class AniListAnimeScreenModel(initialId: Int, val manga: Boolean) :
 
     private fun loadChapters() {
         val link = state.value.link ?: return
-        screenModelScope.launch {
+        val id = state.value.currentId
+        // KMK (r87): tracked and checked like the other tabs; the link must still be the shown one too
+        fun current(shown: State) = shown.currentId == id && shown.link == link
+        launchTab(AniListTab.CHAPTERS) {
             mutableState.update { it.copy(chaptersLoading = true) }
             // What's saved shows at once, then the source's list
             val saved = runCatching { AniListPlayback.mangaChapters(link.localId, refresh = false) }.getOrNull()
-            if (!saved.isNullOrEmpty()) mutableState.update { it.copy(chapters = saved) }
+            if (!saved.isNullOrEmpty()) mutableState.update { if (current(it)) it.copy(chapters = saved) else it }
             val fresh = runCatching { AniListPlayback.mangaChapters(link.localId) }.getOrNull()
-            mutableState.update { it.copy(chapters = fresh ?: saved ?: emptyList(), chaptersLoading = false) }
+            if (isStale(id)) return@launchTab
+            mutableState.update {
+                if (current(it)) it.copy(chapters = fresh ?: saved ?: emptyList(), chaptersLoading = false) else it
+            }
         }
     }
 

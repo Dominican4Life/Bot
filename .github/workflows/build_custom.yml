@@ -11,9 +11,13 @@ on:
       - '**.md'
   workflow_dispatch:
 
+# KMK (r87): one queue for the whole repo, not one per branch. The release number is picked before the build, so a
+# master and a feature/** push building at the same time both picked the same rN and the second "gh release create"
+# failed after a full build. Builds now wait for each other instead of running together or cancelling each other
+# (GitHub keeps at most one waiting run: a newer push replaces the one still waiting).
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -114,6 +118,17 @@ jobs:
         run: |
           # Picked before the build (KMK_RELEASE), so the app inside knows its own number
           tag="r${KMK_RELEASE}"
+          # KMK (r87): if that number was taken meanwhile (a run started outside the queue), use the next free one;
+          # the app inside still says the number picked before the build
+          number="${KMK_RELEASE}"
+          while gh release view "r${number}" --repo "${{ github.repository }}" > /dev/null 2>&1 \
+            || git ls-remote --exit-code --tags origin "refs/tags/r${number}" > /dev/null 2>&1; do
+            number=$(( number + 1 ))
+          done
+          if [ "$number" != "${KMK_RELEASE}" ]; then
+            echo "::warning title=Release number taken::r${KMK_RELEASE} already exists, publishing as r${number}; the app inside says r${KMK_RELEASE}"
+            tag="r${number}"
+          fi
           ls app/build/outputs/apk/preview/
           for f in app/build/outputs/apk/preview/*.apk; do
             abi=$(basename "$f" .apk | sed 's/^app-//; s/-preview.*//')

@@ -660,6 +660,8 @@
     <string name="pref_anime_download_wifi">Download only on Wi-Fi</string>
     <string name="pref_anime_download_wifi_summary">Episode downloads wait while on mobile or metered data</string>
     <string name="pref_anime_download_concurrent">Episodes downloaded at once</string>
+    <string name="pref_video_download_connections">Connections per download</string>
+    <string name="pref_video_download_connections_summary">Pieces of an episode or chapter video fetched at the same time. More is faster; lower it if a server refuses. 1 = one at a time</string>
     <string name="pref_anime_delete_after_seen">Delete episodes after watching</string>
     <string name="pref_anime_delete_after_seen_summary">Deletes the download of an episode watched in the player once the player moves to another episode or closes</string>
     <string name="pref_anime_delete_keep_bookmarked">Keep bookmarked episodes</string>

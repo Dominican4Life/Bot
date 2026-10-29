@@ -34,10 +34,17 @@ import eu.kanade.tachiyomi.ui.player.settings.PlayerPreferences
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import logcat.LogPriority
 import tachiyomi.core.common.preference.PreferenceStore
@@ -87,6 +94,33 @@ class AnimeScreenModel(
     // KMK: the AniList episode info lookup (declared before init, which can start it)
     private var episodeInfoJob: kotlinx.coroutines.Job? = null
 
+    // KMK: the player's "Skip filtered episodes" also decides whether Resume and the toolbar downloads follow the
+    // anime's filters (excluded scanlators are always left out)
+    private val skipFilteredPref = Injekt.get<PlayerPreferences>().skipFiltered()
+
+    // KMK: flag changes (filter / sort / display / season settings) are written one at a time, in tap order, each
+    // reading the flags the previous one saved, so quick taps don't undo each other
+    private val flagWrites = Channel<suspend () -> Unit>(Channel.UNLIMITED)
+
+    // KMK --> kept here rather than in the screen, so turning the device or a phone / tablet layout switch keeps them
+    private val _selection = MutableStateFlow<Set<Long>>(emptySet())
+    val selection: StateFlow<Set<Long>> = _selection.asStateFlow()
+
+    /** The episode whose options dialog is open */
+    val optionsEpisode = MutableStateFlow<Episode?>(null)
+
+    /** Library anime with the same title, shown before adding this one */
+    val duplicates = MutableStateFlow<List<Anime>>(emptyList())
+
+    fun setSelection(ids: Set<Long>) {
+        _selection.value = ids
+    }
+
+    fun toggleSelection(id: Long) {
+        _selection.update { if (id in it) it - id else it + id }
+    }
+    // KMK <--
+
     /** Sets the shown episodes and, when they're grouped, which season each one is in */
     private fun State.withEpisodes(anime: Anime, shown: List<Episode>): State {
         val grouping = AnimeEpisodeDefaults.seasonGrouping(anime)
@@ -122,7 +156,33 @@ class AnimeScreenModel(
     }
     // KMK <--
 
-    private fun filterAndSort(anime: Anime, episodes: List<Episode>, excluded: Set<String>): List<Episode> {
+    // KMK --> the episodes Resume, the toolbar downloads and "mark previous as seen" go through
+    /**
+     * In watching order (oldest first): never episodes of excluded scanlators, and with "Skip filtered episodes"
+     * on, only the ones the filters show (like manga's skipFiltered)
+     */
+    private fun State.watchingList(): List<Episode> {
+        val pool = if (skipFilteredPref.get()) {
+            episodes
+        } else {
+            allEpisodes.filter { it.scanlator.isNullOrBlank() || it.scanlator !in excludedScanlators }
+        }
+        return pool.sortedWith(
+            compareBy<Episode> { memberOrder[it.animeId] ?: 0 }.thenByDescending { it.sourceOrder },
+        )
+    }
+
+    /** Works the Start/Resume episode out once per change, not on every recomposition */
+    private fun State.withNext(): State = copy(nextEpisode = watchingList().firstOrNull { !it.seen })
+    // KMK <--
+
+    private fun filterAndSort(
+        anime: Anime,
+        episodes: List<Episode>,
+        excluded: Set<String>,
+        // KMK: worked out once per change (not per episode on every download tick)
+        downloaded: Set<Long>,
+    ): List<Episode> {
         fun TriState.keep(value: Boolean) = when (this) {
             TriState.DISABLED -> true
             TriState.ENABLED_IS -> value
@@ -132,7 +192,7 @@ class AnimeScreenModel(
             anime.unseenFilter.keep(!ep.seen) &&
                 anime.bookmarkedFilter.keep(ep.bookmark) &&
                 anime.fillermarkedFilter.keep(ep.fillermark) &&
-                anime.downloadedFilter.keep(downloadManager.isDownloaded(state.value.animeOf(ep) ?: anime, ep)) &&
+                anime.downloadedFilter.keep(ep.id in downloaded) &&
                 (ep.scanlator.isNullOrBlank() || ep.scanlator !in excluded)
         }
         // "Descending" is the default: newest first
@@ -186,7 +246,28 @@ class AnimeScreenModel(
     private var seedColorUrl: String? = null
     private var videoJob: Job? = null
 
+    /** KMK: ids of [episodes] that have a downloaded file */
+    private fun downloadedIdsOf(current: State, anime: Anime, episodes: List<Episode>): Set<Long> =
+        episodes.filter { downloadManager.isDownloaded(current.animeOf(it) ?: anime, it) }.mapTo(HashSet()) { it.id }
+
     init {
+        // KMK: flag writes, one after another (see flagWrites)
+        screenModelScope.launchIO {
+            for (write in flagWrites) {
+                try {
+                    write()
+                } catch (e: Throwable) {
+                    if (e is CancellationException) throw e
+                    logcat(LogPriority.ERROR, e) { "Couldn't save the episode settings" }
+                }
+            }
+        }
+        // KMK: Resume follows "Skip filtered episodes" when it's changed while this page stays open
+        screenModelScope.launchIO {
+            skipFilteredPref.changes().drop(1).collect {
+                mutableState.update { if (it.anime != null) it.withNext() else it }
+            }
+        }
         // KMK: pictures / summaries used to be hidden app-wide; keep that choice on the anime once
         screenModelScope.launchIO {
             val migrated = AnimeEpisodeDefaults.displayFlagsMigrated()
@@ -235,6 +316,8 @@ class AnimeScreenModel(
                         mutableState.update { it.copy(seedColor = color) }
                     }
                 }
+                // KMK: worked out once here, outside update (which can run its block again)
+                val downloaded = anime?.let { downloadedIdsOf(state.value, it, episodes) } ?: emptySet()
                 mutableState.update { state ->
                     val updated = state.copy(
                         anime = anime,
@@ -243,14 +326,12 @@ class AnimeScreenModel(
                         scanlators = episodes.mapNotNull { it.scanlator?.takeIf(String::isNotBlank) }.toSet(),
                         excludedScanlators = excluded,
                         notes = notes,
-                        downloadedIds = anime?.let { a ->
-                            episodes.filter { downloadManager.isDownloaded(state.animeOf(it) ?: a, it) }
-                                .map { it.id }
-                                .toSet()
-                        } ?: emptySet(),
+                        downloadedIds = downloaded,
                         isLoaded = true,
                     )
-                    anime?.let { updated.withEpisodes(it, filterAndSort(it, episodes, excluded)) } ?: updated
+                    anime?.let {
+                        updated.withEpisodes(it, filterAndSort(it, episodes, excluded, downloaded)).withNext()
+                    } ?: updated
                 }
                 // KMK: AniList episode info, once per page, when pictures or summaries are shown
                 if (anime != null && (anime.showPreviews || anime.showSummaries) && episodes.isNotEmpty()) {
@@ -281,11 +362,14 @@ class AnimeScreenModel(
                     }
                 }
         }
-        // KMK: download progress and finished downloads update the rows and the Downloaded filter
+        // KMK --> download progress updates only the rows' bars, and only for this page's episodes (other anime's
+        // downloads used to redo the whole list on every percent)
         screenModelScope.launchIO {
             repository.getAnime(animeId)?.let { downloadManager.refresh(it) }
-            combine(
-                downloadManager.queue.flatMapLatest { items ->
+            val pageIds = state.map { it.memberOrder.keys + animeId }.distinctUntilChanged()
+            combine(downloadManager.queue, pageIds) { items, ids -> items.filter { it.anime.id in ids } }
+                .distinctUntilChanged()
+                .flatMapLatest { items ->
                     if (items.isEmpty()) {
                         flowOf(emptyMap())
                     } else {
@@ -295,26 +379,30 @@ class AnimeScreenModel(
                             },
                         ) { it.toMap() }
                     }
-                },
-                downloadManager.changes,
-            ) { active, _ -> active }.collect { active ->
+                }
+                .distinctUntilChanged()
+                .collect { active -> mutableState.update { it.copy(activeDownloads = active) } }
+        }
+        // What's downloaded is read again only when a file appears or goes (downloadManager.changes)
+        screenModelScope.launchIO {
+            downloadManager.changes.collect {
+                val current = state.value
+                val anime = current.anime ?: return@collect
+                val downloaded = downloadedIdsOf(current, anime, current.allEpisodes)
+                if (downloaded == current.downloadedIds) return@collect
                 mutableState.update { state ->
-                    val anime = state.anime
-                    val updated = state.copy(
-                        activeDownloads = active,
-                        downloadedIds = anime?.let { a ->
-                            state.allEpisodes
-                                .filter { downloadManager.isDownloaded(state.animeOf(it) ?: a, it) }
-                                .map { it.id }
-                                .toSet()
-                        } ?: emptySet(),
-                    )
-                    anime?.let {
-                        updated.withEpisodes(it, filterAndSort(it, state.allEpisodes, state.excludedScanlators))
-                    } ?: updated
+                    val updated = state.copy(downloadedIds = downloaded)
+                    val a = state.anime
+                    if (a == null || a.downloadedFilter == TriState.DISABLED) {
+                        updated
+                    } else {
+                        val shown = filterAndSort(a, state.allEpisodes, state.excludedScanlators, downloaded)
+                        updated.withEpisodes(a, shown).withNext()
+                    }
                 }
             }
         }
+        // KMK <--
         screenModelScope.launchIO {
             // Extensions load in the background after app start
             var found = sourceManager.get(sourceIdOf() ?: return@launchIO)
@@ -406,9 +494,24 @@ class AnimeScreenModel(
 
     // KMK --> season settings, saved in this anime's season_flags
 
+    // KMK: changes the flags last saved (read inside the queued write), not the possibly stale ones on screen
     private fun updateSeasonFlags(transform: (Long) -> Long) {
-        val anime = state.value.anime ?: return
-        screenModelScope.launchIO { repository.setSeasonFlags(anime, transform(anime.seasonFlags)) }
+        if (state.value.anime == null) return
+        flagWrites.trySend {
+            repository.getAnime(animeId)?.let { anime ->
+                repository.setSeasonFlags(anime, transform(anime.seasonFlags))
+            }
+        }
+    }
+
+    /** KMK: like [updateSeasonFlags], for the episode flags; [transform] gets the anime as last saved */
+    private fun writeEpisodeFlags(transform: (Anime) -> Long) {
+        if (state.value.anime == null) return
+        flagWrites.trySend {
+            repository.getAnime(animeId)?.let { anime ->
+                repository.setEpisodeFlags(anime, transform(anime))
+            }
+        }
     }
 
     fun setSeasonFilter(include: Long, exclude: Long, state: TriState) =
@@ -424,40 +527,30 @@ class AnimeScreenModel(
     // KMK <--
 
     /** Sets one tri-state filter (only these / hide these / off), like the manga chapter filters */
-    fun setEpisodeFilter(include: Long, exclude: Long, state: TriState) {
-        val anime = this.state.value.anime ?: return
-        screenModelScope.launchIO {
-            repository.setEpisodeFlags(anime, Anime.withTriState(anime.episodeFlags, include, exclude, state))
-        }
+    fun setEpisodeFilter(include: Long, exclude: Long, state: TriState) = writeEpisodeFlags { anime ->
+        Anime.withTriState(anime.episodeFlags, include, exclude, state)
     }
 
     /** Picking the current sort again flips its direction, like the manga Sort tab */
-    fun setSortMode(mode: Long) {
-        val anime = state.value.anime ?: return
+    fun setSortMode(mode: Long) = writeEpisodeFlags { anime ->
         val flags = anime.episodeFlags
-        val newFlags = if (anime.sortMode == mode) {
+        if (anime.sortMode == mode) {
             flags xor Anime.SORT_ASCENDING
         } else {
             (flags and Anime.SORT_MODE_MASK.inv() and Anime.SORT_ASCENDING.inv()) or mode
         }
-        screenModelScope.launchIO { repository.setEpisodeFlags(anime, newFlags) }
     }
 
-    fun setDisplayNumber(number: Boolean) {
-        val anime = state.value.anime ?: return
-        val flags = if (number) {
+    fun setDisplayNumber(number: Boolean) = writeEpisodeFlags { anime ->
+        if (number) {
             anime.episodeFlags or Anime.DISPLAY_NUMBER
         } else {
             anime.episodeFlags and Anime.DISPLAY_NUMBER.inv()
         }
-        screenModelScope.launchIO { repository.setEpisodeFlags(anime, flags) }
     }
 
     // KMK --> Display tab: pictures, summaries and season grouping are this anime's own (AniZen)
-    private fun updateEpisodeFlags(transform: (Long) -> Long) {
-        val anime = state.value.anime ?: return
-        screenModelScope.launchIO { repository.setEpisodeFlags(anime, transform(anime.episodeFlags)) }
-    }
+    private fun updateEpisodeFlags(transform: (Long) -> Long) = writeEpisodeFlags { transform(it.episodeFlags) }
 
     /** Looks the anime's AniList episode info up, once (again after [changeEpisodeInfo]) */
     private fun loadEpisodeInfo(force: Boolean = false) {
@@ -503,12 +596,13 @@ class AnimeScreenModel(
 
     /** Back to the app's defaults: sort, filters, display, pictures, summaries and season grouping */
     fun resetEpisodeSettings() {
-        val anime = state.value.anime ?: return
+        if (state.value.anime == null) return
         val flags = (if (AnimeEpisodeDefaults.showPreviews().get()) 0L else Anime.HIDE_PREVIEWS) or
             (if (AnimeEpisodeDefaults.showSummaries().get()) 0L else Anime.HIDE_SUMMARIES)
         lastSeasonPref.delete()
         mutableState.update { it.copy(selectedSeason = null) }
-        screenModelScope.launchIO { repository.setEpisodeFlags(anime, flags) }
+        // KMK: queued with the other flag changes, so a tap just before Reset can't land after it
+        writeEpisodeFlags { flags }
         excludedScanlatorsPref.delete()
     }
     // KMK <--
@@ -541,8 +635,9 @@ class AnimeScreenModel(
     /** Toolbar download menu */
     fun downloadEpisodes(action: DownloadAction) {
         val anime = state.value.anime ?: return
-        // Watching order: oldest first
-        val inOrder = state.value.allEpisodes.sortedByDescending { it.sourceOrder }
+        // Watching order: oldest first. KMK: without excluded scanlators (and filtered episodes with
+        // "Skip filtered episodes" on), so "Download all" doesn't fetch every scanlator's copy
+        val inOrder = state.value.watchingList()
         val unseen = inOrder.filter { !it.seen }
         val episodes = when (action) {
             DownloadAction.NEXT_1_CHAPTER -> unseen.take(1)
@@ -583,7 +678,8 @@ class AnimeScreenModel(
 
     /** Marks every episode before [episode] (in watching order) as seen */
     fun markPreviousSeen(episode: Episode) {
-        val inOrder = state.value.allEpisodes.sortedByDescending { it.sourceOrder }
+        // KMK: the same episodes as Resume (not excluded scanlators' copies)
+        val inOrder = state.value.watchingList()
         val index = inOrder.indexOfFirst { it.id == episode.id }
         if (index <= 0) return
         setSeen(inOrder.take(index), true)
@@ -688,12 +784,7 @@ class AnimeScreenModel(
     private fun String.normalizedTitle() = lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
     // KMK <--
 
-    fun toggleSort() {
-        val anime = state.value.anime ?: return
-        screenModelScope.launchIO {
-            repository.setEpisodeFlags(anime, anime.episodeFlags xor Anime.SORT_ASCENDING)
-        }
-    }
+    fun toggleSort() = writeEpisodeFlags { it.episodeFlags xor Anime.SORT_ASCENDING }
 
     fun toggleSeen(episode: Episode) {
         screenModelScope.launchIO { repository.setSeen(listOf(episode), !episode.seen) }
@@ -782,12 +873,18 @@ class AnimeScreenModel(
     }
 
     /** Headers the source sends with its requests, for players and downloaders */
-    fun sourceHeaders(episode: Episode): okhttp3.Headers? = (sourceOf(episode) as? AnimeHttpSource)?.headers
+    fun sourceHeaders(episode: Episode): okhttp3.Headers? {
+        val source = sourceOf(episode)
+        return (source as? AnimeHttpSource)?.headers
+            // KMK: Code editor sources send their headers too, as in the player and downloads
+            ?: (source as? eu.kanade.tachiyomi.jssource.JsAnimeSource)?.headers
+    }
 
     /** "Download" in the episode options: queues the episode for the built-in downloader */
-    fun downloadEpisode(episode: Episode) {
+    // KMK (r87): [video] = the stream picked in Episode options, downloaded instead of the automatic pick
+    fun downloadEpisode(episode: Episode, video: Video? = null) {
         val anime = state.value.animeOf(episode) ?: return
-        downloadManager.enqueue(anime, listOf(episode))
+        downloadManager.enqueue(anime, listOf(episode), video = video)
     }
 
     /** The episode sent to an outside player, waiting for the player to return */
@@ -892,6 +989,11 @@ class AnimeScreenModel(
         /** The season tab picked (Tabs only) */
         val selectedSeason: String? = null,
         // KMK <--
+        /**
+         * The episode the Start/Resume button plays: the first unwatched one, oldest first (see watchingList).
+         * KMK: kept in the state (worked out on changes) instead of sorting every episode on each recomposition
+         */
+        val nextEpisode: Episode? = null,
     ) {
         // KMK --> season grouping
         /** Season headers between the episodes */
@@ -922,14 +1024,6 @@ class AnimeScreenModel(
         /** KMK: this page lists seasons instead of episodes */
         val hasSeasons: Boolean
             get() = allSeasons.isNotEmpty() || anime?.fetchType == FetchType.Seasons
-
-        /** The episode the Start/Resume button plays: the first unwatched one, oldest first */
-        val nextEpisode: Episode?
-            get() = allEpisodes
-                .sortedWith(
-                    compareBy<Episode> { memberOrder[it.animeId] ?: 0 }.thenByDescending { it.sourceOrder },
-                )
-                .firstOrNull { !it.seen }
 
         /** The anime an episode belongs to (another one when this page is merged) */
         fun animeOf(episode: Episode): Anime? =

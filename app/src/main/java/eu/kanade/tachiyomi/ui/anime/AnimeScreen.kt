@@ -160,6 +160,8 @@ class AnimeScreen(private val animeId: Long) : Screen() {
         val state by screenModel.state.collectAsState()
         val anime = state.anime
         val playerPreferences = remember { Injekt.get<PlayerPreferences>() }
+        // KMK: one list position for both layouts, so a phone / tablet layout switch doesn't jump to the top
+        val listState = rememberLazyListState()
 
         if (anime == null) {
             Scaffold { LoadingScreen(Modifier.padding(it)) }
@@ -193,7 +195,8 @@ class AnimeScreen(private val animeId: Long) : Screen() {
                 context.toast(KMR.strings.anime_no_player)
             }
         }
-        var optionsEpisode by remember { mutableStateOf<Episode?>(null) }
+        // KMK: kept in the screen model, so turning the device keeps the dialog open
+        val optionsEpisode by screenModel.optionsEpisode.collectAsState()
         // KMK <--
 
         val playEpisode: (Episode) -> Unit = { episode ->
@@ -211,16 +214,17 @@ class AnimeScreen(private val animeId: Long) : Screen() {
             ?: (screenModel.source as? eu.kanade.tachiyomi.jssource.JsAnimeSource)?.getAnimeUrl(anime.toSAnime())
         val openWebView: (() -> Unit)? = animeUrl?.let { url -> { navigator.push(WebViewScreen(url, anime.title, anime.source)) } }
 
-        var dialog by remember { mutableStateOf<AnimeDialog?>(null) }
+        // KMK: saveable, so turning the device keeps the open dialog
+        var dialog by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<AnimeDialog?>(null) }
         // KMK: like manga, adding to the library asks for categories once some exist
         val hasCategories = rememberHasAnimeCategories()
-        // KMK: long-press selects episodes, like manga chapters
-        var selection by remember { mutableStateOf(emptySet<Long>()) }
-        androidx.activity.compose.BackHandler(enabled = selection.isNotEmpty()) { selection = emptySet() }
-        val selectedEpisodes = state.episodes.filter { it.id in selection }
+        // KMK: long-press selects episodes, like manga chapters (kept in the screen model, so rotation keeps it)
+        val selection by screenModel.selection.collectAsState()
+        androidx.activity.compose.BackHandler(enabled = selection.isNotEmpty()) { screenModel.setSelection(emptySet()) }
+        val selectedEpisodes = remember(state.episodes, selection) { state.episodes.filter { it.id in selection } }
         val scope = androidx.compose.runtime.rememberCoroutineScope()
         // Adding to the library: warn first when the same title is already there
-        var duplicates by remember { mutableStateOf<List<Anime>>(emptyList()) }
+        val duplicates by screenModel.duplicates.collectAsState()
         val addToLibrary: () -> Unit = {
             if (hasCategories) dialog = AnimeDialog.Categories
             screenModel.toggleFavorite()
@@ -237,7 +241,7 @@ class AnimeScreen(private val animeId: Long) : Screen() {
                 } else {
                     scope.launch {
                         val found = screenModel.findDuplicates()
-                        if (found.isEmpty()) addToLibrary() else duplicates = found
+                        if (found.isEmpty()) addToLibrary() else screenModel.duplicates.value = found
                     }
                 }
             },
@@ -274,39 +278,39 @@ class AnimeScreen(private val animeId: Long) : Screen() {
                 if (selection.isEmpty()) {
                     playEpisode(episode)
                 } else {
-                    selection = if (episode.id in selection) selection - episode.id else selection + episode.id
+                    screenModel.toggleSelection(episode.id)
                 }
             },
             onEpisodeLongClick = { episode ->
-                selection = if (episode.id in selection) selection - episode.id else selection + episode.id
+                screenModel.toggleSelection(episode.id)
             },
-            onSelectAll = { selection = state.visibleEpisodes.map { it.id }.toSet() },
-            onInvertSelection = { selection = state.visibleEpisodes.map { it.id }.toSet() - selection },
-            onClearSelection = { selection = emptySet() },
+            onSelectAll = { screenModel.setSelection(state.visibleEpisodes.map { it.id }.toSet()) },
+            onInvertSelection = { screenModel.setSelection(state.visibleEpisodes.map { it.id }.toSet() - selection) },
+            onClearSelection = { screenModel.setSelection(emptySet()) },
             onSelectionSeen = { seen ->
                 screenModel.setSeen(selectedEpisodes, seen)
-                selection = emptySet()
+                screenModel.setSelection(emptySet())
             },
             onSelectionPreviousSeen = {
                 selectedEpisodes.singleOrNull()?.let(screenModel::markPreviousSeen)
-                selection = emptySet()
+                screenModel.setSelection(emptySet())
             },
             onSelectionBookmark = { bookmark ->
                 screenModel.setBookmark(selectedEpisodes, bookmark)
-                selection = emptySet()
+                screenModel.setSelection(emptySet())
             },
             onSelectionDownload = {
                 screenModel.downloadSelected(selectedEpisodes)
-                selection = emptySet()
+                screenModel.setSelection(emptySet())
             },
             onSelectionDelete = {
                 screenModel.deleteSelected(selectedEpisodes)
-                selection = emptySet()
+                screenModel.setSelection(emptySet())
             },
             selectedEpisodes = selectedEpisodes,
             onEpisodeOptions = { episode ->
-                selection = emptySet()
-                optionsEpisode = episode
+                screenModel.setSelection(emptySet())
+                screenModel.optionsEpisode.value = episode
             },
             onEditInfo = { dialog = AnimeDialog.EditInfo },
             onCoverClick = { dialog = AnimeDialog.Cover },
@@ -419,21 +423,21 @@ class AnimeScreen(private val animeId: Long) : Screen() {
                 AnimeDuplicateDialog(
                     duplicates = duplicates,
                     sourceName = { id -> screenModel.sourceNameOf(id) },
-                    onDismissRequest = { duplicates = emptyList() },
+                    onDismissRequest = { screenModel.duplicates.value = emptyList() },
                     onAddAnyway = {
-                        duplicates = emptyList()
+                        screenModel.duplicates.value = emptyList()
                         addToLibrary()
                     },
                     onOpen = {
-                        duplicates = emptyList()
+                        screenModel.duplicates.value = emptyList()
                         navigator.push(AnimeScreen(it.id))
                     },
                 )
             }
             if (isTabletUi()) {
-                AnimeScreenLarge(state, anime, actions, screenModel.source)
+                AnimeScreenLarge(state, anime, actions, screenModel.source, listState)
             } else {
-                AnimeScreenSmall(state, anime, actions, screenModel.source)
+                AnimeScreenSmall(state, anime, actions, screenModel.source, listState)
             }
 
             VideoDialogs(
@@ -442,7 +446,7 @@ class AnimeScreen(private val animeId: Long) : Screen() {
                 onPlayExternal = playExternally,
                 onEpisodeOptions = { episode ->
                     screenModel.dismissVideoDialog()
-                    optionsEpisode = episode
+                    screenModel.optionsEpisode.value = episode
                 },
             )
 
@@ -450,13 +454,13 @@ class AnimeScreen(private val animeId: Long) : Screen() {
             optionsEpisode?.let { episode ->
                 val episodeSource = screenModel.sourceOf(episode)
                 if (episodeSource == null) {
-                    optionsEpisode = null
+                    screenModel.optionsEpisode.value = null
                 } else {
                     EpisodeOptionsDialog(
                         anime = state.animeOf(episode) ?: anime,
                         episode = episode,
                         source = episodeSource,
-                        onDismissRequest = { optionsEpisode = null },
+                        onDismissRequest = { screenModel.optionsEpisode.value = null },
                         onPlay = { hosters, hosterIndex, videoIndex ->
                             context.startActivity(
                                 PlayerActivity.newIntent(
@@ -470,7 +474,8 @@ class AnimeScreen(private val animeId: Long) : Screen() {
                             )
                         },
                         onPlayExternal = { video -> playExternally(episode, video) },
-                        onDownload = { screenModel.downloadEpisode(episode) },
+                        // KMK (r87): the stream picked in the dialog is the one downloaded
+                        onDownload = { video -> screenModel.downloadEpisode(episode, video) },
                     )
                 }
             }
@@ -808,7 +813,8 @@ private fun AnimeEpisodeSettingsDialog(
 
 @Composable
 private fun AnimeNotesDialog(notes: String, onDismissRequest: () -> Unit, onSave: (String) -> Unit) {
-    var text by remember { mutableStateOf(notes) }
+    // KMK: saveable, so turning the device keeps what was typed
+    var text by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(notes) }
     AlertDialog(
         onDismissRequest = onDismissRequest,
         confirmButton = {
@@ -948,8 +954,9 @@ private fun AnimeScreenSmall(
     anime: Anime,
     actions: AnimeActions,
     source: eu.kanade.tachiyomi.animesource.AnimeSource?,
+    // KMK: hoisted to Content(), shared by both layouts
+    listState: androidx.compose.foundation.lazy.LazyListState,
 ) {
-    val listState = rememberLazyListState()
     val related = rememberRelatedSettings()
     // KMK: covers per line of the season grid
     val seasonColumns = (androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp / 120).coerceIn(2, 8)
@@ -1015,8 +1022,9 @@ private fun AnimeScreenLarge(
     anime: Anime,
     actions: AnimeActions,
     source: eu.kanade.tachiyomi.animesource.AnimeSource?,
+    // KMK: hoisted to Content(), shared by both layouts
+    listState: androidx.compose.foundation.lazy.LazyListState,
 ) {
-    val listState = rememberLazyListState()
     val layoutDirection = LocalLayoutDirection.current
     val related = rememberRelatedSettings()
     // KMK: covers per line of the season grid (the list takes about half the width)
@@ -1325,14 +1333,17 @@ private fun EpisodeCardItem(
         }
     }
     val swipeBackground = MaterialTheme.colorScheme.primaryContainer
-    val startAction = remember(swipeStart, episode.seen, episode.bookmark, downloadState, onSwipe) {
+    // KMK: the swipe actions call the latest lambda, so they aren't rebuilt on every recomposition (a new lambda
+    // each time made the remember below useless)
+    val currentOnSwipe by androidx.compose.runtime.rememberUpdatedState(onSwipe)
+    val startAction = remember(swipeStart, episode.seen, episode.bookmark, downloadState, swipeBackground) {
         getSwipeAction(swipeStart, episode.seen, episode.bookmark, downloadState, swipeBackground) {
-            onSwipe(swipeStart)
+            currentOnSwipe(swipeStart)
         }
     }
-    val endAction = remember(swipeEnd, episode.seen, episode.bookmark, downloadState, onSwipe) {
+    val endAction = remember(swipeEnd, episode.seen, episode.bookmark, downloadState, swipeBackground) {
         getSwipeAction(swipeEnd, episode.seen, episode.bookmark, downloadState, swipeBackground) {
-            onSwipe(swipeEnd)
+            currentOnSwipe(swipeEnd)
         }
     }
     val aniList = state.episodeInfo?.of(episode.episodeNumber)
@@ -1354,12 +1365,12 @@ private fun EpisodeCardItem(
         number % 1.0 == 0.0 -> number.toLong().toString()
         else -> number.toString()
     }
-    val name = aniList?.title?.takeIf { it.isNotBlank() }
-        ?: episode.name.takeIf { it.isNotBlank() && !it.startsWith("ep", ignoreCase = true) }
-            ?.let { if (": " in it) it.substringAfter(": ") else it }
+    // KMK: the episode's own title ("Episode 5: The Duel" -> "The Duel"; "Epilogue" stays), and Display ›
+    // "Show episode number" shows just "Episode 5", like the rows
+    val name = aniList?.title?.takeIf { it.isNotBlank() } ?: ownEpisodeName(episode.name)
     val title = when {
         numberText == null -> episode.name
-        name == null -> stringResource(KMR.strings.anime_episode_number, numberText)
+        anime.displayNumber || name == null -> stringResource(KMR.strings.anime_episode_number, numberText)
         else -> "$numberText. $name"
     }
     val image: Any? = if (anime.showPreviews) {
@@ -1412,6 +1423,28 @@ private fun EpisodeCardItem(
         )
     }
 }
+
+// KMK --> the episode's own title on cards
+/** "5", "Ep 5", "EP05", "Episode 5", "E5": a name that is only the episode number */
+private val bareEpisodeName = Regex("""^(?:ep(?:isode)?|e)?\s*\.?\s*#?\s*\d+(?:\.\d+)?$""", RegexOption.IGNORE_CASE)
+
+/** "Episode 5: The Duel", "Ep. 5 - The Duel", "5. The Duel": the number, then the title */
+private val numberedEpisodeName = Regex(
+    """^(?:ep(?:isode)?|e)?\s*\.?\s*#?\s*\d+(?:\.\d+)?\s*[-–—:.]\s+(.+)$""",
+    RegexOption.IGNORE_CASE,
+)
+
+/** The title part of an episode name, or null when the name is only "Episode N" */
+private fun ownEpisodeName(name: String): String? {
+    val full = name.trim()
+    numberedEpisodeName.matchEntire(full)?.let { match ->
+        return match.groupValues[1].trim().takeIf { it.isNotBlank() && !bareEpisodeName.matches(it) }
+    }
+    // "Show: Episode 5" -> nothing (the part before is usually the anime's title); "Show: The Duel" -> "The Duel"
+    val part = (if (": " in full) full.substringAfter(": ") else full).trim()
+    return part.takeIf { it.isNotBlank() && !bareEpisodeName.matches(it) }
+}
+// KMK <--
 
 /** KMK: "Season 2", "Specials" or "Extras" for a season key from AnimeEpisodeSeasons */
 @Composable

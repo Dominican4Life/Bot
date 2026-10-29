@@ -87,7 +87,8 @@ fun EpisodeOptionsDialog(
     onDismissRequest: () -> Unit,
     onPlay: (hosters: List<Hoster>, hosterIndex: Int, videoIndex: Int) -> Unit,
     onPlayExternal: (Video) -> Unit,
-    onDownload: () -> Unit,
+    // KMK (r87): gets the picked stream, so that one is downloaded (the downloader used to pick its own)
+    onDownload: (Video) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -202,7 +203,7 @@ fun EpisodeOptionsDialog(
                             context.toast(MR.strings.copied_to_clipboard_plain)
                         }
                         OptionRow(Icons.Outlined.Download, stringResource(KMR.strings.anime_download_internally)) {
-                            onDownload()
+                            onDownload(video)
                             context.toast(KMR.strings.anime_download_added)
                             onDismissRequest()
                         }
@@ -210,7 +211,9 @@ fun EpisodeOptionsDialog(
                             val intent = ExternalPlayer.downloadIntent(
                                 video = video,
                                 fileName = "${anime.title} - ${episode.name}",
-                                sourceHeaders = (source as? AnimeHttpSource)?.headers,
+                                // KMK (r87): Code editor sources' headers too, as in the player and downloads
+                                sourceHeaders = (source as? AnimeHttpSource)?.headers
+                                    ?: (source as? eu.kanade.tachiyomi.jssource.JsAnimeSource)?.headers,
                                 chooserTitle = context.stringResource(KMR.strings.anime_download_externally),
                             )
                             try {

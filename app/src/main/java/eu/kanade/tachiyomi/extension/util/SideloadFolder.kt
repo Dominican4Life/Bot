@@ -35,6 +35,10 @@ object SideloadFolder {
 
     private fun fileName(pkgName: String) = "$pkgName.apk"
 
+    /** KMK: the package an APK file name stands for: the name without ".apk" in any case (".APK", ".Apk") */
+    private fun packageOf(name: String): String =
+        if (name.endsWith(".apk", ignoreCase = true)) name.dropLast(4) else name
+
     fun isSideloaded(kind: Kind, pkgName: String): Boolean = (kind.prefix + pkgName) in tracked.get()
 
     /** A sideloaded APK goes into the folder too (after the app took its own copy) */
@@ -96,7 +100,9 @@ object SideloadFolder {
         }
         val apks = listed
             .filter { it.isFile && it.name?.endsWith(".apk", ignoreCase = true) == true }
-        val inFolder = apks.mapNotNull { it.name?.removeSuffix(".apk")?.removeSuffix(".APK") }.toSet()
+        // KMK: the package name is the file name without its ".apk" in any case ("x.Apk" too); r86 stripped only
+        // ".apk"/".APK" here but any extension below, so "x.Apk" looked gone and was uninstalled on every start
+        val inFolder = apks.mapNotNull { it.name?.let { name -> packageOf(name) } }.toSet()
         val inApp = when (kind) {
             Kind.MANGA -> ExtensionLoader.privateExtensionPackages(context)
             Kind.ANIME -> AnimeExtensionLoader.privateExtensionPackages(context)
@@ -104,7 +110,7 @@ object SideloadFolder {
 
         // Folder -> app
         apks.forEach { apk ->
-            val pkgName = apk.name?.substringBeforeLast('.') ?: return@forEach
+            val pkgName = apk.name?.let { name -> packageOf(name) } ?: return@forEach
             if (pkgName in inApp) {
                 tracked.set(tracked.get() + (kind.prefix + pkgName))
                 return@forEach

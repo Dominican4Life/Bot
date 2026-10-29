@@ -34,6 +34,12 @@ object AnimePrefs {
     /** Episodes downloaded at the same time, 1..5 */
     fun concurrentDownloads(): Preference<Int> = store.getInt("anime_download_concurrent", 1)
 
+    /**
+     * KMK (r87): pieces of one episode (or chapter video) fetched at the same time, 1..8 (ParallelVideoDownload);
+     * 1 = one at a time by ffmpeg, as before
+     */
+    fun videoDownloadConnections(): Preference<Int> = store.getInt("pref_video_download_connections", 4)
+
     fun deleteAfterSeen(): Preference<Boolean> = store.getBoolean("anime_delete_after_seen", false)
 
     /** With [deleteAfterSeen], bookmarked episodes stay on the device */

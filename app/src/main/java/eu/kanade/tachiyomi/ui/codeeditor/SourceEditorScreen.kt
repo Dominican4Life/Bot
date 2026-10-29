@@ -152,8 +152,22 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
             }
         }
         BackHandler(enabled = state.dirty) { confirmLeave = true }
+        // KMK (r87): opening another source, starting a new one or importing with unsaved changes asks first too
+        // (Save / Discard / Cancel). The pair is (what replaces the code, the action); Save runs the action once saved
+        var confirmReplace by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
+        var replaceAfterSave by remember { mutableStateOf<(() -> Unit)?>(null) }
+        val askBeforeReplacing: (String, () -> Unit) -> Unit = { what, action ->
+            if (state.dirty) {
+                confirmReplace = what to action
+            } else {
+                action()
+            }
+        }
         LaunchedEffect(state.saveError) {
-            if (state.saveError != null) leaveAfterSave = false
+            if (state.saveError != null) {
+                leaveAfterSave = false
+                replaceAfterSave = null
+            }
         }
 
         LaunchedEffect(state.justSaved) {
@@ -162,6 +176,11 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
             if (leaveAfterSave) {
                 leaveAfterSave = false
                 navigator.pop()
+                return@LaunchedEffect
+            }
+            replaceAfterSave?.let { action ->
+                replaceAfterSave = null
+                action()
                 return@LaunchedEffect
             }
             val result = snackbar.showSnackbar(
@@ -191,7 +210,8 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
             uri ?: return@rememberLauncherForActivityResult
             runCatching {
                 val text = context.contentResolver.openInputStream(uri)!!.bufferedReader().use { it.readText() }
-                model.importCode(context.fileName(uri), text)
+                val fileName = context.fileName(uri)
+                askBeforeReplacing("Importing ${fileName ?: "the file"}") { model.importCode(fileName, text) }
             }.onFailure { context.toast("Couldn't read the file: ${it.message}") }
         }
         val exportLauncher = rememberLauncherForActivityResult(
@@ -387,11 +407,12 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
                 model = model,
                 onNew = { json ->
                     showSaved = false
-                    model.newSource(json = json, anime = state.anime)
+                    askBeforeReplacing("Starting a new source") { model.newSource(json = json, anime = state.anime) }
                 },
-                onOpen = {
+                onOpen = { key ->
                     showSaved = false
-                    model.open(it)
+                    val name = model.savedName(key)
+                    askBeforeReplacing("Opening ${name ?: "another source"}") { model.open(key) }
                 },
                 onDismiss = { showSaved = false },
             )
@@ -441,6 +462,38 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
                             onClick = {
                                 confirmLeave = false
                                 navigator.pop()
+                            },
+                        ) { Text("Discard") }
+                    }
+                },
+            )
+        }
+        confirmReplace?.let { (what, action) ->
+            AlertDialog(
+                onDismissRequest = { confirmReplace = null },
+                title = { Text("Replace without saving?") },
+                text = {
+                    Text(
+                        "Your changes to ${state.name.ifBlank { "this source" }} aren't saved yet. " +
+                            "$what replaces them.",
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            confirmReplace = null
+                            replaceAfterSave = action
+                            model.save()
+                        },
+                    ) { Text("Save") }
+                },
+                dismissButton = {
+                    Row {
+                        TextButton(onClick = { confirmReplace = null }) { Text("Cancel") }
+                        TextButton(
+                            onClick = {
+                                confirmReplace = null
+                                action()
                             },
                         ) { Text("Discard") }
                     }

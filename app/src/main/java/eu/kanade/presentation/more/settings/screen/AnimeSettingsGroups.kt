@@ -137,6 +137,9 @@ fun getAnimeDownloadGroup(): Preference.PreferenceGroup {
     val allCategories = rememberAnimeCategories()
     val concurrentPref = remember { AnimePrefs.concurrentDownloads() }
     val concurrent by concurrentPref.collectAsState()
+    // KMK (r87): parallel pieces per download
+    val connectionsPref = remember { AnimePrefs.videoDownloadConnections() }
+    val connections by connectionsPref.collectAsState()
     val deleteAfterSeenPref = remember { AnimePrefs.deleteAfterSeen() }
     val deleteAfterSeen by deleteAfterSeenPref.collectAsState()
     val downloadNewPref = remember { AnimePrefs.downloadNewEpisodes() }
@@ -164,6 +167,13 @@ fun getAnimeDownloadGroup(): Preference.PreferenceGroup {
                 valueRange = 1..AnimeDownloadManager.MAX_CONCURRENT,
                 title = stringResource(KMR.strings.pref_anime_download_concurrent),
                 onValueChanged = { concurrentPref.set(it) },
+            ),
+            Preference.PreferenceItem.SliderPreference(
+                value = connections,
+                valueRange = 1..eu.kanade.tachiyomi.data.download.video.ParallelVideoDownload.MAX_CONNECTIONS,
+                title = stringResource(KMR.strings.pref_video_download_connections),
+                subtitle = stringResource(KMR.strings.pref_video_download_connections_summary),
+                onValueChanged = { connectionsPref.set(it) },
             ),
             Preference.PreferenceItem.SwitchPreference(
                 preference = deleteAfterSeenPref,

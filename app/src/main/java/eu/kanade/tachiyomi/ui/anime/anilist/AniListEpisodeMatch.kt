@@ -18,7 +18,8 @@ import kotlin.math.abs
  * ani.zip list the AniList page shows), instead of each source looking them up itself.
  *
  * Which AniList entry an anime is: the one picked with "Change" (remembered per anime), else its AniList track,
- * else its MyAnimeList track, else a title search (an exact title first, the closest episode count winning).
+ * else its MyAnimeList track, else an earlier title match ("auto:"), else a title search (an exact title first, the
+ * closest episode count winning).
  */
 @Immutable
 data class AniListEpisodeInfo(
@@ -64,8 +65,13 @@ object AniListEpisodeMatch {
     private suspend fun find(anime: Anime, numbers: List<Double>): AniListEpisodeInfo? {
         val saved = pref(anime.id).get()
         if (saved == NONE) return null
-        val id = saved.removePrefix(AUTO).toIntOrNull()
+        // KMK (r87): a manual pick first, then the trackers, then a saved title match, then a new title search.
+        // A saved "auto:" match used to come before the tracks, so a wrong title match stuck even after tracking.
+        val manual = saved.takeUnless { it.startsWith(AUTO) }?.toIntOrNull()
+        val auto = saved.takeIf { it.startsWith(AUTO) }?.removePrefix(AUTO)?.toIntOrNull()
+        val id = manual
             ?: fromTracks(anime.id)
+            ?: auto
             ?: fromTitle(anime, numbers)?.also { pref(anime.id).set("$AUTO$it") }
             ?: run {
                 AppLog.add('I', "anilist", "${anime.title}: no AniList entry found for the episode info")

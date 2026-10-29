@@ -6,6 +6,7 @@ import eu.kanade.tachiyomi.animesource.model.FetchType
 import eu.kanade.tachiyomi.data.anime.Anime
 import eu.kanade.tachiyomi.data.anime.AnimeCustomInfo
 import eu.kanade.tachiyomi.data.anime.AnimeExtraPrefs
+import eu.kanade.tachiyomi.data.anime.AnimePrefs
 import eu.kanade.tachiyomi.data.anime.AnimeRepository
 import eu.kanade.tachiyomi.data.anime.Episode
 import eu.kanade.tachiyomi.data.anime.track.AnimeTrack
@@ -155,14 +156,23 @@ class AnimeBackupHelper(
         categories: List<BackupAnimeCategory>,
     ) {
         val nameOfOld = categories.filter { it.id > 0 }.associate { it.id.toString() to it.name.lowercase() }
-        if (nameOfOld.isEmpty()) return
+        // Categories without ids: a backup from before r85
+        if (categories.isNotEmpty() && nameOfOld.isEmpty()) return
         val idOfName = database.anime_categoriesQueries.getAll { id, name, _ -> name.lowercase() to id.toString() }
             .executeAsList()
             .toMap()
+        val uncategorized = AnimePrefs.UNCATEGORIZED.toString()
         val store = Injekt.get<PreferenceStore>()
         preferences.forEach { (key, value) ->
             if (key !in CATEGORY_KEYS || value !is StringSetPreferenceValue) return@forEach
-            val mapped = value.value.mapNotNull { old -> nameOfOld[old]?.let { idOfName[it] } }.toSet()
+            // KMK (r87): "0" (Uncategorized) is the same on every device and stays "0"; up to r86 it was dropped, so
+            // an include set of only Uncategorized came back empty, which means "all categories"
+            val mapped = value.value.mapNotNull { old ->
+                if (old == uncategorized) old else nameOfOld[old]?.let { idOfName[it] }
+            }.toSet()
+            // An empty set means "all": when none of the backup's categories could be matched here, the setting
+            // keeps its current value instead of turning into "all"
+            if (mapped.isEmpty() && value.value.isNotEmpty()) return@forEach
             store.getStringSet(key).set(mapped)
         }
     }

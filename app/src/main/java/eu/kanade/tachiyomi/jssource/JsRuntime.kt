@@ -468,8 +468,14 @@ class JsRuntime private constructor(
         /** KMK: where a source's host.storage is kept */
         internal fun storageDir(context: Context, key: String): File = File(context.filesDir, "js_storage/$key")
 
-        /** KMK: the storage folder of the Code editor's test copy of [key] */
-        internal fun testStorageKey(key: String): String = "${key}_editor"
+        /**
+         * KMK: the storage folder of the Code editor's test copy of [key]. A "." can't be in a key (KEY_PATTERN), so
+         * this never meets a real source's folder; r86's "<key>_editor" could (a source keyed "abc_editor")
+         */
+        internal fun testStorageKey(key: String): String = "$key.editor"
+
+        /** KMK: r86's test copy folder name, only to clean it up */
+        internal fun legacyTestStorageKey(key: String): String = "${key}_editor"
 
         private fun asset(context: Context, name: String): String =
             context.assets.open("jssource/$name").bufferedReader().use { it.readText() }

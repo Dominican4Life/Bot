@@ -1,7 +1,5 @@
 package eu.kanade.presentation.anime
 
-import `is`.xyz.mpv.BaseMPVView
-import `is`.xyz.mpv.MPV
 import android.os.Handler
 import android.os.Looper
 import androidx.compose.animation.AnimatedVisibility
@@ -92,6 +90,8 @@ import eu.kanade.tachiyomi.ui.player.resolveUri
 import eu.kanade.tachiyomi.ui.player.settings.DecoderPreferences
 import eu.kanade.tachiyomi.ui.player.settings.PlayerPreferences
 import eu.kanade.tachiyomi.ui.player.utils.Anime4KManager
+import `is`.xyz.mpv.BaseMPVView
+import `is`.xyz.mpv.MPV
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -237,6 +237,8 @@ fun AnimePreviewSection(
                 }
                 val instance = ensurePlayer()
                 val headers = video.headers ?: (source as? AnimeHttpSource)?.headers
+                    // KMK (r87): Code editor sources send their headers too, as in the player
+                    ?: (source as? eu.kanade.tachiyomi.jssource.JsAnimeSource)?.headers
                 if (headers != null) {
                     val headerString = headers.toMultimap()
                         .map { (name, values) -> name + ": " + (values.firstOrNull() ?: "").replace(",", "\\,") }

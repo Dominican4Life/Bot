@@ -114,6 +114,9 @@ class SourceEditorScreenModel(
 
     val savedSources get() = manager.savedFlow
 
+    /** KMK: the name of the saved source [key], for the "Replace without saving?" dialog */
+    fun savedName(key: String): String? = manager.get(key)?.name?.takeIf { it.isNotBlank() }
+
     // Editing
 
     fun setCode(code: String) {

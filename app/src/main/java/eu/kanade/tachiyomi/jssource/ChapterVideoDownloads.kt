@@ -7,6 +7,7 @@ import com.arthenica.ffmpegkit.LogCallback
 import com.arthenica.ffmpegkit.StatisticsCallback
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.data.download.video.ParallelVideoDownload
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.source.model.Page
@@ -57,7 +58,14 @@ object ChapterVideoDownloads {
      * Saves the video of [page] into [dir] as `[filename].video.*`, unless it's already there. Tries the
      * source's videos in order (best first) until one saves; throws the last error when none does.
      */
-    suspend fun save(page: Page, dir: UniFile, filename: String, onPercent: (Int) -> Unit = {}) = withIOContext {
+    suspend fun save(
+        page: Page,
+        dir: UniFile,
+        filename: String,
+        // KMK (r87): names the video in the "download" log lines
+        label: String = filename,
+        onPercent: (Int) -> Unit = {},
+    ) = withIOContext {
         val prefix = "$filename$MARK"
         val existing = dir.listFiles()?.firstOrNull { f ->
             val n = f.name.orEmpty()
@@ -73,10 +81,12 @@ object ChapterVideoDownloads {
             try {
                 if (video.videoUrl.isBlank()) continue
                 val headers = video.headers ?: Headers.Builder().build()
+                // KMK (r87): the same chapter folder and page give the same pieces folder, so a retry continues
+                val key = "chapter_" + (dir.uri.toString() + "|" + filename).hashCode().toUInt().toString(16)
                 if (isStream(video)) {
-                    ffmpegSave(video, headers, dir, prefix, onPercent)
+                    ffmpegSave(video, headers, dir, prefix, key, label, onPercent)
                 } else {
-                    httpSave(video, headers, dir, prefix, onPercent)
+                    httpSave(video, headers, dir, prefix, key, label, onPercent)
                 }
                 return@withIOContext
             } catch (e: Throwable) {
@@ -102,7 +112,7 @@ object ChapterVideoDownloads {
         videoPages.forEachIndexed { index, page ->
             onPercent(index * 100 / videoPages.size)
             try {
-                save(page, dir, filenameOf(page)) { percent ->
+                save(page, dir, filenameOf(page), "$chapterName, page ${page.number}") { percent ->
                     onPercent((index * 100 + percent.coerceIn(0, 100)) / videoPages.size)
                 }
                 logcat(LogPriority.INFO) { "Chapter video saved: $chapterName, page ${page.number}" }
@@ -133,8 +143,40 @@ object ChapterVideoDownloads {
             "/hls/" in url || video.videoUrl.contains("x=list.m3u8")
     }
 
-    private suspend fun httpSave(video: Video, headers: Headers, dir: UniFile, prefix: String, onPercent: (Int) -> Unit) {
+    private suspend fun httpSave(
+        video: Video,
+        headers: Headers,
+        dir: UniFile,
+        prefix: String,
+        key: String,
+        label: String,
+        onPercent: (Int) -> Unit,
+    ) {
         val client = Injekt.get<NetworkHelper>().client
+        // KMK (r87): a server that sends parts gets several connections at once ("Connections per download")
+        val connections = ParallelVideoDownload.connections()
+        if (connections > 1) {
+            val probe = ParallelVideoDownload.probeRanges(client, video.videoUrl, headers, label)
+            if (probe != null) {
+                val workDir = File(context.cacheDir, "chapter_video_download").apply { mkdirs() }
+                val out = File(workDir, "${System.currentTimeMillis()}.part")
+                try {
+                    val saved = ParallelVideoDownload.saveRanges(
+                        client, video.videoUrl, headers, probe, out, connections, label, onPercent,
+                    )
+                    if (saved) {
+                        val tmp = dir.createFile("$prefix$TMP") ?: error("Can't create the file")
+                        tmp.openOutputStream().use { output -> out.inputStream().use { it.copyTo(output, BUFFER) } }
+                        if (!tmp.renameTo("${prefix}${extensionOf(probe.contentType, video.videoUrl)}")) {
+                            error("Couldn't rename the saved video")
+                        }
+                        return
+                    }
+                } finally {
+                    out.delete()
+                }
+            }
+        }
         val request = Request.Builder().url(video.videoUrl).headers(headers).build()
         client.newCall(request).await().use { response ->
             if (!response.isSuccessful) error("HTTP ${response.code}")
@@ -143,7 +185,7 @@ object ChapterVideoDownloads {
             if (type.contains("mpegurl", ignoreCase = true) || type.contains("dash", ignoreCase = true)) {
                 // It was a playlist after all
                 response.close()
-                ffmpegSave(video, headers, dir, prefix, onPercent)
+                ffmpegSave(video, headers, dir, prefix, key, label, onPercent)
                 return
             }
             val total = body.contentLength()
@@ -162,22 +204,56 @@ object ChapterVideoDownloads {
                     }
                 }
             }
-            val ext = when {
-                type.contains("webm") || video.videoUrl.contains(".webm") -> "webm"
-                type.contains("matroska") || video.videoUrl.contains(".mkv") -> "mkv"
-                else -> "mp4"
-            }
+            val ext = extensionOf(type, video.videoUrl)
             if (!tmp.renameTo("${prefix}$ext")) error("Couldn't rename the saved video")
         }
     }
 
-    private suspend fun ffmpegSave(stream: Video, headers: Headers, dir: UniFile, prefix: String, onPercent: (Int) -> Unit) {
+    private fun extensionOf(type: String, url: String): String = when {
+        type.contains("webm") || url.contains(".webm") -> "webm"
+        type.contains("matroska") || url.contains(".mkv") -> "mkv"
+        else -> "mp4"
+    }
+
+    private suspend fun ffmpegSave(
+        stream: Video,
+        headers: Headers,
+        dir: UniFile,
+        prefix: String,
+        key: String,
+        label: String,
+        onPercent: (Int) -> Unit,
+    ) {
         // KMK: a stream holding several qualities is saved in one (the best), not all of them in one file
         val video = eu.kanade.tachiyomi.ui.player.loader.HlsVariants.forDownload(stream, headers)
-        val headerBlock = headers.joinToString("") { (name, value) -> "$name: $value\r\n" }
         // ffmpeg writes to app storage first, then the file is copied into the chapter folder
         val workDir = File(context.cacheDir, "chapter_video_download").apply { mkdirs() }
         val out = File(workDir, "${System.currentTimeMillis()}.mkv")
+        try {
+            // KMK (r87): pieces fetched several at a time and joined from the local copy; else ffmpeg reads the link
+            if (!ParallelVideoDownload.saveHls(video, headers, out, key, label, onPercent)) {
+                val started = System.currentTimeMillis()
+                ffmpegFromLink(video, headers, out, onPercent)
+                ParallelVideoDownload.discard(key)
+                val seconds = (System.currentTimeMillis() - started) / 1000
+                eu.kanade.tachiyomi.util.system.AppLog.add(
+                    'I',
+                    "download",
+                    "$label: saved by ffmpeg from the link in $seconds s",
+                )
+            }
+            if (!out.exists() || out.length() == 0L) error("ffmpeg saved nothing")
+            val tmp = dir.createFile("$prefix$TMP") ?: error("Can't create the file")
+            tmp.openOutputStream().use { output -> out.inputStream().use { it.copyTo(output, BUFFER) } }
+            if (!tmp.renameTo("${prefix}mkv")) error("Couldn't rename the saved video")
+        } finally {
+            out.delete()
+        }
+    }
+
+    /** The way up to r86: ffmpeg reads the stream from its link (one piece at a time) into [out] */
+    private suspend fun ffmpegFromLink(video: Video, headers: Headers, out: File, onPercent: (Int) -> Unit) {
+        val headerBlock = headers.joinToString("") { (name, value) -> "$name: $value\r\n" }
         val durationMs = java.util.concurrent.atomic.AtomicLong(0L)
         val args = buildList {
             if (headerBlock.isNotEmpty()) {
@@ -191,40 +267,32 @@ object ChapterVideoDownloads {
             addAll(listOf("-i", video.videoUrl, "-map", "0:v?", "-map", "0:a?", "-map", "0:s?"))
             addAll(listOf("-c", "copy", "-f", "matroska", "-y", out.absolutePath))
         }.toTypedArray()
-        try {
-            suspendCancellableCoroutine { continuation ->
-                val session = FFmpegKit.executeWithArgumentsAsync(
-                    args,
-                    { session ->
-                        if (session.returnCode?.isValueSuccess == true) {
-                            continuation.resume(Unit)
-                        } else {
-                            val tail = session.allLogsAsString?.takeLast(300).orEmpty()
-                            continuation.resumeWithException(IllegalStateException("ffmpeg failed: $tail"))
+        suspendCancellableCoroutine<Unit> { continuation ->
+            val session = FFmpegKit.executeWithArgumentsAsync(
+                args,
+                { session ->
+                    if (session.returnCode?.isValueSuccess == true) {
+                        continuation.resume(Unit)
+                    } else {
+                        val tail = session.allLogsAsString?.takeLast(300).orEmpty()
+                        continuation.resumeWithException(IllegalStateException("ffmpeg failed: $tail"))
+                    }
+                },
+                // KMK: the length ffmpeg reads ("Duration: 00:24:01.50") turns its time into a percent
+                LogCallback { log ->
+                    if (durationMs.get() <= 0L) {
+                        DURATION.find(log.message.orEmpty())?.destructured?.let { (h, m, sec) ->
+                            val ms = (h.toLong() * 3600 + m.toLong() * 60) * 1000 + (sec.toDouble() * 1000).toLong()
+                            durationMs.set(ms)
                         }
-                    },
-                    // KMK: the length ffmpeg reads ("Duration: 00:24:01.50") turns its time into a percent
-                    LogCallback { log ->
-                        if (durationMs.get() <= 0L) {
-                            DURATION.find(log.message.orEmpty())?.destructured?.let { (h, m, sec) ->
-                                val ms = (h.toLong() * 3600 + m.toLong() * 60) * 1000 + (sec.toDouble() * 1000).toLong()
-                                durationMs.set(ms)
-                            }
-                        }
-                    },
-                    StatisticsCallback { stats ->
-                        val total = durationMs.get()
-                        if (total > 0L) onPercent((stats.time * 100 / total).toInt().coerceIn(0, 99))
-                    },
-                )
-                continuation.invokeOnCancellation { session.cancel() }
-            }
-            if (!out.exists() || out.length() == 0L) error("ffmpeg saved nothing")
-            val tmp = dir.createFile("$prefix$TMP") ?: error("Can't create the file")
-            tmp.openOutputStream().use { output -> out.inputStream().use { it.copyTo(output, BUFFER) } }
-            if (!tmp.renameTo("${prefix}mkv")) error("Couldn't rename the saved video")
-        } finally {
-            out.delete()
+                    }
+                },
+                StatisticsCallback { stats ->
+                    val total = durationMs.get()
+                    if (total > 0L) onPercent((stats.time * 100 / total).toInt().coerceIn(0, 99))
+                },
+            )
+            continuation.invokeOnCancellation { session.cancel() }
         }
     }
 

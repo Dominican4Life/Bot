@@ -239,7 +239,24 @@ class JsSourceManager(private val context: Application) {
             val saved = JsStorage.of(JsRuntime.storageDir(context, key)).all()
             JsStorage.of(JsRuntime.storageDir(context, JsRuntime.testStorageKey(key))).replaceAll(saved)
         }.onFailure { AppLog.add('W', "js", "Couldn't copy the saved data for testing: ${it.message}") }
+        // KMK: r86 kept the test copy in "<key>_editor"; it moved to "<key>.editor", so the old folder goes
+        legacyTestStorageKey(key)?.let { old ->
+            runCatching {
+                val storage = JsRuntime.storageDir(context, old)
+                if (storage.exists()) {
+                    JsStorage.forget(storage)
+                    storage.deleteRecursively()
+                }
+            }
+        }
     }
+
+    /**
+     * KMK: r86's test copy folder of [key] ("<key>_editor"), or null when a saved source really has that key (its
+     * folder is that source's own storage then, not a test copy)
+     */
+    private fun legacyTestStorageKey(key: String): String? =
+        JsRuntime.legacyTestStorageKey(key).takeIf { get(it) == null }
 
     /** A saved source is listed in Browse even when its language was turned off there */
     private fun showLanguage(info: JsSourceInfo) {
@@ -348,10 +365,10 @@ class JsSourceManager(private val context: Application) {
         runCatching { JsPreferences.testOf(context, idOf(key)).edit().clear().apply() }
         dir(key).deleteRecursively()
         // KMK: the shared copies in memory go too, so nothing old is written back (JsStorage)
-        listOf(key, JsRuntime.testStorageKey(key)).forEach {
+        listOfNotNull(key, JsRuntime.testStorageKey(key), legacyTestStorageKey(key)).forEach {
             val storage = JsRuntime.storageDir(context, it)
-            storage.deleteRecursively()
             JsStorage.forget(storage)
+            storage.deleteRecursively()
         }
         tags.forget(key)
         _saved.value = _saved.value.filterNot { it.key == key }

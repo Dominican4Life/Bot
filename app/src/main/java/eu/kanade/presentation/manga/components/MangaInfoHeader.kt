@@ -101,6 +101,7 @@ import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.library.service.LibraryPreferences.Companion.MANGA_NON_COMPLETED
 import tachiyomi.domain.manga.interactor.FetchInterval
 import tachiyomi.domain.manga.model.Manga
+import tachiyomi.domain.manga.model.MangaCover as DomainMangaCover
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.i18n.sy.SYMR
@@ -117,7 +118,6 @@ import uy.kohesive.injekt.api.get
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import kotlin.math.roundToInt
-import tachiyomi.domain.manga.model.MangaCover as DomainMangaCover
 
 @Composable
 fun MangaInfoBox(
@@ -400,6 +400,8 @@ fun ExpandableMangaDescription(
                 // KMK: tap a tag to search it in this source, hold it for a global search (no menu)
                 val onTagClick: (String) -> Unit = { onTagSearch(it) }
                 val onTagHold: (String) -> Unit = { doSearch(it, true) }
+                // KMK (r87): double tap copies it (Copy tag had no way in since the tag menu went, e6daf49d)
+                val onTagDoubleTap: (String) -> Unit = { onCopyTagToClipboard(it) }
                 if (expanded) {
                     // SY -->
                     if (searchMetadataChips != null) {
@@ -409,6 +411,7 @@ fun ExpandableMangaDescription(
                             // KMK -->
                             pureDarkMode = pureDarkMode,
                             onLongClick = onTagHold,
+                            onDoubleClick = onTagDoubleTap,
                             // KMK <--
                         )
                     } else {
@@ -425,6 +428,7 @@ fun ExpandableMangaDescription(
                                     // KMK -->
                                     pureDarkMode = pureDarkMode,
                                     onLongClick = { onTagHold(it) },
+                                    onDoubleClick = { onTagDoubleTap(it) },
                                     // KMK <--
                                 )
                             }
@@ -443,6 +447,7 @@ fun ExpandableMangaDescription(
                                 // KMK -->
                                 pureDarkMode = pureDarkMode,
                                 onLongClick = { onTagHold(it) },
+                                onDoubleClick = { onTagDoubleTap(it) },
                                 // KMK <--
                             )
                         }

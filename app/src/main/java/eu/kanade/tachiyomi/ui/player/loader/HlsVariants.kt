@@ -187,7 +187,7 @@ object HlsVariants {
         val generic = base.isEmpty() || base.lowercase() in GENERIC_TITLES
         val out = ordered.map { variant ->
             val label = variant.height?.let { "${it}p" }
-                ?: variant.bandwidth?.let { "%.1f Mbps".format(it / 1_000_000.0) }
+                ?: variant.bandwidth?.let { mbps(it) }
                 ?: "Quality"
             video.copy(
                 videoUrl = variant.url,
@@ -212,8 +212,11 @@ object HlsVariants {
     }
 
     private fun heightLabel(variant: Variant): String = variant.height?.let { "${it}p" }
-        ?: variant.bandwidth?.let { "%.1f Mbps".format(it / 1_000_000.0) }
+        ?: variant.bandwidth?.let { mbps(it) }
         ?: "?"
+
+    // KMK (r87): "2.5 Mbps" whatever the phone's language (some wrote "2,5"), so titles read the same everywhere
+    private fun mbps(bandwidth: Int): String = "%.1f Mbps".format(java.util.Locale.US, bandwidth / 1_000_000.0)
 
     // Anywhere in the address: a stream played through the app's relay (HlsRelay) reads
     // "http://127.0.0.1:…/p/…?u=…&x=list.m3u8", with the name after the "?"
@@ -255,8 +258,11 @@ object HlsVariants {
             val bandwidth = BANDWIDTH.find(line)?.groupValues?.get(1)?.toIntOrNull()
             variants += Variant(absolute, height, bandwidth)
         }
-        // One entry per quality (some lists repeat a quality for another server)
-        return variants.distinctBy { it.height ?: it.bandwidth ?: it.url }
+        // One entry per quality (some lists repeat a quality for another server).
+        // KMK (r87): of two with the same size, the one with the highest bitrate (it used to keep the first listed),
+        // so downloads take the best size and then the highest bitrate, and playback lists the better copy
+        return variants.groupBy { it.height ?: it.bandwidth ?: it.url }.values
+            .map { same -> same.maxBy { it.bandwidth ?: 0 } }
     }
 
     private fun resolve(base: HttpUrl, ref: String): String? =

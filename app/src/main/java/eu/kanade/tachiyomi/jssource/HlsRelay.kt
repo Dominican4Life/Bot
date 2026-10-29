@@ -36,6 +36,10 @@ object HlsRelay {
 
     /** The stream each relayed address stands for, for casting (a TV can't reach this device's relay) */
     private val originals = ConcurrentHashMap<String, String>()
+
+    // KMK: when each stream was last handed out or served (a playlist or a piece), so trimming drops the least
+    // recently used ones, not a long video that started early and is still playing
+    private val lastUsed = ConcurrentHashMap<String, Long>()
     private val nextId = AtomicInteger(1)
 
     @Volatile
@@ -61,15 +65,19 @@ object HlsRelay {
         val id = nextId.getAndIncrement().toString()
         sessions[id] = headers
         originals[id] = url
-        // KMK: past 500, the 100 oldest go (ids only grow). take(100) on the map dropped them in hash order, which
-        // could be a stream that was playing: its next playlist or piece then got 404
+        lastUsed[id] = System.currentTimeMillis()
+        // KMK: past 500, the 100 least recently used go (r87; r86 dropped the 100 handed out first, which could be a
+        // video still playing: its next playlist or piece then got 404). Same time: the older id goes first
         if (sessions.size > 500) {
-            val oldest = sessions.keys.sortedBy { it.toLongOrNull() ?: Long.MIN_VALUE }.take(100)
-            oldest.forEach {
+            val unused = sessions.keys
+                .sortedWith(compareBy<String>({ lastUsed[it] ?: 0L }, { it.toLongOrNull() ?: Long.MIN_VALUE }))
+                .take(100)
+            unused.forEach {
                 sessions.remove(it)
                 originals.remove(it)
+                lastUsed.remove(it)
             }
-            AppLog.add('D', "hls", "Let go of the ${oldest.size} oldest stream addresses (more than 500 handed out)")
+            AppLog.add('D', "hls", "Let go of the ${unused.size} oldest stream addresses (more than 500 handed out)")
         }
         return relayUrl(id, url, playlist = true)
     }
@@ -106,6 +114,8 @@ object HlsRelay {
                 respond(out, 404, "text/plain", "Not found".toByteArray())
                 return
             }
+            // KMK: this stream is in use (see lastUsed)
+            if (id != null) lastUsed[id] = System.currentTimeMillis()
             val request = Request.Builder().url(target).headers(headers).build()
             var call = try {
                 execute(request)

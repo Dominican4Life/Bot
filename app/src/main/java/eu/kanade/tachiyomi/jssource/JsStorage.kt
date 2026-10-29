@@ -19,15 +19,22 @@ internal object JsStorage {
     /** The shared storage kept in [dir] */
     fun of(dir: File): Store = stores.computeIfAbsent(dir.absolutePath) { Store(dir) }
 
-    /** Lets go of the copy in memory for [dir] (its folder was deleted), so nothing old is written back */
+    /**
+     * Lets go of the copy in memory for [dir] (its folder is being deleted), so nothing old is written back. KMK: the
+     * old copy is closed too: a runtime still holding it (Browse, a tag download) used to keep writing, and each
+     * write made the deleted folder again. Its later writes are now ignored; [of] gives a new copy.
+     */
     fun forget(dir: File) {
-        stores.remove(dir.absolutePath)?.drop()
+        stores.remove(dir.absolutePath)?.close()
     }
 
     class Store(private val dir: File) {
 
         private val file get() = File(dir, "storage.json")
         private var cache: MutableMap<String, JsonElement>? = null
+
+        // KMK: set by forget(); a closed copy is never written to disk again
+        private var closed = false
 
         private fun map(): MutableMap<String, JsonElement> = cache ?: runCatching {
             (jsJson.parseToJsonElement(file.readText()) as JsonObject).toMutableMap()
@@ -56,11 +63,13 @@ internal object JsStorage {
         }
 
         @Synchronized
-        internal fun drop() {
+        internal fun close() {
+            closed = true
             cache = mutableMapOf()
         }
 
         private fun write(map: Map<String, JsonElement>) {
+            if (closed) return
             runCatching {
                 dir.mkdirs()
                 file.writeText(JsonObject(map).toString())

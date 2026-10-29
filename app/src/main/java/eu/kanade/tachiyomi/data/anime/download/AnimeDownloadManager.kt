@@ -15,6 +15,7 @@ import eu.kanade.tachiyomi.data.anime.AnimeRepository
 import eu.kanade.tachiyomi.data.anime.AnimeVideoFetcher
 import eu.kanade.tachiyomi.data.anime.Episode
 import eu.kanade.tachiyomi.data.download.model.Download
+import eu.kanade.tachiyomi.data.download.video.ParallelVideoDownload
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.util.storage.DiskUtil
@@ -70,6 +71,13 @@ class AnimeDownloadManager(
         val state = MutableStateFlow(Download.State.QUEUE)
         val progress = MutableStateFlow(0)
         var error: String? = null
+
+        /**
+         * KMK (r87): the stream picked in Episode options, downloaded first (it used to be dropped and the
+         * downloader picked its own). Not kept over an app restart: null = the best one found.
+         */
+        @Volatile
+        var video: Video? = null
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -105,7 +113,7 @@ class AnimeDownloadManager(
 
     // Queue
 
-    fun enqueue(anime: Anime, episodes: List<Episode>, startNow: Boolean = false) {
+    fun enqueue(anime: Anime, episodes: List<Episode>, startNow: Boolean = false, video: Video? = null) {
         // Failed ones go back in line
         _queue.value
             .filter { item -> item.state.value == Download.State.ERROR && episodes.any { it.id == item.episode.id } }
@@ -113,6 +121,13 @@ class AnimeDownloadManager(
         val fresh = episodes
             .filter { ep -> !isDownloaded(anime, ep) && _queue.value.none { it.episode.id == ep.id } }
             .map { Item(anime, it) }
+        // KMK (r87): the stream picked in Episode options (one episode), also for one already waiting in line
+        if (video != null) {
+            val episodeId = episodes.singleOrNull()?.id
+            (fresh + _queue.value)
+                .firstOrNull { it.episode.id == episodeId && it.state.value != Download.State.DOWNLOADING }
+                ?.video = video
+        }
         _queue.update { current ->
             if (startNow) {
                 val moved = episodes.mapNotNull { ep -> current.firstOrNull { it.episode.id == ep.id } }
@@ -211,8 +226,9 @@ class AnimeDownloadManager(
 
     fun isDownloaded(anime: Anime, episode: Episode): Boolean {
         val names = fileCache.getOrPut(anime.id) { listFiles(anime) }
-        val base = episodeBaseName(episode)
-        return names.any { it.startsWith("$base.") && !it.endsWith(TMP) }
+        // KMK (r87): the name with the episode number, or the older name without it
+        val bases = listOf(episodeBaseName(episode), legacyBaseName(episode))
+        return names.any { name -> bases.any { isFileOf(name, it) } }
     }
 
     /** Reads the anime's folder again (call when its page opens) */
@@ -224,10 +240,19 @@ class AnimeDownloadManager(
     }
 
     fun findEpisodeFile(anime: Anime, episode: Episode): UniFile? {
-        val base = episodeBaseName(episode)
-        return animeDir(anime, create = false)?.listFiles()
-            ?.firstOrNull { file -> file.name?.let { it.startsWith("$base.") && !it.endsWith(TMP) } == true }
+        val files = animeDir(anime, create = false)?.listFiles() ?: return null
+        // KMK (r87): the name with the episode number first, else the older name without it
+        return listOf(episodeBaseName(episode), legacyBaseName(episode)).firstNotNullOfOrNull { base ->
+            files.firstOrNull { file -> file.name?.let { isFileOf(it, base) } == true }
+        }
     }
+
+    /**
+     * KMK (r87): [name] is the finished file of [base] ("<base>.mkv"). It used to match any name starting with
+     * "<base>.", so "Episode 1" also matched "Episode 1.5.mkv".
+     */
+    private fun isFileOf(name: String, base: String): Boolean =
+        !name.endsWith(TMP) && name.startsWith("$base.") && name.substringBeforeLast('.') == base
 
     fun downloadedCount(anime: Anime): Int = fileCache[anime.id]?.count { !it.endsWith(TMP) } ?: 0
 
@@ -289,36 +314,65 @@ class AnimeDownloadManager(
     private fun listFiles(anime: Anime): Set<String> =
         animeDir(anime, create = false)?.listFiles()?.mapNotNull { it.name }?.toSet() ?: emptySet()
 
-    private fun episodeBaseName(episode: Episode): String {
+    /** Up to r86: `scanlator_name`, shared by two episodes with the same name (they overwrote each other) */
+    private fun legacyBaseName(episode: Episode): String {
         val name = listOfNotNull(episode.scanlator?.takeIf { it.isNotBlank() }, episode.name).joinToString("_")
         return DiskUtil.buildValidFilename(name)
+    }
+
+    /**
+     * KMK (r87): new downloads are `scanlator_name_E<number>` (`_U<hash of the episode link>` when the number is
+     * unknown), so episodes with the same name get their own files. Files named the old way are still found
+     * ([legacyBaseName]).
+     */
+    private fun episodeBaseName(episode: Episode): String {
+        val name = listOfNotNull(episode.scanlator?.takeIf { it.isNotBlank() }, episode.name).joinToString("_")
+        val number = episode.episodeNumber
+        val tag = if (number >= 0) {
+            "E" + if (number % 1.0 == 0.0) number.toLong().toString() else number.toString()
+        } else {
+            "U" + episode.url.hashCode().toUInt().toString(16)
+        }
+        return DiskUtil.buildValidFilename(name, maxBytes = 200) + "_" + tag
     }
 
     // Downloading
 
     private suspend fun download(item: Item, onPercent: (Int) -> Unit) = withIOContext {
         val source = sourceManager.get(item.anime.source) ?: error("Source not installed")
-        val videos = AnimeVideoFetcher.fetchVideos(source, item.episode.toSEpisode())
-        if (videos.isEmpty()) error("No videos found")
-
         // Two downloads of the same anime must not both create its folder
         val dir = dirLock.withLock { animeDir(item.anime, create = true) } ?: error("Can't open the downloads folder")
         val base = episodeBaseName(item.episode)
+        val label = "${item.anime.title} · ${item.episode.name}"
+        val key = "anime_${item.episode.id}"
+        // KMK (r87): the episode number is part of new file names, so same-named episodes don't share one
+        AppLog.add('I', LOG_TAG, "$label: saving as \"$base\" (episode number in the name)")
         var lastError: Throwable? = null
+
+        // KMK (r87): the stream picked in Episode options first (already resolved there)
+        item.video?.let { picked ->
+            AppLog.add('I', LOG_TAG, "$label: downloading the stream picked in Episode options, ${picked.videoTitle}")
+            try {
+                saveVideo(source, picked, dir, base, key, label, onPercent)
+                fileCache[item.anime.id] = listFiles(item.anime)
+                return@withIOContext
+            } catch (e: Throwable) {
+                if (e is CancellationException) throw e
+                AppLog.add('W', LOG_TAG, "$label: the picked stream failed (${e.message}), picking one automatically")
+                lastError = e
+                dir.findFile("$base$TMP")?.delete()
+            }
+        }
+
+        val videos = AnimeVideoFetcher.fetchVideos(source, item.episode.toSEpisode())
+        if (videos.isEmpty()) throw lastError ?: IllegalStateException("No videos found")
+        AppLog.add('I', LOG_TAG, "$label: picking the stream automatically (${videos.size} found)")
         // Best video first; fall back to the next one when a server fails
         for (candidate in videos.take(MAX_TRIES)) {
             try {
                 val video = AnimeVideoFetcher.resolve(source, candidate)
                 if (video.videoUrl.isBlank() || video.videoUrl == "null") continue
-                val headers = video.headers ?: (source as? AnimeHttpSource)?.headers
-                    // KMK: Code editor sources send their headers too, as in the player
-                    ?: (source as? eu.kanade.tachiyomi.jssource.JsAnimeSource)?.headers
-                    ?: Headers.Builder().build()
-                if (isStream(video)) {
-                    ffmpegDownload(video, headers, dir, base, onPercent)
-                } else {
-                    httpDownload(source, video, headers, dir, base, onPercent)
-                }
+                saveVideo(source, video, dir, base, key, label, onPercent)
                 fileCache[item.anime.id] = listFiles(item.anime)
                 return@withIOContext
             } catch (e: Throwable) {
@@ -329,6 +383,26 @@ class AnimeDownloadManager(
             }
         }
         throw lastError ?: IllegalStateException("No playable video")
+    }
+
+    private suspend fun saveVideo(
+        source: AnimeSource,
+        video: Video,
+        dir: UniFile,
+        base: String,
+        key: String,
+        label: String,
+        onPercent: (Int) -> Unit,
+    ) {
+        val headers = video.headers ?: (source as? AnimeHttpSource)?.headers
+            // KMK: Code editor sources send their headers too, as in the player
+            ?: (source as? eu.kanade.tachiyomi.jssource.JsAnimeSource)?.headers
+            ?: Headers.Builder().build()
+        if (isStream(video)) {
+            ffmpegDownload(video, headers, dir, base, key, label, onPercent)
+        } else {
+            httpDownload(source, video, headers, dir, base, key, label, onPercent)
+        }
     }
 
     private fun isStream(video: Video): Boolean {
@@ -345,9 +419,39 @@ class AnimeDownloadManager(
         headers: Headers,
         dir: UniFile,
         base: String,
+        key: String,
+        label: String,
         onPercent: (Int) -> Unit,
     ) {
         val client = (source as? AnimeHttpSource)?.client ?: Injekt.get<NetworkHelper>().client
+        // KMK (r87): a server that sends parts gets several connections at once ("Connections per download")
+        val connections = ParallelVideoDownload.connections()
+        if (connections > 1) {
+            val probe = ParallelVideoDownload.probeRanges(client, video.videoUrl, headers, label)
+            if (probe != null) {
+                val workDir = File(context.cacheDir, "anime_download").apply { mkdirs() }
+                val out = File(workDir, "${UUID.randomUUID()}.part")
+                try {
+                    val saved = ParallelVideoDownload.saveRanges(
+                        client, video.videoUrl, headers, probe, out, connections, label, onPercent,
+                    )
+                    if (saved) {
+                        val ext = extensionOf(probe.contentType, video.videoUrl)
+                        val tmp = dir.findFile("$base$TMP") ?: dir.createFile("$base$TMP")
+                            ?: error("Can't create the file")
+                        tmp.openOutputStream().use { output ->
+                            out.inputStream().use { it.copyTo(output, DEFAULT_BUFFER) }
+                        }
+                        dir.findFile("$base.$ext")?.delete()
+                        tmp.renameTo("$base.$ext")
+                        onPercent(100)
+                        return
+                    }
+                } finally {
+                    out.delete()
+                }
+            }
+        }
         val request = Request.Builder().url(video.videoUrl).headers(headers).build()
         client.newCall(request).await().use { response ->
             if (!response.isSuccessful) error("HTTP ${response.code}")
@@ -358,7 +462,7 @@ class AnimeDownloadManager(
                 response.close()
                 // KMK: marked as one, so a list of several qualities is still cut down to the best (forDownload)
                 val playlist = video.copy(mimeType = type, videoPageUrl = video.videoPageUrl)
-                ffmpegDownload(playlist, headers, dir, base, onPercent)
+                ffmpegDownload(playlist, headers, dir, base, key, label, onPercent)
                 return
             }
             val total = body.contentLength()
@@ -384,14 +488,16 @@ class AnimeDownloadManager(
                     }
                 }
             }
-            val ext = when {
-                type.contains("matroska") || video.videoUrl.contains(".mkv") -> "mkv"
-                type.contains("webm") || video.videoUrl.contains(".webm") -> "webm"
-                else -> "mp4"
-            }
+            val ext = extensionOf(type, video.videoUrl)
             dir.findFile("$base.$ext")?.delete()
             tmp.renameTo("$base.$ext")
         }
+    }
+
+    private fun extensionOf(type: String, url: String): String = when {
+        type.contains("matroska") || url.contains(".mkv") -> "mkv"
+        type.contains("webm") || url.contains(".webm") -> "webm"
+        else -> "mp4"
     }
 
     private suspend fun ffmpegDownload(
@@ -399,6 +505,8 @@ class AnimeDownloadManager(
         headers: Headers,
         dir: UniFile,
         base: String,
+        key: String,
+        label: String,
         onPercent: (Int) -> Unit,
     ) {
         // KMK: a stream holding several qualities is saved in one (the best), not all of them in one file. Its list
@@ -407,11 +515,40 @@ class AnimeDownloadManager(
         if (video.videoUrl != stream.videoUrl) {
             AppLog.add('I', "anime", "Download: saving one quality, ${video.videoTitle}")
         }
-        val headerBlock = headers.joinToString("") { (name, value) -> "$name: $value\r\n" }
-        val duration = probeDuration(video.videoUrl, headerBlock)
         // ffmpeg writes to app storage first, then the file is copied into the downloads folder
         val workDir = File(context.cacheDir, "anime_download").apply { mkdirs() }
         val out = File(workDir, "${UUID.randomUUID()}.mkv")
+        try {
+            // KMK (r87): pieces fetched several at a time, then joined by ffmpeg from the local copy; when that
+            // can't be done, ffmpeg reads the stream from its link as before
+            if (ParallelVideoDownload.saveHls(video, headers, out, key, label, onPercent)) {
+                saveFile(out, dir, base, onPercent)
+                return
+            }
+            val started = System.currentTimeMillis()
+            ffmpegFromLink(video, headers, out, onPercent)
+            ParallelVideoDownload.discard(key)
+            val seconds = (System.currentTimeMillis() - started) / 1000
+            AppLog.add('I', LOG_TAG, "$label: saved by ffmpeg from the link in $seconds s")
+            saveFile(out, dir, base, onPercent)
+        } finally {
+            out.delete()
+        }
+    }
+
+    /** Copies ffmpeg's [out] into the downloads folder as `<base>.mkv` */
+    private fun saveFile(out: File, dir: UniFile, base: String, onPercent: (Int) -> Unit) {
+        val tmp = dir.findFile("$base$TMP") ?: dir.createFile("$base$TMP") ?: error("Can't create the file")
+        tmp.openOutputStream().use { output -> out.inputStream().use { it.copyTo(output, DEFAULT_BUFFER) } }
+        dir.findFile("$base.mkv")?.delete()
+        tmp.renameTo("$base.mkv")
+        onPercent(100)
+    }
+
+    /** The way up to r86: ffmpeg reads the stream from its link (one piece at a time) */
+    private suspend fun ffmpegFromLink(video: Video, headers: Headers, out: File, onPercent: (Int) -> Unit) {
+        val headerBlock = headers.joinToString("") { (name, value) -> "$name: $value\r\n" }
+        val duration = probeDuration(video.videoUrl, headerBlock)
         val args = buildList {
             if (headerBlock.isNotEmpty()) {
                 add("-headers")
@@ -424,33 +561,23 @@ class AnimeDownloadManager(
             addAll(listOf("-i", video.videoUrl, "-map", "0:v?", "-map", "0:a?", "-map", "0:s?"))
             addAll(listOf("-c", "copy", "-f", "matroska", "-y", out.absolutePath))
         }.toTypedArray()
-
-        try {
-            suspendCancellableCoroutine { continuation ->
-                val session = FFmpegKit.executeWithArgumentsAsync(
-                    args,
-                    { session ->
-                        if (session.returnCode?.isValueSuccess == true) {
-                            continuation.resume(Unit)
-                        } else {
-                            val tail = session.allLogsAsString?.takeLast(300).orEmpty()
-                            continuation.resumeWithException(IllegalStateException("ffmpeg failed: $tail"))
-                        }
-                    },
-                    null,
-                    StatisticsCallback { stats ->
-                        if (duration > 0) onPercent(((stats.time / 1000.0) * 100 / duration).toInt().coerceIn(0, 99))
-                    },
-                )
-                continuation.invokeOnCancellation { session.cancel() }
-            }
-            val tmp = dir.findFile("$base$TMP") ?: dir.createFile("$base$TMP") ?: error("Can't create the file")
-            tmp.openOutputStream().use { output -> out.inputStream().use { it.copyTo(output, DEFAULT_BUFFER) } }
-            dir.findFile("$base.mkv")?.delete()
-            tmp.renameTo("$base.mkv")
-            onPercent(100)
-        } finally {
-            out.delete()
+        suspendCancellableCoroutine<Unit> { continuation ->
+            val session = FFmpegKit.executeWithArgumentsAsync(
+                args,
+                { session ->
+                    if (session.returnCode?.isValueSuccess == true) {
+                        continuation.resume(Unit)
+                    } else {
+                        val tail = session.allLogsAsString?.takeLast(300).orEmpty()
+                        continuation.resumeWithException(IllegalStateException("ffmpeg failed: $tail"))
+                    }
+                },
+                null,
+                StatisticsCallback { stats ->
+                    if (duration > 0) onPercent(((stats.time / 1000.0) * 100 / duration).toInt().coerceIn(0, 99))
+                },
+            )
+            continuation.invokeOnCancellation { session.cancel() }
         }
     }
 
@@ -474,6 +601,7 @@ class AnimeDownloadManager(
         private const val TMP = ".tmp"
         private const val MAX_TRIES = 3
         const val MAX_CONCURRENT = 5
+        private const val LOG_TAG = "download"
         private const val DEFAULT_BUFFER = 64 * 1024
     }
 }
