@@ -55,6 +55,9 @@ class LibraryMangaPreview {
     var source by mutableStateOf<eu.kanade.tachiyomi.source.Source?>(null)
     var pending by mutableStateOf<Manga?>(null)
     var model by mutableStateOf<BrowsePreviewScreenModel?>(null)
+
+    // KMK: the source [model] was made for (it can lag behind [source] while a title from another source loads)
+    var modelSourceId by mutableStateOf<Long?>(null)
 }
 
 @Composable
@@ -66,13 +69,29 @@ fun Screen.rememberLibraryMangaPreview(): LibraryMangaPreview {
     if (src != null) {
         key(src.id) {
             val m = rememberScreenModel(tag = "library_preview_${src.id}") { BrowsePreviewScreenModel(src) }
-            LaunchedEffect(m) { preview.model = m }
+            LaunchedEffect(m) {
+                // KMK: a title from another source is picked on its model before that model is shown, so the
+                // panels stay open through the switch. Before, the old model was dropped first: for a moment there
+                // were no panels, the covers jumped to the full width and back.
+                preview.pending?.takeIf { it.source == src.id }?.let { manga ->
+                    m.select(
+                        manga,
+                        showChapters = SourcePreferences.previewLeftOn(panels),
+                        showPages = SourcePreferences.previewRightOn(panels),
+                    )
+                    preview.pending = null
+                }
+                val old = preview.model
+                preview.model = m
+                preview.modelSourceId = src.id
+                if (old != null && old !== m) old.clear()
+            }
         }
     }
     val model = preview.model
     LaunchedEffect(model, preview.pending) {
         val manga = preview.pending ?: return@LaunchedEffect
-        if (model == null || preview.source?.id != manga.source) return@LaunchedEffect
+        if (model == null || preview.modelSourceId != manga.source) return@LaunchedEffect
         model.select(
             manga,
             showChapters = SourcePreferences.previewLeftOn(panels),
@@ -89,12 +108,9 @@ fun LibraryMangaPreview.onCoverClick(manga: Manga): Boolean {
     if (panels == SourcePreferences.PREVIEW_PANELS_NONE) return false
     if (model?.state?.value?.manga?.id == manga.id) return false
     val src = Injekt.get<SourceManager>().getOrStub(manga.source)
-    if (source?.id != src.id) {
-        model?.clear()
-        model = null
-        source = src
-    }
+    // KMK: the current panels stay until the new source's model has the title (see rememberLibraryMangaPreview)
     pending = manga
+    if (source?.id != src.id) source = src
     return true
 }
 
