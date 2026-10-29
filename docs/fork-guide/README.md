@@ -116,6 +116,17 @@ Collected from all sections. These are what to look at first when something odd 
 - **Chapter videos:** a failed rename is a failure; `saveAll` returns the failure count and logs `download` W "X of N videos couldn't be saved".
 - **Backup:** `BackupAnimeCategory` has `id` (proto 3). Anime category settings (`AnimeBackupHelper.CATEGORY_KEYS`) are mapped by name after the anime categories are restored. Settings named after anime ids (`isAnimeIdKey`) are skipped in the app settings restore.
 
+## Changes in r86 (29 October 2026)
+
+- **Library preview:** switching to a title from another source picks it on the new source's model before swapping models, so the panels never close and the covers don't jump (`LibraryMangaPreview.kt`, `modelSourceId`).
+- **Logs:** the quality probe of a downloaded file (`HlsVariants.localQualities`) is filtered from `mpv/ffmpeg` lines for 3 s (`isProbeOutput`); a plain file path no longer logs "unknown scheme". More tab has a Logs entry (phones).
+- **JS:** a `Watchdog` in `JsRuntime` interrupts JS that runs 30 s without returning to the host (host calls don't count). Imports get the custom-id checks. `HlsRelay` trims the oldest sessions. Editor tests use a test copy (`source_<id>_editor`, `js_storage/<key>_editor`). An unsaved-changes dialog appears when leaving the editor. One shared `JsStorage` per storage folder.
+- **Player/anime:** variants are ranked by height, then bandwidth (`BEST` for downloads). Quality lists are fetched with the source's headers (`split(videos, sourceHeaders)`, `forDownload(video, headers)`). Anime downloads detect relayed and untagged playlists. `AnimeRepository.refreshFromSource` runs one load per anime at a time, with a 60 s skip in `AnimeScreenModel` init. Episode cards are swipeable.
+- **Extensions:** the available map key includes the repo (`availableKey`, `copyFor`). Install failures show a toast plus a `W extensions` line (`Installer.failureReasons`). `SideloadFolder.sync` removes nothing when the folder is missing, empty or unreadable.
+- **Settings:** "Remember last used volume" and webtoon "Tap scroll by page" work. The restore-banner row is hidden. Decoder switches are locked to the values a Performance profile actually uses (`locked` on switch preferences). The player has its own `pref_player_skip_filtered_episodes` (seeded from the reader's value).
+- **Backup:** proto 703 holds anime extension source settings, 704 player custom buttons, and `BackupAnimeHistory` 3 watch time (larger value kept).
+- **Images:** `HttpPageLoader.reuseFromPreview()` copies a preview-downloaded page into the reader cache when the saved image URL matches. CBZ preview tiles are streamed (`ArchiveEntrySource`).
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
