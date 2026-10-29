@@ -126,6 +126,37 @@ Collected from all sections. These are what to look at first when something odd 
 - **Backup:** proto 703 holds anime extension source settings, 704 player custom buttons, and `BackupAnimeHistory` 3 watch time (larger value kept).
 - **Images:** `HttpPageLoader.reuseFromPreview()` copies a preview-downloaded page into the reader cache when the saved image URL matches. CBZ preview tiles are streamed (`ArchiveEntrySource`).
 
+## Changes in r87 (29 October 2026)
+
+- **Faster video downloads:** `data/download/video/ParallelVideoDownload.kt` handles both anime episodes and chapter videos.
+  - **HLS:** it picks the highest resolution, then the highest bitrate, plus the audio and subtitle groups that variant uses. It downloads the pieces, the `#EXT-X-MAP` init segment and the AES-128 keys with K workers into `cache/video_pieces/<key>/`. Pieces from an earlier try are kept, matched by a manifest fingerprint. Each piece gets 4 retries, and a 429/503 lowers K. Local playlists are then joined by FFmpegKit with `-protocol_whitelist file,crypto,data -allowed_extensions ALL` and the same `-map` and copy options as before.
+  - **Plain files:** a `Range: bytes=0-0` probe. A 206 with the full size (at least 4 MB) is split into ranges written into a pre-sized file.
+  - **Fallback:** anything unsupported uses the old ffmpeg-from-URL path. Unsupported means: no ENDLIST, BYTERANGE, SAMPLE-AES, separate VIDEO groups, DASH, or `ffmpegStreamArgs`.
+  - **Setting:** `pref_video_download_connections` (1–8, default 4; 1 = old behaviour).
+  - **Logs:** tag `download` covers start, progress every 10 %, retries, slow-down, join, fallback reason and the summary.
+- **HlsVariants:** keeps the highest-bandwidth copy per height. The "Mbps" label is `Locale.US`.
+- **Download the picked stream:** `EpisodeOptionsDialog.onDownload(Video)` goes to `downloadEpisode(episode, video)` and then `enqueue(video=)`. It's not kept across an app restart.
+- **Episode file names:** new downloads are named `scanlator_name_E<number>` (`_U<hash>` when the number is unknown). Lookups try the new name, then the old one, with exact name matching.
+- **Episode sync safety:** `AnimeRepository.loadFromSourceNow` throws `NoEpisodesException` (and deletes nothing) when the source returns no episodes but some are saved. `syncEpisodes` carries seen, progress, bookmark, filler and history over when one removed row and one new row share an episode number (the source's links changed).
+- **Anime page:**
+  - Card titles via `ownEpisodeName()`, and cards follow the Display setting.
+  - `State.watchingList()` (excluded scanlators out, filtered episodes out when skip-filtered is on) drives Resume, toolbar downloads and mark-previous.
+  - Selection and dialogs live in the screen model, or use `rememberSaveable`; one list state is shared by both layouts.
+  - Download ticks only update progress, and `nextEpisode` is kept in state.
+  - Flag writes go through a queue in tap order.
+- **AniList:**
+  - Tab loads are tracked and cancelled per title.
+  - Match order: none/manual, tracks, `auto:`, search.
+  - "Watch now" skips the reload when the last one was under 60 s ago.
+- **Tags:** `onHold` uses a stable `pointerInput`, and a double tap copies the tag. A single tap waits about 300 ms before searching.
+- **Smaller fixes:**
+  - The "Uncategorized" (0) category is kept on restore. A set where no category matches stays unchanged.
+  - The editor asks before replacing unsaved code (open, new, import). Test storage is `js_storage/<key>.editor`.
+  - Sideload APK names are matched case-insensitively.
+  - The relay evicts least recently used sessions.
+  - `JsStorage.forget` closes stores.
+  - CI concurrency is repo-wide, with no parallel builds, and publishing skips taken tags.
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
