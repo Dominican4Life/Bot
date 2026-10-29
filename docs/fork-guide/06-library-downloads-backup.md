@@ -1,7 +1,7 @@
 ## Library, downloads, backup/restore, tracking, pair sync, logs, database
 
 Paths are relative to `app/src/main/java/eu/kanade/` unless they start with `data/src`, `domain/src` or `core/`.
-"Fork" means commits by Claude / Dominican4Life / OmfgItsJesus (from f87f01a5, 2026-10-07). Verified against HEAD a693dc09 (r84).
+"Fork" means commits by Claude / Dominican4Life / OmfgItsJesus (from f87f01a5, 2026-10-07). Written against HEAD a693dc09 (r84); the backup, restore and migration parts were re-checked against r86 (f80f3b5a).
 
 ---
 
@@ -32,7 +32,7 @@ Query-only `.sq` files the fork added: `anime_cleanup.sq` ("Clear Anime database
 - Never edit or renumber a migration that has shipped (47–57). Devices that already ran it won't run it again.
 - Table and index names on the anime side start with `kmk_` or `anime_`. Keep them apart from the manga tables: backups, Clear database and the library queries all assume the two never share a table.
 
-**Failure mode the owner can't see today.** The owner uninstalls before every release because the signing key changes each build, so their device always gets a fresh `.sq` schema and **no migration has ever run on it**. A missing or wrong `.sqm` would not show up until installs over the old app start working. The transcript's r85 plan says r85 fixes signing and r86+ install over the old app. From then on a bad migration bricks the upgrade: the app crashes on open, and the only way out is to uninstall, which loses data that is not in the backup. Check every new `.sqm` by hand against the `.sq` diff.
+**Failure mode that is now live.** Up to r85 the owner uninstalled before every release because the signing key changed each build, so their device always got a fresh `.sq` schema and **no migration ran on it**. r85 moved to the fixed key and was the last release that needed an uninstall; r86 and later install over the previous release (section 1). So from now on a missing or wrong `.sqm` reaches the owner's device, and a bad migration bricks the upgrade: the app crashes on open, and the only way out is to uninstall, which loses data that is not in the backup. Check every new `.sqm` by hand against the `.sq` diff.
 
 ---
 
@@ -40,12 +40,12 @@ Query-only `.sq` files the fork added: `anime_cleanup.sq` ("Clear Anime database
 
 **Where.** `tachiyomi/data/backup/create/BackupCreator.kt`, `BackupOptions.kt`, `BackupCreateJob.kt`, `creators/*`. Fork model files: `models/Backup.kt` (proto fields 700–710), `models/BackupAnime.kt`, `models/BackupJsSource.kt`. Anime parts: `data/backup/AnimeBackupHelper.kt`. Category picking: `data/backup/CategoryChoice.kt`.
 
-**Proto fields** (`Backup`): 1 manga, 2 categories, 101 sources, 104 app prefs, 105 source prefs, 106 extension repos, 600 saved searches (SY), 610 feeds (KMK upstream). Fork-added: **700 `backupAnime`**, **701 `backupAnimeExtensionStores`**, **702 `backupAnimeCategories`** (name + order), **710 `backupJsSources`** (info JSON, code, settings). Never reuse or renumber these. An older or newer app reads unknown numbers as empty. Field 501 (Anikku anime) and field 3 (old Aniyomi anime) belong to other apps' formats. `AnikkuBackupConverter` reads them, so never put fork data at 3 or 501.
+**Proto fields** (`Backup`): 1 manga, 2 categories, 101 sources, 104 app prefs, 105 source prefs, 106 extension repos, 600 saved searches (SY), 610 feeds (KMK upstream). Fork-added: **700 `backupAnime`**, **701 `backupAnimeExtensionStores`**, **702 `backupAnimeCategories`** (name + order, and since r85 `BackupAnimeCategory.id` at 3, so category settings can be mapped by name), **703 `backupAnimeSourcePreferences`** (r86: anime extension settings, with "Source settings"; `PreferenceBackupCreator.createAnimeSource`), **704 `backupCustomButtons`** (r86: player custom buttons, with "App settings"), **710 `backupJsSources`** (info JSON, code, settings). In `BackupAnime.kt`, `BackupAnimeHistory.timeWatch` is field 3 (r86). Never reuse or renumber these. An older or newer app reads unknown numbers as empty. Field 501 (Anikku anime) and field 3 (old Aniyomi anime) belong to other apps' formats. `AnikkuBackupConverter` reads them, so never put fork data at 3 or 501.
 
 **Flow** (`BackupCreator.backup`):
 1. Manga = favorites + read-but-not-in-library manga (only with the "non-library" option, `readEntries`) + merged-manga children. This is upstream.
 2. With a category choice (`categoryKeys`, keys `manga:<name>` / `anime:<name>`, empty name = no category): library manga outside the chosen categories are dropped. Non-library manga always stay.
-3. Anime (`AnimeBackupHelper.createAnime()`): favorites **plus the seasons of favorite anime, favorite or not**, each once. Each anime carries: episodes (seen, bookmark, fillermark, last/total seconds), history (`lastSeen` only), category names, tracks (`anime_sync`), notes and excluded scanlators (read from app prefs `anime_notes_<id>` / `anime_excluded_scanlators_<id>`), Edit info (`anime_custom_info`, minus `file:` cover URLs), and its season parent as **source + url** (ids differ between devices).
+3. Anime (`AnimeBackupHelper.createAnime()`): favorites **plus the seasons of favorite anime, favorite or not**, each once. Each anime carries: episodes (seen, bookmark, fillermark, last/total seconds), history (`lastSeen`, and since r86 `timeWatch`), category names, tracks (`anime_sync`), notes and excluded scanlators (read from app prefs `anime_notes_<id>` / `anime_excluded_scanlators_<id>`), Edit info (`anime_custom_info`, minus `file:` cover URLs), and its season parent as **source + url** (ids differ between devices).
 4. JS sources (`JsSourceManager.backupSources()`): each saved Code editor source's info JSON, code and every key of its `source_<id>` SharedPreferences.
 5. Written gzip+protobuf, then checked with `BackupFileValidator`. Auto backups keep 4 files (`MAX_AUTO_BACKUPS`).
 
@@ -55,22 +55,21 @@ Query-only `.sq` files the fork added: `anime_cleanup.sq` ("Clear Anime database
 - `BackupOptions.asBooleanArray()` / `fromBooleanArray()` are stored in WorkManager input and in preferences by **position**. Add new options only at the end, and read them with `getOrElse(i) { default }`, as `jsSources = array.getOrElse(12) { true }` does. Inserting in the middle shifts every later choice.
 - The Chapters / Tracking / History / Custom info switches apply to **manga only**. Anime always go out with episodes, history, tracks and Edit info whenever "Library entries" is on. Anime categories go out when Library entries **or** Categories is on.
 
-### What a backup contains and what it doesn't (owner reinstalls every release)
+### What a backup contains and what it doesn't (matters after any uninstall; the owner reinstalled every release up to r85)
 
 **In the backup** (with the default options):
 - Manga library, chapters (read/bookmark/progress), manga categories (and order), manga tracking, manga history with read duration, custom manga info, merged manga, flat metadata, excluded scanlators; read non-library manga only if "non-library" is ticked.
-- Anime library + seasons of library anime, episodes and progress, anime watch history (last seen time), anime categories with order, anime tracking, notes, hidden scanlators, Edit info (not a local cover file), season links.
-- App settings: the whole default SharedPreferences, minus `__APP_STATE_` keys, and minus `__PRIVATE_` keys unless "Private settings" is ticked. This covers **every fork setting stored through `PreferenceStore`**: player, anime library sheet, history/updates display, Pause between titles, Save covers in folders, pair sync peers (`pair_sync_peers`, **including the shared secret**), the anime download queue (`anime_download_queue`) and all per-anime keys.
-- Source settings: only `sourceManager.getAll()` that are `ConfigurableSource`, i.e. manga extensions and **enabled** JS manga sources (their `source_<id>` file).
+- Anime library + seasons of library anime, episodes and progress, anime watch history (last seen time, and watch time since r86), anime categories with order, anime tracking, notes, hidden scanlators, Edit info (not a local cover file), season links.
+- App settings: the whole default SharedPreferences, minus `__APP_STATE_` keys, and minus `__PRIVATE_` keys unless "Private settings" is ticked. This covers **every fork setting stored through `PreferenceStore`**: player, anime library sheet, history/updates display, Pause between titles, Save covers in folders, pair sync peers (`pair_sync_peers`, **including the shared secret**). The anime download queue (`anime_download_queue`) and the per-anime-id keys are written to the backup but **skipped on restore** since r85 (see "Id-keyed settings" below).
+- Source settings: `sourceManager.getAll()` that are `ConfigurableSource`, i.e. manga extensions and **enabled** JS manga sources (their `source_<id>` file), and since r86 (proto 703) every `ConfigurableAnimeSource` in `AnimeSourceManager` (Aniyomi extensions).
+- Player custom buttons (r86, proto 704, with App settings). On restore a button with the same name (like the seeded "+85 s") gets the backup's code; others are added after the ones here; the backup's favorite becomes the only favorite.
 - Manga extension repos (106) and anime extension repos (701).
 - Saved searches and feeds. Anime saved searches use the same `saved_search` table, so they come along too.
 - JS sources: code, details (name, id, on/off, `updatedAt`, …) and settings.
 
 **Not in the backup** (lost or reset after uninstall + restore):
-- **Anime extension (Aniyomi) source settings.** `AnimeSourceManager` sources are not in `PreferenceBackupCreator.createSource`.
 - **Merged anime** (`anime_merged`): the members come back as separate anime.
-- **Player custom buttons** (`custom_buttons` table): only the seeded "+85 s" comes back, from migration 49 / `.sq`.
-- **Anime watch time** (`anime_history.time_watch`): Stats › Anime watch time starts again at 0.
+- (In since r86: anime extension settings, player custom buttons and anime watch time. Backups made before r86 don't carry them, so restoring one of those still loses them.)
 - JS source runtime data: `files/js_storage/<key>`, the last tab per source (`js_tabs` prefs), web URLs (`js_weburls_<id>` prefs). JS icons are not in the backup either, but they are kept in `downloads/Icon` and found again from there.
 - Tracker logins and `anime_track_pending`: these are `__PRIVATE_` keys, so you must log in to trackers again unless "Private settings" was ticked.
 - Other SharedPreferences files: manga download queue (`active_downloads`), `chapters_to_delete`, `tracking_queue`, `browse_preview_fetched`.
@@ -79,13 +78,14 @@ Query-only `.sq` files the fork added: `anime_cleanup.sq` ("Clear Anime database
 - Downloads, `mpv-config/` and Sideloaded APKs are files in the storage folder, not in the backup. They survive an uninstall when the storage folder is outside the app.
 - Installed extension APKs. Repos come back, and sideloaded APKs come back from the `Sideloaded/` folder (`SideloadFolder.afterRestore`).
 
-**Id-keyed settings: suspected wrong-title risk (not seen on device).** Anime get **new row ids** on restore. The app-settings restore brings back keys that hold *old* anime, episode or category ids, unchanged:
-- `anime_notes_<id>`, `anime_excluded_scanlators_<id>` (the anime restore also writes the right values under the new id, but only when the backup value is non-blank, so an old key can land on a different anime);
-- `anime_skip_intro_length_<id>`, `anime_last_selected_season_<id>`, `pref_last_aspect_ratio_anime_id`;
-- anime category id sets: `anime_update_categories(_exclude)`, `anime_download_new_categories(_exclude)`, `anime_library_hidden_categories`, `anime_library_filter_categories_include/_exclude`;
-- `anime_download_queue` (`"<animeId>:<episodeId>"`). On the next start `AnimeDownloadManager.init` queues whatever episode now has that id.
+**Id-keyed settings (mitigated in r85).** Anime get **new row ids** on restore, so app settings that hold old anime, episode or category ids would point at the wrong rows. What the code does now (`AnimeBackupHelper`, `PreferenceRestorer`):
+- `PreferenceRestorer` skips every key for which `AnimeBackupHelper.isAnimeIdKey(key)` is true. That is `ID_KEY_PREFIXES` (`anime_notes_`, `anime_excluded_scanlators_`, `anime_skip_intro_length_`, `anime_last_selected_season_`), `ID_KEYS` (`pref_last_aspect_ratio_anime_id`, **`anime_download_queue`**), and `CATEGORY_KEYS`.
+- Notes and hidden scanlators come back with each anime instead (`restoreExtras`, under the new id), so the old race between the app-prefs restore and the anime restore is gone.
+- `CATEGORY_KEYS` (`anime_update_categories(_exclude)`, `anime_download_new_categories(_exclude)`, `anime_library_hidden_categories`, `anime_library_filter_categories_include/_exclude`) are mapped **by name** in `restoreCategoryPreferences` after the anime categories exist. This needs `BackupAnimeCategory.id`, so it works only for backups made with r85 or later; for older backups these settings come back empty.
+- What is still lost: per-anime intro length, last selected season and the last aspect-ratio anime come back empty, and the anime download queue isn't restored (re-queue those episodes by hand).
+- Rule for new settings: an app pref keyed by or holding a database id must be added to `isAnimeIdKey` (or mapped like `CATEGORY_KEYS`), or it lands on another row after a restore.
 
-The manga side doesn't have this problem for categories: upstream `PreferenceRestorer.restoreCategoriesPreference` remaps the ids, but only for `LibraryPreferences.categoryPreferenceKeys + DownloadPreferences.categoryPreferenceKeys`. The anime keys are not in that list. Also, the app-prefs restore and the anime restore run **at the same time** (see restore order), so which value wins for `anime_notes_*` is a race. To fix this, map the anime keys by name in `PreferenceRestorer`, or leave them out of backups.
+The manga side has upstream's `PreferenceRestorer.restoreCategoriesPreference`, which remaps `LibraryPreferences.categoryPreferenceKeys + DownloadPreferences.categoryPreferenceKeys`.
 
 ---
 
@@ -100,11 +100,12 @@ The manga side doesn't have this problem for categories: upstream `PreferenceRes
 2. **Manga categories**, awaited before anything else. Only the chosen ones are created.
 3. Then **in parallel** (`launch` inside one `coroutineScope`):
    - saved searches + feeds;
-   - app preferences (the default-category and category-set keys are remapped by name), then `LibraryUpdateJob/BackupCreateJob/AppUpdateJob.setupTask`;
-   - source preferences;
+   - app preferences (the default-category and category-set keys are remapped by name; anime id keys skipped, r85), then `LibraryUpdateJob/BackupCreateJob/AppUpdateJob.setupTask`;
+   - source preferences (manga, and since r86 anime extensions from 703);
+   - player custom buttons (r86, with app settings);
    - manga, one title per transaction, sorted with merged-source titles last and new titles before existing ones;
    - manga repos;
-   - anime: `restoreCategories` first (missing ones added in backup order after the existing ones), then each anime (`AnimeRepository.restoreAnime` + `restoreEpisodes` + extras), then **season links in a second pass** (`restoreSeasonLink`, which finds the parent by source+url);
+   - anime: `restoreCategories` first (missing ones added in backup order after the existing ones), then each anime (`AnimeRepository.restoreAnime` + `restoreEpisodes` + extras + watch time), then **season links in a second pass** (`restoreSeasonLink`, which finds the parent by source+url);
    - anime repos;
    - JS sources.
 4. After that: `CoverFolders.fillMissingAfterRestore()` (only if "Auto save covers" is on; it **starts** a background import and doesn't wait), `DownloadCache.invalidateCache()` (Reindex downloads), `LibraryRefresh.restoring = false` in `finally`, `LibraryRefresh.request()` (badges worked out again), `SideloadFolder.afterRestore` (when app settings or repos were restored), error log, done notification.
@@ -112,7 +113,8 @@ The manga side doesn't have this problem for categories: upstream `PreferenceRes
 **Merge rules (restoring on top of existing data).**
 - Manga: upstream rules. One fork change (r48, 38f24ac1, `keepLibraryTitle`): if the title existed here only from browsing and the backup has it in the library, the backup's `ogTitle` wins, because download folders are named after it ("Byoru · 272" problem).
 - Anime (`restoreAnime`): an existing anime keeps its own details (title, description… are **not** updated). Favorite = backup OR here. Episode flags and season flags come from the backup. Categories are linked by name, case-insensitive, and created if missing. Episodes: seen, bookmark and filler are OR-ed, last/total seconds take the max, history is upserted. Tracks: `lastEpisodeSeen` takes the max, and Jellyfin (102) or other unknown trackers are skipped.
-- JS sources: `JsSourceManager.restoreSource` → `importSource` **returns early when this device already has that key with `updatedAt >= backup's`**. In that case **the backup's settings are not written either** (the settings callback is never called). On a fresh install nothing exists, so everything is restored. Enabled JS *manga* sources also get their settings through the generic Source settings restore (same `source_<id>` file), so for them the early return doesn't lose settings. JS *anime* sources and disabled JS sources do lose them. An r84 device review checked that a deleted JS source comes back with identical code, and that a changed setting on unchanged code comes back through Source settings. `importSource` also logs `I js Got <name> from a paired device` for **backup** restores, which is misleading. Known review finding, planned for r85: the source `key` from a backup or paired device goes into `File(root, key)` unchecked.
+- JS sources: `JsSourceManager.restoreSource` → `importSource` keeps the device's code when this device already has that key with `updatedAt >= backup's`. Since r85 the backup's settings are written **anyway** whenever the source exists afterwards (JS anime and disabled sources included); before r85 they were skipped in that case. Since r85 the key is checked (`[A-Za-z0-9_-]{1,64}`, inside `js_sources`), and since r86 the `customId` too (section 3). `importSource` still logs `I js Got <name> from a paired device` for **backup** restores, which is misleading.
+- Watch time (r86, `restoreTimeWatch`): per episode, the larger of the device's and the backup's value is kept.
 
 **History of the restore (each of these was a real failure).**
 - r29 (ba9254b9): the restore checked every source first and held blocked sources until WebView passed (Waiting notification + Skip). r33/r34 removed the waiting notification and then all holds ("no more holds"). Don't bring back network checks inside the restore.
@@ -170,7 +172,7 @@ The manga side doesn't have this problem for categories: upstream `PreferenceRes
 - Folders must only be made through `SourceFolders.findOrCreate` / `DownloadProvider.getMangaDir`. A direct `createDirectory` brings the numbered copies back.
 - `index.json` and `cover.jpg` live in the title folder. Anything that lists chapter folders must skip files.
 
-**Anime downloads** are a separate system (`data/anime/download/AnimeDownloadManager.kt`, `AnimeDownloadJob.kt`). They share the queue screen (All | Manga | Anime tabs, 5e5cf6a1). Their queue is in app prefs (`anime_download_queue`), so it is included in backups (see the id risk above). Settings: `anime_download_concurrent` (1), `anime_download_only_wifi` (true), `anime_download_ahead` (0), `anime_download_new` (false), `anime_delete_after_seen` (false).
+**Anime downloads** are a separate system (`data/anime/download/AnimeDownloadManager.kt`, `AnimeDownloadJob.kt`). They share the queue screen (All | Manga | Anime tabs, 5e5cf6a1). Their queue is in app prefs (`anime_download_queue`). It is written to backups but **skipped on restore** since r85 (it holds ids; see "Id-keyed settings"). Settings: `anime_download_concurrent` (1), `anime_download_only_wifi` (true), `anime_download_ahead` (0), `anime_download_new` (false), `anime_delete_after_seen` (false).
 
 ---
 
@@ -271,23 +273,23 @@ The manga side doesn't have this problem for categories: upstream `PreferenceRes
 | Pair sync devices / selection | `pair_sync_peers` / `pair_sync_selection` | `[]` / all | paired devices (with secrets) and what to sync | yes |
 | Update progress after reading (Tracking) | `autoUpdateTrack()` | upstream | also gates anime tracker updates | changed (now used by anime) |
 | (internal) anime tracking pending | `__PRIVATE_anime_track_pending` | empty | changes to send later | yes |
-| (internal) anime download queue | `anime_download_queue` | empty | queue across restarts (**ids**, and in backups) | yes |
+| (internal) anime download queue | `anime_download_queue` | empty | queue across restarts (**ids**; in backups but skipped on restore since r85) | yes |
 
 ### Cross-feature impact map
 
 - Changing **`MangaRestorer.restore` or `AnimeBackupHelper.restoreAnime`** affects **pair sync**, because `PairSyncData.import` calls them directly.
-- Changing **`JsSourceManager.importSource`** affects both the **backup restore** and **pair sync** (same early-return rule and log line), and the Code editor list (`_saved`).
+- Changing **`JsSourceManager.importSource`** affects both the **backup restore** and **pair sync** (same newer-wins rule, key and id checks, and log line), and the Code editor list (`_saved`).
 - Changing a **library flow** (`getLibraryManga.subscribe`, `AnimeRepository.subscribeFavorites/LibraryStats/CategoryLinks`) without `LibraryRefresh.pausedWhileRestoring` brings back **slow, stuck restores** (r72/r73).
 - Changing **`DownloadProvider` / `SourceFolders` naming** affects **download badges, Check downloads, the cover import after restore (`CoverFolders` looks for `Manga/<src>/<title>`), `index.json` lookups and JS icons**.
 - Changing **`StorageManager` folders** (`Manga`, `Anime`, `Icon`, `Sideloaded`, `mpv-config`) affects downloads, the anime player config, sideload restore and the download index (bump `dl_index_cache_vN` if the root changes).
 - Changing **`Download.progress` / `progressFlow`** affects the download queue screen's bars (manga tab and All tab) and anything that waits for 100 %.
 - Changing **`ReaderVideos.isVideo` / `ChapterVideoDownloads.isVideoFile`** affects downloads (`hasVideos`, page counting, `isDownloadSuccessful`), the reader and page grids.
 - Changing **anime category ids or ordering** affects anime prefs that store ids (update, download, hidden, filter categories), so restores can mis-point them.
-- Adding an **app pref keyed by an anime/manga/episode id** puts it into backups, where it is restored under ids that no longer match.
+- Adding an **app pref keyed by an anime/manga/episode id** puts it into backups, where it is restored under ids that no longer match, unless it is added to `AnimeBackupHelper.isAnimeIdKey` (skipped) or mapped like `CATEGORY_KEYS`.
 - Changing **`TrackerManager.trackers`** (for example adding Simkl to it) affects manga track sheets, library tracker filters, Stats and manga backups. Anime-only trackers must stay in `animeOnlyTrackers`.
 - Changing **`BackupNotifier`** affects every parallel restore part. Unlocked builder access crashed restores (r32).
 - Changing **proto numbers in `Backup` / `BackupAnime`** breaks reading older backups and the Anikku import (3/501 are taken by other apps' formats).
-- Changing **`.sq` without `.sqm`** goes unnoticed on the owner's device until installs over the old app work (r85+), and then crashes upgrades.
+- Changing **`.sq` without `.sqm`** crashes upgrades on the owner's device, since r86+ install over the previous release.
 
 ### Build pitfalls seen in this area
 

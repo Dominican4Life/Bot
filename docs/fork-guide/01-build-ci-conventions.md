@@ -1,12 +1,12 @@
 ## Project structure, build, CI/releases, signing and working rules
 
-This section covers how the code is laid out, how a push becomes a release `rN`, why every release so far has had a different signing key, the rules for working on the repo, and the compile errors that have cost release cycles before. Paths are relative to the repo root unless they start with `eu/kanade/...`; those are under `app/src/main/java/`.
+This section covers how the code is laid out, how a push becomes a release `rN`, why every release up to r84 had a different signing key (fixed in r85), the rules for working on the repo, and the compile errors that have cost release cycles before. Paths are relative to the repo root unless they start with `eu/kanade/...`; those are under `app/src/main/java/`.
 
 Ground truth worth knowing first:
 
 - **No local build is possible in the assistant's environment.** There is no Android SDK, `dl.google.com`/`maven.google.com`/Maven Central are blocked by the proxy, and there is no ktlint. **CI is the only compiler.** A green run takes 15 to 23 min (the last 15 runs). A failed run usually means one more full cycle.
 - The local clone is **shallow**: `git rev-list --count HEAD` gives 1173 here, while CI (with `fetch-depth: 0`) gets about 10873. In `git blame`, the boundary commit `^ccd6032a` (AntsyLich, 2025-04-01) means "older than the shallow history", **not** "written by AntsyLich". Upstream code shows up with that hash.
-- The repo is `Dominican4Life/Komikku`. The default branch is `master` and the work branch is `feature/browse-redesign`. The repo is **private** right now (the API says `private: true`), which matters for runner size and artifact quota (see below).
+- The repo is `Dominican4Life/Bot` (renamed from `Dominican4Life/Komikku`; local remote `https://github.com/Dominican4Life/bot`). The app, the releases and the APK file names are still called Komikku. The default branch is `master` and the work branch is `feature/browse-redesign`. The repo is **private** right now (the API says `private: true`), which matters for runner size and artifact quota (see below).
 
 ### Module layout: what goes where
 
@@ -38,8 +38,8 @@ Dependency direction is `app → domain → source-api`, and `data` implements t
 
 `app/build.gradle.kts`:
 
-- `defaultConfig`: `applicationId = "app.komikku"`, **`versionCode = 81`, `versionName = "1.14.1"`** (upstream values, never bumped by the fork). `BuildConfig.COMMIT_COUNT = git rev-list --count HEAD`, `COMMIT_SHA = git rev-parse --short HEAD`, and `BUILD_TIME` (`buildSrc/.../Commands.kt`).
-- `preview` (what CI builds with `assemblePreview`) = `initWith(release)` plus `applicationIdSuffix = ".beta"` → **`app.komikku.beta`**, `versionNameSuffix = "-<commitCount>"` → e.g. `1.14.1-10873`, `signingConfig = debug.signingConfig`, and resources from `app/src/beta/res` (launcher icon colour `#c837ab`). Because it inherits from `release`, the preview is **R8-minified and resource-shrunk** (`Config.enableCodeShrink` is true unless `-Pdisable-code-shrink`). Any new library reached through JNI or reflection needs a keep rule in `app/proguard-rules.pro`. The fork added rules for `is.xyz.mpv.**`, `com.arthenica.**` (FFmpegKit), `com.dokar.quickjs.**`, `com.squareup.zstd.**`, `eu.kanade.tachiyomi.torrentutils.**` and Coil service loaders.
+- `defaultConfig`: `applicationId = "app.komikku"`, **`versionCode = KMK_RELEASE?.coerceAtLeast(82) ?: 81`** (since r85: the release number CI passes in the `KMK_RELEASE` env var; 81 for a local build without it), `versionName = "1.14.1"` (upstream value). `BuildConfig.RELEASE_NUMBER` = `KMK_RELEASE` (empty without it), `BuildConfig.COMMIT_COUNT = git rev-list --count HEAD`, `COMMIT_SHA = git rev-parse --short HEAD`, and `BUILD_TIME` (`buildSrc/.../Commands.kt`).
+- `preview` (what CI builds with `assemblePreview`) = `initWith(release)` plus `applicationIdSuffix = ".beta"` → **`app.komikku.beta`**, `versionNameSuffix = "-<commitCount>"` → e.g. `1.14.1-10873`, `signingConfig = signingConfigs.getByName("debug")` (pointed at the committed keystore since r85, see Signing), and resources from `app/src/beta/res` (launcher icon colour `#c837ab`). Because it inherits from `release`, the preview is **R8-minified and resource-shrunk** (`Config.enableCodeShrink` is true unless `-Pdisable-code-shrink`). Any new library reached through JNI or reflection needs a keep rule in `app/proguard-rules.pro`. The fork added rules for `is.xyz.mpv.**`, `com.arthenica.**` (FFmpegKit), `com.dokar.quickjs.**`, `com.squareup.zstd.**`, `eu.kanade.tachiyomi.torrentutils.**` and Coil service loaders.
 - `debug` (`.dev`), `release`, `releaseTest` (`.rt`), `foss` (`.foss`), `benchmark`: not built by CI.
 - ABI splits: armeabi-v7a, arm64-v8a, x86, x86_64 + universal. **CI publishes only `arm64-v8a` and `universal`.**
 - The `quickjs-kt` native lib is repackaged as `libquickjskt.so` by the `unpackQuickjsKt` task, wired to `preBuild`, so that it doesn't clash with extensions' `libquickjs.so`. Don't rename it.
@@ -48,13 +48,13 @@ Three different numbers describe one build. Don't mix them up:
 
 | Number | Example | Where it comes from | Where it shows |
 |---|---|---|---|
-| Release tag | `r84` | CI: newest `rN` release + 1, computed **at publish time** | GitHub release, APK file name `Komikku-beta-arm64-v8a-r84.apk` |
-| Commit count | `10873` | `git rev-list --count HEAD` with full history | About screen shows **"Beta r10873"** (`AboutScreen.kt:374`), versionName suffix, crash log "Build version" |
-| versionCode | `81` | hard-coded | Package manager. The same for every build, so Android accepts each one as an "update" (only the signature can stop it) |
+| Release tag | `r86` | CI "Pick release number": newest `rN` release + 1, computed **before the build** (since r85) and passed as `KMK_RELEASE` | GitHub release, APK file name `Komikku-beta-arm64-v8a-r86.apk`, About screen |
+| Commit count | `10873` | `git rev-list --count HEAD` with full history | versionName suffix, crash log "Build version", in brackets on the About screen |
+| versionCode | `86` | `KMK_RELEASE.coerceAtLeast(82)`, or `81` without it (r84 and older were all 81) | Package manager and app migrations |
 
 Consequences:
-- The owner's About screen says `r10873`, not `r84`. To map an installed build to a release, compare the commit sha (release notes say "Built from branch … at <sha>") or the commit count.
-- **Preference/app migrations (`mihon/core/migration`, run by `Migrator.initialize(new = BuildConfig.VERSION_CODE)` in `App.kt`) never re-run between fork builds**, because versionCode stays 81. For any one-time fork data move, use a "done" flag or check for the old data's existence, as `jssource/JsLegacy.kt` does (it moves old folders and prefs once and logs `js` W on failure). Don't add a `Migration` with `version = 82f`: it would never run.
+- Since r85 the About screen shows **"Beta rN (commit count · sha)"** (`AboutScreen.kt` ~375). Builds up to r84 showed "Beta r<commit count>" (e.g. `r10873`); a build without `KMK_RELEASE` still does.
+- **Preference/app migrations** (`mihon/core/migration`, run by `Migrator.initialize(new = BuildConfig.VERSION_CODE)` in `App.kt`) run the `Migration`s whose version is above the installed version code, up to the new one. Up to r84 the version code was always 81, so none ran between fork builds. Since r85 each release has a higher code, so **a new `Migration` must use a version above the latest published release** (e.g. `version = 87f` if r86 is out). A version at or below a release the owner already installed never runs on that device. For data moves that must also work for old installs, a "done" flag or a check for the old data still works, as `jssource/JsLegacy.kt` does (it moves old folders and prefs once and logs `js` W on failure).
 - The preview "What's new" dialog (`MainActivity.kt` ~424) triggers when `COMMIT_COUNT` > the stored `preview_last_version_code`.
 - Every screen change in a preview build logs an **ERROR** line `ScreenTransition: <key>` (`eu/kanade/presentation/util/Navigator.kt:101`, upstream code). These are not errors. Ignore them when you filter Logs by Problems.
 
@@ -65,24 +65,25 @@ The only workflow; the fork deleted all upstream workflows in 0e53ee05.
 1. **Triggers**: `push` to `master` or `feature/**`, plus `workflow_dispatch`. `paths-ignore: '**.md'` means a push whose changed files are *all* `.md` creates no run at all. A push mixing `.md` and code does build. A commit message containing `[skip ci]` is also skipped (GitHub built-in). The fork uses that for `WIP rN:` commits (e.g. 5fb7b0f4, 9f786264).
 2. **Concurrency**: group `workflow-ref`, `cancel-in-progress: true`. A new push to the same branch **cancels** the running build. For example, r83 run 40628267250 (find bar only) was cancelled when the download changes were pushed on top, and run 40628628894 built both. A push to a *different* branch (master vs feature/browse-redesign) runs in parallel.
 3. `runs-on: ubuntu-24.04`. Actions are pinned by SHA (checkout v7.0.0 with `fetch-depth: 0` so the commit count is right, setup-java v5.4.0 with Java 21 Temurin, setup-gradle v6).
-4. **"Use fixed debug signing key"**: `mkdir -p ~/.android; cp .github/custom-debug.keystore ~/.android/debug.keystore`. This step succeeds, but AGP does not sign with that key; see the next section.
-5. **"Build app"**: `set -o pipefail`, then up to 4 tries of `./gradlew assemblePreview --stacktrace $extra 2>&1 | tee build.log`. After a failure it greps the log for `Could not resolve|Could not find|Could not GET|Read timed out` (flaky JitPack downloads). If none of these match, it exits at once (compile errors are not retried). If one matches, it sleeps 45 s and retries with `--refresh-dependencies`, because Gradle caches failed lookups (7f6db7b1, 88659f9e).
-6. **"Report build errors"** (only on failure): it greps `build.log` for `^e: |^ERROR|FAILED$|\.sqm?[:(]|\.sq line|sqldelight` plus 20 lines after "What went wrong", keeps the first 120 lines (or `tail -80` if nothing matched), and emits **one `::error title=Build errors::` annotation**. What you see in practice:
-   - The first ~4 lines of every annotation are a harmless `at app.cash.sqldelight.gradle.SqlDelightPlugin.setupSqlDelightTasks…` stack trace, matched by the `sqldelight` pattern. Skip them. The real errors are the `e: file:///home/runner/work/Komikku/Komikku/<path>:<line>:<col> <message>` lines.
+4. **"Use fixed debug signing key"**: `mkdir -p ~/.android; cp .github/custom-debug.keystore ~/.android/debug.keystore`. This step succeeds, but AGP never signed with that copy; since r85 Gradle points at the committed file directly, so the step is only a leftover (see Signing).
+5. **"Pick release number"** (since r85): `gh release list` → highest `rN` + 1, written to `$GITHUB_ENV` as `KMK_RELEASE`, so the build knows its own number.
+6. **"Build app"**: `set -o pipefail`, then up to 4 tries of `./gradlew assemblePreview --stacktrace $extra 2>&1 | tee build.log`. After a failure it greps the log for `Could not resolve|Could not find|Could not GET|Read timed out` (flaky JitPack downloads). If none of these match, it exits at once (compile errors are not retried). If one matches, it sleeps 45 s and retries with `--refresh-dependencies`, because Gradle caches failed lookups (7f6db7b1, 88659f9e).
+7. **"Check signing key"** (since r85): runs `apksigner verify --print-certs` on every preview APK and fails with an `::error title=Wrong signing key::` annotation if the certificate SHA-256 isn't `2c43cb4f…264e34c4f`.
+8. **"Report build errors"** (only on failure): it greps `build.log` for `^e: |^ERROR|FAILED$|\.sqm?[:(]|\.sq line|sqldelight` plus 20 lines after "What went wrong", keeps the first 120 lines (or `tail -80` if nothing matched), and emits **one `::error title=Build errors::` annotation**. What you see in practice:
+   - The first ~4 lines of every annotation are a harmless `at app.cash.sqldelight.gradle.SqlDelightPlugin.setupSqlDelightTasks…` stack trace, matched by the `sqldelight` pattern. Skip them. The real errors are the `e: file:///home/runner/work/Bot/Bot/<path>:<line>:<col> <message>` lines (before the repo rename the path was `/home/runner/work/Komikku/Komikku/`).
    - **Annotations are cut at about 4 KB.** Two past annotations (r32 run 38472407337, r67 run 40223378511) were exactly 4097 bytes, so more errors existed than were shown. If the annotation is near 4 KB, assume more errors exist and re-check every file you touched, not only the ones listed.
-7. **"Upload APKs"**: an artifact kept 3 days, with `continue-on-error: true`. A private repo hits the artifact storage quota. Successful runs then carry a *failure* annotation "Failed to CreateArtifact: Artifact storage quota has been hit". That one is harmless; the release is where the APKs live (9bab11cf).
-8. **"Publish release"**: `last = highest rN among release tags` (via `gh release list`, which works inside Actions), `tag = r(last+1)`. It copies `app-arm64-v8a-preview*.apk` and `app-universal-preview*.apk` to `Komikku-beta-<abi>-<tag>.apk` and runs `gh release create <tag> --target <sha> --title "Komikku beta <tag>" --prerelease`.
+9. **"Upload APKs"**: an artifact kept 3 days, with `continue-on-error: true`. A private repo hits the artifact storage quota. Successful runs then carry a *failure* annotation "Failed to CreateArtifact: Artifact storage quota has been hit". That one is harmless; the release is where the APKs live (9bab11cf).
+10. **"Publish release"**: `tag = r${KMK_RELEASE}` (picked in step 5; up to r84 it was computed here). It copies `app-arm64-v8a-preview*.apk` and `app-universal-preview*.apk` to `Komikku-beta-<abi>-<tag>.apk` and runs `gh release create <tag> --target <sha> --title "Komikku beta <tag>" --prerelease`.
    - Failed or cancelled runs **don't use up a number**. That is why fix commits keep the same prefix ("r81: missing import" after the r81 build failed).
    - The `rN` in a commit message is only the assistant's *prediction*.
-   - Race: two branches building at once both compute the same tag, and the second `gh release create` fails.
+   - Race: two branches building at once both pick the same number, and the second `gh release create` fails (its APK would also carry the duplicate version code).
    - History: numbering was first `custom-r(run_number+86)`, then `custom-rN`, then `rN` (24364c57, 8bd6ae9b).
 
 Runner memory: on 2026-10-10 the repo was private and builds were killed for lack of memory. 402cc16a added a 12 GB swap file, `--max-workers=2` and in-process Kotlin compilation. 2f068409/24364c57 removed all of that again ("the repo is public again… the swap file filled the disk"). The repo is **private again now**, and builds still pass in about 20 min. If a run dies with "Gradle daemon disappeared", exit code 137 or "Killed", look at 402cc16a first.
 
 ### Signing: why every release had a different certificate (fixed in r85)
 
-> **r85:** fixed with an explicit `signingConfigs.debug` (see README, "Changes in r85"). CI now checks the certificate after the build. The text below is the history.
-
+> **r85: fixed.** What the code does now (`app/build.gradle.kts`): inside `signingConfigs`, if `.github/custom-debug.keystore` exists, `getByName("debug") { storeFile = that file; storeType = "pkcs12"; storePassword = "android"; keyAlias = "androiddebugkey"; keyPassword = "android" }`, and `preview` uses `signingConfigs.getByName("debug")`. So the built-in debug config itself is pointed at the committed key; no new `beta` config was created. `.gitattributes` has `*.keystore binary` (`*.jks` is not listed; there is no `.jks` file in the repo). CI's "Check signing key" step fails the run if the certificate is wrong. r85 needed **one** uninstall to move to this key; r86 and later install over the previous release. The text below is the history of how the bug was found.
 
 **Symptom (verified).** r60, r71, r83 and r84 are each signed with a different certificate (r84 SHA-256 `6fe1b84b…`, r71 `44a7175e…`). The committed keystore `.github/custom-debug.keystore` is `2C:43:CB:4F:…`. So a new beta can't install over the previous one ("package conflicts / signatures don't match") without uninstalling, which loses app data.
 
@@ -101,7 +102,7 @@ Runner memory: on 2026-10-10 the repo was private and builds were killed for lac
 
 Either way, the fix is the same.
 
-**Proper fix (not applied, by instruction).** Don't depend on where AGP looks. Give the preview an explicit signing config that points at the committed file:
+**Fix proposed before r85** (the applied version, above, reuses `getByName("debug")` instead of a new `beta` config and adds `storeType = "pkcs12"`). Don't depend on where AGP looks. Give the preview an explicit signing config that points at the committed file:
 
 ```kotlin
 // app/build.gradle.kts, inside android { }, before buildTypes
@@ -119,10 +120,10 @@ signingConfig = signingConfigs.getByName("beta")
 ```
 
 Then:
-1. Remove (or keep, harmless) the copy step.
-2. Add a CI check after the build so this can never silently come back: `"$(ls -d $ANDROID_HOME/build-tools/*/ | sort -V | tail -1)apksigner" verify --print-certs app/build/outputs/apk/preview/*universal*.apk | grep -qi "SHA-256 digest: 2c43cb4f1bca57c8"`, and fail the job otherwise.
-3. Add `*.keystore binary` and `*.jks binary` to `.gitattributes`. Today `* text eol=lf` marks the keystore as **text**, so a future keystore containing CR LF bytes would be corrupted on commit. The current blob happens to be fine.
-4. Tell the owner: the first fixed-key build needs **one uninstall** of the current beta. Back up first (Settings › Data and storage › Create backup). After that, every release updates in place.
+1. Remove (or keep, harmless) the copy step. (Kept.)
+2. (Done in r85 as "Check signing key".) Add a CI check after the build so this can never silently come back: `"$(ls -d $ANDROID_HOME/build-tools/*/ | sort -V | tail -1)apksigner" verify --print-certs app/build/outputs/apk/preview/*universal*.apk | grep -qi "SHA-256 digest: 2c43cb4f1bca57c8"`, and fail the job otherwise.
+3. (Done in r85 for `*.keystore`; `*.jks` was not added, which is fine while no `.jks` exists.) Add `*.keystore binary` to `.gitattributes`. Before r85 `* text eol=lf` marks the keystore as **text**, so a future keystore containing CR LF bytes would be corrupted on commit. The current blob happens to be fine.
+4. (Done: r85 was that build.) Tell the owner: the first fixed-key build needs **one uninstall** of the current beta. Back up first (Settings › Data and storage › Create backup). After that, every release updates in place.
 
 ### Release flow the assistant uses
 
@@ -139,23 +140,23 @@ GitHub GraphQL is blocked from these sessions ("GitHub GraphQL is not available 
    ```bash
    git push -q origin HEAD:feature/browse-redesign
    sleep 8
-   gh api "repos/Dominican4Life/Komikku/actions/runs?branch=feature/browse-redesign&per_page=1" \
+   gh api "repos/Dominican4Life/Bot/actions/runs?branch=feature/browse-redesign&per_page=1" \
      --jq '.workflow_runs[0] | "\(.id) \(.status) \(.head_sha[0:7])"'
    ```
    Check that `head_sha` equals `git rev-parse --short HEAD`. If not, the run isn't created yet, so wait and ask again.
 4. Wait about 20 min. Run this in the background, because foreground `sleep` is blocked:
    ```bash
-   until s=$(gh api repos/Dominican4Life/Komikku/actions/runs/$RUN --jq '.status+" "+(.conclusion//"")'); \
+   until s=$(gh api repos/Dominican4Life/Bot/actions/runs/$RUN --jq '.status+" "+(.conclusion//"")'); \
      [[ $s == completed* ]]; do sleep 30; done; echo $s
    ```
 5. On `failure`, read the errors:
    ```bash
-   JOB=$(gh api repos/Dominican4Life/Komikku/actions/runs/$RUN/jobs --jq '.jobs[0].id')
-   gh api repos/Dominican4Life/Komikku/check-runs/$JOB/annotations \
+   JOB=$(gh api repos/Dominican4Life/Bot/actions/runs/$RUN/jobs --jq '.jobs[0].id')
+   gh api repos/Dominican4Life/Bot/check-runs/$JOB/annotations \
      --jq '.[] | select(.title=="Build errors") | .message'
    ```
-   `gh api ".../actions/jobs/$JOB" --jq '.steps[] | "\(.number) \(.name) \(.conclusion)"'` shows which step failed. "Build app" means compile; "Publish release" means a tag race or a missing APK. Fix the errors, commit as `rN: fix …` with the same N, and push.
-6. On `success`, get the tag: `gh api "repos/Dominican4Life/Komikku/releases?per_page=1" --jq '.[0].tag_name'`. To download an APK: `id=$(gh api repos/Dominican4Life/Komikku/releases/tags/r84 --jq '.assets[]|select(.name|test("arm64"))|.id'); gh api -H "Accept: application/octet-stream" repos/Dominican4Life/Komikku/releases/assets/$id > r84.apk`. Note that a release's `created_at` is the *commit* time, not the build time.
+   `gh api ".../actions/jobs/$JOB" --jq '.steps[] | "\(.number) \(.name) \(.conclusion)"'` shows which step failed. "Build app" means compile; "Check signing key" means the APK isn't signed with the committed key (read the `Wrong signing key` annotation: `select(.title=="Wrong signing key")`, it names the file and the digest found; never "fix" it by changing the expected digest); "Publish release" means a tag race or a missing APK. Fix the errors, commit as `rN: fix …` with the same N, and push.
+6. On `success`, get the tag: `gh api "repos/Dominican4Life/Bot/releases?per_page=1" --jq '.[0].tag_name'`. To download an APK: `id=$(gh api repos/Dominican4Life/Bot/releases/tags/r84 --jq '.assets[]|select(.name|test("arm64"))|.id'); gh api -H "Accept: application/octet-stream" repos/Dominican4Life/Bot/releases/assets/$id > r84.apk`. Note that a release's `created_at` is the *commit* time, not the build time.
 
 ### Repo rules (AGENTS.md) and where the fork deviates
 
@@ -178,7 +179,7 @@ Where the fork actually deviates, and what to do about it:
   - It keeps the last `MAX_LINES = 4000` lines in memory and in `filesDir/app_log/log.txt`. Lines from earlier runs show with a negative time.
   - Format: `+12.345s W tag message`. Filters: All / Info (I, W, E) / Problems (W, E), plus a text search on message and tag. Copy trims to what fits; Share writes a file.
   - `E` lines are written synchronously so they survive a crash.
-  - **Entry point:** the only button is on the **tablet navigation rail** (`HomeScreen.kt:139`, bug icon at the bottom, below "Sync"). The phone bottom bar has none. On a phone, set Appearance › Tablet UI (`tablet_ui_mode`) to always on to reach Logs.
+  - **Entry points:** the **tablet navigation rail** (`HomeScreen.kt`, bug icon at the bottom, below "Sync"), and since r86 **More › Logs** (`MoreScreen.kt` `onClickLogs`, pushed from `MoreTab.kt`), which is how phones get there.
 - **What reaches AppLog** (wired in `App.kt` ~159–173 and `setupExhLogging()`):
   - Everything sent through square `logcat {}` at DEBUG and up, via `AppLog.Logger`, which is installed *before* `XLogLogcatLogger` so duplicates can be dropped.
   - XLog (`xLogD/xLogE`), via `AppLog.XLogPrinter`, but XLog's level is **WARN** unless Settings › Advanced › Log level (`eh_log_level`, SY pref; default MINIMAL for preview, because only `BUILD_TYPE == "debug"` defaults to EXTRA) is EXTRA or EXTREME. So `xLogD` from fork code is invisible by default. **Use `logcat` or `AppLog.add` in fork code.**
@@ -245,18 +246,18 @@ Taken from the "Build errors" annotations of the 25 failed runs, plus the fix co
 | Advanced › Default user agent | `default_user_agent` | Chrome 141 Android 10 string | `UserAgentInterceptor`, Cloudflare/WebView | no |
 | Advanced › auto-open bot checks (`KMR.pref_auto_open_bot_checks`) | `auto_open_bot_checks` | `true` | Opens unpassable bot checks in WebView right away and retries | yes (3db8eea1) |
 | Advanced › Log level (`SYMR.log_level`) | `eh_log_level` | MINIMAL (EXTRA on debug builds) | XLog level (WARN/DEBUG/ALL), `HttpLoggingInterceptor` headers, logcat min priority | no (SY) |
-| Appearance › Tablet UI | `tablet_ui_mode` | AUTOMATIC | Whether the navigation rail, and with it the only **Logs** button, is shown | no |
+| Appearance › Tablet UI | `tablet_ui_mode` | AUTOMATIC | Whether the navigation rail (with its **Logs** button) is shown. Since r86 phones also have More › Logs | no |
 | (internal) | `preview_last_version_code` (app-state key) | 0 | Preview "What's new" dialog when the commit count grows | no (KMK upstream) |
 
 ### Cross-feature impact map
 
-- Changing **`versionCode`** affects app migrations (`Migrator`): bumping it to 82+ re-arms every migration with `version > old`. Leaving it alone means new `Migration`s never run.
+- Changing **`versionCode`** affects app migrations (`Migrator`): since r85 it is the release number, and each `Migration` with `version` above the installed code runs once. Never make it go down (Android refuses the install), and don't detach it from the release number.
 - Changing **NetworkHelper `clientBuilder()`** affects every source, extension, cover, the JS `fetch`, HLS relay, trackers and the AniList calls, because they all derive from `network.client`/`nonCloudflareClient`. The `net` log lines and IPv4-first behaviour come from here too.
 - Changing the **DNS wrapper** affects `HlsRelay.bypassClient`, which overrides DNS and silently drops the wrapper.
 - Changing **interceptor order** affects bot-check notifications (`BotCheckInterceptor` must stay before `CloudflareInterceptor`) and what the `net` timing means.
 - Changing **`source-api` classes** (`Video`, `Hoster`, `SManga`…) affects installed APK extensions: ABI breaks show up only at runtime as `NoSuchMethodError` in Logs, never at compile time.
 - Changing **R8 keep rules or adding JNI/reflective libraries** affects only preview/release builds (minified). A missing rule passes CI and crashes on the device.
-- Changing **`.github/custom-debug.keystore` or the signing config** means every installed beta needs one uninstall.
+- Changing **`.github/custom-debug.keystore` or the signing config** means every installed beta needs one uninstall, and the "Check signing key" step fails until its expected digest is changed too.
 - Changing **i18n modules**: a string removed from `KMR`/`AMR` that is still referenced is a compile error in `app`.
 - Changing **the workflow's error grep** affects the only way to read failures from these sessions (annotations).
 

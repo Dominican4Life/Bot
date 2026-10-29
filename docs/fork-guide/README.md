@@ -1,17 +1,19 @@
 # Fork guide: how this Komikku fork works, why, and what breaks what
 
-This is the engineering reference for the owner's fork of Komikku (`Dominican4Life/Komikku`, app id `app.komikku.beta`). It covers what the fork added on top of upstream Komikku (Mihon + TachiyomiSY): the anime side (Anikku/Aniyomi), AniZen's mpv player, in-app JS/JSON sources and the Code editor, the browse/extension redesign, previews, and many fixes. For each part it records **how it works, why it was built that way (the bug it fixed), what must not change, and what will break if it does**.
+This is the engineering reference for the owner's fork of Komikku (GitHub repo `Dominican4Life/Bot`, app id `app.komikku.beta`). It covers what the fork added on top of upstream Komikku (Mihon + TachiyomiSY): the anime side (Anikku/Aniyomi), AniZen's mpv player, in-app JS/JSON sources and the Code editor, the browse/extension redesign, previews, and many fixes. For each part it records **how it works, why it was built that way (the bug it fixed), what must not change, and what will break if it does**.
 
 **Who it's for:** the owner, and any AI session that changes this code. The owner can only test on a phone/tablet, and every build costs a release cycle (r1, r2, …). So **read the relevant section before changing anything, and check its "Cross-feature impact map" and "Predictable failure modes"**.
 
-Written 28–29 October 2026, at r84 (commit a693dc09). The sections were written from the code, the fork's 237 commits and the conversation history. Facts marked unverified were not tested on a device. When the code and this guide disagree, the code wins; update the guide.
+**Repo rename:** the GitHub repo was renamed from `Dominican4Life/Komikku` to `Dominican4Life/Bot` (local remote `https://github.com/Dominican4Life/bot`, CI paths `/home/runner/work/Bot/Bot/`). The app, the releases (`Komikku beta rN`) and the APK file names stay "Komikku".
+
+Written 28–29 October 2026, at r84 (commit a693dc09), and updated for r85 (0144ac1a) and r86 (f80f3b5a). The sections were written from the code, the fork's 237 commits and the conversation history. Facts marked unverified were not tested on a device. When the code and this guide disagree, the code wins; update the guide.
 
 ## Sections
 
 | # | File | Covers |
 |---|------|--------|
-| 1 | [01-build-ci-conventions.md](01-build-ci-conventions.md) | Modules, build variants and version numbers, the CI workflow, **signing (why every release needs an uninstall)**, release flow, repo rules, logging, networking, past compile errors, **"Before you push" checklist** |
-| 2 | [02-browse-extensions.md](02-browse-extensions.md) | Browse tabs, browsing a source, filters and tag boxes, saved searches, Feed, global search, the unified Extensions screen, **repositories (the repo-issue history r64–r76)**, installers and Sideload, known issues from the r84 outside review |
+| 1 | [01-build-ci-conventions.md](01-build-ci-conventions.md) | Modules, build variants and version numbers, the CI workflow, **signing (why releases up to r85 needed an uninstall, fixed in r85)**, release flow, repo rules, logging, networking, past compile errors, **"Before you push" checklist** |
+| 2 | [02-browse-extensions.md](02-browse-extensions.md) | Browse tabs, browsing a source, filters and tag boxes, saved searches, Feed, global search, the unified Extensions screen, **repositories (the repo-issue history r64–r76)**, installers and Sideload, the r84 outside review (addressed in r85) |
 | 3 | [03-js-sources.md](03-js-sources.md) | The app side of JS/JSON sources: QuickJS runtime and host API, saving/keys/ids, how a source maps onto the app, videos (JsVideos, ReaderVideos), the HLS relay, saving chapter videos, the Code editor |
 | 4 | [04-player-anime.md](04-player-anime.md) | How playback starts, decoder, **multi-quality HLS splitting (HlsVariants)**, Qualities menu order and button, audio tracks, anime downloads, AniList episode cards, IPv4-first DNS, the `Video` model, Cast/torrent |
 | 5 | [05-images-previews-reader.md](05-images-previews-reader.md) | Coil setup, covers (one download per cover), image logs, **animated tiles and header sniffing (why only the first bytes are read)**, preview panels, the reader's side panels, video hand-off |
@@ -27,10 +29,10 @@ Written 28–29 October 2026, at r84 (commit a693dc09). The sections were writte
 4. **One shared download per cache key.** Covers broke when Popular and Latest downloaded the same cover twice (r81, section 5). Keep `MangaCoverKeyer` keys identical across screens.
 5. **Read headers, not whole files.** Animated tiles are recognised from the first 21 bytes. Loading whole files for the Pages panel of a 381-page animated gallery ran out of memory (r79, section 5). Only one tile animates at a time.
 6. **Detect streams by content or by "m3u8" anywhere in the URL, never by the path ending.** Relayed streams look like `http://127.0.0.1:PORT/p/<id>?u=…&x=list.m3u8` (r84, sections 3–4).
-7. **Database: every `.sq` change needs a matching `.sqm` migration.** The owner has been reinstalling every release, so no migration has really run on a device yet. Once updates install over each other (after the signing fix), a bad migration crashes the app on open (sections 1 and 6).
+7. **Database: every `.sq` change needs a matching `.sqm` migration.** Up to r85 the owner reinstalled every release (r85 needed the last uninstall, for the signing fix), so no migration had run on a device. From r86 on, releases install over each other, so a bad migration crashes the app on open (sections 1 and 6). App `Migration`s need a version above the latest published release.
 8. **Backups: anything keyed by a database id comes back pointing at the wrong row after a restore** (ids change on a fresh install). Prefer keys by source + url (sections 6 and 7).
-9. **`source-api` changes break installed extensions at runtime, not at compile time** (`NoSuchMethodError`). Add overloads; don't change signatures (`Video` has two `copy` overloads for this reason; section 4).
-10. **Compile risks CI catches only after a push:** missing imports (r81), Compose `remember` inside conditions, lines over 120 characters, the two `Video.copy` overloads (pass `videoPageUrl` to pick the right one). Use the checklist in section 1.
+9. **`source-api` changes break installed extensions at runtime, not at compile time** (`NoSuchMethodError`). Add overloads; don't change signatures (`Video` has three `copy` overloads for this reason, one of them hidden for ext-lib 16; sections 1 and 4).
+10. **Compile risks CI catches only after a push:** missing imports (r81), Compose `remember` inside conditions, the `Video.copy` overloads (pass `videoPageUrl`/`type`/`mimeType` to pick the full one). Use the checklist in section 1. Style is not checked at all: CI only runs `assemblePreview` (no Spotless/ktlint), and ktlint's max-line-length rule is disabled, so long lines don't break the build; still keep lines ≤ 120 characters (`.editorconfig`) so a later `spotlessApply` diff stays small.
 
 ## Shared code: changing one thing affects another
 
@@ -47,61 +49,58 @@ The biggest hubs. Every section ends with a fuller impact map.
 | `AnimatedThumbnail` | reader Pages panel and Browse/library preview panels (same component) | 5 |
 | `JsRuntime` limits / mutex | Browse, details, player, downloads of that JS source (one runtime per source) | 3 |
 | JS source id rules (`idFor`, `customId`) | library entries, history and settings of every JS source (they look lost) | 3 |
-| `ExtensionStoreUrls.key()` / available-extension map key | repo counts, duplicates, updates, sideload restore | 2 |
+| `ExtensionStoreUrls.key()` / available-extension map key (`availableKey`: repo + package + signing key since r86) | repo counts, duplicates, updates, sideload restore | 2 |
 | Manga `ExtensionManager` install steps | **anime** installs too (they share the installer and are forwarded from the manga manager) | 2 |
-| `SideloadFolder.sync` | can uninstall extensions whose APK is missing from the folder, on every start | 2 |
+| `SideloadFolder.sync` | can uninstall extensions whose APK is missing from the folder, on every start (since r86 not when the folder is missing, empty or unreadable) | 2 |
 | `AutoCompleteItem` (tag boxes) | E-Hentai tags, JS tag filters, anime tag filters, Browse preview tag hold | 2 |
 | Library flows without `LibraryRefresh.pausedWhileRestoring` | slow/stuck restores come back (r72/r73) | 6 |
 | Download folder naming | download badges, Check downloads, cover import after restore, `index.json`, chapter video pairing (`NNN`, `NNN__001`) | 3, 6 |
 | `Download.progress` | the queue's bars; anything waiting for 100 % | 6 |
 | Backup proto numbers | reading older backups and Anikku imports | 6 |
-| Settings keys | the reader's "Skip filtered chapters" and the player's skip-filtered-episodes share a key; the Performance profile silently overrides decoder switches | 7 |
+| Settings keys | renaming a key loses the saved value; settings named after database ids need the backup skip list (`AnimeBackupHelper.isAnimeIdKey`). (Up to r85 the reader and player shared the skip-filtered key and profiles silently overrode the decoder switches; since r86 the player has `pref_player_skip_filtered_episodes` and the switches are `locked` to the profile's values.) | 7 |
 
-## Known open issues and risks (not fixed at r84)
+## Known open issues and risks (at r86)
 
-Collected from all sections. These are what to look at first when something odd is reported.
+Collected from all sections. These are what to look at first when something odd is reported. Items fixed in r85/r86 are listed under "Fixed since r84" below, not here.
 
-**Release and update** (fixed in r85, see "Changes in r85" below)
-- From r85 on, every release is signed with the committed key and installs over the previous one, so database and app migrations now really run on the owner's device (rule 7).
+**Release and update**
+- r85 was the last release that needed an uninstall (it moved to the committed key). r86 and later install over the previous one, so database and app migrations now really run on the owner's device (rule 7, section 1).
 
 **Extensions and repos (section 2)**
-- Repos are keyed by package + signing key. Two repos with the same (or no) key offering the same package overwrite each other, so one repo shows fewer packages. This is the most likely cause of the next "repo shows 0" report.
-- Manga install errors silently put the row back to Install with no message.
-- The r84 review issues (chips cut off, Repositories (0), keyboard over results, library after "Install unknown apps", Private Installer vs Sideload, wrong prompt / stuck "Installing") were addressed in r85; see below. Not yet confirmed on a device.
+- The r85 fixes from the r84 review (chips, Repositories (0), keyboard, return after "Install unknown apps", installer sessions, Sideload wording) are not yet confirmed on a device.
 
 **JS sources (section 3)**
-- No time limit on JS: a loop that never awaits blocks that source everywhere until restart, with nothing in Logs.
-- Imports skip the id checks (source keys are checked since r85).
-- The HLS relay drops 100 sessions when it passes 500, which can 404 a video that's playing.
-- Each runtime copy of a source caches `storage.json` separately, so one can overwrite what another wrote.
-- Testing in the Code editor writes to the saved source's real settings.
-- No "unsaved changes" warning in the editor.
+- The 30 s JS limit (r86) pauses during host calls, so a host call that itself never returns isn't stopped by it (fetch has its own 60 s limit; `host.render` waits as long as `options.timeout` says, uncapped).
+- The HLS relay drops the 100 oldest sessions (by when they were handed out, not by last use) once it passes 500, so a video that has played for a long time while many new relay addresses were made can still 404.
 - Chapter video save failures still leave a chapter counted as downloaded (since r85 the Logs say which chapter is missing videos).
+- Importing a source doesn't call `setApkEnabled`, and `setApkEnabled` swallows write errors.
+- The unsaved-changes dialog (r86) only appears when leaving the editor screen, not when switching sources or tabs inside it.
 
 **Player and anime (section 4)**
-- A quality list with only bandwidth (no resolution) makes HlsVariants pick the lowest quality, for playback and "best" downloads.
-- The quality list is fetched with only the video's own headers.
 - The 4 s limit can't interrupt ffprobe.
 - The preview player, the outside player and anime downloads don't go through `split`.
 - Network-aware preloading caps quality at 720p on metered networks, which its label doesn't say.
 
 **Images (section 5)**
-- Coil's image disk cache is ≤ 250 MB and shared by non-library covers, Browse preview pages and JS preview tiles. Pages viewed in a preview panel are downloaded again when the reader opens.
-- Downloaded CBZ preview tiles copy whole entries into memory (up to 8 at once).
+- Coil's image disk cache is ≤ 250 MB and shared by non-library covers, Browse preview pages and JS preview tiles. (Since r86 the reader reuses a page already downloaded by a preview panel when the saved image URL matches, `HttpPageLoader.reuseFromPreview()`.)
 
 **Backup (section 6)**
-- Since r85, settings named after anime ids aren't restored (per-anime intro length and last season start empty), and anime category settings are mapped by name, but only for backups made with r85 or later (older ones don't carry anime category ids).
+- Settings named after anime ids aren't restored (per-anime intro length and last season start come back empty), and anime category settings are mapped by name only for backups made with r85 or later (older ones don't carry anime category ids).
 - Not in a backup:
-  - Aniyomi extension settings.
   - Merged anime.
-  - Player custom buttons.
-  - Watch time.
   - JS source storage.
   - Tracker logins, unless "Private settings" is ticked.
   - The Logs file.
 
-**Settings (section 7)**
-- Some settings do nothing (listed in section 7), e.g. "Show restoring progress banner" and the player's "Remember last used volume".
+### Fixed since r84 (removed from the list above)
+
+- **Signing** (r85): one key for all releases; CI checks it.
+- **Extensions** (r86): repos with the same (or no) signing key no longer overwrite each other's packages (`availableKey`, `copyFor`). Manga install errors show a toast and a `W extensions` line instead of silently resetting the row.
+- **JS** (r85/r86): JS that runs 30 s without returning to the host is stopped (`Watchdog`, r86). Imports check source keys (r85) and custom ids (r86). The relay trims the oldest sessions, not random ones (r86). One shared `JsStorage` per storage folder, so runtime copies don't overwrite each other (r86). Editor tests use a test copy of settings and storage (r86). An unsaved-changes dialog when leaving the editor (r86).
+- **Player** (r86): quality lists with only bandwidth pick the highest, not the lowest. Quality lists are fetched with the source's headers.
+- **Images** (r86): preview-panel pages are reused by the reader. CBZ preview tiles are streamed instead of copied into memory.
+- **Backup** (r85/r86): anime extension settings (proto 703), player custom buttons (704) and watch time (`BackupAnimeHistory` 3) are in backups since r86. Settings holding anime ids, including `anime_download_queue`, are skipped on restore since r85.
+- **Settings** (r86): "Show restoring progress banner" is hidden (it did nothing); "Remember last used volume" and webtoon "Tap scroll by page" work.
 
 ## Changes in r85 (29 October 2026)
 

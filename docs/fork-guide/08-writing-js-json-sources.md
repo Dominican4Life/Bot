@@ -35,7 +35,7 @@ Before writing any code, find out how the site delivers each thing a source need
 | The editor's Test tab | What your source actually got: requests, status codes and console. | Run Popular, then tap a title, then a chapter or episode. |
 | `console.log(body.slice(0, 2000))` | The start of a reply, in the editor's console. | Add it to a method while testing, remove it after. |
 | `host.render(url, { capture: /…/ })` | Every address the page loaded while it ran, such as video streams and API calls. | Use it on the Test tab to find hidden requests. |
-| The app's **Logs** screen | Every request the app made, with its status and time, and errors from sources. | The bug button at the bottom of the navigation rail. |
+| The app's **Logs** screen | Every request the app made, with its status and time, and errors from sources. | The bug button at the bottom of the navigation rail, or More › Logs (phones too, since r86). |
 | A desktop browser's DevTools (Network tab) | All requests, with their headers and replies. | Easiest on a computer. Filter by `Fetch/XHR` for APIs, `m3u8` or `mp4` for video. |
 
 **The golden rule:** if something shows in the browser but not in `view-source:`, the page built it with JavaScript. Then the data comes from somewhere else: an API request, a JSON blob inside the page, or it needs `host.render`. Find that source rather than fighting the HTML.
@@ -643,14 +643,16 @@ Zip files:
 
 ### 4.6 Limits
 
+What the app really enforces (checked against `JsRuntime.kt` and `JsRender.kt`, r86). The same limits apply in the editor.
+
 | What | Limit |
 | --- | --- |
-| One method call | 90 seconds, or 30 in the editor |
-| One request | 30 seconds, and at most 10 redirects |
-| Memory | 128 MB per source |
-| `host.sleep` | 10 seconds |
-| `host.render` | 85 seconds |
-| Addresses | Public `http` and `https` only. `localhost`, private and link-local addresses are refused, even after a redirect. |
+| JS running without a break | **30 seconds** (since r86). Only time spent running your code counts: while a `fetch`, `host.render`, `host.sleep` or other host call is being answered, the clock stops, and it starts again from zero when the call returns. Past 30 s the call is stopped with "its code ran for 30 s without stopping" and an `E js` line in Logs; the source keeps working afterwards. There is no limit on a whole method call: a method that keeps awaiting requests can run for minutes. |
+| One request (`fetch`) | **60 seconds** for the whole call (`callTimeout`), on top of the app's 30 s connect and 30 s read timeouts. Redirects are followed with OkHttp's defaults (up to 20). |
+| Memory | 128 MB per source (stack 2 MB) |
+| `host.sleep` | 10 seconds (longer values are cut to 10) |
+| `host.render` | `options.timeout`, default 20 seconds. The app doesn't cap it, so a large value really waits that long (and the JS clock is stopped meanwhile). |
+| Addresses | Not filtered. The app doesn't refuse `localhost` or private addresses; don't rely on that and don't point a source at them. |
 
 ### 4.7 Example
 
@@ -1394,7 +1396,7 @@ getPagePreviews: async function (url) {
 
 ### 7.7 Finding problems
 
-- The **Logs** screen (bug button at the bottom of the navigation rail) has every request the app made and every source error, newest first. Switch to **Problems** to see only failures, and use copy to share them.
+- The **Logs** screen (bug button at the bottom of the navigation rail, or More › Logs since r86) has every request the app made and every source error, newest first. Switch to **Problems** to see only failures, and use copy to share them.
 - In the editor, the **Console** shows the source's own `console.log` output and each request with its status code and time.
 - A failed save shows the exact error the source stopped with, with a Copy button.
 
@@ -1641,7 +1643,7 @@ Real mistakes made while writing sources, what they looked like, and how to avoi
 **Running out of time in the editor** *(Jable, October 2026)*
 
 - **What you see:** a debug or test run stops with a time-out and shows nothing useful.
-- **Why:** a call in the editor has a time limit ([4.6](#46-limits)), and a run that tests everything at once goes over it.
+- **Why:** each request has a time limit, and since r86 JS that runs 30 s without awaiting anything is stopped ([4.6](#46-limits)); a run that tests everything at once in one long loop can hit either.
 - **Do this instead:** give a debug run its own time budget and a time-out per request, and split it into sections that can run on their own (`!debug lists`, `!debug videos`).
 
 **Testing old code or a wrong address** *(MissAV, Hanime, October 2026)*

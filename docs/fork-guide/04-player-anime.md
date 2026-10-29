@@ -129,17 +129,21 @@ File: `tachiyomi/ui/player/loader/HlsVariants.kt` (fork).
 **How `expand(video, preferredHeight)` works:**
 1. It only runs for `http…` URLs where `isPlaylist` is true: **"m3u8" anywhere in the URL** (case-insensitive) or
    `mimeType` contains "mpegurl".
-2. `read()`: GET with **only `video.headers`** (not the source's headers) through `NetworkHelper.client`. It reads at
+2. `read(video, sourceHeaders)`: GET with **`video.headers ?: sourceHeaders`** (since r86; up to r85 only
+   `video.headers`) through `NetworkHelper.client`. `EpisodeLoader` passes the source's headers
+   (`split(videos, sourceHeaders)`), downloads pass their own headers (`forDownload(video, headers)`). It reads at
    most 256 KB (`MAX_BYTES`) of the body. The body must start with `#EXTM3U`.
 3. If any `#EXT-X-MEDIA:…TYPE=AUDIO…URI=` line is present (separate audio), it returns null, so the list is not split.
    A split would leave the picture with no sound.
 4. It parses `#EXT-X-STREAM-INF` (`RESOLUTION=WxH` → height, `BANDWIDTH=`) and resolves the next URI line against
    the final (post-redirect) URL. `distinctBy { height ?: bandwidth ?: url }` keeps one entry per quality.
 5. Fewer than 2 variants: the video is left as is.
-6. Sort best first by height (or bandwidth/10 000). Pick, in order:
+6. Sort best first by height, then bandwidth (r86: `compareByDescending { height ?: 0 }.thenByDescending
+   { bandwidth ?: 0 }`). Pick, in order:
+   - no variant has a height, or a download (`BEST`): the first (highest),
    - exact preferred height,
    - else the best height ≤ preferred,
-   - else the last (lowest).
+   - else the lowest sized one.
 
    The pick goes first in the list. Only the pick inherits `video.preferred`.
 7. Titles: `"720p"` (or `"<original title> · 720p"` when the original title isn't generic: video/auto/default/stream/
@@ -189,20 +193,20 @@ File: `tachiyomi/ui/player/loader/HlsVariants.kt` (fork).
 - r83 saved the *preferred* quality. r84 (the owner asked "save best quality only") calls
   `expand(video, Int.MAX_VALUE)`, which picks the highest known height.
 - Callers:
-  - `AnimeDownloadManager.ffmpegDownload`. Its comment still says "(the preferred)"; that comment is stale.
+  - `AnimeDownloadManager.ffmpegDownload`. Its comment now says "(the best)" and that the list is read with the
+    download's headers (the source's when the video has none).
   - `jssource/ChapterVideoDownloads` (videos in manga chapters).
 - For comparison, AniZen's downloader takes the *first* listed variant ("Resolved master playlist to variant"). Ours
   takes the highest.
 
 **Predictable failure modes:**
-- **No `RESOLUTION=` in the master (only BANDWIDTH):**
-  - Every height is null, so `pick` falls to `sorted.last()`, the **lowest bandwidth**.
-  - So both playback and the "best quality" download start on the *worst* variant.
-  - Fix idea (not done): when no heights are known, pick by bandwidth (first for downloads).
-- **Hosts that need the source's Referer/Cookie** but don't put headers on the `Video`:
-  - `read()` gets 403, the video stays unsplit, and you get the old slow start and an all-qualities download.
-  - Downloads pass `video.headers ?: source.headers` to ffmpeg, but `forDownload` only uses `video.headers`.
-  - Look for `W net GET <master> -> 403` with no `hls Split` line after it.
+- Fixed in r86: **no `RESOLUTION=` in the master (only BANDWIDTH).** Every height was null, so `pick` fell to the
+  **lowest bandwidth** for playback and for "best" downloads. Now such a list is ranked by bandwidth and starts on (and
+  downloads) the highest; labels read e.g. "2.5 Mbps".
+- Fixed in r86: **hosts that need the source's Referer/Cookie** but don't put headers on the `Video`. `read()` used
+  only `video.headers`, got 403, and the video stayed unsplit (old slow start, all-qualities download). Now it falls
+  back to the source's headers. If it still happens, look for `W net GET <master> -> 403` with no `hls Split` line
+  after it: the host wants something neither set of headers has.
 - **The timeout is weak against blocking reads.** `withTimeoutOrNull` can't interrupt a blocking call:
   - `FFprobeKit.executeWithArguments` is blocking,
   - `source.request(MAX_BYTES)` is a blocking read.
@@ -272,7 +276,8 @@ call `checkFileLoaded()`, or the spinner never ends (ANK comment).
 ### Playback problems: logs and self-healing
 
 - **Two logs:**
-  - `AppLog`: the Logs screen, from the debug button on the navigation rail. It gets everything from logcat/XLog at
+  - `AppLog`: the Logs screen, from the debug button on the navigation rail or (since r86, phones too) More › Logs.
+    It gets everything from logcat/XLog at
     DEBUG and above, including mpv INFO/WARN/ERROR as tag `mpv/<prefix>` (`PlayerObserver.logMessage`), network
     lines `net GET … -> 200 in N ms`, `hls`, and `anilist`.
   - `PlayerDebugLog` (`PlayerDebugLog.kt`): 400 lines, cleared each time the player opens. It holds the `player`,
@@ -301,7 +306,8 @@ call `checkFileLoaded()`, or the spinner never ends (ANK comment).
   - A `.tmp` while writing.
   - The source folder is matched through `SourceFolders.match` (any tag such as "(JS)", numbered copies).
   - Stored with `UniFile` (SAF).
-- **`isStream`:** `.m3u8`/`.mpd` before "?", `/hls/`, or "m3u8" anywhere. Streams go to `ffmpegDownload`, everything
+- **`isStream`:** `.m3u8`/`.mpd` before "?", `/hls/`, "m3u8" anywhere, or (r86) a `mimeType` containing
+  "mpegurl", so relayed and untagged playlists are caught. Streams go to `ffmpegDownload`, everything
   else to `httpDownload`.
 - **`httpDownload`:**
   - Uses the source's client (cookies, Cloudflare), with a percent from Content-Length.
@@ -316,7 +322,8 @@ call `checkFileLoaded()`, or the spinner never ends (ANK comment).
   `forDownload` must run before it (r83), and why relayed URLs had to be detected (r84). Don't remove the `?` maps or
   the pre-selection.
 - **Queue:**
-  - Saved in `anime_download_queue` (string set, `"<anime>:<episode>"`), restored at start.
+  - Saved in `anime_download_queue` (string set, `"<anime>:<episode>"`), restored at app start. It holds ids, so a
+    backup restore skips it (r85, `AnimeBackupHelper.isAnimeIdKey`).
   - Workers = `anime_download_concurrent` (1..5).
   - Errors go to `failures`; cancelled items go back to QUEUE.
 - **The player and downloads:** `EpisodeLoader.isDownload` → `AnimeDownloadManager.isDownloaded`, which uses an
@@ -368,8 +375,9 @@ call `checkFileLoaded()`, or the spinner never ends (ANK comment).
 - **Fallbacks:** each field falls back to the source's own `previewUrl` (through the `EpisodePreview` Coil model,
   kept with the anime) and `summary`.
 - **Known gaps:**
-  - Card mode `return`s before the row list, so the **episode swipe actions** (EpisodeRow, line ~1501) aren't
-    available on cards.
+  - Fixed in r86: cards swipe like the episode rows, with the same settings (`episodeSwipeToEndAction` /
+    `episodeSwipeToStartAction`, `getSwipeAction` in `ui/anime/AnimeScreen.kt`). Before, card mode returned before
+    the row list and had no swipe actions.
   - The card UI strings are hard-coded English ("Change", "Looking for this anime on AniList…") instead of `KMR`.
   - The lookup isn't redone when new episodes arrive during the same visit, so the offset can be stale until reopen.
 

@@ -2,7 +2,7 @@
 
 Everything here was added by the fork (first commit d50abb5e, 2026-10-09, authors Claude / Dominican4Life). Until r62 the package was `eu.kanade.tachiyomi.sumizuri` with `Sumizuri*` class names; commit 5fb7b0f4 (r62) renamed it to `jssource` / `Js*` and `ui/sumizuri` to `ui/codeeditor`. Use `git log --follow` or the old path `app/src/main/java/eu/kanade/tachiyomi/sumizuri/` for older history.
 
-How to write a source (fields, methods, selectors) is in `Writing-JS-JSON-extensions.md`. This section covers what the app does with a source: the engine, storage, how results become app objects, and the video plumbing.
+How to write a source (fields, methods, selectors) is in [08-writing-js-json-sources.md](08-writing-js-json-sources.md). This section covers what the app does with a source: the engine, storage, how results become app objects, and the video plumbing.
 
 Paths below are relative to `app/src/main/java/eu/kanade/tachiyomi/` unless they start with `assets/` (which means `app/src/main/assets/`).
 
@@ -70,8 +70,8 @@ Paths below are relative to `app/src/main/java/eu/kanade/tachiyomi/` unless they
 | `gzip*`, `deflate*`, `zipEntries`, `zipRead` | `JsCompress` |
 | `sleep` | Capped at 10 s |
 | `cookiesGet` / `cookiesSet` | The app's shared `network.cookieJar` (same cookies as WebView and APK sources) |
-| `storageGet/Set/Delete/Clear/All` | `js_storage/<key>/storage.json`, one JSON object. It is read once into a per-Host cache, and the **whole file** is rewritten on every write. Write errors are swallowed. |
-| `preferenceGet/Set/All` | SharedPreferences `source_<id>`. Unset keys fall back to the `getSourcePreferences` defaults. `JsPreferences.write`: array to StringSet, JSON boolean to Boolean, anything else to String. |
+| `storageGet/Set/Delete/Clear/All` | `js_storage/<key>/storage.json`, one JSON object. Since r86 it goes through `JsStorage`: **one shared in-memory copy per storage folder** for the whole app (`JsStorage.of(dir)`), so the Browse runtime, tag runtime and others no longer overwrite each other's writes. The **whole file** is still rewritten on every write; a failed write logs W `js` "Couldn't write <key>/storage.json: …" (before r86 it was swallowed). |
+| `preferenceGet/Set/All` | SharedPreferences `source_<id>` (the editor's test copy uses `source_<id>_editor`, see 3.8). Unset keys fall back to the `getSourcePreferences` defaults. `JsPreferences.write`: array to StringSet, JSON boolean to Boolean, anything else to String. |
 | `log`, `trace` | Console ring buffer (500 lines) and `AppLog` under tag `js:<name>` with level E/W/D/I |
 
 **`require` modules.**
@@ -85,11 +85,13 @@ Paths below are relative to `app/src/main/java/eu/kanade/tachiyomi/` unless they
 - JS heap 128 MiB, JS stack 2 MiB
 - `sleep` ≤ 10 s, fetch call ≤ 60 s
 - browser fetch poll ≤ 45 s, plus ≤ 30 s waiting out a challenge
-- render default 20 s, plus ≤ 30 s for its script
+- render default 20 s (`options.timeout`, no upper limit), plus ≤ 30 s for its script
+- since r86: 30 s of JS running without returning to the host (`Watchdog`, below)
 
 **No `setTimeout`/`setInterval`** is defined in prelude or stdlib.
 
-**Known finding (not fixed): there is no CPU deadline.** Nothing interrupts a JS loop that does not await (`while(true){}`, or a runaway regex). `call()` never returns, the runtime's mutex stays held, and every later call to that source hangs until the app process dies. Coroutine cancellation does not stop it either: `ensureActive` only runs after `evaluate` returns. Browse shows endless loading for that source. No log line appears, because nothing fails.
+**CPU deadline (r86, `JsRuntime.Watchdog`).** Up to r85 nothing interrupted a JS loop that didn't await (`while(true){}`, or a runaway regex): `call()` never returned, the runtime's mutex stayed held, and every later call to that source hung until the app process died, with no log line. Now each evaluation runs inside `Watchdog.guard`. A watcher checks once a second; when JS has run `LIMIT_MS = 30_000` ms since it last got control back (the evaluation started or a host call was answered) and no host call is pending, it calls `QuickJs.interruptEvaluation()`. The call fails with `JsException` "<name>: its code ran for 30 s without stopping, so it was stopped" and an E `js` line; the engine stays usable. quickjs-kt's `evaluationTimeoutMillis` is deliberately not used (it is a deadline from the start, so it would kill a long tag download).
+- Gaps: the clock is paused while a host call is pending, so a host call that never returns isn't stopped by it (fetch has its own 60 s; `render` waits `options.timeout`, uncapped). The check runs once a second, so the real limit is 30–31 s. There is still no limit on a whole method call that keeps awaiting.
 
 **Invariants**
 - The method name is pasted into JS code (`extension.$method`). Only pass the app's own constant names, never user text.
@@ -142,8 +144,8 @@ Registered in `di/AppModule.kt` (`addSingletonFactory { JsSourceManager(app) }`)
 **Runtimes cache.** `runtime(info)` keeps one runtime per key in `runtimes` (under `runtimeLock`), started on first use and kept for the life of the process. `invalidate` drops it on save, import, disable and delete. `JsTags` uses **its own** short-lived runtime (so a tag download doesn't hold up Browse). The editor also has its own (3.8).
 
 **Enable / disable** (`setEnabled`, from `UnifiedExtensionsScreenModel.setSourceEnabled`). It changes meta.json's `enabled`, and `mangaSourcesFlow`/`animeSourcesFlow` leave out disabled sources. An APK that shares the id uses `setApkEnabled` (writes `apk_off.txt`). The app-wide `disabledSources` pref is deliberately **not** used for JS/APK pairs: it goes by id and would hide both.
-- **Known finding:** in `setEnabled` the meta.json write is wrapped in `runCatching { }` with no log. If it fails, the in-memory state says "off" but the source comes back "on" after a restart.
-- `setApkEnabled` swallows write errors the same way.
+- Fixed in r85: `setEnabled` only changes the in-memory state once meta.json is written; a failed write logs E `js` "Couldn't switch <name> on/off: …" and nothing changes.
+- Still open: `setApkEnabled` writes `apk_off.txt` inside `runCatching { }` with no log, so a failed write is silent and the APK state comes back after a restart.
 
 **Delete.** Re-enables the shared APK, then removes the tab memory, runtime, `js_sources/<key>`, `js_storage/<key>` and the tag cache. Not removed: `source_<id>` prefs, `js_weburls_<id>`, icon copies in downloads/Icon.
 
@@ -151,13 +153,13 @@ Registered in `di/AppModule.kt` (`addSingletonFactory { JsSourceManager(app) }`)
 - `exportSources(keys)` gives `(meta JSON, code)` pairs. `PairSyncData.export` sends them; settings are **not** sent.
 - `importSource(infoJson, code)` writes the files **as they are, without running the code**. Newer wins by `updatedAt`, so an equal timestamp means no import. Logs I `js` "Got <name> from a paired device". The pairing screen log says "Code editor sources: N new or updated of M".
 - Backup: `BackupCreator.backupJsSources()` → `BackupJsSource(info, code, settings)` (proto field 710 in `Backup`). Settings come from `source_<id>`; Int/Long/Float/String/Boolean/StringSet are kept and other types dropped.
-- Restore: `BackupRestorer.restoreJsSources` → `restoreSource()` = `importSource()` and then the settings. **Settings are restored only when the source itself is.** If the device copy is the same or newer, the backup's settings are ignored. Errors go to the restore error list as "JS source: …".
+- Restore: `BackupRestorer.restoreJsSources` → `restoreSource()` = `importSource()` and then the settings. Since r85 the backup's settings are written **whenever the source exists afterwards**, even when the device kept its own same-or-newer code (so restoring with only "JS sources" ticked brings settings back). A settings write failure logs E `js` "Couldn't restore the settings of <name>: …". Errors go to the restore error list as "JS source: …".
 - Not backed up or synced: `storage.json`, tag lists, web URLs, last tab, `apk_off.txt`.
 
-**Known findings (not fixed).**
-- `importSource` and `restoreSource` use `info.key` from the incoming JSON in `File(root, key)` **without checking it**. A key like `../..` writes outside `js_sources`, and a later `delete(key)` would `deleteRecursively()` there.
-- The same path also skips `customId()`. An imported `customId` that equals a reserved id (for example `LocalSource.ID`) or another JS source's id is accepted, and the JS source then replaces that source in the source map.
-- Import also doesn't call `setApkEnabled` for an id change.
+**Import checks.**
+- Fixed in r85: keys must match `[A-Za-z0-9_-]{1,64}` and resolve directly inside `js_sources` (`isSafeKey`), on import, restore, delete and `dir()`. A bad key logs W `js` "Skipped <name>: its key … isn't a valid folder name" and the import returns false. (Before, a key like `../..` could write outside the folder.)
+- Fixed in r86: an imported `customId` goes through `customId()` like a save; a reserved id or one another saved source uses is dropped and the source keeps its own id.
+- Still open: import doesn't call `setApkEnabled` for an id change (save and delete do), and `setApkEnabled` still swallows write errors (see above).
 
 **Invariants**
 - `meta.json` is the only index. `load()` lists folders, and a folder whose meta.json fails to parse is skipped with W `js` "Couldn't read source <folder>: …". The source then vanishes from Browse; its code is still on disk.
@@ -294,7 +296,7 @@ Registered in `di/AppModule.kt` (`addSingletonFactory { JsSourceManager(app) }`)
 - **DNS bypass (r68, b2836e9f).** If a request fails with an IOException mentioning `/0.0.0.0` or `/127.0.0.1:`, or the system resolver returns only any-local or loopback addresses (what ad blockers and filtering DNS answer), the request is retried through a client with DNS-over-HTTPS. It tries Cloudflare (`cloudflare-dns.com`, bootstrap 1.1.1.1/1.0.0.1), then Google (`dns.google`, 8.8.8.8/8.8.4.4), and drops local or loopback answers. The host is remembered in `bypassedHosts` for the process. Logs: W `hls` "<host> is blocked by this device's DNS or ad blocker (it answers 0.0.0.0); asking Cloudflare / Google DNS instead", then I `hls` "<host> reached through Cloudflare / Google DNS (200)". Only relayed requests get this: JS `host.fetch`, ffmpeg on direct URLs and mpv on non-HLS URLs do not.
 
 **Predictable failure modes**
-- **Session eviction.** Above 500 sessions, `sessions.keys.take(100)` removes 100 ids in `ConcurrentHashMap` hash order, **not oldest first**. A stream that is playing can lose its session; its next playlist or piece request then gets **404 "Not found"** (no AppLog line). Every `getVideoList` wraps every HLS video, so a long session with many servers or qualities can reach 500. If playback stops mid-way after heavy browsing, suspect this.
+- **Session eviction.** Above 500 sessions, the 100 **oldest** ids go (r86: ids only grow, so it sorts them numerically; up to r85 `take(100)` dropped them in hash order). Logged D `hls` "Let go of the 100 oldest stream addresses (more than 500 handed out)". "Oldest" means handed out first, not least recently used: a video that has been playing for a long time while 500 more relay addresses were made (every `getVideoList` wraps every HLS video) can still lose its session, and its next playlist or piece request gets **404 "Not found"**. If playback stops mid-way after heavy browsing, look for that D line.
 - **Sessions are in memory only.** A relayed URL saved anywhere (DB, download queue) is dead after a process restart.
 - **`HlsRelay.original()` is never called.** Its comment says it exists for casting, but `ui/player/cast/CastMediaBuilder.kt` doesn't use it. Casting a relayed JS stream probably hands the TV a `127.0.0.1` URL it can't reach. Not verified on a device.
 - Keys fetched direct: a host that wants the Referer on key requests depends on mpv sending `Video.headers`.
@@ -326,7 +328,7 @@ Registered in `di/AppModule.kt` (`addSingletonFactory { JsSourceManager(app) }`)
 7. Offline: `DownloadPageLoader` calls `attachFromDirectory` (maps `NNN` or `NNN__001` split pictures to `NNN.video.*`) or `attachFromArchive` (CBZ: the n-th image entry in natural sort order ↔ page n; the page url gets `{archive, entry}`, and `extract()` copies the entry to `externalCacheDir/chapter_videos/<hash>.<ext>` on first play; that cache is never cleaned by the app).
 8. `isVideoFile(name)` (`.video.` in the name) keeps these files out of page counts. It is used in `Downloader` (picture lookup, `isDownloadSuccessful`), `CheckDownloadsScreen` and `BrowsePreviewScreenModel` (`picturesWithVideo` puts ▶ on pictures that have a video).
 
-**Known finding (not fixed): a failed video save leaves a chapter that looks complete.** `saveAll` catches each failure and only logs it (logcat E, so the Logs screen shows it under the class tag): "Couldn't save the video of page N in <title · chapter>; it stays a picture: <msg>". `isDownloadSuccessful` ignores videos, so the chapter is marked DOWNLOADED and nothing retries it. Offline, the page is just the thumbnail or tile, with no play button. Good line: I "Chapter video saved: <title · chapter>, page N".
+**Partly fixed: a failed video save leaves a chapter that looks complete.** `saveAll` catches each failure and logs it (logcat E, so the Logs screen shows it under the class tag): "Couldn't save the video of page N in <title · chapter>; it stays a picture: <msg>". Since r85 a failed rename counts as a failure, `saveAll` returns the failure count, and one W `download` line sums it up: "<chapter>: X of N videos couldn't be saved (they stay pictures); delete and download the chapter again to retry". Still open: `isDownloadSuccessful` ignores videos, so the chapter is still marked DOWNLOADED and nothing retries it. Offline, the page is just the thumbnail or tile, with no play button. Good line: I "Chapter video saved: <title · chapter>, page N".
 
 **Invariants**
 - The picture name and the video name must use the same `NNN`. Changing the digit count, or `page.number` versus index, in only one place breaks offline video pairing.
@@ -340,10 +342,10 @@ Registered in `di/AppModule.kt` (`addSingletonFactory { JsSourceManager(app) }`)
 **Where.** `ui/codeeditor/SourceEditorScreen.kt` (Voyager `Screen(sourceKey)`), `SourceEditorScreenModel.kt`, `CodeEditor.kt`, `SourceTemplates.kt`. It opens from the code button in Browse › Sources (`SourcesTab`), the JS entries in Extensions (`UnifiedExtensionsTab` `onJsEdit`/`onJsNew`), and the anime Browse panes.
 
 **Layout.** Width ≥ 840 dp: the code on the left, a 420 dp side panel with Details | Test tabs on the right. Narrower: tabs Code | Details | Test.
-- Top bar: back, title ("Add source" or the name, plus "Manga/Anime · JS/JSON · not saved"), JS extension | JSON declarative tabs (`KindTabs`), Copy all, Paste (replaces everything after a confirm dialog with the line count; a693dc09), Find, Run all, Save, Created Sources (folder icon), and a menu (Import, Export, Delete).
+- Top bar (since r85): back, title ("Add source" or the name, plus a one-line "Manga/Anime · JS/JSON · not saved" subtitle), JS extension | JSON declarative tabs (`KindTabs`; below the bar on phones), Save, Created Sources (folder icon), and the ⋮ menu: **Copy code, Paste code** (replaces everything after a confirm dialog with the line count), **Search code** (opens the find bar and switches the phone layout to the Code tab, `phoneTab = 0`), then Import, Export and Delete. There is no top ▶ any more: Run all is in the Test panel. An empty successful run says "No results".
 
 **Model behaviour.**
-- **Its own runtime.** `runtime()` rebuilds when `json + code` changes, with `testing = true`, using `manager.idOf(key)` and the same `key`. **Testing uses the saved source's real `source_<id>` settings and `js_storage/<key>`.** A test that writes storage or settings changes the installed source too.
+- **Its own runtime.** `runtime()` rebuilds when `json + code` changes, with `testing = true` and (since r86) `testCopy = true`, using `manager.idOf(key)`. Since r86 tests use a **test copy**: settings in `source_<id>_editor` (`JsPreferences.testOf`) and storage in `js_storage/<key>_editor` (`JsRuntime.testStorageKey`), filled from the saved source once per source opened (`ensureTestCopy` → `manager.prepareTestCopy`). Up to r85 tests wrote the saved source's real `source_<id>` and `js_storage/<key>`.
 - **`detectDetails()`.** 1.2 s after typing stops, it creates a runtime (running the source's top-level code and `getSourcePreferences`) and fills name, icon, lang, base URL and the Manga/Anime kind from `metadata()`. It is skipped while the code is still the untouched template.
 - **Import** (`importCode`):
   - JSON if the file name ends `.json`, or (not `.js` and the text starts with `{`).
@@ -352,7 +354,7 @@ Registered in `di/AppModule.kt` (`addSingletonFactory { JsSourceManager(app) }`)
   - Importing while a saved source is open **starts a new key**, so it doesn't overwrite.
 - **Export** writes the code via `CreateDocument`, named after the source with unsafe characters replaced by `_`.
 - **Save** → `manager.save(...)` with the Details fields as overrides. On success, a snackbar "Saved. X is in Browse → Sources (manga)" with Open. On failure, the "Couldn't save" dialog with the error (copyable) and E `js` "Saving X failed: …".
-- **Test panel.** A search field, plus square buttons: Run all, Popular, Latest, Catalogs, Filters, Settings (opens `SourceSettingsDialog`, which writes the real `source_<id>`), Clear.
+- **Test panel.** A search field, plus square buttons: Run all, Popular, Latest, Catalogs, Filters, Settings (opens `SourceSettingsDialog` on `testPreferences()`, the test copy, since r86), Clear.
   - The last 20 results are kept, each card showing at most 60 items.
   - Tapping an entry runs `getDetails` + `getChapterList`. Tapping a chapter runs `getPageList` or `getVideoList`. A page with `videoListUrl` shows as "Page N · video (tap to test)" and runs `getVideoList`.
   - `runAll`: tab catalogs (page 1 each), then Popular and Latest (skipped when tabs exist and the flag says missing), then search, then the first entry's chapters, then the first chapter's pages or videos.
@@ -367,7 +369,7 @@ Registered in `di/AppModule.kt` (`addSingletonFactory { JsSourceManager(app) }`)
 - The text area keeps its own `TextFieldValue` and only resets from the `code` prop when the two differ, **putting the cursor at 0**. Paste, import and open all jump to the top.
 
 **Predictable problems**
-- **Unsaved code is lost without warning.** There is no dirty check on Back, on opening another source from Created Sources, or on New. (Not a recorded finding, but visible in the code.)
+- **Unsaved changes (r86, partly).** Leaving the editor screen with unsaved changes (system Back or the back arrow, `BackHandler(enabled = state.dirty)`) asks first; Save there leaves once saved. Still no warning when opening another source from Created Sources or starting a New one inside the editor.
 - `closeRuntime()` cancels the job and closes the engine outside `runtimeMutex`. Closing while an evaluate is still running relies on quickjs-kt handling that (not verified).
 - Each pause in typing builds a new QuickJS engine and runs the source's top-level code. A source that fetches at top level fires requests while you type.
 
@@ -431,4 +433,4 @@ There are no app-wide preferences specific to JS sources. These stores change th
 - **Compile fixes in c80868cc:**
   - `elements += element` inside a `getOrPut {}` lambda was ambiguous for the compiler. Use `elements.add(element)`.
   - A Compose `val openInBrowser = { … }` whose branches return different types needed an explicit `() -> Unit`.
-- **r83/r84 Compose notes** (from the session log): keep `remember` calls unconditional (no `remember` inside an `if`), and keep lines under the ktlint length limit (Spotless runs in CI).
+- **r83/r84 Compose notes** (from the session log): keep `remember` calls unconditional (no `remember` inside an `if`), and keep lines ≤ 120 characters as style. CI does **not** run Spotless or ktlint (only `assemblePreview`) and ktlint's max-line-length rule is disabled, so long lines don't break the build (section 1).

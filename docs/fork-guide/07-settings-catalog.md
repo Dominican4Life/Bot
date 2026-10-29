@@ -246,7 +246,7 @@ with its sheet toggle on.
 | Flash with | `"pref_reader_flash_mode"` | Enum, `FlashColor.BLACK` | DisplayRefreshHost.kt, GeneralSettingsPage.kt | no |
 | **Reading** | | | | |
 | Skip chapters marked read | `"skip_read"` | Boolean, `false` | ReaderViewModel.kt | no |
-| Skip filtered chapters | `"skip_filtered"` | Boolean, `true` | ReaderViewModel.kt, MangaScreenModel.kt **and PlayerViewModel.kt** (PlayerPreferences.skipFiltered() uses the same key) | no (key shared by fork) |
+| Skip filtered chapters | `"skip_filtered"` | Boolean, `true` | ReaderViewModel.kt, MangaScreenModel.kt (the player has its own `pref_player_skip_filtered_episodes` since r86; up to r85 it shared this key) | no |
 | Skip duplicate chapters | `"skip_dupe"` | Boolean, `false` | ReaderViewModel.kt | no |
 | Always show chapter transition | `"always_show_chapter_transition"` | Boolean, `true` | GeneralSettingsPage.kt, ViewerConfig.kt | no |
 | **Paged** | | | | |
@@ -282,7 +282,7 @@ with its sheet toggle on.
 | Disable zoom out | `"webtoon_disable_zoom_out"` | Boolean, `false` | ReadingModePage.kt, WebtoonConfig.kt | no |
 | Animate page transitions | `"pref_enable_transitions_webtoon_key"` | Boolean, `true` | ReadingModePage.kt, WebtoonConfig.kt | no |
 | **Long strip with gaps** | | | | |
-| Tap scroll by page | `"continuous_vertical_tapping_by_page"` | Boolean, `false` | **none found: dead** (upstream SY) | no |
+| Tap scroll by page | `"continuous_vertical_tapping_by_page"` | Boolean, `false` | WebtoonViewer.kt (`scrollDown`, read live; since r86, dead before) | no (fix: fork r86) |
 | Crop borders | `"crop_borders_continues_vertical"` | Boolean, `false` | ReaderActivity.kt, ReaderViewModel.kt, ReadingModePage.kt, WebtoonConfig.kt | no |
 | **Navigation** | | | | |
 | Volume keys | `"reader_volume_keys"` | Boolean, `false` | ViewerConfig.kt | no |
@@ -308,10 +308,12 @@ with its sheet toggle on.
 Notes:
 - The whole Reader screen and the in-reader settings sheet are upstream; no fork-authored line references a reader
   preference (the fork's reader side sheet/page grid has no settings of its own).
-- **Tap scroll by page** has no reader anywhere: dead (upstream SY).
-- **Skip filtered chapters** (`skip_filtered`) is *also* the key of `PlayerPreferences.skipFiltered()` (fork port),
-  so this reader switch also decides whether the player's next/previous episode skips filtered episodes
-  (`PlayerViewModel` ~line 1569). There is no separate player row.
+- **Tap scroll by page** works since r86: `WebtoonViewer.scrollDown` reads it live. Up to r85 nothing read it
+  (nothing passed `tapByPage`).
+- **Skip filtered chapters** (`skip_filtered`) is the reader's only. Up to r85 it was *also* the key of
+  `PlayerPreferences.skipFiltered()`, so this switch decided the player's next/previous episode too. Since r86 the
+  player reads `pref_player_skip_filtered_episodes`, seeded once from `skip_filtered` the first time it's read, with
+  its own row in Player settings › Internal player › Filler Skip.
 - "Page Downloading", "Fork Settings" (`eh_*`) groups are SY's; **Reader cache size** (`eh_cache_size`) is read when
   `ChapterCache` is created (effectively restart-only).
 
@@ -462,7 +464,7 @@ Notes:
 | Create backup / Restore backup (two buttons) | action; options are per run (`BackupOptions`), not stored | | | no (screens edited by fork: JS sources option, category choice, 9532b75f) |
 | Automatic backup frequency | `"backup_interval"` | Int, `12` | AlwaysBackupMigration.kt, BackupCreateJob.kt | no |
 | (InfoPreference) | `"last_auto_backup_timestamp" (appState)` | Long, `0L` | BackupCreator.kt | no |
-| Show restoring progress banner | `"pref_show_restoring_progress_banner_key" (appState)` | Boolean, `true` | **none found: dead since the fork removed the restore bar (2c614de7, r33)** | changed (made dead) |
+| Show restoring progress banner | `"pref_show_restoring_progress_banner_key" (appState)` | Boolean, `true` | nothing (the fork removed the restore bar, 2c614de7, r33); **row hidden since r86**, key kept | changed (hidden) |
 | **Storage usage** | | | | |
 | Storage usage | (CustomPreference, action) | | | no |
 | Clear chapter cache | (TextPreference, action) | | | no |
@@ -490,8 +492,9 @@ Notes:
 | Show syncing progress banner | `"pref_show_syncing_progress_banner_key" (appState)` | Boolean, `true` | MainActivity.kt | no |
 
 Notes:
-- **Show restoring progress banner** is dead since the fork removed the restore top bar in r33 (2c614de7, "no
-  restore bar"; the bar redrew the whole app for every title). Restore progress is only the notification now.
+- **Show restoring progress banner** did nothing since the fork removed the restore top bar in r33 (2c614de7, "no
+  restore bar"; the bar redrew the whole app for every title). Since r86 its row is hidden (`SettingsDataScreen.kt`
+  ~L329; the key stays). Restore progress is only the notification.
 - Backup creation (`presentation/more/settings/screen/data/CreateBackupScreen.kt`) got two fork options that are per run, not settings: a **JS sources**
   checkbox (`BackupOptions.jsSources`) and a **category choice** card (`BackupCategoryChoice.kt`: ticking all = no
   filter, as before). Restore (`RestoreBackupScreen.kt`) was also changed (Anikku/Aniyomi backups, r55).
@@ -538,7 +541,7 @@ were not checked for it.
 | Show Japanese titles in search results | `"use_jp_title"` | Boolean, `false` | EHentaiSearchMetadata.kt, EhUConfigBuilder.kt (name shared with another class; list approximate) | no |
 | The quality of the downloaded images | `"ehentai_quality"` | String, `"auto"` | EhUConfigBuilder.kt | no |
 | **Source settings** | | | | |
-| Incognito mode | `"eh_incognito_mode"` | Boolean, `false` | **none found: dead** (upstream) | no |
+| Incognito mode | `"eh_incognito_mode"` | Boolean, `false` | SettingsEhScreen.kt: `onValueChanged` adds/removes `EH_PACKAGE` in `incognito_extensions`, which `GetIncognitoState` reads (always worked; r86 re-syncs the switch from that list) | no |
 | **E-Hentai Website Account Settings** | | | | |
 | Enable ExHentai | `"enable_exhentai" (private)` | Boolean, `false` | AndroidSourceManager.kt, BatchAddScreenModel.kt, EHentai.kt, EhLoginActivity.kt, FavoritesSyncHelper.kt … | no |
 | Use original images | `"eh_useOrigImages"` | Boolean, `false` | EhUConfigBuilder.kt | no |
@@ -559,7 +562,7 @@ were not checked for it.
 | Auto update restrictions | `"eh_auto_update_restrictions"` | StringSet, `emptySet()` | EHentaiUpdateWorker.kt | no |
 | Show updater statistics | (TextPreference, action) | | | no |
 
-Notes: all upstream SY. **Incognito mode** (`eh_incognito_mode`) has no reader in this build: dead. Untitled rows at
+Notes: all upstream SY. **Incognito mode** (`eh_incognito_mode`) was listed here as dead up to r85, which was wrong: it works through `incognito_extensions` (see the row). Untitled rows at
 the top (Hentai@Home, Japanese titles, image quality) belong to the first group.
 
 
@@ -712,7 +715,7 @@ playback, Performance profile, Adaptive Performance Scaling, Disable auto subtit
 | Show loading circle | `"pref_show_loading"` | Boolean, `true` | PlayerControls.kt | yes (AniZen port 23ba5816) |
 | Show current chapter indicator | `"pref_show_current_chapter"` | Boolean, `true` | PlayerButtons.kt | yes (AniZen port 23ba5816) |
 | Remember and switch to the last used brightness | `"pref_remember_brightness"` | Boolean, `false` | PlayerActivity.kt | yes (AniZen port 23ba5816) |
-| Remember and switch to the last used volume | `"pref_remember_volume"` | Boolean, `false` | **none found: dead** (and `player_volume_value` is never written) | yes (AniZen port 23ba5816) |
+| Remember and switch to the last used volume | `"pref_remember_volume"` | Boolean, `false` | PlayerActivity.kt (since r86; `player_volume_value`) | yes (AniZen port 23ba5816; made to work r86) |
 | Remember custom aspect ratio globally | `"pref_remember_aspect_ratio"` | Boolean, `false` | PlayerViewModel.kt | yes (AniZen port 23ba5816) |
 | **Hosters** | | | | |
 | Preferred quality | `"pref_preferred_quality"` | String, `"1080"` | HlsVariants.kt (VideoComparator.kt reads it too, but that class is never constructed) | yes (AniZen port 23ba5816) |
@@ -746,6 +749,7 @@ playback, Performance profile, Adaptive Performance Scaling, Disable auto subtit
 | AniSkip requires the anime to be tracked with MAL or Anilist to work | (InfoPreference, action) | | | UI added 23ba5816 |
 | **Filler Skip** | | | | |
 | Skip Filler Episodes | `"pref_skip_filler_episodes"` | Boolean, `false` | PlayerViewModel.kt | yes (AniZen port 23ba5816) |
+| Skip filtered episodes (r86) | `"pref_player_skip_filtered_episodes"` | Boolean, seeded from `skip_filtered` (default `true`) | PlayerViewModel.kt (`PlayerPreferences.skipFiltered()`) | yes (r86; shared the reader's `skip_filtered` before) |
 | **Picture-in-Picture (PiP)** | | | | |
 | Enable the use of PiP mode | `"pref_enable_pip"` | Boolean, `true` | PlayerActivity.kt | yes (AniZen port 23ba5816) |
 | Show episode toasts when switching episodes in PiP mode | `"pref_pip_episode_toasts"` | Boolean, `true` | PlayerActivity.kt | yes (AniZen port 23ba5816) |
@@ -766,8 +770,9 @@ Notes:
   also used by the anime page (`AnimeScreenModel`) to show progress.
 - **Enable or disable Cast** (`pref_enable_cast`): group disabled with an info row when Google Play services are
   missing (1546a765). Read by `CastManager`, the player's Cast button and the home mini controller.
-- **Remember … last used volume** is dead: nothing reads `pref_remember_volume` and nothing writes
-  `player_volume_value`. (Brightness works: `PlayerActivity` reads/writes `player_brightness_value`.)
+- **Remember … last used volume** works since r86: `PlayerActivity.onStop` saves the media volume as a fraction in
+  `player_volume_value`, and the first `onStart` restores it. Up to r85 nothing read or wrote it. (Brightness always
+  worked: `player_brightness_value`.)
 - **Remember custom aspect ratio globally** works with hidden `pref_player_last_aspect_ratio` /
   `pref_last_aspect_ratio_anime_id` (`PlayerViewModel`).
 - **Preferred quality** (`pref_preferred_quality`, "1080"; digits are taken, so "1080p" = 1080) only decides which
@@ -784,9 +789,12 @@ Notes:
   `effectiveVideoSettings()` **overrides** the Decoder screen while a profile is picked:
   - Custom (`Automatic`): Decoder settings as set, Anime4K up to High, cache ×1.
   - Best quality (`MaxPerformance`): high-quality scaling forced on, cache ×2, rest as set.
-  - Balanced: hardware decoding on, HQ scaling on, smooth motion off, Anime4K capped at Fast.
+  - Balanced: hardware decoding on, **HQ scaling forced on**, smooth motion off, Anime4K capped at Fast.
   - Power saver: hardware decoding on, HQ scaling off, smooth motion off, Anime4K off, cache ×0.5.
-  The Decoder switches still show their own values, so the screen can look "on" while the profile has it off.
+  Since r86 the Decoder switches are **locked to these values**: an overridden switch shows the value in use, greyed
+  (`SwitchPreference.locked`), with "Set by the <profile> profile; choose Custom to change". Best quality locks
+  High quality scaling; Balanced and Power saver lock all three. Up to r85 the switches showed the user's own
+  (unused) values.
 - **Preload next episode** (`pref_preload_mode_key`: Off / Wi-Fi only (default) / Always): near 80 % of an
   episode (or with < 2 min left) the next episode's hosters are fetched (`maybePreloadNextEpisode`).
 - **Network-aware playback** (`pref_network_aware_throttling`, `true`): on a metered network, online episodes are
@@ -1131,19 +1139,19 @@ Separate SharedPreferences files and files on disk (not in the app-settings back
 
 ### Settings that do nothing (no reader found)
 
+As of r86. (Up to r85 this table also listed "Remember … last used volume", "Show restoring progress banner",
+"Tap scroll by page" and E-Hentai "Incognito mode"; see "r86 changes" below.)
+
 | Setting (screen) | Key | Origin |
 |---|---|---|
-| Remember and switch to the last used volume (Player › Internal player) | `pref_remember_volume` (+ `player_volume_value` never written) | AniZen port |
-| Show restoring progress banner (Data and storage) | `__APP_STATE_pref_show_restoring_progress_banner_key` | made dead by the fork (restore bar removed, 2c614de7 r33) |
-| Tap scroll by page (Reader › Long strip with gaps) | `continuous_vertical_tapping_by_page` | upstream SY |
-| Incognito mode (E-Hentai) | `eh_incognito_mode` | upstream SY |
+| (hidden row, r86) Show restoring progress banner (Data and storage) | `__APP_STATE_pref_show_restoring_progress_banner_key` | made dead by the fork (restore bar removed, 2c614de7 r33); row hidden in r86 |
 | (no row) | `pref_top_left_controls`, `pref_use_external_downloader` | AniZen port |
 | (no row) | `anime_library_filter_tracked_<trackerId>` (sheet only uses "Tracked (any)") | fork |
 | (code) | `VideoComparator` reads `pref_preferred_quality` / `pref_audio_lang` but is never constructed | AniZen port |
 | Discord settings | `pref_enable_discord_rpc` etc. | live code, but the screen is unreachable (39f455aa) |
 
 Shown and read, but overridden: **Try hardware decoding / High quality scaling / Smooth Motion** whenever the
-Performance profile is not "Custom".
+Performance profile is not "Custom". Since r86 the overridden switches are locked and show the profile's value.
 
 **r86 changes to the list above:**
 - *Remember … last used volume* now works: `PlayerActivity.onStop` saves the media volume as a fraction (0–1) in
@@ -1164,8 +1172,8 @@ Performance profile is not "Custom".
 ### Settings that interact or conflict
 
 - **Performance profile ⟶ Decoder screen.** Balanced and Power saver force hardware decoding on and smooth motion
-  off; Power saver forces Anime4K off and HQ scaling off; Best quality forces HQ scaling on. The Decoder switches keep
-  showing the user's own value. Anime4K quality is also capped (Balanced: Fast) and may be lowered further for the
+  off; Power saver forces Anime4K off and HQ scaling off; Balanced and Best quality force HQ scaling on. Since r86 the Decoder switches
+  are locked to the profile's values (greyed, with a note); before, they kept showing the user's own value. Anime4K quality is also capped (Balanced: Fast) and may be lowered further for the
   session by **Adaptive Performance Scaling**.
 - **Network-aware playback ⟶ Preferred quality / Preload / cache.** On metered networks it caps online video at
   720p even if Preferred quality says 1080, halves the cache, and pauses preloading while buffering. **Preload next
@@ -1227,7 +1235,7 @@ Episodes downloaded at once.
 | Anime downloads: Wi-Fi only / at once / delete after watching / keep bookmarked / download ahead / download new + categories | `anime_download_only_wifi`, `anime_download_concurrent`, `anime_delete_after_seen`, `anime_delete_keep_bookmarked`, `anime_download_ahead`, `anime_download_new`, `anime_download_new_categories[_exclude]` | true, 1, false, true, 0, false, all | anime download queue and player clean-up | yes |
 | Simkl tracker | tracker login | – | anime tracking | yes |
 | Replace latest button | `use_new_source_navigation` | **false** (was true) | Latest button vs combined browse | changed |
-| Show restoring progress banner | `__APP_STATE_pref_show_restoring_progress_banner_key` | true | nothing any more | changed (dead) |
+| Show restoring progress banner | `__APP_STATE_pref_show_restoring_progress_banner_key` | true | nothing any more; row hidden since r86 | changed (hidden) |
 | Open bot checks automatically | `auto_open_bot_checks` | true | auto-open WebView for bot checks and retry | yes |
 | Clear Anime database / Clear Manga database | actions | – | delete non-library entries | yes / renamed |
 | All Player settings screens | see tables | – | AniZen player | yes (port) |
@@ -1241,8 +1249,8 @@ Episodes downloaded at once.
 ### Cross-feature impact map
 
 - Changing a **getter's key string** in any `*Preferences` class silently resets that setting for every user and
-  breaks restore of older backups (keys are stored and restored by name). The fork's `skip_filtered` reuse shows
-  keys can be shared on purpose; check with `grep '"<key>"'` before renaming or reusing one.
+  breaks restore of older backups (keys are stored and restored by name). The fork's old `skip_filtered` reuse (up to r85) shows
+  keys can be shared by accident; check with `grep '"<key>"'` before renaming or reusing one.
 - Changing **`AnimeLibraryPrefs`** getter names collides easily with `LibraryPreferences` (same names:
   `downloadBadge`, `localBadge`, `filterDownloaded`…); a wrong import compiles and silently uses the manga value.
 - Changing **`libraryPreferences.displayMode()` / columns / `libraryPanoramaStyle`** affects manga library, anime
@@ -1281,7 +1289,7 @@ Episodes downloaded at once.
 
 - A setting that "does nothing": first see the tables above (dead list, overrides). Player settings apply on the
   next episode opened; job settings on the next run.
-- Logs screen (`tachiyomi/ui/logs/LogsScreen.kt`, the bug icon on the home navigation rail; AppLog): tag `botcheck` for "Open bot
+- Logs screen (`tachiyomi/ui/logs/LogsScreen.kt`, the bug icon on the home navigation rail, or More › Logs since r86; AppLog): tag `botcheck` for "Open bot
   checks automatically". Lines starting `not opened:` give the reason (`"Open bot checks automatically" is off`,
   `the app isn't on screen`, `… isn't one of your sources' sites`, `… is turned off`); other `botcheck` lines come
   from `BotCheckCoordinator` while it opens and retries. Player settings are checked with the player's own log
