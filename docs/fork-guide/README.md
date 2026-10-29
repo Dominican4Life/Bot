@@ -61,30 +61,22 @@ The biggest hubs. Every section ends with a fuller impact map.
 
 Collected from all sections. These are what to look at first when something odd is reported.
 
-**Release and update**
-- Every release is signed with a new random key (the committed keystore isn't used), so no release installs over the previous one. Fix: an explicit `signingConfigs` block (section 1). After that fix, migrations start running for real (rule 7).
-- `versionCode` is fixed at 81. New `Migration`s in `Migrator` won't run unless it is bumped (section 1).
-- About shows the commit count ("Beta r10873"), not the release number (r84).
+**Release and update** (fixed in r85, see "Changes in r85" below)
+- From r85 on, every release is signed with the committed key and installs over the previous one, so database and app migrations now really run on the owner's device (rule 7).
 
 **Extensions and repos (section 2)**
 - Repos are keyed by package + signing key. Two repos with the same (or no) key offering the same package overwrite each other, so one repo shows fewer packages. This is the most likely cause of the next "repo shows 0" report.
 - Manga install errors silently put the row back to Install with no message.
-- From the r84 review:
-  - The repo kind chips are cut off ("Aniyo").
-  - Search filters the Repositories count down to 0.
-  - The keyboard hides results.
-  - Returning from "Install unknown apps" opens the library.
-  - The warning says "Private Installer", but the option is named "Sideload".
-  - Once, Android's prompt named the wrong extension and the row was stuck on "Installing" after Cancel (cause unproven).
+- The r84 review issues (chips cut off, Repositories (0), keyboard over results, library after "Install unknown apps", Private Installer vs Sideload, wrong prompt / stuck "Installing") were addressed in r85; see below. Not yet confirmed on a device.
 
 **JS sources (section 3)**
 - No time limit on JS: a loop that never awaits blocks that source everywhere until restart, with nothing in Logs.
-- Imported/restored source keys go into file paths unchecked, and imports skip the id checks.
+- Imports skip the id checks (source keys are checked since r85).
 - The HLS relay drops 100 sessions when it passes 500, which can 404 a video that's playing.
 - Each runtime copy of a source caches `storage.json` separately, so one can overwrite what another wrote.
 - Testing in the Code editor writes to the saved source's real settings.
 - No "unsaved changes" warning in the editor.
-- Chapter video save failures leave a chapter looking complete.
+- Chapter video save failures still leave a chapter counted as downloaded (since r85 the Logs say which chapter is missing videos).
 
 **Player and anime (section 4)**
 - A quality list with only bandwidth (no resolution) makes HlsVariants pick the lowest quality, for playback and "best" downloads.
@@ -98,7 +90,7 @@ Collected from all sections. These are what to look at first when something odd 
 - Downloaded CBZ preview tiles copy whole entries into memory (up to 8 at once).
 
 **Backup (section 6)**
-- Anime ids change on restore, but settings that store anime/category ids are restored unchanged: notes, update/download/hidden categories, intro length, the download queue.
+- Since r85, settings named after anime ids aren't restored (per-anime intro length and last season start empty), and anime category settings are mapped by name, but only for backups made with r85 or later (older ones don't carry anime category ids).
 - Not in a backup:
   - Aniyomi extension settings.
   - Merged anime.
@@ -110,6 +102,19 @@ Collected from all sections. These are what to look at first when something odd 
 
 **Settings (section 7)**
 - Some settings do nothing (listed in section 7), e.g. "Show restoring progress banner" and the player's "Remember last used volume".
+
+## Changes in r85 (29 October 2026)
+
+- **Signing:** `app/build.gradle.kts` has an explicit `signingConfigs.debug` pointing at `.github/custom-debug.keystore` (PKCS12, alias `androiddebugkey`, passwords `android`); the preview build type uses it. CI's "Check signing key" step fails the build if an APK's certificate SHA-256 isn't `2c43cb4f…264e34c4f`. r85 was verified to carry it. `.gitattributes` marks `*.keystore` binary. **Never change the key**: every install would need an uninstall again.
+- **Version code = release number.** CI's "Pick release number" step sets `KMK_RELEASE` before the build. Gradle uses it as `versionCode` (at least 82) and `BuildConfig.RELEASE_NUMBER`. About shows "Beta r85 (commit count · sha)". App `Migration`s run for versions above the installed one, so a new migration must use a version above the last release that's already out.
+- **First launch:** a fresh install says "Welcome to v…" (`KMR.welcome_version`) instead of "Updated to".
+- **Code editor:** the top ▶ is gone (Run all is in Test). Copy, Paste and Search code are at the top of the ⋮ menu; Search switches the phone layout to the Code tab (`phoneTab`). The subtitle is one line. An empty successful run says "No results".
+- **Extensions:** filter rows hide while the keyboard is open, and the pager has `imePadding()`. While searching, tabs read "X (n of m)" and empty lists say "No matches", with no update banner. Repo kind chips use `FlowRow`. The Sideload warning wording was fixed.
+- **Install recovery:** `ExtensionsReturn` (a separate prefs file, not in backups) remembers the search when an install starts. If the app starts again within 10 minutes (Android restarts it after "Install unknown apps" is turned on), Home opens Browse › Extensions on Packages with that search. The flag is cleared when the install flow ends.
+- **PackageInstaller:** status broadcasts for any session other than the active one are ignored and abandoned, and the app's leftover sessions are abandoned when the installer starts. An in-app cancel of the active install resets the row and continues the queue.
+- **JS sources:** keys must match `[A-Za-z0-9_-]{1,64}` and resolve inside the sources folder (import, restore, delete, `dir()`). Switching a source on or off only happens once `meta.json` is written. A restore writes the backup's settings even when the device keeps its own code.
+- **Chapter videos:** a failed rename is a failure; `saveAll` returns the failure count and logs `download` W "X of N videos couldn't be saved".
+- **Backup:** `BackupAnimeCategory` has `id` (proto 3). Anime category settings (`AnimeBackupHelper.CATEGORY_KEYS`) are mapped by name after the anime categories are restored. Settings named after anime ids (`isAnimeIdKey`) are skipped in the app settings restore.
 
 ## How to use this guide when adding a feature
 

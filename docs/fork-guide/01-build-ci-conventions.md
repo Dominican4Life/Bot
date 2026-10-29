@@ -79,7 +79,10 @@ The only workflow; the fork deleted all upstream workflows in 0e53ee05.
 
 Runner memory: on 2026-10-10 the repo was private and builds were killed for lack of memory. 402cc16a added a 12 GB swap file, `--max-workers=2` and in-process Kotlin compilation. 2f068409/24364c57 removed all of that again ("the repo is public again… the swap file filled the disk"). The repo is **private again now**, and builds still pass in about 20 min. If a run dies with "Gradle daemon disappeared", exit code 137 or "Killed", look at 402cc16a first.
 
-### Signing: why every release has a different certificate
+### Signing: why every release had a different certificate (fixed in r85)
+
+> **r85:** fixed with an explicit `signingConfigs.debug` (see README, "Changes in r85"). CI now checks the certificate after the build. The text below is the history.
+
 
 **Symptom (verified).** r60, r71, r83 and r84 are each signed with a different certificate (r84 SHA-256 `6fe1b84b…`, r71 `44a7175e…`). The committed keystore `.github/custom-debug.keystore` is `2C:43:CB:4F:…`. So a new beta can't install over the previous one ("package conflicts / signatures don't match") without uninstalling, which loses app data.
 
