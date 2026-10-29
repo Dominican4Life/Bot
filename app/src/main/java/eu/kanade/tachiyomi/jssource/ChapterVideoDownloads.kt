@@ -96,7 +96,8 @@ object ChapterVideoDownloads {
         chapterName: String,
         // KMK: 0-100 over all the chapter's videos, for the download's progress
         onPercent: (Int) -> Unit = {},
-    ) {
+    ): Int {
+        var failed = 0
         val videoPages = pages.filter { ReaderVideos.isVideo(it.url) }
         videoPages.forEachIndexed { index, page ->
             onPercent(index * 100 / videoPages.size)
@@ -107,12 +108,23 @@ object ChapterVideoDownloads {
                 logcat(LogPriority.INFO) { "Chapter video saved: $chapterName, page ${page.number}" }
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
+                failed++
                 logcat(LogPriority.ERROR, e) {
                     "Couldn't save the video of page ${page.number} in $chapterName; it stays a picture: ${e.message}"
                 }
             }
         }
         onPercent(100)
+        // KMK: the chapter still counts as downloaded (its pictures are there), so say which videos are missing
+        if (failed > 0) {
+            eu.kanade.tachiyomi.util.system.AppLog.add(
+                'W',
+                "download",
+                "$chapterName: $failed of ${videoPages.size} videos couldn't be saved (they stay pictures); " +
+                    "delete and download the chapter again to retry",
+            )
+        }
+        return failed
     }
 
     private fun isStream(video: Video): Boolean {
@@ -155,7 +167,7 @@ object ChapterVideoDownloads {
                 type.contains("matroska") || video.videoUrl.contains(".mkv") -> "mkv"
                 else -> "mp4"
             }
-            tmp.renameTo("${prefix}$ext")
+            if (!tmp.renameTo("${prefix}$ext")) error("Couldn't rename the saved video")
         }
     }
 
@@ -210,7 +222,7 @@ object ChapterVideoDownloads {
             if (!out.exists() || out.length() == 0L) error("ffmpeg saved nothing")
             val tmp = dir.createFile("$prefix$TMP") ?: error("Can't create the file")
             tmp.openOutputStream().use { output -> out.inputStream().use { it.copyTo(output, BUFFER) } }
-            tmp.renameTo("${prefix}mkv")
+            if (!tmp.renameTo("${prefix}mkv")) error("Couldn't rename the saved video")
         } finally {
             out.delete()
         }

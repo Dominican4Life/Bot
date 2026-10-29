@@ -371,11 +371,24 @@ class AboutScreen : Screen() {
                 }
 
                 isPreviewBuildType -> {
-                    "Beta r${BuildConfig.COMMIT_COUNT}".let {
-                        if (withBuildDate) {
-                            "$it (${BuildConfig.COMMIT_SHA}, ${getFormattedBuildTime()})"
-                        } else {
-                            "$it (${BuildConfig.COMMIT_SHA})"
+                    // KMK: the release number (r85, as on the downloaded file) when CI gave one, then the build number
+                    val release = BuildConfig.RELEASE_NUMBER
+                    if (release.isNotEmpty()) {
+                        "Beta r$release".let {
+                            if (withBuildDate) {
+                                "$it (${BuildConfig.COMMIT_COUNT} · ${BuildConfig.COMMIT_SHA}, " +
+                                    "${getFormattedBuildTime()})"
+                            } else {
+                                "$it (${BuildConfig.COMMIT_COUNT} · ${BuildConfig.COMMIT_SHA})"
+                            }
+                        }
+                    } else {
+                        "Beta r${BuildConfig.COMMIT_COUNT}".let {
+                            if (withBuildDate) {
+                                "$it (${BuildConfig.COMMIT_SHA}, ${getFormattedBuildTime()})"
+                            } else {
+                                "$it (${BuildConfig.COMMIT_SHA})"
+                            }
                         }
                     }
                 }

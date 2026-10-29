@@ -44,6 +44,17 @@ jobs:
           mkdir -p ~/.android
           cp .github/custom-debug.keystore ~/.android/debug.keystore
 
+      # The release number this build will be published as (rN, one after the newest). The app uses it as its
+      # version code and shows it in About.
+      - name: Pick release number
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          last=$(gh release list --repo "${{ github.repository }}" --limit 1000 --json tagName -q '.[].tagName' \
+            | sed -n 's/^r\([0-9]\+\)$/\1/p' | sort -n | tail -1)
+          echo "KMK_RELEASE=$(( ${last:-0} + 1 ))" >> "$GITHUB_ENV"
+
       - name: Build app
         shell: bash
         run: |
@@ -59,6 +70,21 @@ jobs:
             sleep 45
           done
           exit 1
+
+      # Every release must be signed with the fixed key, or it can't be installed over the previous one
+      - name: Check signing key
+        shell: bash
+        run: |
+          apksigner=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          expected="2c43cb4f1bca57c8a91aea87819655e45d54047020856db3d2d7702264e34c4f"
+          for f in app/build/outputs/apk/preview/*.apk; do
+            digest=$("$apksigner" verify --print-certs "$f" | sed -n 's/.*certificate SHA-256 digest: //p' | head -1)
+            echo "$(basename "$f"): $digest"
+            if [ "$digest" != "$expected" ]; then
+              echo "::error title=Wrong signing key::$(basename "$f") is signed with $digest, expected $expected"
+              exit 1
+            fi
+          done
 
       # Surface compile errors as annotations so they are readable without downloading logs
       - name: Report build errors
@@ -86,10 +112,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Next number after the newest rN release in this repo (first build is r1)
-          last=$(gh release list --repo "${{ github.repository }}" --limit 1000 --json tagName -q '.[].tagName' \
-            | sed -n 's/^r\([0-9]\+\)$/\1/p' | sort -n | tail -1)
-          tag="r$(( ${last:-0} + 1 ))"
+          # Picked before the build (KMK_RELEASE), so the app inside knows its own number
+          tag="r${KMK_RELEASE}"
           ls app/build/outputs/apk/preview/
           for f in app/build/outputs/apk/preview/*.apk; do
             abi=$(basename "$f" .apk | sed 's/^app-//; s/-preview.*//')

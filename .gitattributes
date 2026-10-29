@@ -22,3 +22,6 @@
 *.woff binary
 *.pyc binary
 *.swp binary
+
+# KMK: the signing key must never be line-ending converted
+*.keystore binary

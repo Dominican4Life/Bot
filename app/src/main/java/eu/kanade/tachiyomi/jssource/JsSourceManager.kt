@@ -80,8 +80,13 @@ class JsSourceManager(private val context: Application) {
     /** Switches a JS source on or off. Off: the app ignores it, nothing is deleted */
     fun setEnabled(key: String, enabled: Boolean) {
         val info = get(key)?.takeIf { it.enabled != enabled }?.copy(enabled = enabled) ?: return
-        runCatching {
+        // KMK: only switched when that's saved, so it doesn't come back the other way after a restart
+        val written = runCatching {
             File(dir(key), META).writeText(jsJson.encodeToString(JsSourceInfo.serializer(), info))
+        }
+        written.exceptionOrNull()?.let { e ->
+            AppLog.add('E', "js", "Couldn't switch ${info.name} ${if (enabled) "on" else "off"}: ${e.message}")
+            return
         }
         if (!enabled) invalidate(key)
         _saved.value = _saved.value.map { if (it.key == key) info else it }
@@ -89,7 +94,15 @@ class JsSourceManager(private val context: Application) {
     }
     // KMK <--
 
-    private fun dir(key: String) = File(root, key)
+    // KMK: a key is a folder name. Keys from a backup or a paired device are checked, so one can't reach outside
+    // the sources folder ("../…", "/…")
+    private fun dir(key: String): File {
+        require(isSafeKey(key)) { "Not a valid source key: $key" }
+        return File(root, key)
+    }
+
+    private fun isSafeKey(key: String): Boolean = KEY_PATTERN.matches(key) &&
+        runCatching { File(root, key).canonicalFile.parentFile == root.canonicalFile }.getOrDefault(false)
 
     private fun load(): List<JsSourceInfo> = root.listFiles().orEmpty()
         .filter { it.isDirectory }
@@ -245,6 +258,10 @@ class JsSourceManager(private val context: Application) {
      */
     fun importSource(infoJson: String, code: String): Boolean {
         val info = jsJson.decodeFromString(JsSourceInfo.serializer(), infoJson)
+        if (!isSafeKey(info.key)) {
+            AppLog.add('W', "js", "Skipped ${info.name}: its key \"${info.key.take(40)}\" isn't a valid folder name")
+            return false
+        }
         val existing = get(info.key)
         if (existing != null && existing.updatedAt >= info.updatedAt) return false
         val folder = dir(info.key).apply { mkdirs() }
@@ -278,12 +295,16 @@ class JsSourceManager(private val context: Application) {
         code: String,
         writeSettings: (android.content.SharedPreferences.Editor) -> Unit,
     ): Boolean {
-        if (!importSource(infoJson, code)) return false
+        val restored = importSource(infoJson, code)
         val info = jsJson.decodeFromString(JsSourceInfo.serializer(), infoJson)
-        runCatching {
-            JsPreferences.of(context, info.id).edit().also(writeSettings).apply()
+        // KMK: the backup's settings are written even when this device keeps its own (same or newer) code, so
+        // restoring with only "JS sources" ticked brings the settings back too
+        if (get(info.key) != null) {
+            runCatching {
+                JsPreferences.of(context, idOf(info.key)).edit().also(writeSettings).apply()
+            }.onFailure { AppLog.add('E', "js", "Couldn't restore the settings of ${info.name}: ${it.message}") }
         }
-        return true
+        return restored
     }
     // KMK <--
 
@@ -298,6 +319,7 @@ class JsSourceManager(private val context: Application) {
     // KMK <--
 
     fun delete(key: String) {
+        if (!isSafeKey(key)) return
         // an APK switched off for this source is used again
         get(key)?.customId?.let { setApkEnabled(it, true) }
         runCatching { tabPrefs.edit().remove(key).apply() }
@@ -343,5 +365,8 @@ class JsSourceManager(private val context: Application) {
 
     private companion object {
         const val META = "meta.json"
+
+        /** What a key may look like (new keys are 16 hex characters) */
+        val KEY_PATTERN = Regex("[A-Za-z0-9_-]{1,64}")
     }
 }

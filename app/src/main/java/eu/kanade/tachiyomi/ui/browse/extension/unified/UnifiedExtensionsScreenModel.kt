@@ -11,9 +11,6 @@ import eu.kanade.tachiyomi.extension.model.Extension
 import eu.kanade.tachiyomi.extension.model.InstallStep
 import eu.kanade.tachiyomi.jssource.JsSourceManager
 import eu.kanade.tachiyomi.util.system.AppLog
-import kotlinx.coroutines.launch
-import mihon.data.extension.service.ExtensionStoreStatus
-import mihon.data.extension.service.ExtensionStoreUrls
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -21,6 +18,9 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import mihon.data.extension.service.ExtensionStoreStatus
+import mihon.data.extension.service.ExtensionStoreUrls
 import mihon.domain.extension.model.ExtensionStore
 import mihon.domain.extension.repository.AnimeExtensionStoreRepository
 import mihon.domain.extension.repository.ExtensionStoreRepository
@@ -72,7 +72,16 @@ class UnifiedExtensionsScreenModel(
         val disabledRepos: Set<String>,
     )
 
+    /** KMK: opened again after Android restarted the app during an install, so it starts on Packages */
+    var returnedFromInstall = false
+        private set
+
     init {
+        // KMK: the search from before Android restarted the app during an install (ExtensionsReturn)
+        ExtensionsReturn.consumeQuery()?.let { query ->
+            returnedFromInstall = true
+            if (query.isNotEmpty()) mutableState.update { it.copy(filters = it.filters.copy(query = query)) }
+        }
         val mangaFlow = combine(
             mangaManager.installedExtensionsFlow,
             mangaManager.untrustedExtensionsFlow,
@@ -587,6 +596,8 @@ class UnifiedExtensionsScreenModel(
 
     /** [sideload]: the Sideload button; Install leaves it to the installer setting (never sideloading) */
     fun install(item: UnifiedPackage, sideload: Boolean = false) {
+        // KMK: so the screen comes back if Android restarts the app meanwhile (ExtensionsReturn)
+        ExtensionsReturn.remember(state.value.filters.query)
         when (val ext = item.manga ?: item.animeOther) {
             is Extension.Available -> {
                 if (item.kind == ExtensionKind.ANIYOMI) {
@@ -600,6 +611,7 @@ class UnifiedExtensionsScreenModel(
     }
 
     fun update(item: UnifiedPackage) {
+        ExtensionsReturn.remember(state.value.filters.query)
         item.anime?.let { animeManager.updateExtension(it).track(item.key) }
         (item.manga as? Extension.Installed)?.let { mangaManager.updateExtension(it).track(item.key) }
     }
@@ -690,7 +702,10 @@ class UnifiedExtensionsScreenModel(
         screenModelScope.launchIO {
             this@track
                 .takeWhile { it != InstallStep.Installed }
-                .onCompletion { steps.update { it - key } }
+                .onCompletion {
+                    steps.update { it - key }
+                    ExtensionsReturn.clear()
+                }
                 .collectLatest { step -> steps.update { it + (key to step) } }
         }
     }

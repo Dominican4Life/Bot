@@ -422,6 +422,8 @@ class MainActivity : BaseActivity() {
                 0,
             )
             val previewCurrentVersion = BuildConfig.COMMIT_COUNT.toInt()
+            // KMK: nothing recorded yet = a fresh install (the value is set below once shown)
+            val firstInstall = remember { previewLastVersion.get() == 0 }
             var isCheckingWhatsNew by remember { mutableStateOf(false) }
             // KMK <--
 
@@ -436,6 +438,7 @@ class MainActivity : BaseActivity() {
             if (showChangelog) {
                 // KMK -->
                 WhatsNewDialog(
+                    firstInstall = firstInstall,
                     onDismissRequest = { showChangelog = false },
                     onOpenWhatsNew = {
                         showChangelog = false

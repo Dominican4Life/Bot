@@ -45,9 +45,13 @@ android {
     defaultConfig {
         applicationId = "app.komikku"
 
-        versionCode = 81
+        // KMK: CI passes the release number it is about to publish (rN) in KMK_RELEASE. It is the version code, so
+        // every release is higher than the one before (app migrations compare it), and the app shows it in About.
+        val releaseNumber = System.getenv("KMK_RELEASE")?.toIntOrNull()
+        versionCode = releaseNumber?.coerceAtLeast(82) ?: 81
         versionName = "1.14.1"
 
+        buildConfigField("String", "RELEASE_NUMBER", "\"${releaseNumber ?: ""}\"")
         buildConfigField("String", "COMMIT_COUNT", "\"${getCommitCount()}\"")
         buildConfigField("String", "COMMIT_SHA", "\"${getGitSha()}\"")
         buildConfigField("String", "BUILD_TIME", "\"${getBuildTime(useLastCommitTime = false)}\"")
@@ -55,6 +59,21 @@ android {
         buildConfigField("boolean", "UPDATER_ENABLED", "${Config.enableUpdater}")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    // KMK: every build is signed with the key kept in the repo, so each release installs as an update over the last
+    // one. Relying on ~/.android/debug.keystore didn't work: CI builds each came out with a new random key.
+    signingConfigs {
+        val fixedKey = rootProject.file(".github/custom-debug.keystore")
+        if (fixedKey.exists()) {
+            getByName("debug") {
+                storeFile = fixedKey
+                storeType = "pkcs12"
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
     }
 
     buildTypes {
@@ -96,7 +115,7 @@ android {
             applicationIdSuffix = ".beta"
 
             versionNameSuffix = debug.versionNameSuffix
-            signingConfig = debug.signingConfig
+            signingConfig = signingConfigs.getByName("debug")
 
             matchingFallbacks.addAll(commonMatchingFallbacks)
 

@@ -74,6 +74,9 @@ data class BackupAnimeCustomInfo(
 data class BackupAnimeCategory(
     @ProtoNumber(1) var name: String,
     @ProtoNumber(2) var order: Long = 0,
+    // KMK (r85): its id on the device that made the backup, so settings holding anime category ids can be mapped to
+    // the ids on the restoring device by name. 0 in older backups.
+    @ProtoNumber(3) var id: Long = 0,
 )
 
 @Serializable

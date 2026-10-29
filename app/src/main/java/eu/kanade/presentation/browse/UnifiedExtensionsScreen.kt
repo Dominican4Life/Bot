@@ -12,8 +12,11 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -95,6 +98,7 @@ private val ListPadding = 12.dp
  * KMK: Extension management in one place, modelled on Kototoro: Sources / Repositories / Packages tabs, a search
  * box, and chip rows to narrow by repository, status and kind (Mihon, Aniyomi, JAR, Cloudstream).
  */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun UnifiedExtensionsContent(
     state: UnifiedExtensionsScreenModel.State,
@@ -147,12 +151,27 @@ fun UnifiedExtensionsContent(
     val packages = state.packages
 
     Column(modifier = Modifier.padding(top = contentPadding.calculateTopPadding())) {
+        // KMK: while searching, the tabs say how many match out of how many there are ("Repositories (0 of 1)"),
+        // so a search doesn't look like the repositories are gone
+        val searching = state.filters.query.isNotBlank()
         SecondaryTabRow(selectedTabIndex = tab) {
-            listOf(
-                stringResource(KMR.strings.ext_tab_sources, sources.size),
-                stringResource(KMR.strings.ext_tab_repositories, repos.size),
-                stringResource(KMR.strings.ext_tab_packages, packages.size),
-            ).forEachIndexed { index, title ->
+            if (searching) {
+                listOf(
+                    stringResource(
+                        KMR.strings.ext_tab_sources_of,
+                        sources.size,
+                        state.allSources.size + state.allJsSources.size,
+                    ),
+                    stringResource(KMR.strings.ext_tab_repositories_of, repos.size, state.allRepos.size),
+                    stringResource(KMR.strings.ext_tab_packages_of, packages.size, state.allPackages.size),
+                )
+            } else {
+                listOf(
+                    stringResource(KMR.strings.ext_tab_sources, sources.size),
+                    stringResource(KMR.strings.ext_tab_repositories, repos.size),
+                    stringResource(KMR.strings.ext_tab_packages, packages.size),
+                )
+            }.forEachIndexed { index, title ->
                 Tab(
                     selected = tab == index,
                     onClick = { scope.launch { pagerState.animateScrollToPage(index) } },
@@ -178,7 +197,8 @@ fun UnifiedExtensionsContent(
                 }
             }
         }
-        FilterRows(tab, state, onKindClick, onRepoClick, onStatusClick)
+        // KMK: the filter rows fold away while the keyboard is open, so the results have room above it
+        if (!WindowInsets.isImeVisible) FilterRows(tab, state, onKindClick, onRepoClick, onStatusClick)
         if (state.isLoading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
 
         val listPadding = PaddingValues(
@@ -187,7 +207,11 @@ fun UnifiedExtensionsContent(
             top = 4.dp,
             bottom = contentPadding.calculateBottomPadding() + ListPadding,
         )
-        HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize(), beyondViewportPageCount = 1) { page ->
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxSize().imePadding(),
+            beyondViewportPageCount = 1,
+        ) { page ->
             when (page) {
                 UNIFIED_TAB_SOURCES -> SourceList(
                     sources = sources,
@@ -204,6 +228,7 @@ fun UnifiedExtensionsContent(
                     onFailedOnly = onFailedOnly,
                     padding = listPadding,
                     emptyKinds = state.filters.kinds,
+                    searching = searching,
                     onEnabled = onSourceEnabled,
                     onAllEnabled = onSourcesEnabled,
                     onPin = onSourcePin,
@@ -218,6 +243,7 @@ fun UnifiedExtensionsContent(
                     repos = repos,
                     padding = listPadding,
                     emptyKinds = state.filters.kinds,
+                    searching = searching,
                     onAdd = onAddRepo,
                     onEnabled = onRepoEnabled,
                     onDelete = onRepoDelete,
@@ -230,6 +256,7 @@ fun UnifiedExtensionsContent(
                     updateCount = state.updateCount,
                     padding = listPadding,
                     emptyKinds = state.filters.kinds,
+                    searching = searching,
                     onUpdateAll = onUpdateAll,
                     onPrimary = onPackagePrimary,
                     onSideload = onPackageSideload,
@@ -411,6 +438,7 @@ private fun SourceList(
     // KMK <--
     padding: PaddingValues,
     emptyKinds: Set<ExtensionKind>,
+    searching: Boolean,
     onEnabled: (UnifiedSource, Boolean) -> Unit,
     onAllEnabled: (List<UnifiedSource>, Boolean) -> Unit,
     onPin: (UnifiedSource) -> Unit,
@@ -430,7 +458,15 @@ private fun SourceList(
         modifier = Modifier.fillMaxSize(),
     ) {
         if (sources.isEmpty() && !showNewJs) {
-            item(key = "empty") { EmptyState(emptyText(emptyKinds, stringResource(KMR.strings.ext_no_sources))) }
+            item(key = "empty") {
+                EmptyState(
+                    if (searching) {
+                        stringResource(KMR.strings.ext_no_matches)
+                    } else {
+                        emptyText(emptyKinds, stringResource(KMR.strings.ext_no_sources))
+                    },
+                )
+            }
             return@LazyColumn
         }
         item(key = "actions") {
@@ -604,6 +640,7 @@ private fun RepoList(
     repos: List<UnifiedRepo>,
     padding: PaddingValues,
     emptyKinds: Set<ExtensionKind>,
+    searching: Boolean,
     onAdd: () -> Unit,
     onEnabled: (UnifiedRepo, Boolean) -> Unit,
     onDelete: (UnifiedRepo) -> Unit,
@@ -625,7 +662,15 @@ private fun RepoList(
             )
         }
         if (repos.isEmpty()) {
-            item(key = "empty") { EmptyState(emptyText(emptyKinds, stringResource(KMR.strings.ext_no_repositories))) }
+            item(key = "empty") {
+                EmptyState(
+                    if (searching) {
+                        stringResource(KMR.strings.ext_no_matches)
+                    } else {
+                        emptyText(emptyKinds, stringResource(KMR.strings.ext_no_repositories))
+                    },
+                )
+            }
         }
         items(repos, key = { "${it.kind}_${it.indexUrl}" }) { repo ->
             ElevatedCard(
@@ -714,6 +759,7 @@ private fun PackageList(
     updateCount: Int,
     padding: PaddingValues,
     emptyKinds: Set<ExtensionKind>,
+    searching: Boolean,
     onUpdateAll: () -> Unit,
     onPrimary: (UnifiedPackage) -> Unit,
     onSideload: (UnifiedPackage) -> Unit,
@@ -726,7 +772,8 @@ private fun PackageList(
         verticalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier.fillMaxSize(),
     ) {
-        if (updateCount > 0) {
+        // KMK: not while searching, so the matches come first
+        if (updateCount > 0 && !searching) {
             item(key = "update_all") {
                 ElevatedCard(
                     shape = CardShape,
@@ -761,7 +808,15 @@ private fun PackageList(
             }
         }
         if (packages.isEmpty()) {
-            item(key = "empty") { EmptyState(emptyText(emptyKinds, stringResource(KMR.strings.ext_no_packages))) }
+            item(key = "empty") {
+                EmptyState(
+                    if (searching) {
+                        stringResource(KMR.strings.ext_no_matches)
+                    } else {
+                        emptyText(emptyKinds, stringResource(KMR.strings.ext_no_packages))
+                    },
+                )
+            }
         }
         items(packages, key = { it.key }) { item ->
             PackageRow(

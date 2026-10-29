@@ -220,6 +220,13 @@ object HomeScreen : Screen() {
             // KMK <--
 
             LaunchedEffect(Unit) {
+                // KMK: back to Browse › Extensions when Android restarted the app during an extension install
+                // (turning on "Install unknown apps" does that)
+                launch {
+                    if (eu.kanade.tachiyomi.ui.browse.extension.unified.ExtensionsReturn.take()) {
+                        openTabEvent.send(Tab.Browse(toExtensions = true))
+                    }
+                }
                 launch {
                     librarySearchEvent.receiveAsFlow().collectLatest {
                         goToLibraryTab()

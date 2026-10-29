@@ -1,39 +1,30 @@
 package eu.kanade.presentation.more.settings.screen.browse.components
 
-import androidx.compose.foundation.layout.Arrangement
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.FileOpen
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.style.TextOverflow
-import eu.kanade.presentation.more.settings.screen.browse.FoundRepo
-import eu.kanade.presentation.more.settings.screen.browse.RepoInput
-import eu.kanade.presentation.more.settings.screen.browse.RepoKind
-import eu.kanade.presentation.more.settings.screen.browse.RepoMemory
-import eu.kanade.tachiyomi.util.system.toast
-import mihon.data.extension.service.ExtensionStoreUrls
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.text.input.TextFieldLineLimits
-import androidx.compose.foundation.text.input.rememberTextFieldState
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -41,13 +32,24 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import eu.kanade.presentation.more.settings.screen.browse.FoundRepo
+import eu.kanade.presentation.more.settings.screen.browse.RepoInput
+import eu.kanade.presentation.more.settings.screen.browse.RepoKind
+import eu.kanade.presentation.more.settings.screen.browse.RepoMemory
+import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.delay
+import mihon.data.extension.service.ExtensionStoreUrls
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
 import kotlin.time.Duration.Companion.seconds
@@ -57,6 +59,7 @@ import kotlin.time.Duration.Companion.seconds
  * index.pb, with or without https), what it is added as (Auto goes by its packages), several addresses at once or a
  * file of them, and the repositories added here before that aren't added now.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ExtensionStoreCreateDialog(
     onDismissRequest: () -> Unit,
@@ -122,7 +125,8 @@ fun ExtensionStoreCreateDialog(
                     lineLimits = TextFieldLineLimits.MultiLine(maxHeightInLines = 4),
                 )
                 Text("Add as", style = MaterialTheme.typography.labelLarge)
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                // KMK: wraps onto a second line instead of cutting the last choice off ("Aniyo")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     RepoKind.entries.forEach { k ->
                         FilterChip(
                             selected = kind == k,
@@ -203,6 +207,7 @@ fun ExtensionStoreCreateDialog(
  * KMK: What was found before it's added (Kototoro's trust step): the repository's name, website, signing key, its
  * packages, and what it'll be added as.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ExtensionStorePreviewDialog(
     found: FoundRepo,
@@ -242,7 +247,7 @@ fun ExtensionStorePreviewDialog(
                     )
                 }
                 Text("Add as", style = MaterialTheme.typography.labelLarge)
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     RepoKind.entries.forEach { k ->
                         FilterChip(selected = picked == k, onClick = { picked = k }, label = { Text(k.label, maxLines = 1) })
                     }

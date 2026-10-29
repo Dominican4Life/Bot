@@ -30,32 +30,30 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import eu.kanade.tachiyomi.util.storage.getUriCompat
-import eu.kanade.tachiyomi.util.system.toShareIntent
-import androidx.compose.material.icons.automirrored.outlined.ViewList
-import androidx.compose.material.icons.automirrored.outlined.PlaylistPlay
-import androidx.compose.material.icons.outlined.ClearAll
-import androidx.compose.material.icons.outlined.FilterList
-import androidx.compose.material.icons.outlined.NewReleases
-import androidx.compose.material.icons.outlined.FavoriteBorder
-import androidx.compose.material.icons.outlined.Favorite
-import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
+import androidx.compose.material.icons.automirrored.outlined.PlaylistPlay
+import androidx.compose.material.icons.automirrored.outlined.ViewList
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.ClearAll
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.Favorite
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.FileUpload
+import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.NewReleases
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Checkbox
@@ -111,14 +109,16 @@ import eu.kanade.tachiyomi.jssource.JsPreferences
 import eu.kanade.tachiyomi.ui.anime.source.AnimeSourceScreen
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreen
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
+import eu.kanade.tachiyomi.util.storage.getUriCompat
+import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
-import kotlin.math.roundToInt
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import tachiyomi.domain.source.interactor.GetRemoteManga
 import tachiyomi.presentation.core.components.material.Scaffold
+import kotlin.math.roundToInt
 
 /**
  * KMK: The Code editor, opened from the code button in Browse. Write a source as JavaScript or as a
@@ -192,6 +192,8 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
         }
 
         var findOpen by remember { mutableStateOf(false) }
+        // KMK: the phone layout's tab (Code, Details, Test), kept here so "Search code" can show the code
+        var phoneTab by rememberSaveable { mutableIntStateOf(0) }
         var pasteText by remember { mutableStateOf<String?>(null) }
         pasteText?.let { text ->
             val lines = text.count { it == '\n' } + 1
@@ -245,35 +247,13 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
                                 },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
                         }
                         if (wide) {
                             KindTabs(json = state.json, onJson = model::setJson, modifier = Modifier.width(380.dp))
                             Spacer(Modifier.weight(0.65f))
-                        }
-                        // KMK: copy the whole code, or replace it with the clipboard's
-                        IconButton(
-                            onClick = {
-                                saveClipboard.setText(AnnotatedString(state.code))
-                                context.toast("Code copied")
-                            },
-                        ) {
-                            Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy all code")
-                        }
-                        IconButton(
-                            onClick = {
-                                val text = saveClipboard.getText()?.text.orEmpty()
-                                if (text.isBlank()) context.toast("The clipboard is empty") else pasteText = text
-                            },
-                        ) {
-                            Icon(Icons.Outlined.ContentPaste, contentDescription = "Replace code with the clipboard")
-                        }
-                        // KMK: find in the code, like a browser's find in page
-                        IconButton(onClick = { findOpen = !findOpen }) {
-                            Icon(Icons.Outlined.Search, contentDescription = "Find in code")
-                        }
-                        IconButton(onClick = { model.runAll(query) }) {
-                            Icon(Icons.Outlined.PlayArrow, contentDescription = "Run all", tint = MaterialTheme.colorScheme.primary)
                         }
                         IconButton(onClick = model::save) {
                             Icon(Icons.Outlined.Save, contentDescription = "Save")
@@ -286,6 +266,23 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
                                 Icon(Icons.Outlined.MoreVert, contentDescription = null)
                             }
                             DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                                // KMK: copy the whole code, replace it with the clipboard's, find in it
+                                MenuItem("Copy code", Icons.Outlined.ContentCopy) {
+                                    showMenu = false
+                                    saveClipboard.setText(AnnotatedString(state.code))
+                                    context.toast("Code copied")
+                                }
+                                MenuItem("Paste code", Icons.Outlined.ContentPaste) {
+                                    showMenu = false
+                                    val text = saveClipboard.getText()?.text.orEmpty()
+                                    if (text.isBlank()) context.toast("The clipboard is empty") else pasteText = text
+                                }
+                                MenuItem("Search code", Icons.Outlined.Search) {
+                                    showMenu = false
+                                    phoneTab = 0
+                                    findOpen = true
+                                }
+                                HorizontalDivider()
                                 MenuItem("Import Source", Icons.Outlined.FileUpload) {
                                     showMenu = false
                                     importLauncher.launch("*/*")
@@ -338,13 +335,16 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
                             )
                         }
                     } else {
-                        var tab by rememberSaveable { mutableIntStateOf(0) }
-                        SecondaryTabRow(selectedTabIndex = tab) {
+                        SecondaryTabRow(selectedTabIndex = phoneTab) {
                             listOf("Code", "Details", "Test").forEachIndexed { index, label ->
-                                Tab(selected = tab == index, onClick = { tab = index }, text = { Text(label) })
+                                Tab(
+                                    selected = phoneTab == index,
+                                    onClick = { phoneTab = index },
+                                    text = { Text(label) },
+                                )
                             }
                         }
-                        when (tab) {
+                        when (phoneTab) {
                             0 -> editor(Modifier.fillMaxSize())
                             else -> SidePanel(
                                 state = state,
@@ -352,7 +352,7 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
                                 query = query,
                                 onQuery = { query = it },
                                 onOpenInBrowser = openInBrowser,
-                                fixedTab = tab - 1,
+                                fixedTab = phoneTab - 1,
                                 modifier = Modifier.fillMaxSize(),
                             )
                         }
@@ -687,6 +687,15 @@ private fun ResultCard(result: SourceEditorScreenModel.Result, onOpen: (SourceEd
                         modifier = Modifier.padding(top = 6.dp),
                     )
                 }
+            }
+            // KMK: say so when a run worked but gave nothing, instead of an empty card
+            if (result.ok && result.text == null && result.items.isEmpty()) {
+                Text(
+                    "No results: the source returned an empty list.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
             }
             result.items.take(60).forEach { item ->
                 Row(

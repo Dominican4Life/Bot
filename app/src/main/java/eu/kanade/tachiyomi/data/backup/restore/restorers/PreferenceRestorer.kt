@@ -66,6 +66,8 @@ class PreferenceRestorer(
         val backupCategoriesById = backupCategories?.associateBy { it.id.toString() }.orEmpty()
         val prefs = preferenceStore.getAll()
         toRestore.forEach { (key, value) ->
+            // KMK: settings holding anime ids are restored by the anime restore (mapped to the new ids) or not at all
+            if (eu.kanade.tachiyomi.data.backup.AnimeBackupHelper.isAnimeIdKey(key)) return@forEach
             try {
                 when (value) {
                     is IntPreferenceValue -> {

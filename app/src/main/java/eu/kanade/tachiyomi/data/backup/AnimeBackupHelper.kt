@@ -16,8 +16,11 @@ import eu.kanade.tachiyomi.data.backup.models.BackupAnimeHistory
 import eu.kanade.tachiyomi.data.backup.models.BackupAnimeTrack
 import eu.kanade.tachiyomi.data.backup.models.BackupEpisode
 import eu.kanade.tachiyomi.data.backup.models.BackupExtensionStore
+import eu.kanade.tachiyomi.data.backup.models.BackupPreference
+import eu.kanade.tachiyomi.data.backup.models.StringSetPreferenceValue
 import eu.kanade.tachiyomi.data.backup.models.backupExtensionStoreMapper
 import mihon.domain.extension.repository.AnimeExtensionStoreRepository
+import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.data.Database
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -133,7 +136,29 @@ class AnimeBackupHelper(
 
     /** KMK: every anime category, with its place in the list */
     suspend fun createCategories(): List<BackupAnimeCategory> =
-        repository.getCategories().map { BackupAnimeCategory(name = it.name, order = it.order) }
+        repository.getCategories().map { BackupAnimeCategory(name = it.name, order = it.order, id = it.id) }
+
+    /**
+     * KMK (r85): the app settings that hold anime category ids, restored with the ids of the categories with the same
+     * names here (run after [restoreCategories]). Older backups don't carry the ids, so those settings keep their
+     * current values instead of pointing at other categories.
+     */
+    fun restoreCategoryPreferences(
+        preferences: List<BackupPreference>,
+        categories: List<BackupAnimeCategory>,
+    ) {
+        val nameOfOld = categories.filter { it.id > 0 }.associate { it.id.toString() to it.name.lowercase() }
+        if (nameOfOld.isEmpty()) return
+        val idOfName = database.anime_categoriesQueries.getAll { id, name, _ -> name.lowercase() to id.toString() }
+            .executeAsList()
+            .toMap()
+        val store = Injekt.get<PreferenceStore>()
+        preferences.forEach { (key, value) ->
+            if (key !in CATEGORY_KEYS || value !is StringSetPreferenceValue) return@forEach
+            val mapped = value.value.mapNotNull { old -> nameOfOld[old]?.let { idOfName[it] } }.toSet()
+            store.getStringSet(key).set(mapped)
+        }
+    }
 
     /**
      * KMK: Adds the backed up anime categories missing here, in the backup's order, after the ones already here.
@@ -293,5 +318,35 @@ class AnimeBackupHelper(
             isLegacy = backupStore.isLegacy ?: true,
             extensionListUrl = backupStore.extensionListUrl,
         )
+    }
+
+    companion object {
+        /** KMK (r85): app settings holding anime category ids, mapped by name on restore */
+        val CATEGORY_KEYS = setOf(
+            "anime_update_categories",
+            "anime_update_categories_exclude",
+            "anime_download_new_categories",
+            "anime_download_new_categories_exclude",
+            "anime_library_hidden_categories",
+            "anime_library_filter_categories_include",
+            "anime_library_filter_categories_exclude",
+        )
+
+        /**
+         * KMK (r85): app settings named after, or holding, anime or episode ids. Ids change on a restore, so these
+         * would land on other anime; they are left out of the app settings restore (notes and hidden scanlators come
+         * back with each anime instead).
+         */
+        private val ID_KEY_PREFIXES = listOf(
+            "anime_notes_",
+            "anime_excluded_scanlators_",
+            "anime_skip_intro_length_",
+            "anime_last_selected_season_",
+        )
+        private val ID_KEYS = setOf("pref_last_aspect_ratio_anime_id", "anime_download_queue")
+
+        /** True for an app setting the plain app-settings restore must skip (see [CATEGORY_KEYS] and above) */
+        fun isAnimeIdKey(key: String): Boolean =
+            key in CATEGORY_KEYS || key in ID_KEYS || ID_KEY_PREFIXES.any { key.startsWith(it) }
     }
 }

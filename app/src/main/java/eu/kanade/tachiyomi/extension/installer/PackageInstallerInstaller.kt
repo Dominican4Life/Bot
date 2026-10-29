@@ -13,6 +13,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.IntentSanitizer
 import eu.kanade.tachiyomi.extension.model.InstallStep
 import eu.kanade.tachiyomi.util.lang.use
+import eu.kanade.tachiyomi.util.system.AppLog
 import eu.kanade.tachiyomi.util.system.getParcelableExtraCompat
 import eu.kanade.tachiyomi.util.system.getUriSize
 import exh.log.xLogE
@@ -23,6 +24,15 @@ class PackageInstallerInstaller(private val service: Service) : Installer(servic
 
     private val packageActionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
+            // KMK: only the session being installed now. A status from another (leftover) session used to open
+            // Android's prompt for that one (another extension's update) and leave this row on "Installing".
+            val sessionId = intent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1)
+            val active = activeSession
+            if (active == null || sessionId != active.second) {
+                AppLog.add('W', "extensions", "Ignored an install status for an old install attempt ($sessionId)")
+                if (sessionId >= 0) runCatching { packageInstaller.abandonSession(sessionId) }
+                return
+            }
             when (intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
                 PackageInstaller.STATUS_PENDING_USER_ACTION -> {
                     val userAction = intent.getParcelableExtraCompat<Intent>(Intent.EXTRA_INTENT)
@@ -107,6 +117,10 @@ class PackageInstallerInstaller(private val service: Service) : Installer(servic
             if (activeEntry == entry) {
                 return try {
                     packageInstaller.abandonSession(sessionId)
+                    // KMK: Android sends nothing for an abandoned session, so the row is put back here and the
+                    // queue goes on (it stayed on "Installing" before)
+                    activeSession = null
+                    continueQueue(InstallStep.Idle)
                     false
                 } catch (_: SecurityException) {
                     // Highly likely the session has succeeded
@@ -123,6 +137,13 @@ class PackageInstallerInstaller(private val service: Service) : Installer(servic
     }
 
     init {
+        // KMK: install attempts left from before (the app was closed or restarted mid-install) are cleared, so
+        // Android can't show their prompts in place of the new one
+        runCatching {
+            packageInstaller.mySessions.forEach { info ->
+                runCatching { packageInstaller.abandonSession(info.sessionId) }
+            }
+        }
         ContextCompat.registerReceiver(
             service,
             packageActionReceiver,

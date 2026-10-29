@@ -208,10 +208,12 @@ class BackupRestorer(
                 restoreExtensionStores(backup.backupExtensionStores)
             }
             // KMK -->
+            // KMK (r85): with app settings, the ones holding anime category ids are mapped once the categories exist
+            val animeCategoryPrefs = if (options.appSettings) backup.backupPreferences else emptyList()
             if (options.libraryEntries) {
-                restoreAnime(backup.backupAnime, backup.backupAnimeCategories)
+                restoreAnime(backup.backupAnime, backup.backupAnimeCategories, animeCategoryPrefs)
             } else if (options.categories) {
-                restoreAnime(emptyList(), backup.backupAnimeCategories)
+                restoreAnime(emptyList(), backup.backupAnimeCategories, animeCategoryPrefs)
             }
             if (options.extensionStores) {
                 restoreAnimeExtensionStores(backup.backupAnimeExtensionStores)
@@ -380,12 +382,14 @@ class BackupRestorer(
     private fun CoroutineScope.restoreAnime(
         backupAnime: List<eu.kanade.tachiyomi.data.backup.models.BackupAnime>,
         categories: List<eu.kanade.tachiyomi.data.backup.models.BackupAnimeCategory>,
+        preferences: List<BackupPreference> = emptyList(),
     ) =
         launch {
             val helper = eu.kanade.tachiyomi.data.backup.AnimeBackupHelper()
             // Categories first, so they keep the backup's order
             try {
                 helper.restoreCategories(categories)
+                helper.restoreCategoryPreferences(preferences, categories)
             } catch (e: Exception) {
                 errors.add(Date() to "Anime categories: ${e.message}")
             }

@@ -79,7 +79,9 @@ fun unifiedExtensionsTab(
         ),
         content = { contentPadding, _ ->
             val scope = rememberCoroutineScope()
-            val pagerState = rememberPagerState { UNIFIED_TAB_COUNT }
+            val pagerState = rememberPagerState(
+                initialPage = if (screenModel.returnedFromInstall) UNIFIED_TAB_PACKAGES else 0,
+            ) { UNIFIED_TAB_COUNT }
             var trustItem by remember { mutableStateOf<UnifiedPackage?>(null) }
             var removeItem by remember { mutableStateOf<UnifiedPackage?>(null) }
             // KMK: another repo's copy is installed: it has to go before this one can go on
