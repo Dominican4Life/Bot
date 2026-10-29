@@ -214,10 +214,16 @@ class BackupRestorer(
             // KMK -->
             // KMK (r85): with app settings, the ones holding anime category ids are mapped once the categories exist
             val animeCategoryPrefs = if (options.appSettings) backup.backupPreferences else emptyList()
+            // KMK (r88): the settings are mapped with all the backup's anime categories, not only the picked ones
+            // (a category choice used to narrow them to the picked categories)
+            val allAnimeCategories = decoded.backupAnimeCategories
             if (options.libraryEntries) {
-                restoreAnime(backup.backupAnime, backup.backupAnimeCategories, animeCategoryPrefs)
+                restoreAnime(backup.backupAnime, backup.backupAnimeCategories, animeCategoryPrefs, allAnimeCategories)
             } else if (options.categories) {
-                restoreAnime(emptyList(), backup.backupAnimeCategories, animeCategoryPrefs)
+                restoreAnime(emptyList(), backup.backupAnimeCategories, animeCategoryPrefs, allAnimeCategories)
+            } else if (options.appSettings) {
+                // KMK (r88): app settings alone: map them onto the anime categories already here (they were skipped)
+                restoreAnimeCategoryPreferences(animeCategoryPrefs, allAnimeCategories)
             }
             if (options.extensionStores) {
                 restoreAnimeExtensionStores(backup.backupAnimeExtensionStores)
@@ -401,17 +407,32 @@ class BackupRestorer(
     }
 
     // KMK -->
+    /** KMK (r88): only the app settings holding anime category ids, mapped by name onto the categories here */
+    private fun CoroutineScope.restoreAnimeCategoryPreferences(
+        preferences: List<BackupPreference>,
+        categories: List<eu.kanade.tachiyomi.data.backup.models.BackupAnimeCategory>,
+    ) = launch {
+        if (preferences.isEmpty()) return@launch
+        try {
+            eu.kanade.tachiyomi.data.backup.AnimeBackupHelper().restoreCategoryPreferences(preferences, categories)
+        } catch (e: Exception) {
+            errors.add(Date() to "Anime categories: ${e.message}")
+        }
+    }
+
     private fun CoroutineScope.restoreAnime(
         backupAnime: List<eu.kanade.tachiyomi.data.backup.models.BackupAnime>,
         categories: List<eu.kanade.tachiyomi.data.backup.models.BackupAnimeCategory>,
         preferences: List<BackupPreference> = emptyList(),
+        // KMK (r88): every anime category in the backup, for mapping the category settings' old ids to names
+        allCategories: List<eu.kanade.tachiyomi.data.backup.models.BackupAnimeCategory> = categories,
     ) =
         launch {
             val helper = eu.kanade.tachiyomi.data.backup.AnimeBackupHelper()
             // Categories first, so they keep the backup's order
             try {
                 helper.restoreCategories(categories)
-                helper.restoreCategoryPreferences(preferences, categories)
+                helper.restoreCategoryPreferences(preferences, allCategories)
             } catch (e: Exception) {
                 errors.add(Date() to "Anime categories: ${e.message}")
             }

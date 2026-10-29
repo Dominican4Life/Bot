@@ -22,24 +22,13 @@
 
 package eu.kanade.tachiyomi.ui.player
 
+import android.app.Application
+import android.graphics.Bitmap
+import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
-import android.graphics.Bitmap
-import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
-import eu.kanade.tachiyomi.animesource.model.ThumbnailInfo
-import eu.kanade.tachiyomi.animesource.model.TileInfo
-import eu.kanade.tachiyomi.data.filler.AnimeFillerListFetcher
-import eu.kanade.tachiyomi.ui.player.utils.DefaultStreamPreferenceStore
-import eu.kanade.tachiyomi.ui.player.utils.DefaultStreamSelector
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.stateIn
-
-
-import android.app.Application
-import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
@@ -48,15 +37,31 @@ import com.yubyf.truetypeparser.TTFFile
 import dev.icerock.moko.resources.StringResource
 import eu.kanade.domain.base.BasePreferences
 import eu.kanade.domain.ui.UiPreferences
+import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
 import eu.kanade.tachiyomi.animesource.AnimeSource
 import eu.kanade.tachiyomi.animesource.model.ChapterType
 import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SerializableHoster.Companion.toHosterList
+import eu.kanade.tachiyomi.animesource.model.ThumbnailInfo
+import eu.kanade.tachiyomi.animesource.model.TileInfo
 import eu.kanade.tachiyomi.animesource.model.TimeStamp
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
+import eu.kanade.tachiyomi.data.anime.Anime
+import eu.kanade.tachiyomi.data.anime.AnimePrefs
+import eu.kanade.tachiyomi.data.anime.AnimeRepository
+import eu.kanade.tachiyomi.data.anime.Episode as DomainEpisode
+import eu.kanade.tachiyomi.data.anime.download.AnimeDownloadManager
+import eu.kanade.tachiyomi.data.filler.AnimeFillerListFetcher
 import eu.kanade.tachiyomi.data.saver.Image
 import eu.kanade.tachiyomi.data.saver.ImageSaver
 import eu.kanade.tachiyomi.data.saver.Location
+import eu.kanade.tachiyomi.torrentServer.TorrentServerUtils
+import eu.kanade.tachiyomi.ui.player.compat.Episode
+import eu.kanade.tachiyomi.ui.player.compat.skipIntroDisable
+import eu.kanade.tachiyomi.ui.player.compat.skipIntroLength
+import eu.kanade.tachiyomi.ui.player.compat.toDbEpisode
+import eu.kanade.tachiyomi.ui.player.compat.toDomainEpisode
 import eu.kanade.tachiyomi.ui.player.controls.components.IndexedSegment
 import eu.kanade.tachiyomi.ui.player.controls.components.sheets.HosterState
 import eu.kanade.tachiyomi.ui.player.controls.components.sheets.getChangedAt
@@ -72,15 +77,16 @@ import eu.kanade.tachiyomi.ui.player.settings.PlayerPreferences
 import eu.kanade.tachiyomi.ui.player.settings.SubtitlePreferences
 import eu.kanade.tachiyomi.ui.player.utils.AniSkipApi
 import eu.kanade.tachiyomi.ui.player.utils.Anime4KManager
-import eu.kanade.tachiyomi.torrentServer.TorrentServerUtils
-import eu.kanade.tachiyomi.util.system.connectivityManager
 import eu.kanade.tachiyomi.ui.player.utils.ChapterUtils
 import eu.kanade.tachiyomi.ui.player.utils.ChapterUtils.Companion.getStringRes
+import eu.kanade.tachiyomi.ui.player.utils.DefaultStreamPreferenceStore
+import eu.kanade.tachiyomi.ui.player.utils.DefaultStreamSelector
 import eu.kanade.tachiyomi.ui.reader.SaveImageNotifier
 import eu.kanade.tachiyomi.util.lang.byteSize
 import eu.kanade.tachiyomi.util.lang.takeBytes
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.cacheImageDir
+import eu.kanade.tachiyomi.util.system.connectivityManager
 import `is`.xyz.mpv.MPV
 import `is`.xyz.mpv.MPVNode
 import `is`.xyz.mpv.Utils
@@ -96,6 +102,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
@@ -109,6 +116,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -127,25 +135,15 @@ import tachiyomi.domain.storage.service.StorageManager
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.ank.AMR
 import tachiyomi.i18n.kmk.KMR
-
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.File
 import java.io.InputStream
 import java.util.Date
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.cancellation.CancellationException
-import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
-import eu.kanade.tachiyomi.data.anime.Anime
-import eu.kanade.tachiyomi.data.anime.AnimePrefs
-import eu.kanade.tachiyomi.data.anime.AnimeRepository
-import eu.kanade.tachiyomi.data.anime.download.AnimeDownloadManager
-import eu.kanade.tachiyomi.ui.player.compat.Episode
-import eu.kanade.tachiyomi.ui.player.compat.skipIntroDisable
-import eu.kanade.tachiyomi.ui.player.compat.skipIntroLength
-import eu.kanade.tachiyomi.ui.player.compat.toDbEpisode
-import eu.kanade.tachiyomi.ui.player.compat.toDomainEpisode
-import eu.kanade.tachiyomi.data.anime.Episode as DomainEpisode
 
 class PlayerViewModel @JvmOverloads constructor(
     private val context: Application,
@@ -437,6 +435,10 @@ class PlayerViewModel @JvmOverloads constructor(
 
     private val _fontList = MutableStateFlow<ImmutableList<String>>(persistentListOf())
     val fontList = _fontList.asStateFlow()
+
+    // KMK: episode rows replaced by a refresh while playing (old id to the new row's id); declared before init
+    // because the position flow started there saves progress through it
+    private val episodeIdRemap = ConcurrentHashMap<Long, Long>()
 
     init {
         viewModelScope.launchIO {
@@ -1417,6 +1419,8 @@ class PlayerViewModel @JvmOverloads constructor(
     }
 
     fun resetHosterState() {
+        // KMK: loads still running for the old hosters must not write into the new ones
+        hosterGeneration.incrementAndGet()
         _pausedState.update { _ -> false }
         _hosterState.update { _ -> emptyList() }
         _hosterList.update { _ -> emptyList() }
@@ -1567,7 +1571,9 @@ class PlayerViewModel @JvmOverloads constructor(
     ): List<DomainEpisode> {
         val skipSeen = playerPreferences.skipSeen().get()
         val skipFiltered = playerPreferences.skipFiltered().get()
-        if (!skipSeen && !skipFiltered) return episodes
+        // KMK: scanlators hidden on the anime page are never part of next/previous (like its Resume)
+        val excludedScanlators = eu.kanade.tachiyomi.data.anime.AnimeExtraPrefs.excludedScanlators(anime.id).get()
+        if (!skipSeen && !skipFiltered && excludedScanlators.isEmpty()) return episodes
 
         // KMK: our anime keeps its filters as TriStates (ENABLED_IS = only these, ENABLED_NOT = hide these)
         fun TriState.hides(matches: Boolean): Boolean = when (this) {
@@ -1578,6 +1584,8 @@ class PlayerViewModel @JvmOverloads constructor(
 
         val filteredEpisodes = episodes.filterNot {
             when {
+                // KMK
+                !it.scanlator.isNullOrBlank() && it.scanlator in excludedScanlators -> true
                 skipSeen && it.seen -> true
                 skipFiltered -> {
                     anime.unseenFilter.hides(!it.seen) ||
@@ -1644,7 +1652,14 @@ class PlayerViewModel @JvmOverloads constructor(
     fun onSaveInstanceStateNonConfigurationChange() {
         val currentEpisode = currentEpisode.value ?: return
         viewModelScope.launchNonCancellable {
-            saveEpisodeProgress(currentEpisode)
+            // KMK: a failed save never closes the player
+            try {
+                saveEpisodeProgress(currentEpisode)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                logcat(LogPriority.WARN, e) { "Couldn't save the watching progress" }
+            }
         }
     }
 
@@ -1732,6 +1747,13 @@ class PlayerViewModel @JvmOverloads constructor(
                     ?: throw ExceptionWithStringResource("Source not installed", KMR.strings.anime_source_not_loaded)
                 _currentAnime.update { _ -> anime }
                 animeTitle.update { _ -> anime.title }
+                // KMK: another episode opened in the running player (PiP / singleTask, onNewIntent) starts fresh:
+                // default stream, preferred quality and the metered cap apply again instead of the old position in
+                // the old episode's list. A process restore keeps its saved quality (same episode id).
+                if (episodeId != initialEpisodeId) {
+                    resetHosterState()
+                    if (hostList.isBlank()) qualityIndex = Pair(-1, -1)
+                }
                 episodeId = initialEpisodeId
 
                 updateEpisodeList(initEpisodeList(anime))
@@ -1827,6 +1849,19 @@ class PlayerViewModel @JvmOverloads constructor(
 
     private var getHosterVideoLinksJob: Job? = null
 
+    // KMK -->
+    /**
+     * Bumped whenever the hoster list is replaced (episode switch, new list, self-healing). A hoster or video load
+     * started for an older list stops before it writes hoster state or sends a video, so a late answer can't
+     * play the previous episode's video or index a list of another size.
+     */
+    private val hosterGeneration = AtomicInteger(0)
+
+    /** Hosters whose videos came from the preload, already sorted and split (identity, not equality) */
+    @Volatile
+    private var presplitHosters: List<Hoster> = emptyList()
+    // KMK <--
+
     fun cancelHosterVideoLinksJob() {
         getHosterVideoLinksJob?.cancel()
     }
@@ -1918,6 +1953,9 @@ class PlayerViewModel @JvmOverloads constructor(
         // ANK --> Don't carry a postponed selection over from the previous episode
         hasPendingVideoFallback.set(false)
         // ANK <--
+        // KMK: loads for the previous list stop writing from here on
+        val generation = hosterGeneration.incrementAndGet()
+        val presplit = presplitHosters
 
         _hosterList.update { _ -> hosterList }
         _hosterExpandedList.update { _ ->
@@ -1957,7 +1995,13 @@ class PlayerViewModel @JvmOverloads constructor(
                 coroutineScope {
                     hosterList.mapIndexed { hosterIdx, hoster ->
                         async {
-                            val hosterState = EpisodeLoader.loadHosterVideos(source, hoster)
+                            // KMK: preloaded videos were already split, so they aren't split a second time
+                            val hosterState = EpisodeLoader.loadHosterVideos(
+                                source,
+                                hoster,
+                                alreadySplit = presplit.any { it === hoster },
+                            )
+                            if (hosterGeneration.get() != generation) return@async
 
                             _hosterState.updateAt(hosterIdx, hosterState)
 
@@ -1971,7 +2015,7 @@ class PlayerViewModel @JvmOverloads constructor(
                                     // KMK <--
                                     hosterState.videoList.getOrNull(wantedIndex)?.let {
                                         hasFoundPreferredVideo.set(true)
-                                        val success = loadVideo(source, it, hosterIndex, wantedIndex)
+                                        val success = loadVideo(source, it, hosterIndex, wantedIndex, generation)
                                         if (!success) {
                                             hasFoundPreferredVideo.set(false)
                                         }
@@ -1987,7 +2031,7 @@ class PlayerViewModel @JvmOverloads constructor(
                                             val vIdx = if (capQuality) capQualityIndex(hosterState, rankedIdx) else rankedIdx
                                             hosterState.videoList.getOrNull(vIdx)?.let { video ->
                                                 if (hasFoundPreferredVideo.compareAndSet(false, true)) {
-                                                    val success = loadVideo(source, video, hosterIdx, vIdx)
+                                                    val success = loadVideo(source, video, hosterIdx, vIdx, generation)
                                                     if (!success) {
                                                         hasFoundPreferredVideo.set(false)
                                                     }
@@ -2011,6 +2055,7 @@ class PlayerViewModel @JvmOverloads constructor(
                                                             hosterState.videoList[prefIndex],
                                                             hosterIdx,
                                                             prefIndex,
+                                                            generation,
                                                         )
                                                     if (!success) {
                                                         hasFoundPreferredVideo.set(false)
@@ -2029,6 +2074,9 @@ class PlayerViewModel @JvmOverloads constructor(
                         }
                     }.awaitAll()
 
+                    // KMK: a newer list took over while these loaded
+                    if (hosterGeneration.get() != generation) return@coroutineScope
+
                     if (hasFoundPreferredVideo.compareAndSet(false, true)) {
                         // ANZ -->
                         val (hosterIdx, bestIdx) = HosterLoader.selectBestVideo(hosterState.value, defaultSelector)
@@ -2045,7 +2093,7 @@ class PlayerViewModel @JvmOverloads constructor(
 
                         val video = (hosterState.value[hosterIdx] as HosterState.Ready).videoList[videoIdx]
 
-                        loadVideo(source, video, hosterIdx, videoIdx)
+                        loadVideo(source, video, hosterIdx, videoIdx, generation)
                     }
 
                     // ANK --> Nothing left to wait for; resolve any postponed selection
@@ -2053,11 +2101,21 @@ class PlayerViewModel @JvmOverloads constructor(
                     // ANK <--
                 }
             } catch (e: CancellationException) {
-                _hosterState.update { _ ->
-                    hosterList.map { HosterState.Idle(it.hosterName) }
+                // KMK: only when no newer list has replaced this one
+                if (hosterGeneration.get() == generation) {
+                    _hosterState.update { _ ->
+                        hosterList.map { HosterState.Idle(it.hosterName) }
+                    }
                 }
 
                 throw e
+            } catch (e: Exception) {
+                // KMK: "No available videos" and other failures reach the error screen instead of crashing the app
+                // (the player used to replace the app's crash handler to catch these)
+                logcat(LogPriority.ERROR, e) { "Couldn't load the videos" }
+                if (hosterGeneration.get() == generation) {
+                    eventChannel.send(Event.SetVideoLoadError(e))
+                }
             }
         }
     }
@@ -2068,8 +2126,9 @@ class PlayerViewModel @JvmOverloads constructor(
 
     fun setCurrentVideoError() {
         val (hosterIdx, videoIdx) = selectedHosterVideoIndex.value
-        val currentHosterState = (hosterState.value[hosterIdx] as? HosterState.Ready) ?: return
-        val currentVideo = currentHosterState.videoList[videoIdx]
+        // KMK: nothing selected (-1, -1) after an episode switch, or a list that changed meanwhile
+        val currentHosterState = (hosterState.value.getOrNull(hosterIdx) as? HosterState.Ready) ?: return
+        val currentVideo = currentHosterState.videoList.getOrNull(videoIdx) ?: return
 
         _hosterState.updateAt(
             hosterIdx,
@@ -2098,26 +2157,37 @@ class PlayerViewModel @JvmOverloads constructor(
             // ANK <--
         }
         val newVideo = (hosterState.value[hosterIdx] as HosterState.Ready).videoList[videoIdx]
+        // KMK: the hoster list this pick belongs to
+        val generation = hosterGeneration.get()
         viewModelScope.launchIO {
             // ANK -->
             // loadVideo() can still exhaust every fallback candidate deep in its own
             // recursion and throw; make sure that surfaces as a graceful close instead
             // of an uncaught exception in this coroutine.
             try {
-                if (!loadVideo(source, newVideo, hosterIdx, videoIdx)) {
+                if (!loadVideo(source, newVideo, hosterIdx, videoIdx, generation)) {
                     // loadVideo() bailed out because other hosters are still resolving
-                    recordPendingVideoFallback(source)
+                    // KMK: not when the episode changed meanwhile
+                    if (hosterGeneration.get() == generation) recordPendingVideoFallback(source)
                 }
             } catch (e: ExceptionWithStringResource) {
-                eventChannel.send(Event.SetVideoLoadError(e))
+                if (hosterGeneration.get() == generation) eventChannel.send(Event.SetVideoLoadError(e))
             }
             // ANK <--
         }
         return true
     }
 
-    private suspend fun loadVideo(source: AnimeSource?, video: Video, hosterIndex: Int, videoIndex: Int): Boolean {
-        val selectedHosterState = (_hosterState.value[hosterIndex] as? HosterState.Ready) ?: return false
+    private suspend fun loadVideo(
+        source: AnimeSource?,
+        video: Video,
+        hosterIndex: Int,
+        videoIndex: Int,
+        // KMK: the hoster list the caller picked from; a load for an older list writes nothing
+        generation: Int = hosterGeneration.get(),
+    ): Boolean {
+        if (hosterGeneration.get() != generation) return false
+        val selectedHosterState = (_hosterState.value.getOrNull(hosterIndex) as? HosterState.Ready) ?: return false
         // KMK -->
         // Buffer handoff: switching quality/server in the middle of an episode keeps the position and pause state
         val isHandoff = isMidEpisodeSwitch()
@@ -2153,11 +2223,14 @@ class PlayerViewModel @JvmOverloads constructor(
         if (handoffPaused != null) _pausedState.update { _ -> handoffPaused } else updatePausedState()
         pause()
 
-        val resolvedVideo = if (selectedHosterState.videoState[videoIndex] != Video.State.READY) {
+        val resolvedVideo = if (selectedHosterState.videoState.getOrNull(videoIndex) != Video.State.READY) {
             HosterLoader.getResolvedVideo(source, video)
         } else {
             video
         }
+
+        // KMK: the episode (or its hoster list) changed while the link was resolved
+        if (hosterGeneration.get() != generation) return false
 
         if (resolvedVideo == null || resolvedVideo.videoUrl.isEmpty()) {
             if (currentVideo.value == null) {
@@ -2178,7 +2251,7 @@ class PlayerViewModel @JvmOverloads constructor(
 
                 val newVideo = (hosterState.value[newHosterIdx] as HosterState.Ready).videoList[newVideoIdx]
 
-                return loadVideo(source, newVideo, newHosterIdx, newVideoIdx)
+                return loadVideo(source, newVideo, newHosterIdx, newVideoIdx, generation)
             } else {
                 _selectedHosterVideoIndex.update { _ -> oldSelectedIndex }
                 _hosterState.updateAt(
@@ -2236,44 +2309,63 @@ class PlayerViewModel @JvmOverloads constructor(
             return
         }
 
+        // KMK: the list this tap belongs to, so a late answer can't land in another episode
+        val generation = hosterGeneration.get()
+        val source = currentSource.value
         viewModelScope.launchIO {
-            val success = loadVideo(currentSource.value, video, hosterIndex, videoIndex)
-            if (success) {
-                if (sheetShown.value == Sheets.QualityTracks) {
-                    dismissSheet()
+            try {
+                val success = loadVideo(source, video, hosterIndex, videoIndex, generation)
+                if (success) {
+                    if (sheetShown.value == Sheets.QualityTracks) {
+                        dismissSheet()
+                    }
                 }
+            } catch (e: ExceptionWithStringResource) {
+                // KMK: every candidate failed; the error screen instead of an uncaught exception
+                if (hosterGeneration.get() == generation) eventChannel.send(Event.SetVideoLoadError(e))
             }
         }
     }
 
     fun onHosterClicked(index: Int) {
-        when (hosterState.value[index]) {
+        when (hosterState.value.getOrNull(index)) {
             is HosterState.Ready -> {
-                _hosterExpandedList.updateAt(index, !_hosterExpandedList.value[index])
+                _hosterExpandedList.update { values ->
+                    if (index in values.indices) {
+                        values.toMutableList().apply { this[index] = !this[index] }
+                    } else {
+                        values
+                    }
+                }
             }
             is HosterState.Idle -> {
-                val hosterName = hosterList.value[index].hosterName
-                _hosterState.updateAt(index, HosterState.Loading(hosterName))
+                // KMK: read everything now; the coroutine may finish after an episode switch
+                val hoster = hosterList.value.getOrNull(index) ?: return
+                val source = currentSource.value ?: return
+                val generation = hosterGeneration.get()
+                _hosterState.updateAt(index, HosterState.Loading(hoster.hosterName))
 
                 viewModelScope.launchIO {
                     val hosterState = EpisodeLoader.loadHosterVideos(
-                        source = currentSource.value!!,
-                        hoster = hosterList.value[index],
-                        
+                        source = source,
+                        hoster = hoster,
                     )
+                    if (hosterGeneration.get() != generation) return@launchIO
                     _hosterState.updateAt(index, hosterState)
 
                     // ANK --> A postponed selection may be waiting on this hoster
-                    retryPendingVideoFallback(currentSource.value)
+                    retryPendingVideoFallback(source)
                     // ANK <--
                 }
             }
-            is HosterState.Loading, is HosterState.Error -> {}
+            is HosterState.Loading, is HosterState.Error, null -> {}
         }
     }
 
     private fun <T> MutableStateFlow<List<T>>.updateAt(index: Int, newValue: T) {
         this.update { values ->
+            // KMK: an index from a list that was replaced meanwhile is ignored instead of crashing
+            if (index !in values.indices) return@update values
             values.toMutableList().apply {
                 this[index] = newValue
             }
@@ -2284,6 +2376,8 @@ class PlayerViewModel @JvmOverloads constructor(
         val hosterList: List<Hoster>?,
         val episodeTitle: String,
         val source: AnimeSource,
+        // KMK: why hosterList is null (the links couldn't be fetched)
+        val error: Throwable? = null,
     )
 
     suspend fun loadEpisode(episodeId: Long?): EpisodeLoadResult? {
@@ -2304,6 +2398,9 @@ class PlayerViewModel @JvmOverloads constructor(
         // ANZ <--
 
         return withIOContext {
+            // KMK: never keep the previous episode's hosters, or a failed fetch plays them under this episode
+            currentHosterList = null
+            var error: Throwable? = null
             try {
                 val currentEpisode =
                     currentEpisode.value
@@ -2317,14 +2414,18 @@ class PlayerViewModel @JvmOverloads constructor(
                     )
 
                 this@PlayerViewModel.episodeId = currentEpisode.id!!
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 logcat(LogPriority.ERROR, e) { e.message ?: "Error getting links" }
+                error = e
             }
 
             EpisodeLoadResult(
                 hosterList = currentHosterList,
                 episodeTitle = anime.title + " - " + chosenEpisode.name,
                 source = source,
+                error = error,
             )
         }
     }
@@ -2414,7 +2515,13 @@ class PlayerViewModel @JvmOverloads constructor(
 
     // --- Preloading the next episode ---
 
-    private class PreloadedEpisode(val episodeId: Long, val hosters: List<Hoster>, val fetchedAt: Long)
+    // KMK: splitHosters = the ones whose videos went through EpisodeLoader (sorted and split already)
+    private class PreloadedEpisode(
+        val episodeId: Long,
+        val hosters: List<Hoster>,
+        val fetchedAt: Long,
+        val splitHosters: List<Hoster> = emptyList(),
+    )
 
     @Volatile
     private var preloaded: PreloadedEpisode? = null
@@ -2452,19 +2559,26 @@ class PlayerViewModel @JvmOverloads constructor(
             PlayerDebugLog.add("preload", "Fetching the videos of '${nextEpisode.name}'")
             try {
                 val hosters = EpisodeLoader.getHosters(nextEpisode, anime, source, allowDownloaded = false)
+                val splitHosters = java.util.Collections.synchronizedList(mutableListOf<Hoster>())
                 val withVideos = coroutineScope {
                     hosters.map { hoster ->
                         async {
                             if (hoster.lazy || hoster.videoList != null) return@async hoster
                             when (val state = EpisodeLoader.loadHosterVideos(source, hoster)) {
                                 is HosterState.Ready -> hoster.copy(videoList = state.videoList)
+                                    .also { splitHosters.add(it) }
                                 else -> hoster
                             }
                         }
                     }.awaitAll()
                 }
                 if (withVideos.isNotEmpty()) {
-                    preloaded = PreloadedEpisode(nextId, withVideos, System.currentTimeMillis())
+                    preloaded = PreloadedEpisode(
+                        nextId,
+                        withVideos,
+                        System.currentTimeMillis(),
+                        splitHosters.toList(),
+                    )
                     PlayerDebugLog.add("preload", "Next episode ready (${withVideos.size} hosters)")
                 }
             } catch (e: CancellationException) {
@@ -2487,6 +2601,8 @@ class PlayerViewModel @JvmOverloads constructor(
         val domainEpisode = episode.toDomainEpisode() ?: return null
         if (EpisodeLoader.isDownload(domainEpisode, anime)) return null
         PlayerDebugLog.add("preload", "Using the preloaded videos")
+        // KMK: these were split during the preload; loadHosters doesn't split them again
+        presplitHosters = cached.splitHosters
         return cached.hosters
     }
 
@@ -2563,11 +2679,15 @@ class PlayerViewModel @JvmOverloads constructor(
                 currentHosterList = hosters
                 val newHosterIdx = hosters.indexOfFirst { it.hosterName == hosterName }
                 PlayerDebugLog.add("self-heal", "Got ${hosters.size} hosters")
+                val oldVideoIdx = selectedHosterVideoIndex.value.second
+                // KMK: the old server is gone, so this is a fresh pick: loadHosters only picks the preferred video
+                // while nothing is selected, and would otherwise load nothing at all
+                if (newHosterIdx == -1) _selectedHosterVideoIndex.update { _ -> Pair(-1, -1) }
                 loadHosters(
                     source = source,
                     hosterList = hosters,
                     hosterIndex = newHosterIdx,
-                    videoIndex = if (newHosterIdx == -1) -1 else selectedHosterVideoIndex.value.second,
+                    videoIndex = if (newHosterIdx == -1) -1 else oldVideoIdx,
                     preferredVideoTitle = video.videoTitle.takeIf { newHosterIdx != -1 },
                 )
             } catch (e: CancellationException) {
@@ -2733,7 +2853,24 @@ class PlayerViewModel @JvmOverloads constructor(
         watchTimePending = 0L
         watchTimeLastPos = -1L
         if (epId < 0 || millis <= 0) return
-        viewModelScope.launchNonCancellable { eu.kanade.tachiyomi.data.anime.AnimeWatchTime.add(epId, millis) }
+        viewModelScope.launchNonCancellable {
+            // KMK: a replaced episode row (refresh) must not close the player; retry on the row that replaced it
+            try {
+                eu.kanade.tachiyomi.data.anime.AnimeWatchTime.add(liveEpisodeId(epId), millis)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val episode = currentPlaylist.value.firstOrNull { it.id == epId }
+                val newId = episode?.let { findReplacedEpisodeId(it, epId) }
+                try {
+                    if (newId != null) eu.kanade.tachiyomi.data.anime.AnimeWatchTime.add(newId, millis)
+                } catch (e2: CancellationException) {
+                    throw e2
+                } catch (e2: Exception) {
+                    logcat(LogPriority.WARN, e2) { "Couldn't save the watch time" }
+                }
+            }
+        }
     }
     // KMK <--
 
@@ -2815,10 +2952,67 @@ class PlayerViewModel @JvmOverloads constructor(
      */
     private fun saveWatchingProgress(episode: Episode) {
         viewModelScope.launchNonCancellable {
-            saveEpisodeProgress(episode)
-            saveEpisodeHistory(episode)
+            // KMK: a failed save never closes the player. When a refresh replaced the episode's row (its links
+            // changed), the new row is found and the progress goes there.
+            try {
+                saveEpisodeProgress(episode)
+                saveEpisodeHistory(episode)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val oldId = episode.id
+                val newId = oldId?.let { findReplacedEpisodeId(episode, it) }
+                if (newId == null) {
+                    logcat(LogPriority.WARN, e) { "Couldn't save the watching progress" }
+                    return@launchNonCancellable
+                }
+                try {
+                    saveEpisodeProgress(episode)
+                    saveEpisodeHistory(episode)
+                } catch (e2: CancellationException) {
+                    throw e2
+                } catch (e2: Exception) {
+                    logcat(LogPriority.WARN, e2) { "Couldn't save the watching progress" }
+                }
+            }
         }
     }
+
+    // KMK -->
+    /** The id saves go to: the episode's own, or the row that replaced it */
+    private fun liveEpisodeId(id: Long): Long = episodeIdRemap[id] ?: id
+
+    /**
+     * When the row of episode [oldId] is gone (the anime's episodes were refreshed and the row replaced), finds the
+     * same episode in the anime's current episodes, by url first and then by episode number, and remembers it so
+     * later saves go there. Null when the row still exists or no match was found.
+     */
+    private suspend fun findReplacedEpisodeId(episode: Episode, oldId: Long): Long? {
+        return try {
+            val current = liveEpisodeId(oldId)
+            if (animeRepository.getEpisode(current) != null) return null
+            val animeId = episode.anime_id ?: anime?.id ?: return null
+            val episodes = animeRepository.getEpisodes(animeId)
+            val match = episodes.firstOrNull { it.url == episode.url }
+                ?: episodes.filter {
+                    // The player keeps the number as a Float
+                    episode.episode_number >= 0f &&
+                        kotlin.math.abs(it.episodeNumber - episode.episode_number.toDouble()) < 0.001
+                }
+                    .let { sameNumber ->
+                        sameNumber.firstOrNull { it.scanlator == episode.scanlator } ?: sameNumber.firstOrNull()
+                    }
+                ?: return null
+            episodeIdRemap[oldId] = match.id
+            logcat(LogPriority.INFO) { "Episode $oldId was replaced by ${match.id}; saving the progress there" }
+            match.id
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
+    }
+    // KMK <--
 
     /**
      * Saves this [episode] progress (last second seen and whether it's seen).
@@ -2827,7 +3021,8 @@ class PlayerViewModel @JvmOverloads constructor(
     private suspend fun saveEpisodeProgress(episode: Episode) {
         if (!incognitoMode) {
             animeRepository.updateEpisode(
-                id = episode.id!!,
+                // KMK: the replacing row when the episode's row was replaced
+                id = liveEpisodeId(episode.id!!),
                 seen = episode.seen,
                 bookmark = episode.bookmark,
                 fillermark = episode.fillermark,
@@ -2842,7 +3037,7 @@ class PlayerViewModel @JvmOverloads constructor(
      */
     private suspend fun saveEpisodeHistory(episode: Episode) {
         if (!incognitoMode) {
-            animeRepository.upsertHistory(episode.id!!, System.currentTimeMillis())
+            animeRepository.upsertHistory(liveEpisodeId(episode.id!!), System.currentTimeMillis())
         }
     }
 
@@ -2851,7 +3046,7 @@ class PlayerViewModel @JvmOverloads constructor(
      */
     fun bookmarkEpisode(episodeId: Long?, bookmarked: Boolean) {
         viewModelScope.launchNonCancellable {
-            animeRepository.updateEpisode(id = episodeId!!, bookmark = bookmarked)
+            animeRepository.updateEpisode(id = liveEpisodeId(episodeId!!), bookmark = bookmarked)
         }
     }
 
@@ -2859,7 +3054,7 @@ class PlayerViewModel @JvmOverloads constructor(
     /** Marks an episode watched or unwatched, from the episodes panel */
     fun setEpisodeSeen(episodeId: Long?, seen: Boolean) {
         viewModelScope.launchNonCancellable {
-            animeRepository.updateEpisode(id = episodeId!!, seen = seen)
+            animeRepository.updateEpisode(id = liveEpisodeId(episodeId!!), seen = seen)
         }
     }
     // KMK <--
@@ -2869,7 +3064,7 @@ class PlayerViewModel @JvmOverloads constructor(
      */
     fun fillermarkEpisode(episodeId: Long?, fillermarked: Boolean) {
         viewModelScope.launchNonCancellable {
-            animeRepository.updateEpisode(id = episodeId!!, fillermark = fillermarked)
+            animeRepository.updateEpisode(id = liveEpisodeId(episodeId!!), fillermark = fillermarked)
         }
     }
 

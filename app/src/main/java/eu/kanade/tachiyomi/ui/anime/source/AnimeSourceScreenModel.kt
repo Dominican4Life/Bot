@@ -3,13 +3,13 @@ package eu.kanade.tachiyomi.ui.anime.source
 import androidx.compose.runtime.Immutable
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
+import eu.kanade.presentation.anime.toMangaFilterList
+import eu.kanade.presentation.anime.writeBackToAnime
 import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
 import eu.kanade.tachiyomi.animesource.AnimeCatalogueSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.data.anime.Anime
 import eu.kanade.tachiyomi.data.anime.AnimeRepository
-import eu.kanade.presentation.anime.toMangaFilterList
-import eu.kanade.presentation.anime.writeBackToAnime
 import eu.kanade.tachiyomi.jssource.JsTabs
 import eu.kanade.tachiyomi.ui.anime.AnimeIncognito
 import kotlinx.collections.immutable.ImmutableList
@@ -50,6 +50,10 @@ class AnimeSourceScreenModel(
     val source: AnimeCatalogueSource? = sourceManager.get(sourceId) as? AnimeCatalogueSource
 
     private var loadJob: Job? = null
+
+    // KMK (r88): bumped whenever the shown list is replaced, so a page load still running for the old one (a
+    // blocking source call doesn't stop on cancel) doesn't write its page into the new list
+    @Volatile private var loadGeneration = 0L
 
     init {
         mutableState.update {
@@ -176,6 +180,7 @@ class AnimeSourceScreenModel(
         }
         val kept = tabCache[cacheKey(listing)].takeUnless { force }
         loadJob?.cancel()
+        loadGeneration++
         if (kept != null) {
             mutableState.update {
                 it.copy(
@@ -259,6 +264,7 @@ class AnimeSourceScreenModel(
 
     private fun setListingForce(listing: Listing) {
         loadJob?.cancel()
+        loadGeneration++
         mutableState.update {
             it.copy(listing = listing, items = emptyList(), page = 0, hasNextPage = true, error = null, isLoading = false)
         }
@@ -276,6 +282,7 @@ class AnimeSourceScreenModel(
         if (current.isLoading || !current.hasNextPage || current.error != null) return
         val nextPage = current.page + 1
         mutableState.update { it.copy(isLoading = true) }
+        val generation = loadGeneration
         loadJob = screenModelScope.launchIO {
             try {
                 val page = when (val listing = current.listing) {
@@ -285,6 +292,8 @@ class AnimeSourceScreenModel(
                 }
                 val items = page.animes.map { repository.networkToLocal(it, source.id) }
                 mutableState.update {
+                    // KMK (r88): the listing changed meanwhile (another tab, filter or search): not its page
+                    if (!it.isSameLoad(current, generation)) return@update it
                     it.copy(
                         items = (it.items + items).distinctBy { anime -> anime.id },
                         page = nextPage,
@@ -295,10 +304,17 @@ class AnimeSourceScreenModel(
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
                 logcat(LogPriority.ERROR, e)
-                mutableState.update { it.copy(isLoading = false, error = e.message ?: e.javaClass.simpleName) }
+                mutableState.update {
+                    if (!it.isSameLoad(current, generation)) return@update it
+                    it.copy(isLoading = false, error = e.message ?: e.javaClass.simpleName)
+                }
             }
         }
     }
+
+    /** KMK (r88): still the list (listing, page and load generation) [started] was loading the next page of */
+    private fun State.isSameLoad(started: State, generation: Long): Boolean =
+        generation == loadGeneration && listing == started.listing && page == started.page
 
     // KMK --> preview panel: first tap on a cover shows its episodes on the left, like manga browsing
     private val _preview = kotlinx.coroutines.flow.MutableStateFlow(Preview())

@@ -48,7 +48,8 @@ object AnimeStats {
             runCatching {
                 downloadManager.animeDir(anime, create = false)
                     ?.listFiles()
-                    ?.count { file -> file.isFile && file.name?.endsWith(".tmp") == false }
+                    // KMK (r88): episode videos only (not the saved cover, subtitles or unfinished files)
+                    ?.count { file -> file.isFile && AnimeDownloadManager.isEpisodeVideo(file.name.orEmpty()) }
                     ?: 0
             }.getOrDefault(0)
         }

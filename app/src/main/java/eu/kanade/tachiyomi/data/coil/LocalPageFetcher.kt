@@ -20,6 +20,7 @@ import okio.source
 import tachiyomi.core.common.util.lang.withIOContext
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.io.Closeable
 import java.io.InputStream
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -42,7 +43,19 @@ class LocalPageFetcher(
     private val options: Options,
 ) : Fetcher {
 
-    override suspend fun fetch(): FetchResult = withIOContext {
+    override suspend fun fetch(): FetchResult {
+        // KMK (r88): Coil closes the result's source once it has it (EngineInterceptor), but a fetch cancelled while
+        // withIOContext hands the result back drops it unseen, which kept the archive mapped. Close it here then.
+        var opened: Closeable? = null
+        try {
+            return withIOContext { openSource { opened = it } }
+        } catch (e: Throwable) {
+            opened?.let { runCatching { it.close() } }
+            throw e
+        }
+    }
+
+    private fun openSource(onOpened: (Closeable) -> Unit): FetchResult {
         val context = Injekt.get<Application>()
         val source = when {
             data.fileUri != null -> checkNotNull(context.contentResolver.openInputStream(data.fileUri)) {
@@ -67,7 +80,8 @@ class LocalPageFetcher(
             }
             else -> error("Nothing to load for page ${data.index + 1}")
         }
-        SourceFetchResult(
+        onOpened(source)
+        return SourceFetchResult(
             source = ImageSource(source = source, fileSystem = options.fileSystem),
             mimeType = null,
             dataSource = DataSource.DISK,

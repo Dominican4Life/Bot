@@ -29,6 +29,7 @@ import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.File
+import java.util.UUID
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -64,8 +65,10 @@ object ChapterVideoDownloads {
         filename: String,
         // KMK (r87): names the video in the "download" log lines
         label: String = filename,
-        onPercent: (Int) -> Unit = {},
+        reportPercent: (Int) -> Unit = {},
     ) = withIOContext {
+        // KMK (r88): the percent never steps back (pieces finish out of order; a fallback starts again at 0)
+        val onPercent = ParallelVideoDownload.monotonic(reportPercent)
         val prefix = "$filename$MARK"
         val existing = dir.listFiles()?.firstOrNull { f ->
             val n = f.name.orEmpty()
@@ -76,13 +79,13 @@ object ChapterVideoDownloads {
 
         val videos = ReaderVideos.videosOf(page.url)
         if (videos.isEmpty()) error("The source found no video")
+        // KMK (r87): the same chapter folder and page give the same pieces folder, so a retry continues
+        val key = "chapter_" + (dir.uri.toString() + "|" + filename).hashCode().toUInt().toString(16)
         var lastError: Throwable? = null
         for (video in videos.take(MAX_TRIES)) {
             try {
                 if (video.videoUrl.isBlank()) continue
                 val headers = video.headers ?: Headers.Builder().build()
-                // KMK (r87): the same chapter folder and page give the same pieces folder, so a retry continues
-                val key = "chapter_" + (dir.uri.toString() + "|" + filename).hashCode().toUInt().toString(16)
                 if (isStream(video)) {
                     ffmpegSave(video, headers, dir, prefix, key, label, onPercent)
                 } else {
@@ -95,6 +98,8 @@ object ChapterVideoDownloads {
                 dir.findFile("$prefix$TMP")?.delete()
             }
         }
+        // KMK (r88): no video saved: its pieces (can be GBs) aren't kept until the chapter is downloaded again
+        ParallelVideoDownload.discard(key, label)
         throw lastError ?: IllegalStateException("No video could be saved")
     }
 
@@ -137,10 +142,15 @@ object ChapterVideoDownloads {
         return failed
     }
 
+    /**
+     * KMK (r88): as for anime episodes: "m3u8" anywhere in the whole address (a relayed or tokenized playlist), or
+     * a playlist mimeType. It only looked before "?" and at a literal "x=list.m3u8".
+     */
     private fun isStream(video: Video): Boolean {
         val url = video.videoUrl.substringBefore('?').lowercase()
-        return url.endsWith(".m3u8") || url.endsWith(".mpd") || url.endsWith("list.m3u8") || "m3u8" in url ||
-            "/hls/" in url || video.videoUrl.contains("x=list.m3u8")
+        return url.endsWith(".m3u8") || url.endsWith(".mpd") || url.contains("/hls/") ||
+            video.videoUrl.contains("m3u8", ignoreCase = true) ||
+            video.mimeType?.contains("mpegurl", ignoreCase = true) == true
     }
 
     private suspend fun httpSave(
@@ -159,7 +169,8 @@ object ChapterVideoDownloads {
             val probe = ParallelVideoDownload.probeRanges(client, video.videoUrl, headers, label)
             if (probe != null) {
                 val workDir = File(context.cacheDir, "chapter_video_download").apply { mkdirs() }
-                val out = File(workDir, "${System.currentTimeMillis()}.part")
+                // KMK (r88): a random name; two pages saved in the same millisecond shared one file
+                val out = File(workDir, "${UUID.randomUUID()}.part")
                 try {
                     val saved = ParallelVideoDownload.saveRanges(
                         client, video.videoUrl, headers, probe, out, connections, label, onPercent,
@@ -228,7 +239,7 @@ object ChapterVideoDownloads {
         val video = eu.kanade.tachiyomi.ui.player.loader.HlsVariants.forDownload(stream, headers)
         // ffmpeg writes to app storage first, then the file is copied into the chapter folder
         val workDir = File(context.cacheDir, "chapter_video_download").apply { mkdirs() }
-        val out = File(workDir, "${System.currentTimeMillis()}.mkv")
+        val out = File(workDir, "${UUID.randomUUID()}.mkv")
         try {
             // KMK (r87): pieces fetched several at a time and joined from the local copy; else ffmpeg reads the link
             if (!ParallelVideoDownload.saveHls(video, headers, out, key, label, onPercent)) {

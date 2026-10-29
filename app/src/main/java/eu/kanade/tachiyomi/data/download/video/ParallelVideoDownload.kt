@@ -117,7 +117,11 @@ object ParallelVideoDownload {
 
     private class HttpStatus(val code: Int, val retryAfterMs: Long?) : IOException("HTTP $code")
 
-    private class Piece(val url: String, val file: String)
+    /**
+     * KMK (r88): [isKey] = an AES-128 key; [checked] = its first bytes must look like video or sound (not a piece
+     * under a key, which only ffmpeg decrypts, nor a subtitle)
+     */
+    private class Piece(val url: String, val file: String, val isKey: Boolean = false, val checked: Boolean = false)
 
     /** Lowers the number of connections when a server answers 429/503 */
     private class Gate(start: Int) {
@@ -179,12 +183,20 @@ object ParallelVideoDownload {
             // Pieces from an earlier try of the same stream are kept; another stream starts afresh
             val fingerprint = fingerprint(pieces)
             val manifest = File(dir, MANIFEST)
-            if (dir.exists() && runCatching { manifest.readText() }.getOrNull() != fingerprint) {
-                dir.deleteRecursively()
-            }
+            val sameStream = dir.exists() && runCatching { manifest.readText() }.getOrNull() == fingerprint
+            if (dir.exists() && !sameStream) dir.deleteRecursively()
             dir.mkdirs()
             manifest.writeText(fingerprint)
             plan.files.forEach { (name, text) -> File(dir, name).writeText(text) }
+            // KMK (r88): keys can be given per session; pieces saved under an older key can't be decrypted with
+            // the new one, so a changed key starts afresh
+            if (sameStream && keysChanged(pieces, headers, dir, run)) {
+                AppLog.add('I', TAG, "$label: the stream's keys changed since the last try, starting afresh")
+                dir.deleteRecursively()
+                dir.mkdirs()
+                manifest.writeText(fingerprint)
+                plan.files.forEach { (name, text) -> File(dir, name).writeText(text) }
+            }
             val present = pieces.count { File(dir, it.file).length() > 0 }
             done.set(present)
 
@@ -197,7 +209,7 @@ object ParallelVideoDownload {
             if (present > 0) AppLog.add('I', TAG, "$label: resuming, $present of $total pieces already here")
             onPercent(present * 95 / total)
 
-            fetchPieces(pieces, headers, dir, connections, run, done, started, onPercent)
+            val fetched = fetchPieces(pieces, headers, dir, connections, run, done, started, onPercent)
 
             val joinStart = System.currentTimeMillis()
             AppLog.add('I', TAG, "$label: joining $total pieces with ffmpeg (${formatSeconds(plan.seconds)} of video)")
@@ -207,18 +219,24 @@ object ParallelVideoDownload {
 
             val bytes = pieces.sumOf { File(dir, it.file).length() }
             val seconds = secondsSince(started)
+            // KMK (r88): the speed counts only what this try downloaded (pieces kept from an earlier try made it
+            // look faster); the whole size is shown apart
             AppLog.add(
                 'I',
                 TAG,
                 "Fast download: $total pieces with $connections connections in ${seconds}s " +
-                    "(${formatSize(bytes)}, ${speed(bytes, started)}" +
+                    "(${formatSize(fetched)} downloaded at ${speed(fetched, started)}" +
+                    (if (present > 0) ", $present pieces from the last try" else "") +
+                    ", ${formatSize(bytes)} in all" +
                     (if (run.retries.get() > 0) ", ${run.retries.get()} retries" else "") + "): $label",
             )
             dir.deleteRecursively()
             onPercent(99)
             true
         } catch (e: CancellationException) {
-            AppLog.add('I', TAG, "$label: cancelled at ${done.get()} of $total pieces; they're kept for the next try")
+            // KMK (r88): kept only while the download is still queued (stopped by the system); cancel, delete and
+            // a failed download delete them (discard)
+            AppLog.add('I', TAG, "$label: stopped at ${done.get()} of $total pieces")
             throw e
         } catch (e: Exception) {
             val reason = if (e is Unsupported) e.message else "${e.javaClass.simpleName}: ${e.message}"
@@ -227,9 +245,63 @@ object ParallelVideoDownload {
         }
     }
 
-    /** Deletes the pieces kept for [key] (after the old way saved the video instead) */
-    fun discard(key: String) {
-        runCatching { File(File(context.cacheDir, PIECES_DIR), safeKey(key)).deleteRecursively() }
+    /**
+     * Deletes the pieces kept for [key] (after the old way saved the video instead, or when the download was
+     * cancelled, deleted or failed). KMK (r88): with a [label], says how much was deleted.
+     */
+    fun discard(key: String, label: String? = null) {
+        runCatching {
+            val dir = File(File(context.cacheDir, PIECES_DIR), safeKey(key))
+            if (!dir.exists()) return@runCatching
+            val size = dir.listFiles()?.sumOf { it.length() } ?: 0L
+            dir.deleteRecursively()
+            if (label != null && size > 0) {
+                AppLog.add('I', TAG, "$label: deleted ${formatSize(size)} of saved pieces")
+            }
+        }
+    }
+
+    /**
+     * KMK (r88): deletes kept pieces nobody will continue: any older than a few days, and (with [prefix]) every
+     * folder of that kind of download whose key isn't in [keep]. Called at app start and when the anime queue is
+     * done; a cancelled or failed download used to leave its pieces (up to GBs) until the same one ran again.
+     */
+    fun cleanUp(prefix: String? = null, keep: Collection<String> = emptyList()) {
+        runCatching {
+            val root = File(context.cacheDir, PIECES_DIR)
+            val kept = keep.mapTo(HashSet()) { safeKey(it) }
+            val now = System.currentTimeMillis()
+            var removed = 0
+            root.listFiles()?.forEach { dir ->
+                val unused = prefix != null && dir.name.startsWith(safeKey(prefix)) && dir.name !in kept
+                if (unused || now - dir.lastModified() > KEEP_PIECES_MS) {
+                    dir.deleteRecursively()
+                    removed++
+                }
+            }
+            if (removed > 0) AppLog.add('I', TAG, "Deleted the saved pieces of $removed unfinished downloads")
+        }
+    }
+
+    /**
+     * KMK (r88): a progress callback that never steps back. Pieces finish out of order on several connections,
+     * and a fallback to another way (or another video) starts again from 0.
+     */
+    fun monotonic(onPercent: (Int) -> Unit): (Int) -> Unit {
+        val lock = Any()
+        var highest = -1
+        return { percent ->
+            val value = percent.coerceIn(0, 100)
+            synchronized(lock) {
+                val higher = value > highest
+                if (higher) {
+                    highest = value
+                    onPercent(value)
+                }
+                higher
+            }
+            Unit
+        }
     }
 
     private class Plan(
@@ -252,10 +324,12 @@ object ParallelVideoDownload {
 
         if (lines.none { it.startsWith("#EXT-X-STREAM-INF:") }) {
             val (local, seconds) = localMedia("v", text, finalUrl, shared, pieces)
+            // KMK (r88): the height and bitrate only when the title doesn't already say them ("1080p, 1080p, …")
+            val title = video.videoTitle.trim()
             val quality = listOfNotNull(
-                video.videoTitle.ifBlank { null },
-                video.resolution?.let { "${it}p" },
-                video.bitrate?.let { mbps(it) },
+                title.ifBlank { null },
+                video.resolution?.let { "${it}p" }?.takeIf { !title.contains(it, ignoreCase = true) },
+                video.bitrate?.let { mbps(it) }?.takeIf { !title.contains("Mbps", ignoreCase = true) },
             ).joinToString(", ").ifBlank { "one quality" }
             return Plan("v.m3u8", listOf("v.m3u8" to local), seconds, quality, 1)
         }
@@ -297,7 +371,7 @@ object ParallelVideoDownload {
             val name = "r$renditions"
             renditions++
             val (mediaText, mediaUrl) = withRetries(run, "a sound or subtitle list") { fetchText(url, headers) }
-            val (local, _) = localMedia(name, mediaText, mediaUrl, shared, pieces)
+            val (local, _) = localMedia(name, mediaText, mediaUrl, shared, pieces, subtitles = type == "SUBTITLES")
             files += "$name.m3u8" to local
             masterLines += replaceUri(line, "$name.m3u8")
         }
@@ -322,12 +396,18 @@ object ParallelVideoDownload {
         base: HttpUrl,
         shared: MutableMap<String, String>,
         pieces: MutableList<Piece>,
+        subtitles: Boolean = false,
     ): Pair<String, Double> {
         if (!text.trimStart().startsWith("#EXTM3U")) throw Unsupported("a playlist that isn't HLS")
         val out = mutableListOf<String>()
         var seconds = 0.0
         var segments = 0
         var ended = false
+        // KMK (r88): pieces of a list with an init piece are fMP4; saved as ".ts" (when their address has no usable
+        // extension) ffmpeg's HLS reader took them for MPEG-TS
+        val fallbackExtension = if (text.contains("#EXT-X-MAP")) "m4s" else "ts"
+        // KMK (r88): whether the pieces from here on are under an AES-128 key
+        var encrypted = false
         for (raw in text.lines()) {
             val line = raw.trim()
             when {
@@ -339,11 +419,15 @@ object ParallelVideoDownload {
                 line.startsWith("#EXT-X-BYTERANGE") -> throw Unsupported("pieces given as byte ranges")
                 line.startsWith("#EXT-X-STREAM-INF") -> throw Unsupported("a quality list inside a quality")
                 line.startsWith("#EXT-X-SKIP") -> throw Unsupported("a live list")
-                line.startsWith("#EXT-X-KEY:") -> out += localKey(line, base, shared, pieces)
+                line.startsWith("#EXT-X-KEY:") -> {
+                    encrypted = (attr(line, "METHOD")?.uppercase() ?: "NONE") != "NONE"
+                    out += localKey(line, base, shared, pieces)
+                }
                 line.startsWith("#EXT-X-MAP:") -> {
                     if (attr(line, "BYTERANGE") != null) throw Unsupported("an init piece given as a byte range")
                     val uri = attr(line, "URI") ?: throw Unsupported("an init piece without an address")
-                    out += replaceUri(line, localFile(uri, base, "${name}_init", "mp4", shared, pieces))
+                    val local = localFile(uri, base, "${name}_init", "mp4", shared, pieces, checked = !encrypted)
+                    out += replaceUri(line, local)
                 }
                 line.startsWith("#EXTINF:") -> {
                     seconds += line.removePrefix("#EXTINF:").substringBefore(',').trim().toDoubleOrNull() ?: 0.0
@@ -353,9 +437,10 @@ object ParallelVideoDownload {
                 line.startsWith("#") -> out += line
                 else -> {
                     val url = resolve(base, line) ?: throw Unsupported("a bad piece address")
-                    val file = "${name}_" + "%05d".format(Locale.US, segments) + "." + extensionOf(url, "ts")
+                    val file = "${name}_" + "%05d".format(Locale.US, segments) + "." +
+                        extensionOf(url, fallbackExtension)
                     segments++
-                    pieces += Piece(url, file)
+                    pieces += Piece(url, file, checked = !encrypted && !subtitles)
                     out += file
                 }
             }
@@ -379,7 +464,10 @@ object ParallelVideoDownload {
         val uri = attr(line, "URI") ?: throw Unsupported("a key without an address")
         if (uri.startsWith("data:")) return line
         // The IV (or the piece number when there's none) stays as it is
-        return replaceUri(line, localFile(uri, base, "key", "key", shared, pieces, keepExtension = false))
+        return replaceUri(
+            line,
+            localFile(uri, base, "key", "key", shared, pieces, keepExtension = false, isKey = true),
+        )
     }
 
     /** The local name of an init piece or key, the same file each time the same address comes up */
@@ -391,14 +479,37 @@ object ParallelVideoDownload {
         shared: MutableMap<String, String>,
         pieces: MutableList<Piece>,
         keepExtension: Boolean = true,
+        isKey: Boolean = false,
+        checked: Boolean = false,
     ): String {
         val url = resolve(base, uri) ?: throw Unsupported("a bad address in the playlist")
         return shared.getOrPut(url) {
             val ext = if (keepExtension) extensionOf(url, fallbackExtension) else fallbackExtension
             val file = "$prefix${shared.size}.$ext"
-            pieces += Piece(url, file)
+            pieces += Piece(url, file, isKey = isKey, checked = checked)
             file
         }
+    }
+
+    /**
+     * KMK (r88): on a resume, fetches the stream's keys again; true when one differs from the saved copy (or can't
+     * be fetched), so the pieces saved under it are useless
+     */
+    private suspend fun keysChanged(pieces: List<Piece>, headers: Headers, dir: File, run: Run): Boolean {
+        for (piece in pieces.filter { it.isKey }) {
+            val saved = File(dir, piece.file)
+            if (saved.length() == 0L) continue
+            val check = File(dir, piece.file + ".check")
+            try {
+                withRetries(run, "a key") { fetchPiece(piece, headers, check) }
+                if (!check.readBytes().contentEquals(saved.readBytes())) return true
+            } catch (e: IOException) {
+                return true
+            } finally {
+                check.delete()
+            }
+        }
+        return false
     }
 
     private suspend fun fetchPieces(
@@ -410,7 +521,7 @@ object ParallelVideoDownload {
         done: AtomicInteger,
         started: Long,
         onPercent: (Int) -> Unit,
-    ) {
+    ): Long {
         val total = pieces.size
         val next = AtomicInteger(0)
         val bytes = AtomicLong(0L)
@@ -427,7 +538,7 @@ object ParallelVideoDownload {
                         val file = File(dir, piece.file)
                         if (file.length() > 0) continue
                         val size = withRetries(run, "piece ${index + 1}/$total") {
-                            fetchPiece(piece.url, headers, file)
+                            fetchPiece(piece, headers, file)
                         }
                         bytes.addAndGet(size)
                         val now = done.incrementAndGet()
@@ -447,13 +558,18 @@ object ParallelVideoDownload {
         }
         val missing = pieces.count { File(dir, it.file).length() == 0L }
         if (missing > 0) throw IOException("$missing pieces are missing")
+        // KMK (r88): what this try downloaded, for the speed in the summary
+        return bytes.get()
     }
 
-    private suspend fun fetchPiece(url: String, headers: Headers, file: File): Long {
+    private suspend fun fetchPiece(piece: Piece, headers: Headers, file: File): Long {
         val part = File(file.parentFile, file.name + ".part")
-        val request = Request.Builder().url(url).headers(headers).build()
+        val request = Request.Builder().url(piece.url).headers(headers).build()
         return call(hlsClient, request) { response ->
             if (!response.isSuccessful) throw HttpStatus(response.code, retryAfter(response))
+            // KMK (r88): an error or login page sent with 200 was saved as a piece, and ffmpeg failed on it later
+            val type = response.body.contentType()?.toString().orEmpty()
+            if (type.contains("text/html", ignoreCase = true)) throw IOException("a web page instead of a piece")
             var written = 0L
             part.outputStream().use { output ->
                 response.body.byteStream().use { input ->
@@ -470,9 +586,54 @@ object ParallelVideoDownload {
             val expected = response.body.contentLength()
             if (written == 0L) throw IOException("an empty piece")
             if (expected > 0 && written < expected) throw IOException("cut short ($written of $expected bytes)")
+            if (piece.checked && piece.file.substringAfterLast('.') in CHECKED_EXTENSIONS &&
+                !looksLikeMedia(readHead(part))
+            ) {
+                part.delete()
+                throw IOException("not a video piece")
+            }
             if (!part.renameTo(file)) throw IOException("couldn't keep the piece")
             written
         }
+    }
+
+    /** KMK (r88): piece kinds whose first bytes are checked before they're kept */
+    private val CHECKED_EXTENSIONS = setOf("ts", "mpegts", "m4s", "mp4", "m4v", "m4a", "mov", "aac")
+
+    /** fMP4 boxes a piece (or init piece) starts with */
+    private val MP4_BOXES = setOf("ftyp", "styp", "moof", "sidx", "moov", "emsg", "prft", "free", "mdat")
+
+    private const val HEAD_BYTES = 64 * 1024
+    private const val TS_PACKET = 188
+
+    private fun readHead(file: File): ByteArray = file.inputStream().use { input ->
+        val buffer = ByteArray(HEAD_BYTES)
+        var size = 0
+        while (size < buffer.size) {
+            val read = input.read(buffer, size, buffer.size - size)
+            if (read < 0) break
+            size += read
+        }
+        buffer.copyOf(size)
+    }
+
+    /**
+     * KMK (r88): MPEG-TS (sync byte 0x47 every 188 bytes, also after a picture some sites put in front), an fMP4
+     * box, or packed audio (ID3, ADTS)
+     */
+    private fun looksLikeMedia(head: ByteArray): Boolean {
+        if (head.size >= 8 && String(head, 4, 4, Charsets.ISO_8859_1) in MP4_BOXES) return true
+        if (head.size >= 3 && String(head, 0, 3, Charsets.ISO_8859_1) == "ID3") return true
+        if (head.size >= 2 && head[0] == 0xFF.toByte() && (head[1].toInt() and 0xF0) == 0xF0) return true
+        val sync = 0x47.toByte()
+        if (head.size <= TS_PACKET) return head.isNotEmpty() && head[0] == sync
+        for (offset in 0 until head.size - 2 * TS_PACKET) {
+            if (head[offset] == sync && head[offset + TS_PACKET] == sync && head[offset + 2 * TS_PACKET] == sync) {
+                return true
+            }
+        }
+        // A short piece: one or two packets
+        return head[0] == sync && (head.size < 2 * TS_PACKET + 1 || head[TS_PACKET] == sync)
     }
 
     private suspend fun fetchText(url: String, headers: Headers): Pair<String, HttpUrl> {
@@ -730,13 +891,22 @@ object ParallelVideoDownload {
         return fallback
     }
 
-    /** Same stream = same piece addresses, without their query (tokens change) and through the relay */
+    /**
+     * Same stream = same piece addresses, without their query (tokens change) and through the relay. KMK (r88): a
+     * query that tells pieces apart ("…/seg?n=1", "…/seg?n=2") is kept, or any stream with as many pieces looked
+     * the same.
+     */
     private fun fingerprint(pieces: List<Piece>): String {
         val digest = MessageDigest.getInstance("MD5")
-        pieces.forEach { piece ->
+        val full = pieces.map { piece ->
             val http = piece.url.toHttpUrlOrNull()
             val inner = if (http?.host == "127.0.0.1") http.queryParameter("u") else null
-            val address = (inner ?: piece.url).substringBefore('?')
+            inner ?: piece.url
+        }
+        val bare = full.map { it.substringBefore('?') }
+        val shared = bare.groupingBy { it }.eachCount().filterValues { it > 1 }.keys
+        pieces.forEachIndexed { index, piece ->
+            val address = if (bare[index] in shared) full[index] else bare[index]
             digest.update("${piece.file}|$address\n".toByteArray())
         }
         return digest.digest().joinToString("") { "%02x".format(it) }

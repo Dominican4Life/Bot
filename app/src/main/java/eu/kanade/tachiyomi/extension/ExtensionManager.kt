@@ -14,6 +14,7 @@ import eu.kanade.tachiyomi.extension.model.LoadResult
 import eu.kanade.tachiyomi.extension.util.ExtensionInstallReceiver
 import eu.kanade.tachiyomi.extension.util.ExtensionInstaller
 import eu.kanade.tachiyomi.extension.util.ExtensionLoader
+import eu.kanade.tachiyomi.extension.util.InstallOrigins
 import eu.kanade.tachiyomi.util.system.toast
 import exh.log.xLogD
 import exh.source.BlacklistedSources
@@ -306,7 +307,12 @@ class ExtensionManager(
         for ((pkgName, extension) in installedExtensionsMap) {
             // KMK: same signature (or, for a repo with no signing fingerprint, the package name), from the repo it
             // came from when that one still offers it
-            val availableExt = availableExtensions.copyFor(pkgName, extension.signatureHash, extension.store)
+            val availableExt = availableExtensions.copyFor(
+                pkgName,
+                extension.signatureHash,
+                extension.store,
+                InstallOrigins.repoOf(anime = false, pkgName),
+            )
 
             if (availableExt == null &&
                 (!extension.isObsolete || /* KMK --> */ extension.hasUpdate /* KMK <-- */)
@@ -354,6 +360,8 @@ class ExtensionManager(
      */
     // KMK: [sideload] true/false from the Sideload / Install buttons, null as set in the installer setting
     fun installExtension(extension: Extension.Available, sideload: Boolean? = null): Flow<InstallStep> {
+        // KMK: which repo it comes from, so later matches prefer that repo's copy (copyFor)
+        InstallOrigins.remember(anime = false, extension.pkgName, extension.store.indexUrl)
         return installer.downloadAndInstall(extension.apkUrl, extension, sideload)
     }
 
@@ -367,7 +375,12 @@ class ExtensionManager(
     fun updateExtension(extension: Extension.Installed): Flow<InstallStep> {
         // KMK: the copy of the repo it came from (else same signature, else a repo with no fingerprint by name)
         val availableExt = availableExtensionMapFlow.value.values
-            .copyFor(extension.pkgName, extension.signatureHash, extension.store)
+            .copyFor(
+                extension.pkgName,
+                extension.signatureHash,
+                extension.store,
+                InstallOrigins.repoOf(anime = false, extension.pkgName),
+            )
             ?: return emptyFlow()
         // KMK: updated the way it was installed: sideloaded stays sideloaded
         return installExtension(availableExt, sideload = !extension.isShared)
@@ -514,7 +527,8 @@ class ExtensionManager(
     private fun Extension.Installed.updateExists(availableExtension: Extension.Available? = null): Boolean {
         val availableExt = availableExtension
             // KMK: the map is keyed by package, signature and repo (looking up by package alone never matched)
-            ?: availableExtensionMapFlow.value.values.copyFor(pkgName, signatureHash, store)
+            ?: availableExtensionMapFlow.value.values
+                .copyFor(pkgName, signatureHash, store, InstallOrigins.repoOf(anime = false, pkgName))
             ?: return false
 
         return (availableExt.versionCode > versionCode || availableExt.libVersion > libVersion)
@@ -543,12 +557,17 @@ internal fun availableKey(ext: Extension.Available): String =
 /**
  * The repo copy that stands for an installed (or untrusted) package [pkgName] signed with [signatureHash]: one with the
  * same signature, or else one from a repo with no signing fingerprint (only matchable by name). Among those, the copy
- * from [store] (the repo it came from) is preferred, else the first.
+ * from [installedFrom] (the repo it was installed from, [InstallOrigins]) is preferred, then the one from [store] when
+ * that repo signs it, else the first.
+ *
+ * KMK (r88): [store] only counts when its signing key is the package's. It is set from this function's own answer,
+ * so a by-name match used to become "the repo it came from" and stuck to the first repo offering the package.
  */
 fun Collection<Extension.Available>.copyFor(
     pkgName: String,
     signatureHash: String,
     store: ExtensionStore?,
+    installedFrom: String? = null,
 ): Extension.Available? {
     val offers = filter { it.pkgName == pkgName }
     if (offers.isEmpty()) return null
@@ -556,8 +575,9 @@ fun Collection<Extension.Available>.copyFor(
     val byName = offers.filter {
         it.signatureHash != signatureHash && !ExtensionStoreUrls.hasFingerprint(it.signatureHash)
     }
-    val repoKey = store?.let { ExtensionStoreUrls.key(it.indexUrl) }
-    if (repoKey != null) {
+    val preferred = listOfNotNull(installedFrom, store?.takeIf { it.signingKey == signatureHash }?.indexUrl)
+        .map { ExtensionStoreUrls.key(it) }
+    for (repoKey in preferred) {
         (signed + byName).firstOrNull { ExtensionStoreUrls.key(it.store.indexUrl) == repoKey }?.let { return it }
     }
     return signed.firstOrNull() ?: byName.firstOrNull()

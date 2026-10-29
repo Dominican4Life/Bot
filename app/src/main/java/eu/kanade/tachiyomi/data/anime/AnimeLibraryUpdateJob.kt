@@ -116,7 +116,11 @@ class AnimeLibraryUpdateJob(
         val downloadCheck = newEpisodesDownloadCheck()
 
         val done = AtomicInteger(0)
-        val failed = AtomicInteger(0)
+        // KMK (r88): titles that failed, anime whose source isn't installed and "no episodes" answers are counted
+        // apart; before, a missing source counted as checked and a kept-episodes answer as a crash-level failure
+        val failed = mutableListOf<String>()
+        val noSource = AtomicInteger(0)
+        val noEpisodes = AtomicInteger(0)
         val updated = mutableListOf<Pair<Anime, Int>>()
         val semaphore = Semaphore(5)
         val pauseEnabled = libraryPreferences.updatePauseEnabled().get()
@@ -132,24 +136,28 @@ class AnimeLibraryUpdateJob(
                             var updatedInSource = 0
                             animes.forEach { anime ->
                                 val source = sourceManager.get(anime.source)
-                                if (source != null) {
+                                if (source == null) {
+                                    noSource.incrementAndGet()
+                                } else {
                                     if (updatedInSource++ > 0) PauseBetweenTitles.pause(pauseEnabled, pauseRange)
                                     showProgress(done.get(), favorites.size, anime.title)
                                     try {
                                         val autoDownload = downloadCheck(anime)
-                                        val before = if (autoDownload) {
-                                            repository.getEpisodes(anime.id).map { it.id }.toSet()
-                                        } else {
-                                            emptySet()
-                                        }
-                                        val count = repository.refreshFromSource(anime, source)
+                                        // KMK (r88): only the really new episodes; rows carried over after the source
+                                        // changed its links get new ids but aren't new (they were auto-downloaded
+                                        // again when this compared ids with the ones saved before)
+                                        val result = repository.refreshFromSourceResult(anime, source)
+                                        val count = result.newCount
                                         if (count > 0) {
                                             synchronized(updated) { updated += anime to count }
-                                            if (autoDownload) downloadNewEpisodes(anime, before)
+                                            if (autoDownload) downloadNewEpisodes(anime, result.newEpisodeIds.toSet())
                                         }
+                                    } catch (e: AnimeRepository.NoEpisodesException) {
+                                        // KMK (r88): a skip with a warning (AnimeRepository logs it), not a failure
+                                        noEpisodes.incrementAndGet()
                                     } catch (e: Throwable) {
                                         if (e is CancellationException) throw e
-                                        failed.incrementAndGet()
+                                        synchronized(failed) { failed += anime.title }
                                         logcat(LogPriority.ERROR, e) { "Failed to update ${anime.title}" }
                                     }
                                 }
@@ -163,12 +171,20 @@ class AnimeLibraryUpdateJob(
             context.cancelNotification(Notifications.ID_ANIME_LIBRARY_PROGRESS)
         }
 
+        val checked = favorites.size - noSource.get()
         logcat(LogPriority.INFO, tag = "anime") {
-            "Anime update: ${favorites.size} checked, $skipped skipped, ${failed.get()} failed, " +
+            "Anime update: $checked checked, $skipped skipped, ${noSource.get()} without their source, " +
+                "${noEpisodes.get()} with no episodes from the source, ${failed.size} failed, " +
                 "${updated.size} with new episodes"
         }
         if (updated.isNotEmpty()) {
-            showNewEpisodes(updated.sortedBy { it.first.title.lowercase() }, failed.get())
+            showNewEpisodes(updated.sortedBy { it.first.title.lowercase() }, failed.size)
+        }
+        // KMK (r88): failures used to show only inside the new-episodes notification
+        if (updated.isEmpty() && failed.isNotEmpty()) {
+            showFailures(failed.sortedBy { it.lowercase() })
+        } else {
+            context.cancelNotification(ID_ANIME_UPDATE_ERRORS)
         }
         return Result.success()
     }
@@ -216,9 +232,9 @@ class AnimeLibraryUpdateJob(
         return { anime -> AnimePrefs.matchesCategories(links[anime.id].orEmpty(), included, excluded) }
     }
 
-    private suspend fun downloadNewEpisodes(anime: Anime, before: Set<Long>) {
+    private suspend fun downloadNewEpisodes(anime: Anime, newIds: Set<Long>) {
         val fresh = repository.getEpisodes(anime.id)
-            .filter { it.id !in before && !it.seen }
+            .filter { it.id in newIds && !it.seen }
             .sortedByDescending { it.sourceOrder }
         if (fresh.isEmpty()) return
         Injekt.get<AnimeDownloadManager>().enqueue(anime, fresh)
@@ -270,9 +286,28 @@ class AnimeLibraryUpdateJob(
         }
     }
 
+    /** KMK (r88): the anime that couldn't be updated, when no anime got new episodes */
+    private fun showFailures(titles: List<String>) {
+        val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
+        val pendingIntent = launchIntent?.let {
+            PendingIntent.getActivity(context, 0, it, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        }
+        context.notify(ID_ANIME_UPDATE_ERRORS, Notifications.CHANNEL_LIBRARY_ERROR) {
+            setSmallIcon(R.drawable.ic_komikku)
+            setContentTitle(context.stringResource(KMR.strings.anime_update_failed_count, titles.size))
+            setContentText(titles.joinToString(", "))
+            setStyle(NotificationCompat.BigTextStyle().bigText(titles.joinToString("\n")))
+            setAutoCancel(true)
+            pendingIntent?.let { setContentIntent(it) }
+        }
+    }
+
     companion object {
         private const val WORK_NAME = "AnimeLibraryUpdate"
         private const val WORK_NAME_AUTO = "AnimeLibraryUpdate-auto"
+
+        // KMK (r88): outside the ids in Notifications (fork ids -1801..-1813)
+        private const val ID_ANIME_UPDATE_ERRORS = -1814
 
         private const val DAY = 24L * 60 * 60 * 1000
 

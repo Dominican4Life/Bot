@@ -40,6 +40,25 @@ class JsSourceManager(private val context: Application) {
     /** Every saved source, newest change first */
     val savedFlow: StateFlow<List<JsSourceInfo>> = _saved.asStateFlow()
 
+    // KMK: the Code editor's test copies of sources that were never saved, left from earlier runs (an hour old,
+    // so one in use right now stays)
+    init {
+        scope.launch {
+            val keys = _saved.value.map { it.key }.toSet()
+            val old = System.currentTimeMillis() - 60 * 60 * 1000L
+            File(context.filesDir, "js_storage").listFiles().orEmpty()
+                .filter { it.isDirectory && it.name.endsWith(".editor") && it.name.removeSuffix(".editor") !in keys }
+                .forEach { folder ->
+                    runCatching {
+                        if (folder.walk().all { it.lastModified() < old }) {
+                            JsStorage.forget(folder)
+                            folder.deleteRecursively()
+                        }
+                    }
+                }
+        }
+    }
+
     /** Tag lists for the sources' autocomplete filters */
     val tags = JsTags(context, ::code)
 
@@ -247,6 +266,22 @@ class JsSourceManager(private val context: Application) {
                     JsStorage.forget(storage)
                     storage.deleteRecursively()
                 }
+            }
+        }
+    }
+
+    /**
+     * KMK: removes the Code editor's test copy (settings and storage) of [key] when it was never saved, once the
+     * editor moves on from it. A saved source keeps its test copy until it is deleted.
+     */
+    fun dropTestCopy(key: String) {
+        if (!isSafeKey(key) || get(key) != null) return
+        scope.launch {
+            runCatching { JsPreferences.testOf(context, JsSourceInfo.idFor(key)).edit().clear().apply() }
+            runCatching {
+                val storage = JsRuntime.storageDir(context, JsRuntime.testStorageKey(key))
+                JsStorage.forget(storage)
+                storage.deleteRecursively()
             }
         }
     }

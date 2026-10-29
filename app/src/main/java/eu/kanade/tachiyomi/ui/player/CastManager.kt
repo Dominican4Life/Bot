@@ -99,6 +99,46 @@ class CastManager(
     private var discoveryRetryJob: Job? = null
     private var mediaRouterCallback: androidx.mediarouter.media.MediaRouter.Callback? = null
 
+    // KMK -->
+    /** Collects the hoster list for the quality pick; replaced (not added to) on every session connect/resume */
+    private var qualitySelectionJob: Job? = null
+
+    /** The client [mediaClientCallback] is registered on, so each connect/resume registers it once */
+    private var callbackClient: RemoteMediaClient? = null
+
+    private val mediaClientCallback = object : RemoteMediaClient.Callback() {
+        override fun onStatusUpdated() {
+            updateCurrentMedia()
+            updateQueueItems()
+        }
+
+        override fun onMetadataUpdated() {
+            updateCurrentMedia()
+            updateQueueItems()
+        }
+
+        override fun onQueueStatusUpdated() {
+            updateQueueItems()
+        }
+
+        override fun onPreloadStatusUpdated() {
+            updateQueueItems()
+        }
+    }
+
+    private fun attachMediaClientCallback(client: RemoteMediaClient?) {
+        if (client === callbackClient) return
+        detachMediaClientCallback()
+        client?.registerCallback(mediaClientCallback)
+        callbackClient = client
+    }
+
+    private fun detachMediaClientCallback() {
+        callbackClient?.unregisterCallback(mediaClientCallback)
+        callbackClient = null
+    }
+    // KMK <--
+
     private val isCastApiAvailable: Boolean
         get() = isCastApiAvailable(context)
 
@@ -189,6 +229,10 @@ class CastManager(
 
     fun cleanup() {
         discoveryRetryJob?.cancel()
+        // KMK
+        qualitySelectionJob?.cancel()
+        qualitySelectionJob = null
+        detachMediaClientCallback()
         mediaRouterCallback?.let { mediaRouter.removeCallback(it) }
         mediaRouterCallback = null
         unregisterSessionListener()
@@ -203,29 +247,16 @@ class CastManager(
         updateCurrentMedia()
         updateQueueItems()
 
-        session.remoteMediaClient?.registerCallback(object : RemoteMediaClient.Callback() {
-            override fun onStatusUpdated() {
-                updateCurrentMedia()
-                updateQueueItems()
-            }
-
-            override fun onMetadataUpdated() {
-                updateCurrentMedia()
-                updateQueueItems()
-            }
-
-            override fun onQueueStatusUpdated() {
-                updateQueueItems()
-            }
-
-            override fun onPreloadStatusUpdated() {
-                updateQueueItems()
-            }
-        })
+        // KMK: one callback per client, not one more on every connect/resume
+        attachMediaClientCallback(session.remoteMediaClient)
     }
 
     fun onSessionEnded() {
         castProgressJob?.cancel()
+        // KMK
+        qualitySelectionJob?.cancel()
+        qualitySelectionJob = null
+        detachMediaClientCallback()
         val lastPosition = getCurrentCastPosition()
         if (lastPosition > 0) viewModel?.updateCastProgress(lastPosition.toFloat() / 1000)
         castSession = null
@@ -241,7 +272,9 @@ class CastManager(
 
     // Quality Selection
     fun handleQualitySelection() {
-        viewModel?.hosterList?.filter { it.isNotEmpty() }
+        // KMK: the collector of the previous connect/resume stops
+        qualitySelectionJob?.cancel()
+        qualitySelectionJob = viewModel?.hosterList?.filter { it.isNotEmpty() }
             ?.onEach { videos ->
                 val hasQueueItems = (castSession?.remoteMediaClient?.mediaQueue?.itemCount ?: 0) > 0
                 val hasMultipleQualities = videos.size > 1
@@ -378,6 +411,10 @@ class CastManager(
         _isLoading.value = false
         _castState.value = CastState.DISCONNECTED
         castProgressJob?.cancel()
+        // KMK
+        qualitySelectionJob?.cancel()
+        qualitySelectionJob = null
+        detachMediaClientCallback()
         castSession = null
     }
 
@@ -393,22 +430,8 @@ class CastManager(
                     updateQueueItems()
                     updateCurrentMedia()
 
-                    castSession?.remoteMediaClient?.registerCallback(
-                        object : RemoteMediaClient.Callback() {
-                            override fun onStatusUpdated() {
-                                updateCurrentMedia()
-                                updateQueueItems()
-                            }
-
-                            override fun onQueueStatusUpdated() {
-                                updateQueueItems()
-                            }
-
-                            override fun onPreloadStatusUpdated() {
-                                updateQueueItems()
-                            }
-                        },
-                    )
+                    // KMK: the same single callback as onSessionConnected
+                    attachMediaClientCallback(castSession?.remoteMediaClient)
                 }
             } catch (e: Exception) {
                 logcat(LogPriority.ERROR, e)

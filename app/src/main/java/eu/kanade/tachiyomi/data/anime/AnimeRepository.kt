@@ -369,8 +369,16 @@ class AnimeRepository(
      * Saves the episodes from the source: adds new ones, updates changed ones and removes the ones the source
      * no longer has. Keeps seen/bookmark/progress of existing episodes.
      */
-    suspend fun syncEpisodes(anime: Anime, sourceEpisodes: List<SEpisode>): Int {
-        var newCount = 0
+    suspend fun syncEpisodes(anime: Anime, sourceEpisodes: List<SEpisode>): Int =
+        syncEpisodesNew(anime, sourceEpisodes).size
+
+    /**
+     * KMK (r88): [syncEpisodes], returning the ids of the episodes that are really new. Rows carried over from a
+     * removed episode (the source changed its links) get new ids too but aren't in the list, so the library update
+     * doesn't auto-download old unseen episodes again.
+     */
+    private suspend fun syncEpisodesNew(anime: Anime, sourceEpisodes: List<SEpisode>): List<Long> {
+        val newIds = ArrayList<Long>()
         val now = Instant.now().toEpochMilli()
         val existing = getEpisodes(anime.id).associateBy { it.url }
         val distinct = sourceEpisodes.distinctBy { it.url }
@@ -385,7 +393,6 @@ class AnimeRepository(
                 val number = episodeNumberOf(ep)
                 if (old == null) {
                     val from = carryFrom[ep.url]
-                    if (from == null) newCount++
                     episodesQueries.insert(
                         animeId = anime.id,
                         url = ep.url,
@@ -400,8 +407,10 @@ class AnimeRepository(
                         dateFetch = from?.dateFetch ?: now,
                         dateUpload = ep.date_upload,
                     )
-                    if (from != null) {
-                        val newId = animesQueries.selectLastInsertedRowId().executeAsOne()
+                    val newId = animesQueries.selectLastInsertedRowId().executeAsOne()
+                    if (from == null) {
+                        newIds += newId
+                    } else {
                         episodesQueries.updatePartial(
                             seen = from.seen,
                             bookmark = from.bookmark,
@@ -429,7 +438,7 @@ class AnimeRepository(
             // The history rows of moved episodes were moved above, so the cascade only drops the others'
             removed.forEach { episodesQueries.deleteById(it.id) }
         }
-        return newCount
+        return newIds
     }
 
     private fun episodeNumberOf(ep: SEpisode): Double = ep.episode_number.toDouble().takeIf { it >= 0 } ?: -1.0
@@ -477,7 +486,19 @@ class AnimeRepository(
      * KMK: like AniZen, details and episodes are two separate calls through the extensions-lib 17 combined API, so
      * a failing details page still leaves the episodes loaded (with their thumbnails, summaries and Sub / Dub).
      */
-    suspend fun refreshFromSource(anime: Anime, source: AnimeSource): Int {
+    suspend fun refreshFromSource(anime: Anime, source: AnimeSource): Int =
+        refreshFromSourceResult(anime, source).newCount
+
+    /**
+     * KMK (r88): what one load from the source did. [detailsError] is the details page's failure when the episodes
+     * still loaded; it's only a warning (logged), so the new episodes are still reported and auto-downloaded.
+     */
+    class RefreshResult(val newEpisodeIds: List<Long>, val detailsError: Throwable?) {
+        val newCount: Int get() = newEpisodeIds.size
+    }
+
+    /** [refreshFromSource], with the ids of the new episodes. Throws only when the episodes (or seasons) failed. */
+    suspend fun refreshFromSourceResult(anime: Anime, source: AnimeSource): RefreshResult {
         // KMK: one load per anime at a time. Opening an anime from a Browse / library preview started a second load
         // of its episodes while the preview's was still running (the JS source logged "episodes" twice); a caller
         // that comes while one runs waits for it and gets its answer. It runs outside the caller, so leaving the
@@ -501,16 +522,16 @@ class AnimeRepository(
     private val refreshScope = kotlinx.coroutines.CoroutineScope(
         kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO,
     )
-    private val refreshing = HashMap<Pair<Long, Long>, kotlinx.coroutines.Deferred<Int>>()
+    private val refreshing = HashMap<Pair<Long, Long>, kotlinx.coroutines.Deferred<RefreshResult>>()
     private val refreshedAt = java.util.concurrent.ConcurrentHashMap<Long, Long>()
 
-    private suspend fun loadFromSource(anime: Anime, source: AnimeSource): Int {
+    private suspend fun loadFromSource(anime: Anime, source: AnimeSource): RefreshResult {
         val result = loadFromSourceNow(anime, source)
         refreshedAt[anime.id] = System.currentTimeMillis()
         return result
     }
 
-    private suspend fun loadFromSourceNow(anime: Anime, source: AnimeSource): Int {
+    private suspend fun loadFromSourceNow(anime: Anime, source: AnimeSource): RefreshResult {
         val base = anime.toSAnime()
         val detailsError = runCatching {
             val details = source.getAnimeEpisodeUpdate(base, emptyList(), fetchDetails = true, fetchEpisodes = false).anime
@@ -526,7 +547,7 @@ class AnimeRepository(
         }.exceptionOrNull()
         val fresh = getAnime(anime.id) ?: anime
         var keptSaved = false
-        val count = if (fresh.fetchType == FetchType.Episodes) {
+        val newIds: List<Long> = if (fresh.fetchType == FetchType.Episodes) {
             val episodes = source.getAnimeEpisodeUpdate(
                 fresh.toSAnime(),
                 emptyList(),
@@ -550,9 +571,9 @@ class AnimeRepository(
                     "anime",
                     "${anime.title}: the source returned no episodes; kept the $saved saved ones",
                 )
-                0
+                emptyList()
             } else {
-                syncEpisodes(fresh, episodes)
+                syncEpisodesNew(fresh, episodes)
             }
         } else {
             // KMK: an anime made of seasons saves them as anime linked to it, like Anikku
@@ -564,13 +585,14 @@ class AnimeRepository(
             ).seasons
             logcat(LogPriority.INFO, tag = "anime") { "${anime.title}: ${seasons.size} seasons" }
             syncSeasons(fresh, seasons, source.id)
-            0
+            emptyList()
         }
         if (keptSaved) {
             throw NoEpisodesException().also { e -> detailsError?.let { e.addSuppressed(it) } }
         }
-        detailsError?.let { throw it }
-        return count
+        // KMK (r88): the episodes were saved even though the details failed (logged above). Throwing here hid them
+        // from the library update (no notification or auto-download, and they counted as old the next time).
+        return RefreshResult(newIds, detailsError)
     }
 
     /** KMK (r87): the source answered with no episodes while some were saved; they were kept. Shown by the UI. */

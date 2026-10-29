@@ -337,6 +337,22 @@ class WebtoonViewer(
      * Scrolls up by [scrollDistance].
      */
     private fun scrollUp() {
+        // KMK (r88): "Tap scroll by page" went back by screen; the same by-page step as scrollDown(), backwards
+        if (!isContinuous && (tapByPage || readerPreferences.continuousVerticalTappingByPage().get())) {
+            val currentPage = currentPage
+            if (currentPage is ReaderPage) {
+                val position = adapter.items.indexOf(currentPage)
+                val previousItem = adapter.items.getOrNull(position - 1)
+                if (position > 0 && previousItem is ReaderPage) {
+                    if (config.usePageTransitions) {
+                        recycler.smoothScrollToPosition(position - 1)
+                    } else {
+                        recycler.scrollToPosition(position - 1)
+                    }
+                    return
+                }
+            }
+        }
         if (config.usePageTransitions) {
             recycler.smoothScrollBy(0, -scrollDistance)
         } else {

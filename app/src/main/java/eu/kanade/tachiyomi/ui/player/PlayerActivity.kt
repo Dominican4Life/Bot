@@ -255,6 +255,8 @@ class PlayerActivity : BaseActivity() {
                 withUIContext {
                     setInitialEpisodeError(exception)
                 }
+                // KMK: the player is closing (e.g. the source isn't installed, so there is no source to load from)
+                return@launchNonCancellable
             }
 
             viewModel.updateIsLoadingHosters(false)
@@ -294,15 +296,8 @@ class PlayerActivity : BaseActivity() {
         setupMediaSession()
         setupPlayerOrientation()
 
-
-
-        Thread.setDefaultUncaughtExceptionHandler { _, throwable ->
-            runOnUiThread {
-                toast(throwable.message)
-            }
-            logcat(LogPriority.ERROR, throwable)
-            finish()
-        }
+        // KMK: the player no longer replaces the app's crash handler (it was never restored, kept this activity
+        // alive and hid the crash screen). Its load failures go through SetVideoLoadError instead.
 
         viewModel.eventFlow
             .onEach { event ->
@@ -1026,7 +1021,8 @@ class PlayerActivity : BaseActivity() {
             PlayerOrientation.ReversePortrait -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
             PlayerOrientation.SensorPortrait -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
             PlayerOrientation.Landscape -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-            PlayerOrientation.ReverseLandscape -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
+            // KMK: was REVERSE_PORTRAIT
+            PlayerOrientation.ReverseLandscape -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
             PlayerOrientation.SensorLandscape -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         }
         if (requestedOrientation != target) {
@@ -1249,6 +1245,16 @@ class PlayerActivity : BaseActivity() {
                         }
                     } else {
                         logcat(LogPriority.ERROR) { "Error getting links" }
+                        // KMK: the links couldn't be fetched; the error is shown instead of a spinner that never ends
+                        withUIContext {
+                            setInitialEpisodeError(
+                                switchMethod.error ?: PlayerViewModel.ExceptionWithStringResource(
+                                    "Hoster list is empty",
+                                    AMR.strings.no_hosters,
+                                ),
+                            )
+                        }
+                        return@launchIO
                     }
 
                     if (isInPictureInPictureMode && pipEpisodeToasts) {

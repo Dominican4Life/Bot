@@ -100,6 +100,9 @@ object HomeScreen : Screen() {
         // SY <--
         // KMK: the app opens on the library tab used last
         val lastLibraryAnime = remember { Injekt.get<SourcePreferences>().libraryShowAnime() }
+        // KMK: read before any tab is composed: a restored Browse tab makes the Extensions screen model (which takes
+        // the kept search) during composition, before a LaunchedEffect would run
+        val returnToExtensions = remember { eu.kanade.tachiyomi.ui.browse.extension.unified.ExtensionsReturn.take() }
 
         TabNavigator(
             tab = if (lastLibraryAnime.get()) AnimeLibraryTab else LibraryTab,
@@ -223,7 +226,7 @@ object HomeScreen : Screen() {
                 // KMK: back to Browse › Extensions when Android restarted the app during an extension install
                 // (turning on "Install unknown apps" does that)
                 launch {
-                    if (eu.kanade.tachiyomi.ui.browse.extension.unified.ExtensionsReturn.take()) {
+                    if (returnToExtensions) {
                         openTabEvent.send(Tab.Browse(toExtensions = true))
                     }
                 }

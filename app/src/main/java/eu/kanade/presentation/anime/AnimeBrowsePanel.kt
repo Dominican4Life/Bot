@@ -22,8 +22,11 @@ import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -31,8 +34,12 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -40,17 +47,24 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.browse.components.BrowsePreviewInfoHeader
+import eu.kanade.presentation.manga.DownloadAction
+import eu.kanade.presentation.manga.components.ChapterDownloadAction
 import eu.kanade.presentation.reader.SlidingSidePanel
 import eu.kanade.tachiyomi.animesource.AnimeSource
 import eu.kanade.tachiyomi.data.anime.Anime
 import eu.kanade.tachiyomi.data.anime.Episode
+import eu.kanade.tachiyomi.data.anime.download.AnimeDownloadManager
+import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.ui.anime.source.AnimeSourceScreenModel
+import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.components.material.DISABLED_ALPHA
 import tachiyomi.presentation.core.components.material.SECONDARY_ALPHA
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.selectedBackground
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import java.text.DateFormat
 import java.util.Date
 
@@ -90,6 +104,38 @@ fun AnimeEpisodePanel(
         key(anime.id) {
             val listState = rememberLazyListState()
             val displayManga = remember(anime) { anime.asDisplayManga() }
+            // KMK (r88): download buttons like the manga preview's, fed by AnimeDownloadManager's queue and files
+            val downloadManager = remember { Injekt.get<AnimeDownloadManager>() }
+            val downloadQueue by downloadManager.queue.collectAsState()
+            val downloadChanges by downloadManager.changes.collectAsState()
+            val queuedById = remember(downloadQueue) { downloadQueue.associateBy { it.episode.id } }
+            LaunchedEffect(Unit) { downloadManager.refresh(anime) }
+            val downloadedIds by produceState(emptySet<Long>(), preview.episodes, downloadChanges) {
+                val episodes = preview.episodes
+                value = withIOContext {
+                    episodes.filter { downloadManager.isDownloaded(anime, it) }.mapTo(HashSet()) { it.id }
+                }
+            }
+            val onDownloadMenu: (DownloadAction) -> Unit = { action ->
+                // Watching order (oldest first), without the ones already downloaded or waiting in line
+                val open = preview.episodes
+                    .sortedByDescending { it.sourceOrder }
+                    .filter { ep ->
+                        ep.id !in downloadedIds &&
+                            queuedById[ep.id]?.state?.value.let { it == null || it == Download.State.ERROR }
+                    }
+                val unseen = open.filter { !it.seen }
+                val picked = when (action) {
+                    DownloadAction.NEXT_1_CHAPTER -> unseen.take(1)
+                    DownloadAction.NEXT_5_CHAPTERS -> unseen.take(5)
+                    DownloadAction.NEXT_10_CHAPTERS -> unseen.take(10)
+                    DownloadAction.NEXT_25_CHAPTERS -> unseen.take(25)
+                    DownloadAction.UNREAD_CHAPTERS -> unseen
+                    DownloadAction.BOOKMARKED_CHAPTERS -> open.filter { it.bookmark }
+                    DownloadAction.ALL_CHAPTERS -> open
+                }
+                if (picked.isNotEmpty()) downloadManager.enqueue(anime, picked)
+            }
             LazyColumn(
                 state = listState,
                 contentPadding = PaddingValues(bottom = 8.dp),
@@ -116,6 +162,43 @@ fun AnimeEpisodePanel(
                             style = MaterialTheme.typography.titleMedium,
                             modifier = Modifier.weight(1f),
                         )
+                        // KMK (r88): the download menu, like the manga preview's
+                        var showDownloadMenu by remember { mutableStateOf(false) }
+                        Box {
+                            IconButton(onClick = { showDownloadMenu = true }, enabled = preview.episodes.isNotEmpty()) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Download,
+                                    contentDescription = stringResource(MR.strings.manga_download),
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = showDownloadMenu,
+                                onDismissRequest = { showDownloadMenu = false },
+                            ) {
+                                listOf(
+                                    DownloadAction.NEXT_1_CHAPTER to
+                                        stringResource(KMR.strings.anime_download_next_one),
+                                    DownloadAction.NEXT_5_CHAPTERS to
+                                        stringResource(KMR.strings.anime_download_ahead_next, 5),
+                                    DownloadAction.NEXT_10_CHAPTERS to
+                                        stringResource(KMR.strings.anime_download_ahead_next, 10),
+                                    DownloadAction.UNREAD_CHAPTERS to stringResource(KMR.strings.anime_filter_unseen),
+                                    DownloadAction.ALL_CHAPTERS to
+                                        stringResource(KMR.strings.anime_download_all_episodes),
+                                    DownloadAction.BOOKMARKED_CHAPTERS to
+                                        stringResource(MR.strings.download_bookmarked),
+                                ).forEach { (action, label) ->
+                                    DropdownMenuItem(
+                                        text = { Text(text = label) },
+                                        onClick = {
+                                            showDownloadMenu = false
+                                            onDownloadMenu(action)
+                                        },
+                                    )
+                                }
+                            }
+                        }
                         IconButton(onClick = onToggleSort) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Outlined.Sort,
@@ -147,6 +230,17 @@ fun AnimeEpisodePanel(
                             onLongClick = { onPlay(episode) },
                             onToggleSeen = { onToggleSeen(episode) },
                             onToggleBookmark = { onToggleBookmark(episode) },
+                            downloaded = episode.id in downloadedIds,
+                            queued = queuedById[episode.id],
+                            onDownload = { action ->
+                                when (action) {
+                                    ChapterDownloadAction.START -> downloadManager.enqueue(anime, listOf(episode))
+                                    ChapterDownloadAction.START_NOW ->
+                                        downloadManager.enqueue(anime, listOf(episode), startNow = true)
+                                    ChapterDownloadAction.CANCEL -> downloadManager.cancel(listOf(episode.id))
+                                    ChapterDownloadAction.DELETE -> downloadManager.delete(anime, listOf(episode))
+                                }
+                            },
                         )
                     }
                 }
@@ -212,6 +306,9 @@ private fun AnimePanelEpisodeRow(
     onLongClick: () -> Unit,
     onToggleSeen: () -> Unit,
     onToggleBookmark: () -> Unit,
+    downloaded: Boolean,
+    queued: AnimeDownloadManager.Item?,
+    onDownload: (ChapterDownloadAction) -> Unit,
 ) {
     val subtitle = remember(episode.dateUpload, episode.scanlator) {
         listOfNotNull(
@@ -286,5 +383,13 @@ private fun AnimePanelEpisodeRow(
                 modifier = Modifier.size(20.dp),
             )
         }
+        // KMK (r88): download / queued / progress / downloaded, as on the manga preview's chapter rows
+        AnimeEpisodeDownloadIndicator(
+            enabled = true,
+            downloaded = downloaded,
+            queued = queued,
+            onClick = onDownload,
+            modifier = Modifier.size(36.dp),
+        )
     }
 }

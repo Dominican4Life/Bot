@@ -492,7 +492,14 @@ class AnimeBackupHelper(
             "anime_skip_intro_length_",
             "anime_last_selected_season_",
         )
-        private val ID_KEYS = setOf("pref_last_aspect_ratio_anime_id", "anime_download_queue")
+        // KMK (r88): the AniList airing cache holds "title:<animeId>" entries (another show's airing after a restore),
+        // and pending anime tracking holds "animeId:trackerId" (a private key, in backups with Private settings)
+        private val ID_KEYS = setOf(
+            "pref_last_aspect_ratio_anime_id",
+            "anime_download_queue",
+            "anime_airing_cache",
+            "__PRIVATE_anime_track_pending",
+        )
 
         /** True for an app setting the plain app-settings restore must skip (see [CATEGORY_KEYS] and above) */
         fun isAnimeIdKey(key: String): Boolean =

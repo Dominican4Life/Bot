@@ -172,38 +172,49 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
 
         LaunchedEffect(state.justSaved) {
             val info = state.justSaved ?: return@LaunchedEffect
-            model.consumeSaved()
             if (leaveAfterSave) {
                 leaveAfterSave = false
+                model.consumeSaved(info)
                 navigator.pop()
                 return@LaunchedEffect
             }
             replaceAfterSave?.let { action ->
                 replaceAfterSave = null
+                model.consumeSaved(info)
                 action()
                 return@LaunchedEffect
             }
-            val result = snackbar.showSnackbar(
-                message = "Saved. ${info.name} is in Browse → Sources (${if (info.anime) "anime" else "manga"})",
-                actionLabel = "Open",
-                withDismissAction = true,
-                duration = SnackbarDuration.Long,
-            )
-            if (result == SnackbarResult.ActionPerformed) {
-                navigator.push(
-                    if (info.anime) {
-                        AnimeSourceScreen(info.id)
-                    } else {
-                        BrowseSourceScreen(info.id, GetRemoteManga.QUERY_POPULAR)
-                    },
+            // KMK: consumed once the snackbar is done: consuming first changed this effect's key, which cancelled
+            // the snackbar straight away. Only this save's value is cleared, not a newer one
+            try {
+                val result = snackbar.showSnackbar(
+                    message = "Saved. ${info.name} is in Browse → Sources (${if (info.anime) "anime" else "manga"})",
+                    actionLabel = "Open",
+                    withDismissAction = true,
+                    duration = SnackbarDuration.Long,
                 )
+                if (result == SnackbarResult.ActionPerformed) {
+                    navigator.push(
+                        if (info.anime) {
+                            AnimeSourceScreen(info.id)
+                        } else {
+                            BrowseSourceScreen(info.id, GetRemoteManga.QUERY_POPULAR)
+                        },
+                    )
+                }
+            } finally {
+                model.consumeSaved(info)
             }
         }
 
         LaunchedEffect(state.message) {
             val message = state.message ?: return@LaunchedEffect
-            model.consumeMessage()
-            snackbar.showSnackbar(message)
+            // KMK: consumed after it was shown (see justSaved above)
+            try {
+                snackbar.showSnackbar(message)
+            } finally {
+                model.consumeMessage(message)
+            }
         }
 
         val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->

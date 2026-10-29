@@ -13,6 +13,7 @@ import eu.kanade.tachiyomi.extension.availableKey
 import eu.kanade.tachiyomi.extension.copyFor
 import eu.kanade.tachiyomi.extension.model.Extension
 import eu.kanade.tachiyomi.extension.model.InstallStep
+import eu.kanade.tachiyomi.extension.util.InstallOrigins
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -166,7 +167,12 @@ class AnimeExtensionManager(
         for ((pkgName, extension) in installedExtensionsMap) {
             // KMK: same signature (or, for a repo with no signing fingerprint, the package name), from the repo it
             // came from when that one still offers it
-            val availableExt = availableExtensions.copyFor(pkgName, extension.signatureHash, extension.store)
+            val availableExt = availableExtensions.copyFor(
+                pkgName,
+                extension.signatureHash,
+                extension.store,
+                InstallOrigins.repoOf(anime = true, pkgName),
+            )
             if (availableExt == null) {
                 if (!extension.isObsolete || extension.hasUpdate) {
                     installedExtensionsMap[pkgName] = extension.copy(isObsolete = true, hasUpdate = false)
@@ -187,13 +193,20 @@ class AnimeExtensionManager(
 
     // KMK: [sideload] true/false from the Sideload / Install buttons, null as set in the installer setting
     fun installExtension(extension: Extension.Available, sideload: Boolean? = null): Flow<InstallStep> {
+        // KMK: which repo it comes from, so later matches prefer that repo's copy (copyFor)
+        InstallOrigins.remember(anime = true, extension.pkgName, extension.store.indexUrl)
         return installer.downloadAndInstall(extension.apkUrl, extension, sideload)
     }
 
     fun updateExtension(extension: AnimeExtension): Flow<InstallStep> {
         // KMK: the copy of the repo it came from (else same signature, else a repo with no fingerprint by name)
         val availableExt = availableExtensionMapFlow.value.values
-            .copyFor(extension.pkgName, extension.signatureHash, extension.store)
+            .copyFor(
+                extension.pkgName,
+                extension.signatureHash,
+                extension.store,
+                InstallOrigins.repoOf(anime = true, extension.pkgName),
+            )
             ?: return emptyFlow()
         // KMK: updated the way it was installed: sideloaded stays sideloaded
         return installExtension(availableExt, sideload = !extension.isShared)
@@ -262,7 +275,8 @@ class AnimeExtensionManager(
     private fun AnimeExtension.updateExists(availableExtension: Extension.Available? = null): Boolean {
         val availableExt = availableExtension
             // KMK: the map is keyed by package, signature and repo
-            ?: availableExtensionMapFlow.value.values.copyFor(pkgName, signatureHash, store)
+            ?: availableExtensionMapFlow.value.values
+                .copyFor(pkgName, signatureHash, store, InstallOrigins.repoOf(anime = true, pkgName))
             ?: return false
         return availableExt.versionCode > versionCode || availableExt.libVersion > libVersion
     }

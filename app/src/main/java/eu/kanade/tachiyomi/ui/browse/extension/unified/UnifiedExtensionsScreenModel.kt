@@ -10,14 +10,18 @@ import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.extension.copyFor
 import eu.kanade.tachiyomi.extension.model.Extension
 import eu.kanade.tachiyomi.extension.model.InstallStep
+import eu.kanade.tachiyomi.extension.util.InstallOrigins
 import eu.kanade.tachiyomi.jssource.JsSourceManager
 import eu.kanade.tachiyomi.util.system.AppLog
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.onCompletion
-import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import mihon.data.extension.service.ExtensionStoreStatus
@@ -28,6 +32,7 @@ import mihon.domain.extension.repository.ExtensionStoreRepository
 import tachiyomi.core.common.util.lang.launchIO
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * KMK: State of the unified Extensions screen (Kototoro-style): every source, repository and package, whatever
@@ -49,6 +54,10 @@ class UnifiedExtensionsScreenModel(
 ) {
 
     private val steps = MutableStateFlow(emptyMap<String, InstallStep>())
+
+    // KMK: the install each row is following (the latest one per row), so a cancel can stop it. A newer try doesn't
+    // cancel the older collector: its onCompletion would drop the newer install's step from the installer
+    private val tracking = ConcurrentHashMap<String, Job>()
 
     private data class MangaData(
         val installed: List<Extension.Installed>,
@@ -203,7 +212,8 @@ class UnifiedExtensionsScreenModel(
         manga.installed.forEach { ext ->
             val key = key(ExtensionKind.MIHON, ext.pkgName)
             // KMK: the repo copy that stands for it (the one from its repo first), not whichever came last
-            val offer = manga.available.copyFor(ext.pkgName, ext.signatureHash, ext.store)
+            val offer = manga.available
+                .copyFor(ext.pkgName, ext.signatureHash, ext.store, InstallOrigins.repoOf(anime = false, ext.pkgName))
             val repoUrl = ext.store?.indexUrl
             val repoName = ext.store?.name ?: ext.storeName
             val active = ext.sources.count { it.id.toString() !in prefs.disabled }
@@ -278,7 +288,8 @@ class UnifiedExtensionsScreenModel(
         anime.installed.forEach { ext ->
             val key = key(ExtensionKind.ANIYOMI, ext.pkgName)
             // KMK: the repo copy that stands for it (the one from its repo first), not whichever came last
-            val offer = anime.available.copyFor(ext.pkgName, ext.signatureHash, ext.store)
+            val offer = anime.available
+                .copyFor(ext.pkgName, ext.signatureHash, ext.store, InstallOrigins.repoOf(anime = true, ext.pkgName))
             val repoUrl = ext.store?.indexUrl
             val repoName = ext.store?.name ?: ext.storeName
             packages += UnifiedPackage(
@@ -633,6 +644,8 @@ class UnifiedExtensionsScreenModel(
         } else {
             item.manga?.let { mangaManager.cancelInstallUpdateExtension(it) }
         }
+        // KMK: stop following it, so the kept search (ExtensionsReturn) is cleared once nothing else installs
+        tracking.remove(item.key)?.cancel()
         steps.update { it - item.key }
     }
 
@@ -706,15 +719,24 @@ class UnifiedExtensionsScreenModel(
     }
 
     private fun Flow<InstallStep>.track(key: String) {
-        screenModelScope.launchIO {
-            this@track
-                .takeWhile { it != InstallStep.Installed }
+        val flow = this
+        val job = screenModelScope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
+            val self = this.coroutineContext[Job]
+            flow
                 .onCompletion {
-                    steps.update { it - key }
-                    ExtensionsReturn.clear()
+                    // KMK: only this row's latest install clears the row; the kept search goes once none is running
+                    if (self != null && tracking.remove(key, self)) steps.update { it - key }
+                    if (tracking.isEmpty()) ExtensionsReturn.clear()
                 }
-                .collectLatest { step -> steps.update { it + (key to step) } }
+                // KMK: stops on Error and Idle (failed or cancelled) too, not only on Installed: the step flow never
+                // completes by itself, so the row and ExtensionsReturn stayed set after a failed install
+                .firstOrNull { step ->
+                    steps.update { it + (key to step) }
+                    step.isCompleted()
+                }
         }
+        tracking[key] = job
+        job.start()
     }
 
     @Immutable

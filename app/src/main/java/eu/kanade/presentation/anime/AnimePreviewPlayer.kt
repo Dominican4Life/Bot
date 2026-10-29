@@ -86,6 +86,7 @@ import eu.kanade.tachiyomi.data.anime.download.AnimeDownloadManager
 import eu.kanade.tachiyomi.ui.player.VideoFilterTheme
 import eu.kanade.tachiyomi.ui.player.VideoFilters
 import eu.kanade.tachiyomi.ui.player.applyAnime4K
+import eu.kanade.tachiyomi.ui.player.controls.components.sheets.QualityOrder
 import eu.kanade.tachiyomi.ui.player.resolveUri
 import eu.kanade.tachiyomi.ui.player.settings.DecoderPreferences
 import eu.kanade.tachiyomi.ui.player.settings.PlayerPreferences
@@ -147,6 +148,8 @@ fun AnimePreviewSection(
     var phase by remember { mutableStateOf<PreviewPhase>(PreviewPhase.Idle) }
     var mpv by remember { mutableStateOf<MPV?>(null) }
     var videos by remember { mutableStateOf<List<Video>>(emptyList()) }
+    // KMK (r88): the server each of [videos] came from (same positions), for the grouped Qualities menu
+    var servers by remember { mutableStateOf<List<String?>>(emptyList()) }
     var videoIndex by remember { mutableIntStateOf(0) }
     var position by remember { mutableDoubleStateOf(0.0) }
     var duration by remember { mutableDoubleStateOf(0.0) }
@@ -269,6 +272,7 @@ fun AnimePreviewSection(
             }
             if (localUrl != null) {
                 videos = listOf(Video(videoUrl = localUrl, videoTitle = "Downloaded", initialized = true))
+                servers = listOf(null)
                 startVideo(0, videos, ep)
                 return@launch
             }
@@ -277,12 +281,15 @@ fun AnimePreviewSection(
                 return@launch
             }
             try {
-                val list = withIOContext { AnimeVideoFetcher.fetchVideos(src, ep.toSEpisode()) }
+                // KMK (r88): with each video's server, so the Qualities menu can group them like the full player
+                val result = withIOContext { AnimeVideoFetcher.fetchServerVideos(src, ep.toSEpisode()) }
+                val list = result.videos
                 videos = list
+                servers = result.servers
                 if (list.isEmpty()) {
                     phase = PreviewPhase.NoVideos
                 } else {
-                    startVideo(0, list, ep)
+                    startVideo(result.start.coerceIn(0, list.lastIndex), list, ep)
                 }
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
@@ -398,6 +405,7 @@ fun AnimePreviewSection(
                             position = position,
                             duration = duration,
                             videos = videos,
+                            servers = servers,
                             videoIndex = videoIndex,
                             onTogglePause = {
                                 showControls = true
@@ -532,6 +540,7 @@ private fun PlayerControls(
     position: Double,
     duration: Double,
     videos: List<Video>,
+    servers: List<String?>,
     videoIndex: Int,
     onTogglePause: () -> Unit,
     onToggleMute: () -> Unit,
@@ -556,22 +565,46 @@ private fun PlayerControls(
                             tint = Color.White,
                         )
                     }
+                    // KMK (r88): grouped under server headers like the full player's Qualities sheet, each server's
+                    // videos in QualityOrder (SUB then DUB, highest first). Every pick is still an index into [videos].
+                    val groups = remember(videos, servers) {
+                        val byServer = LinkedHashMap<String?, MutableList<Int>>()
+                        videos.indices.forEach { byServer.getOrPut(servers.getOrNull(it)) { mutableListOf() } += it }
+                        byServer.map { (server, members) ->
+                            server to QualityOrder.of(members.map { videos[it] }).map { members[it] }
+                        }
+                    }
                     DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-                        videos.forEachIndexed { index, video ->
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        text = video.videoTitle.ifBlank { video.videoUrl },
-                                        fontWeight = if (index == videoIndex) FontWeight.Bold else null,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                },
-                                onClick = {
-                                    open = false
-                                    onPickVideo(index)
-                                },
-                            )
+                        groups.forEachIndexed { groupIndex, (server, indexes) ->
+                            if (server != null) {
+                                if (groupIndex > 0) HorizontalDivider()
+                                Text(
+                                    text = server,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                )
+                            }
+                            indexes.forEach { index ->
+                                val video = videos[index]
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = video.videoTitle.ifBlank { video.videoUrl },
+                                            fontWeight = if (index == videoIndex) FontWeight.Bold else null,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    },
+                                    onClick = {
+                                        open = false
+                                        onPickVideo(index)
+                                    },
+                                )
+                            }
                         }
                     }
                 }

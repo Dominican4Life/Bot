@@ -410,7 +410,8 @@ class AnimeGlobalSearchScreenModel(
             Row(source, emptyList(), e.message ?: e.javaClass.simpleName)
         }
         if (state.value.query != query) return
-        if (mergeIntoId == null) {
+        // KMK (r88): a failed source isn't kept, so the next search with these words tries it again
+        if (mergeIntoId == null && result.error == null) {
             resultCache.getOrPut(query) { java.util.concurrent.ConcurrentHashMap() }[source.id] = result
         }
         mutableState.update { state ->

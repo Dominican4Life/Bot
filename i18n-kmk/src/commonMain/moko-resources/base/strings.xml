@@ -667,6 +667,8 @@
     <string name="pref_anime_delete_keep_bookmarked">Keep bookmarked episodes</string>
     <string name="pref_anime_download_ahead">Download ahead while watching</string>
     <string name="anime_download_ahead_next">Next %1$d unseen episodes</string>
+    <string name="anime_download_next_one">Next unseen episode</string>
+    <string name="anime_download_all_episodes">All episodes</string>
     <string name="pref_anime_download_ahead_info">Only for anime in your library, once an episode counts as watched.</string>
     <string name="pref_anime_download_new">Download new episodes</string>
     <string name="pref_anime_download_new_categories_details">Anime in excluded categories won\'t be downloaded even if they\'re also in included categories.</string>

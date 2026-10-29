@@ -135,6 +135,10 @@ class SourceEditorScreenModel(
         detectJob = screenModelScope.launchIO {
             kotlinx.coroutines.delay(delayMs)
             if (SourceTemplates.isTemplate(state.value.code)) return@launchIO
+            // KMK: what the details are read for; they're dropped if another source or other code is there by then
+            val forKey = state.value.key
+            val forCode = state.value.code
+            val forJson = state.value.json
             val meta = try {
                 runtime().metadata()
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -144,6 +148,7 @@ class SourceEditorScreenModel(
             }
             fun value(key: String) = meta.str(key)?.takeIf { it.isNotBlank() }
             mutableState.update {
+                if (it.key != forKey || it.code != forCode || it.json != forJson) return@update it
                 it.copy(
                     name = value("name") ?: it.name,
                     iconUrl = value("iconUrl") ?: it.iconUrl,
@@ -226,6 +231,7 @@ class SourceEditorScreenModel(
 
     fun newSource(json: Boolean, anime: Boolean) {
         closeRuntime()
+        dropUnsavedTestCopy()
         mutableState.value = State(
             key = manager.newKey(),
             json = json,
@@ -238,6 +244,7 @@ class SourceEditorScreenModel(
         closeRuntime()
         val info = manager.get(key) ?: return
         val code = manager.code(key) ?: return
+        if (key != state.value.key) dropUnsavedTestCopy()
         mutableState.value = State(
             key = info.key,
             saved = true,
@@ -259,11 +266,14 @@ class SourceEditorScreenModel(
         return true
     }
 
-    fun consumeSaved() = mutableState.update { it.copy(justSaved = null) }
+    // KMK: clears only the value that was shown, so a newer save or message isn't lost
+    fun consumeSaved(info: JsSourceInfo) = mutableState.update {
+        if (it.justSaved === info) it.copy(justSaved = null) else it
+    }
 
     fun dismissSaveError() = mutableState.update { it.copy(saveError = null) }
 
-    fun consumeMessage() = mutableState.update { it.copy(message = null) }
+    fun consumeMessage(text: String) = mutableState.update { if (it.message == text) it.copy(message = null) else it }
 
     private fun message(text: String) = mutableState.update { it.copy(message = text) }
 
@@ -289,15 +299,20 @@ class SourceEditorScreenModel(
                 )
             }.onSuccess { info ->
                 mutableState.update {
+                    // KMK: another source was opened meanwhile: leave it alone
+                    if (it.key != s.key) return@update it.copy(running = null)
+                    // KMK: edits made while it was saving aren't saved yet, so they stay (and keep it unsaved)
+                    val same = it.code == s.code && it.json == s.json && it.name == s.name && it.lang == s.lang &&
+                        it.iconUrl == s.iconUrl && it.baseUrl == s.baseUrl
                     it.copy(
                         saved = true,
-                        dirty = false,
+                        dirty = it.dirty && !same,
                         running = null,
-                        anime = info.anime,
-                        name = info.name,
-                        lang = info.lang,
-                        iconUrl = info.iconUrl.orEmpty(),
-                        baseUrl = info.baseUrl,
+                        anime = if (it.anime == s.anime) info.anime else it.anime,
+                        name = if (it.name == s.name) info.name else it.name,
+                        lang = if (it.lang == s.lang) info.lang else it.lang,
+                        iconUrl = if (it.iconUrl == s.iconUrl) info.iconUrl.orEmpty() else it.iconUrl,
+                        baseUrl = if (it.baseUrl == s.baseUrl) info.baseUrl else it.baseUrl,
                         justSaved = info,
                     )
                 }
@@ -351,8 +366,16 @@ class SourceEditorScreenModel(
         return JsPreferences.testOf(context, manager.idOf(key))
     }
 
+    /** KMK: a source never saved leaves no test copy (settings and storage) behind once the editor moves on */
+    private fun dropUnsavedTestCopy() {
+        val s = state.value
+        if (!s.saved) manager.dropTestCopy(s.key)
+    }
+
     private fun closeRuntime() {
         job?.cancel()
+        // KMK: a details read still running would otherwise fill the next source's Details with this one's
+        detectJob?.cancel()
         runtime?.close()
         runtime = null
         runtimeCode = null
@@ -611,6 +634,7 @@ class SourceEditorScreenModel(
 
     override fun onDispose() {
         closeRuntime()
+        dropUnsavedTestCopy()
         super.onDispose()
     }
 

@@ -282,12 +282,15 @@ private fun FilterRows(
         verticalArrangement = Arrangement.spacedBy(2.dp),
         modifier = Modifier.padding(vertical = 4.dp),
     ) {
-        if (tab != UNIFIED_TAB_REPOSITORIES && state.allRepos.size > 1) {
+        // KMK: a repo with manga and anime packages is in both tables; the chip filters by address, so one chip each
+        // (two with the same key crashed the row)
+        val repoChips = remember(state.allRepos) { state.allRepos.distinctBy { it.indexUrl } }
+        if (tab != UNIFIED_TAB_REPOSITORIES && repoChips.size > 1) {
             ChipRow {
                 item(key = "repo_all") {
                     Chip(stringResource(KMR.strings.ext_all_repositories), filters.repoUrl == null) { onRepoClick(null) }
                 }
-                items(state.allRepos, key = { "repo_" + it.indexUrl }) { repo ->
+                items(repoChips, key = { "repo_" + it.indexUrl }) { repo ->
                     Chip(repo.name, filters.repoUrl == repo.indexUrl) { onRepoClick(repo.indexUrl) }
                 }
             }
@@ -551,7 +554,8 @@ private fun SourceList(
         }
         // KMK
         if (sources.isEmpty()) item(key = "empty_js") { EmptyState(stringResource(KMR.strings.ext_js_empty)) }
-        items(sources, key = { "${it.kind}_${it.id}" }) { source ->
+        // KMK: two installed packages can give a source the same id, so the row key has the package too
+        items(sources.distinctBy(::sourceRowKey), key = ::sourceRowKey) { source ->
             ElevatedCard(
                 shape = CardShape,
                 colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
@@ -975,3 +979,6 @@ private fun TestBadge(test: SourceTest) {
         modifier = Modifier.widthIn(max = 220.dp),
     )
 }
+
+// KMK: the Sources list's row key. Kind + id alone isn't unique: two installed packages can share a source id
+private fun sourceRowKey(source: UnifiedSource): String = "${source.kind}_${source.pkgName}_${source.id}"

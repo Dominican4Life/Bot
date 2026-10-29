@@ -31,6 +31,17 @@ object SideloadFolder {
     private val tracked get() = Injekt.get<PreferenceStore>().getStringSet(TRACKED_KEY, emptySet())
     private val storage get() = Injekt.get<StorageManager>()
 
+    // KMK (r88): both managers run [sync] at the same time on start; the tracked set is changed by read-modify-write,
+    // so one could write back a set without the other's change. Every change goes through this lock
+    private val trackedLock = Any()
+
+    private fun track(entry: String, add: Boolean) {
+        synchronized(trackedLock) {
+            val now = tracked.get()
+            tracked.set(if (add) now + entry else now - entry)
+        }
+    }
+
     private fun dir(kind: Kind, create: Boolean) = storage.getSideloadedDirectory(kind.folder, create)
 
     private fun fileName(pkgName: String) = "$pkgName.apk"
@@ -51,7 +62,7 @@ object SideloadFolder {
         }.onSuccess {
             // Only what's really in the folder counts as sideloaded through it (else a later check would find it
             // missing there and take it out of the app)
-            tracked.set(tracked.get() + (kind.prefix + pkgName))
+            track(kind.prefix + pkgName, add = true)
         }.onFailure {
             AppLog.add('W', "Sideload", "Couldn't save $pkgName to the Sideloaded folder: ${it.message}")
         }
@@ -60,7 +71,7 @@ object SideloadFolder {
     /** Removed in the app: its APK leaves the folder */
     fun remove(kind: Kind, pkgName: String) {
         runCatching { dir(kind, create = false)?.findFile(fileName(pkgName))?.delete() }
-        tracked.set(tracked.get() - (kind.prefix + pkgName))
+        track(kind.prefix + pkgName, add = false)
     }
 
     /**
@@ -112,7 +123,7 @@ object SideloadFolder {
         apks.forEach { apk ->
             val pkgName = apk.name?.let { name -> packageOf(name) } ?: return@forEach
             if (pkgName in inApp) {
-                tracked.set(tracked.get() + (kind.prefix + pkgName))
+                track(kind.prefix + pkgName, add = true)
                 return@forEach
             }
             val tmp = File(context.cacheDir, "sideload_$pkgName.apk")
@@ -123,7 +134,7 @@ object SideloadFolder {
                     Kind.ANIME -> AnimeExtensionLoader.installPrivateExtensionFile(context, tmp)
                 }
                 if (ok) {
-                    tracked.set(tracked.get() + (kind.prefix + pkgName))
+                    track(kind.prefix + pkgName, add = true)
                     AppLog.add('I', "Sideload", "Put back $pkgName from the Sideloaded folder")
                 }
             }.onFailure {
@@ -152,7 +163,7 @@ object SideloadFolder {
                 Kind.ANIME -> AnimeExtensionLoader.uninstallPrivateExtension(context, pkgName)
             }
             ExtensionInstallReceiver.notifyRemoved(context, pkgName)
-            tracked.set(tracked.get() - (kind.prefix + pkgName))
+            track(kind.prefix + pkgName, add = false)
             AppLog.add('I', "Sideload", "Removed $pkgName: its APK was deleted from the Sideloaded folder")
         }
     }

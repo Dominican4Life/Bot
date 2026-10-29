@@ -209,9 +209,17 @@ class EpisodeLoader {
             }
         }
 
-        suspend fun loadHosterVideos(source: AnimeSource, hoster: Hoster): HosterState {
+        /**
+         * @param alreadySplit KMK: the hoster's videoList came from this function before (the player's preload), so
+         * it is used as is instead of being sorted and split a second time (duplicate qualities, slower start)
+         */
+        suspend fun loadHosterVideos(
+            source: AnimeSource,
+            hoster: Hoster,
+            alreadySplit: Boolean = false,
+        ): HosterState {
             return try {
-                val videos = getVideos(source, hoster)
+                val videos = hoster.videoList?.takeIf { alreadySplit } ?: getVideos(source, hoster)
                 HosterState.Ready(hoster.hosterName, videos, List(videos.size) { Video.State.QUEUE })
             } catch (e: Exception) {
                 if (e is CancellationException) {

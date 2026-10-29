@@ -21,8 +21,10 @@ import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
@@ -32,6 +34,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -78,7 +81,27 @@ class AnimeDownloadManager(
          */
         @Volatile
         var video: Video? = null
+
+        /** KMK (r88): cancelled or deleted by the user (a running download is stopped, not marked downloaded) */
+        @Volatile
+        var cancelled: Boolean = false
     }
+
+    /**
+     * KMK (r88): a download that is running (or its pieces being deleted). Cancel used to only take the episode off
+     * the list: the worker went on and marked it downloaded, and a new download of the same episode ran in the same
+     * pieces folder at the same time (a broken file). [finished] completes once it has stopped and cleaned up.
+     */
+    private class Running(val item: Item) {
+        @Volatile
+        var job: Job? = null
+        val finished = CompletableDeferred<Unit>()
+    }
+
+    private class Claim(val item: Item, val running: Running, val previous: Running?)
+
+    /** KMK (r88): how many of an anime's episodes share each file name, for the older and looser name lookups */
+    private class NameCounts(val legacy: Map<String, Int>, val stems: Map<String, Int>)
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val queuePref = preferenceStore.getStringSet("anime_download_queue", emptySet())
@@ -93,6 +116,12 @@ class AnimeDownloadManager(
     /** Episode file names on disk, per anime id (filled the first time an anime is looked at) */
     private val fileCache = ConcurrentHashMap<Long, Set<String>>()
 
+    /** KMK (r88): per anime id, filled with [fileCache] */
+    private val nameCounts = ConcurrentHashMap<Long, NameCounts>()
+
+    /** KMK (r88): per episode id */
+    private val running = ConcurrentHashMap<Long, Running>()
+
     /** Taking the next queued item and creating folders happen one download at a time */
     private val claimLock = Mutex()
     private val dirLock = Mutex()
@@ -101,13 +130,18 @@ class AnimeDownloadManager(
         // Bring back what was still queued when the app closed
         scope.launch {
             val saved = queuePref.get().mapNotNull { it.substringAfter(':').toLongOrNull() }
-            if (saved.isEmpty()) return@launch
-            val items = saved.mapNotNull { episodeId ->
-                val episode = repository.getEpisode(episodeId) ?: return@mapNotNull null
-                val anime = repository.getAnime(episode.animeId) ?: return@mapNotNull null
-                Item(anime, episode)
+            if (saved.isNotEmpty()) {
+                val items = saved.mapNotNull { episodeId ->
+                    val episode = repository.getEpisode(episodeId) ?: return@mapNotNull null
+                    val anime = repository.getAnime(episode.animeId) ?: return@mapNotNull null
+                    Item(anime, episode)
+                }
+                _queue.update { current ->
+                    current + items.filter { new -> current.none { it.episode.id == new.episode.id } }
+                }
             }
-            _queue.update { current -> current + items.filter { new -> current.none { it.episode.id == new.episode.id } } }
+            // KMK (r88): pieces of episode downloads that aren't queued any more (cancelled, failed, removed)
+            ParallelVideoDownload.cleanUp(KEY_PREFIX, keptKeys())
         }
     }
 
@@ -143,10 +177,53 @@ class AnimeDownloadManager(
     fun cancel(episodeIds: Collection<Long>) {
         val removed = _queue.value.filter { it.episode.id in episodeIds }
         _queue.update { it - removed.toSet() }
-        removed.forEach { item -> item.state.value = Download.State.NOT_DOWNLOADED }
+        removed.forEach { item ->
+            item.cancelled = true
+            item.state.value = Download.State.NOT_DOWNLOADED
+            // KMK (r88): a running download is stopped (its worker deletes its pieces and unfinished file);
+            // a waiting one only had pieces from an earlier try
+            val active = running[item.episode.id]?.takeIf { it.item === item }
+            if (active != null) {
+                active.job?.cancel()
+                AppLog.add('I', LOG_TAG, "${labelOf(item)}: cancelled, stopping the download")
+            } else {
+                cleanUpLater(item)
+            }
+        }
         saveQueue()
         _changes.update { it + 1 }
     }
+
+    /** KMK (r88): deletes the pieces of a cancelled download that wasn't running */
+    private fun cleanUpLater(item: Item) {
+        val entry = Running(item)
+        // Something already running for this episode cleans up after itself
+        if (running.putIfAbsent(item.episode.id, entry) != null) return
+        scope.launch {
+            try {
+                cleanUpStopped(item)
+            } finally {
+                running.remove(item.episode.id, entry)
+                entry.finished.complete(Unit)
+            }
+        }
+    }
+
+    /** KMK (r88): the pieces and the unfinished file of a stopped download */
+    private fun cleanUpStopped(item: Item) {
+        ParallelVideoDownload.discard(pieceKey(item.episode), labelOf(item))
+        runCatching {
+            animeDir(item.anime, create = false)?.findFile("${episodeBaseName(item.episode)}$TMP")?.delete()
+        }
+    }
+
+    private fun pieceKey(episode: Episode): String = "$KEY_PREFIX${episode.id}"
+
+    private fun labelOf(item: Item): String = "${item.anime.title} · ${item.episode.name}"
+
+    /** Pieces folders still needed: queued and running downloads */
+    private fun keptKeys(): List<String> =
+        (_queue.value.map { it.episode } + running.values.map { it.item.episode }).map { pieceKey(it) }
 
     fun cancelAll() = cancel(_queue.value.map { it.episode.id })
 
@@ -174,41 +251,91 @@ class AnimeDownloadManager(
         coroutineScope {
             repeat(workers) { launch { runWorker(onProgress) } }
         }
+        // KMK (r88): the queue is done; pieces nobody will continue go
+        withIOContext { ParallelVideoDownload.cleanUp(KEY_PREFIX, keptKeys()) }
     }
 
-    /** Takes the next queued episode, marking it as downloading so no other worker takes it */
-    private suspend fun claimNext(): Item? = claimLock.withLock {
-        _queue.value.firstOrNull { it.state.value == Download.State.QUEUE }
-            ?.also { it.state.value = Download.State.DOWNLOADING }
+    /**
+     * Takes the next queued episode, marking it as downloading so no other worker takes it. KMK (r88): also notes
+     * it as running, with the earlier run of the same episode it must wait for (a cancelled one still stopping).
+     */
+    private suspend fun claimNext(): Claim? = claimLock.withLock {
+        val item = _queue.value.firstOrNull { it.state.value == Download.State.QUEUE }
+        if (item == null) {
+            null
+        } else {
+            item.state.value = Download.State.DOWNLOADING
+            val mine = Running(item)
+            Claim(item, mine, running.put(item.episode.id, mine))
+        }
     }
 
     private suspend fun runWorker(onProgress: (Item, Int, Int) -> Unit) {
         while (true) {
             currentCoroutineContext().ensureActive()
-            val next = claimNext() ?: break
-            val remaining = _queue.value.count { it.state.value == Download.State.QUEUE }
-            onProgress(next, 0, remaining)
+            val claim = claimNext() ?: break
             try {
-                download(next) { percent ->
-                    next.progress.value = percent
-                    onProgress(next, percent, remaining)
-                }
-                next.state.value = Download.State.DOWNLOADED
-                _queue.update { it - next }
-                saveQueue()
-            } catch (e: Throwable) {
-                if (e is CancellationException) {
-                    // Paused by the system: leave it queued
-                    next.state.value = Download.State.QUEUE
-                    throw e
-                }
-                logcat(LogPriority.ERROR, e) { "Anime download failed: ${next.episode.name}" }
-                next.error = e.message ?: e.javaClass.simpleName
-                next.state.value = Download.State.ERROR
-                synchronized(failures) { failures += next }
-                saveQueue()
+                runOne(claim, onProgress)
+            } finally {
+                running.remove(claim.item.episode.id, claim.running)
+                claim.running.finished.complete(Unit)
             }
             _changes.update { it + 1 }
+        }
+    }
+
+    private suspend fun runOne(claim: Claim, onProgress: (Item, Int, Int) -> Unit) {
+        val next = claim.item
+        val remaining = _queue.value.count { it.state.value == Download.State.QUEUE }
+        onProgress(next, 0, remaining)
+        try {
+            // KMK (r88): never two downloads of one episode at once (same pieces folder and file)
+            claim.previous?.let { previous ->
+                if (!previous.finished.isCompleted) {
+                    AppLog.add('I', LOG_TAG, "${labelOf(next)}: waiting for the stopped download of it to end")
+                }
+                previous.finished.await()
+            }
+            // KMK (r88): the download runs as its own job, so cancel/delete can stop it
+            if (!next.cancelled) {
+                coroutineScope {
+                    val job = launch {
+                        download(next) { percent ->
+                            next.progress.value = percent
+                            onProgress(next, percent, remaining)
+                        }
+                    }
+                    claim.running.job = job
+                    // Cancelled before the job was noted
+                    if (next.cancelled) job.cancel()
+                }
+            }
+            if (next.cancelled) {
+                cleanUpStopped(next)
+                return
+            }
+            next.state.value = Download.State.DOWNLOADED
+            _queue.update { it - next }
+            saveQueue()
+        } catch (e: Throwable) {
+            if (next.cancelled) {
+                // A stopped download can end with the error its stop caused (a closed connection)
+                cleanUpStopped(next)
+                if (e is CancellationException) throw e
+                return
+            }
+            if (e is CancellationException) {
+                // Paused by the system: leave it queued (its pieces are kept to continue)
+                next.state.value = Download.State.QUEUE
+                throw e
+            }
+            logcat(LogPriority.ERROR, e) { "Anime download failed: ${next.episode.name}" }
+            next.error = e.message ?: e.javaClass.simpleName
+            next.state.value = Download.State.ERROR
+            synchronized(failures) { failures += next }
+            saveQueue()
+            // KMK (r88): a failed download starts afresh when retried
+            ParallelVideoDownload.discard(pieceKey(next.episode), labelOf(next))
         }
     }
 
@@ -226,52 +353,124 @@ class AnimeDownloadManager(
 
     fun isDownloaded(anime: Anime, episode: Episode): Boolean {
         val names = fileCache.getOrPut(anime.id) { listFiles(anime) }
-        // KMK (r87): the name with the episode number, or the older name without it
-        val bases = listOf(episodeBaseName(episode), legacyBaseName(episode))
-        return names.any { name -> bases.any { isFileOf(name, it) } }
+        return matchName(anime, episode, names) != null
     }
 
     /** Reads the anime's folder again (call when its page opens) */
     fun refresh(anime: Anime) {
         scope.launch {
-            fileCache[anime.id] = listFiles(anime)
+            reload(anime)
             _changes.update { it + 1 }
         }
     }
 
     fun findEpisodeFile(anime: Anime, episode: Episode): UniFile? {
         val files = animeDir(anime, create = false)?.listFiles() ?: return null
-        // KMK (r87): the name with the episode number first, else the older name without it
-        return listOf(episodeBaseName(episode), legacyBaseName(episode)).firstNotNullOfOrNull { base ->
-            files.firstOrNull { file -> file.name?.let { isFileOf(it, base) } == true }
+        val name = matchName(anime, episode, files.mapNotNull { it.name }) ?: return null
+        return files.firstOrNull { it.name == name }
+    }
+
+    /**
+     * KMK (r87): the name with the episode number first, else the older name without it. KMK (r88): the older name
+     * only when no other episode of the anime has the same name (an old "Episode 1.mkv" was taken for every
+     * "Episode 1": B couldn't be downloaded, and playing or deleting B used A's file). As a last resort (the source
+     * renumbered the episode or changed its link), the one file with the same "<scanlator_name>_E…"/"_U…" start.
+     */
+    private fun matchName(anime: Anime, episode: Episode, names: Collection<String>): String? {
+        val base = episodeBaseName(episode)
+        names.firstOrNull { isFileOf(it, base) }?.let { return it }
+        val counts = nameCountsOf(anime)
+        val legacy = legacyBaseName(episode)
+        // Unknown counts (the database couldn't be read): as up to r87
+        if ((counts?.legacy?.get(legacy) ?: 1) <= 1) {
+            names.firstOrNull { isFileOf(it, legacy) }?.let { return it }
         }
+        val stem = nameStem(episode)
+        if (counts == null || (counts.stems[stem] ?: 1) > 1) return null
+        return names.filter { name ->
+            isEpisodeVideo(name) && name.startsWith(stem) &&
+                NUMBER_TAG.matches(name.substring(stem.length).substringBeforeLast('.'))
+        }.singleOrNull()
     }
 
     /**
      * KMK (r87): [name] is the finished file of [base] ("<base>.mkv"). It used to match any name starting with
-     * "<base>.", so "Episode 1" also matched "Episode 1.5.mkv".
+     * "<base>.", so "Episode 1" also matched "Episode 1.5.mkv". KMK (r88): only video files ("<base>.srt" isn't).
      */
     private fun isFileOf(name: String, base: String): Boolean =
-        !name.endsWith(TMP) && name.startsWith("$base.") && name.substringBeforeLast('.') == base
+        isEpisodeVideo(name) && name.substringBeforeLast('.') == base
 
-    fun downloadedCount(anime: Anime): Int = fileCache[anime.id]?.count { !it.endsWith(TMP) } ?: 0
+    /**
+     * KMK (r88): only episode videos count. Every file in the folder used to count, so the cover saved there
+     * ("Save covers in download folders") showed every anime with a download.
+     */
+    fun downloadedCount(anime: Anime): Int = fileCache[anime.id]?.count { isEpisodeVideo(it) } ?: 0
+
+    /** KMK (r88): reads the folder and the episode names again */
+    private suspend fun reload(anime: Anime) {
+        fileCache[anime.id] = listFiles(anime)
+        val counts = loadNameCounts(anime.id)
+        if (counts != null) nameCounts[anime.id] = counts else nameCounts.remove(anime.id)
+    }
+
+    private fun nameCountsOf(anime: Anime): NameCounts? {
+        nameCounts[anime.id]?.let { return it }
+        // Called from screens too: one short database read per anime, the first time it's looked at
+        val counts = try {
+            runBlocking(Dispatchers.IO) { loadNameCounts(anime.id) }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            null
+        }
+        if (counts != null) nameCounts[anime.id] = counts
+        return counts
+    }
+
+    private suspend fun loadNameCounts(animeId: Long): NameCounts? {
+        return try {
+            val episodes = repository.getEpisodes(animeId)
+            NameCounts(
+                legacy = episodes.groupingBy { legacyBaseName(it) }.eachCount(),
+                stems = episodes.groupingBy { nameStem(it) }.eachCount(),
+            )
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            logcat(LogPriority.WARN, e) { "Couldn't read the episode names of anime $animeId" }
+            null
+        }
+    }
 
     // Deleting
 
     fun delete(anime: Anime, episodes: List<Episode>) {
         cancel(episodes.map { it.id })
+        // KMK (r88): a running download is stopped first; deleting before its file was there left it behind
+        val stopping = episodes.mapNotNull { running[it.id] }
         scope.launch {
-            episodes.forEach { findEpisodeFile(anime, it)?.delete() }
-            fileCache[anime.id] = listFiles(anime)
+            stopping.forEach { it.finished.await() }
+            val dir = animeDir(anime, create = false)
+            episodes.forEach { episode ->
+                findEpisodeFile(anime, episode)?.delete()
+                dir?.findFile("${episodeBaseName(episode)}$TMP")?.delete()
+                ParallelVideoDownload.discard(pieceKey(episode))
+            }
+            reload(anime)
             _changes.update { it + 1 }
         }
     }
 
     fun deleteAnime(anime: Anime) {
-        cancel(_queue.value.filter { it.anime.id == anime.id }.map { it.episode.id })
+        val ids = _queue.value.filter { it.anime.id == anime.id }.map { it.episode.id }
+        cancel(ids)
+        val stopping = running.values.filter { it.item.anime.id == anime.id }
         scope.launch {
+            stopping.forEach { it.finished.await() }
             animeDir(anime, create = false)?.delete()
             fileCache[anime.id] = emptySet()
+            nameCounts.remove(anime.id)
+            // KMK (r88): and the pieces kept for any of its episodes
+            runCatching { repository.getEpisodes(anime.id) }.getOrNull()
+                ?.forEach { ParallelVideoDownload.discard(pieceKey(it)) }
             _changes.update { it + 1 }
         }
     }
@@ -320,31 +519,38 @@ class AnimeDownloadManager(
         return DiskUtil.buildValidFilename(name)
     }
 
+    /** KMK (r88): `scanlator_name_`, the part of [episodeBaseName] before the number tag */
+    private fun nameStem(episode: Episode): String {
+        val name = listOfNotNull(episode.scanlator?.takeIf { it.isNotBlank() }, episode.name).joinToString("_")
+        return DiskUtil.buildValidFilename(name, maxBytes = 200) + "_"
+    }
+
     /**
      * KMK (r87): new downloads are `scanlator_name_E<number>` (`_U<hash of the episode link>` when the number is
      * unknown), so episodes with the same name get their own files. Files named the old way are still found
      * ([legacyBaseName]).
      */
     private fun episodeBaseName(episode: Episode): String {
-        val name = listOfNotNull(episode.scanlator?.takeIf { it.isNotBlank() }, episode.name).joinToString("_")
         val number = episode.episodeNumber
         val tag = if (number >= 0) {
             "E" + if (number % 1.0 == 0.0) number.toLong().toString() else number.toString()
         } else {
             "U" + episode.url.hashCode().toUInt().toString(16)
         }
-        return DiskUtil.buildValidFilename(name, maxBytes = 200) + "_" + tag
+        return nameStem(episode) + tag
     }
 
     // Downloading
 
-    private suspend fun download(item: Item, onPercent: (Int) -> Unit) = withIOContext {
+    private suspend fun download(item: Item, reportPercent: (Int) -> Unit) = withIOContext {
+        // KMK (r88): the percent never steps back (pieces finish out of order; a fallback starts again at 0)
+        val onPercent = ParallelVideoDownload.monotonic(reportPercent)
         val source = sourceManager.get(item.anime.source) ?: error("Source not installed")
         // Two downloads of the same anime must not both create its folder
         val dir = dirLock.withLock { animeDir(item.anime, create = true) } ?: error("Can't open the downloads folder")
         val base = episodeBaseName(item.episode)
-        val label = "${item.anime.title} · ${item.episode.name}"
-        val key = "anime_${item.episode.id}"
+        val label = labelOf(item)
+        val key = pieceKey(item.episode)
         // KMK (r87): the episode number is part of new file names, so same-named episodes don't share one
         AppLog.add('I', LOG_TAG, "$label: saving as \"$base\" (episode number in the name)")
         var lastError: Throwable? = null
@@ -354,7 +560,7 @@ class AnimeDownloadManager(
             AppLog.add('I', LOG_TAG, "$label: downloading the stream picked in Episode options, ${picked.videoTitle}")
             try {
                 saveVideo(source, picked, dir, base, key, label, onPercent)
-                fileCache[item.anime.id] = listFiles(item.anime)
+                reload(item.anime)
                 return@withIOContext
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
@@ -373,7 +579,7 @@ class AnimeDownloadManager(
                 val video = AnimeVideoFetcher.resolve(source, candidate)
                 if (video.videoUrl.isBlank() || video.videoUrl == "null") continue
                 saveVideo(source, video, dir, base, key, label, onPercent)
-                fileCache[item.anime.id] = listFiles(item.anime)
+                reload(item.anime)
                 return@withIOContext
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
@@ -443,7 +649,8 @@ class AnimeDownloadManager(
                             out.inputStream().use { it.copyTo(output, DEFAULT_BUFFER) }
                         }
                         dir.findFile("$base.$ext")?.delete()
-                        tmp.renameTo("$base.$ext")
+                        // KMK (r88): a failed rename left only the .tmp, and the episode was marked downloaded
+                        if (!tmp.renameTo("$base.$ext")) error("Couldn't rename the saved video")
                         onPercent(100)
                         return
                     }
@@ -490,7 +697,7 @@ class AnimeDownloadManager(
             }
             val ext = extensionOf(type, video.videoUrl)
             dir.findFile("$base.$ext")?.delete()
-            tmp.renameTo("$base.$ext")
+            if (!tmp.renameTo("$base.$ext")) error("Couldn't rename the saved video")
         }
     }
 
@@ -541,7 +748,7 @@ class AnimeDownloadManager(
         val tmp = dir.findFile("$base$TMP") ?: dir.createFile("$base$TMP") ?: error("Can't create the file")
         tmp.openOutputStream().use { output -> out.inputStream().use { it.copyTo(output, DEFAULT_BUFFER) } }
         dir.findFile("$base.mkv")?.delete()
-        tmp.renameTo("$base.mkv")
+        if (!tmp.renameTo("$base.mkv")) error("Couldn't rename the saved video")
         onPercent(100)
     }
 
@@ -599,6 +806,19 @@ class AnimeDownloadManager(
     companion object {
         const val ANIME_DIR = "anime"
         private const val TMP = ".tmp"
+        private const val KEY_PREFIX = "anime_"
+
+        /** KMK (r88): the tag [episodeBaseName] ends with ("E12", "E12.5", "U1a2b3c") */
+        private val NUMBER_TAG = Regex("E[0-9][0-9.]*|U[0-9a-f]+")
+
+        private val VIDEO_EXTENSIONS = setOf("mkv", "mp4", "webm", "ts", "m4v", "mov", "avi")
+
+        /**
+         * KMK (r88): an episode video in an anime's download folder (not the cover, subtitles, dot-files or an
+         * unfinished .tmp/.part)
+         */
+        fun isEpisodeVideo(name: String): Boolean =
+            !name.startsWith('.') && name.substringAfterLast('.', "").lowercase() in VIDEO_EXTENSIONS
         private const val MAX_TRIES = 3
         const val MAX_CONCURRENT = 5
         private const val LOG_TAG = "download"

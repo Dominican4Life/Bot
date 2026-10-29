@@ -69,9 +69,13 @@ object HlsRelay {
         // KMK: past 500, the 100 least recently used go (r87; r86 dropped the 100 handed out first, which could be a
         // video still playing: its next playlist or piece then got 404). Same time: the older id goes first
         if (sessions.size > 500) {
-            val unused = sessions.keys
-                .sortedWith(compareBy<String>({ lastUsed[it] ?: 0L }, { it.toLongOrNull() ?: Long.MIN_VALUE }))
+            // KMK: sorted on a snapshot: serving threads update lastUsed meanwhile, and a sort whose values change
+            // under it can throw ("Comparison method violates its general contract")
+            val unused = sessions.keys.toList()
+                .map { id -> Triple(id, lastUsed[id] ?: 0L, id.toLongOrNull() ?: Long.MIN_VALUE) }
+                .sortedWith(compareBy<Triple<String, Long, Long>>({ it.second }, { it.third }))
                 .take(100)
+                .map { it.first }
             unused.forEach {
                 sessions.remove(it)
                 originals.remove(it)
