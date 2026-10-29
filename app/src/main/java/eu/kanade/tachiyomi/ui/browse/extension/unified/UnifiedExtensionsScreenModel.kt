@@ -7,6 +7,7 @@ import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.tachiyomi.animeextension.AnimeExtensionManager
 import eu.kanade.tachiyomi.animeextension.model.AnimeExtension
 import eu.kanade.tachiyomi.extension.ExtensionManager
+import eu.kanade.tachiyomi.extension.copyFor
 import eu.kanade.tachiyomi.extension.model.Extension
 import eu.kanade.tachiyomi.extension.model.InstallStep
 import eu.kanade.tachiyomi.jssource.JsSourceManager
@@ -199,9 +200,10 @@ class UnifiedExtensionsScreenModel(
         val sources = mutableListOf<UnifiedSource>()
 
         // Mihon (manga) extensions
-        val mangaAvailable = manga.available.associateBy { it.pkgName }
         manga.installed.forEach { ext ->
             val key = key(ExtensionKind.MIHON, ext.pkgName)
+            // KMK: the repo copy that stands for it (the one from its repo first), not whichever came last
+            val offer = manga.available.copyFor(ext.pkgName, ext.signatureHash, ext.store)
             val repoUrl = ext.store?.indexUrl
             val repoName = ext.store?.name ?: ext.storeName
             val active = ext.sources.count { it.id.toString() !in prefs.disabled }
@@ -210,7 +212,7 @@ class UnifiedExtensionsScreenModel(
                 kind = ExtensionKind.MIHON,
                 name = ext.name,
                 pkgName = ext.pkgName,
-                versionName = if (ext.hasUpdate) mangaAvailable[ext.pkgName]?.versionName ?: ext.versionName else ext.versionName,
+                versionName = if (ext.hasUpdate) offer?.versionName ?: ext.versionName else ext.versionName,
                 installedVersionName = ext.versionName.takeIf { ext.hasUpdate },
                 lang = ext.lang,
                 isNsfw = ext.isNsfw,
@@ -224,7 +226,7 @@ class UnifiedExtensionsScreenModel(
                 },
                 installStep = steps[key] ?: InstallStep.Idle,
                 icon = ext.icon,
-                iconUrl = mangaAvailable[ext.pkgName]?.iconUrl,
+                iconUrl = offer?.iconUrl,
                 sourceNames = ext.sources.map { it.name }.distinct(),
                 activeSources = active,
                 totalSources = ext.sources.size,
@@ -273,9 +275,10 @@ class UnifiedExtensionsScreenModel(
             }
 
         // Aniyomi (anime) extensions
-        val animeAvailable = anime.available.associateBy { it.pkgName }
         anime.installed.forEach { ext ->
             val key = key(ExtensionKind.ANIYOMI, ext.pkgName)
+            // KMK: the repo copy that stands for it (the one from its repo first), not whichever came last
+            val offer = anime.available.copyFor(ext.pkgName, ext.signatureHash, ext.store)
             val repoUrl = ext.store?.indexUrl
             val repoName = ext.store?.name ?: ext.storeName
             packages += UnifiedPackage(
@@ -283,7 +286,7 @@ class UnifiedExtensionsScreenModel(
                 kind = ExtensionKind.ANIYOMI,
                 name = ext.name,
                 pkgName = ext.pkgName,
-                versionName = if (ext.hasUpdate) animeAvailable[ext.pkgName]?.versionName ?: ext.versionName else ext.versionName,
+                versionName = if (ext.hasUpdate) offer?.versionName ?: ext.versionName else ext.versionName,
                 installedVersionName = ext.versionName.takeIf { ext.hasUpdate },
                 lang = ext.lang,
                 isNsfw = ext.isNsfw,
@@ -297,7 +300,7 @@ class UnifiedExtensionsScreenModel(
                 },
                 installStep = steps[key] ?: InstallStep.Idle,
                 icon = ext.icon,
-                iconUrl = animeAvailable[ext.pkgName]?.iconUrl,
+                iconUrl = offer?.iconUrl,
                 sourceNames = ext.sources.map { it.name }.distinct(),
                 activeSources = ext.sources.count { it.id.toString() !in prefs.animeDisabled },
                 totalSources = ext.sources.size,
@@ -351,6 +354,10 @@ class UnifiedExtensionsScreenModel(
             val offered = (if (kind == ExtensionKind.MIHON) manga.available else anime.available)
                 .filter { ExtensionStoreUrls.key(it.store.indexUrl) == storeKey }
                 .distinctBy { it.pkgName }
+            // KMK: a package this repo offers that is installed from another repo with the same signature isn't
+            // listed under this repo (the installed row stands for it), but it is still one of its packages
+            val listed = inRepo.map { it.pkgName }.toSet()
+            val sameSigned = offered.count { (showNsfw || !it.isNsfw) && it.pkgName !in listed }
             UnifiedRepo(
                 hiddenNsfw = if (showNsfw) 0 else offered.count { it.isNsfw },
                 noFingerprint = !ExtensionStoreUrls.hasFingerprint(store.signingKey),
@@ -360,8 +367,8 @@ class UnifiedExtensionsScreenModel(
                 indexUrl = store.indexUrl,
                 name = store.name,
                 website = store.contact.website.takeIf { it.isNotBlank() },
-                packageCount = inRepo.size,
-                installedCount = inRepo.count { it.state.isInstalled },
+                packageCount = inRepo.size + sameSigned,
+                installedCount = inRepo.count { it.state.isInstalled } + sameSigned,
                 enabled = store.indexUrl !in prefs.disabledRepos,
             )
         }

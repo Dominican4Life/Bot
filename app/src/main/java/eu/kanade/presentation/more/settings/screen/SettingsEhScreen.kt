@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import eu.kanade.domain.source.interactor.ToggleIncognito
+import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.presentation.library.components.SyncFavoritesWarningDialog
 import eu.kanade.presentation.more.settings.Preference
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
@@ -194,6 +195,13 @@ object SettingsEhScreen : SearchableSettings {
     fun ehIncognitoMode(
         exhPreferences: ExhPreferences,
     ): Preference.PreferenceItem.SwitchPreference {
+        // KMK: the switch mirrors E-Hentai's entry in the per-extension incognito list (that list is what the app
+        // reads); re-sync it when the screen opens in case incognito was changed from the source's menu.
+        remember {
+            val inList = EH_PACKAGE in Injekt.get<SourcePreferences>().incognitoExtensions().get()
+            if (exhPreferences.ehIncognitoMode().get() != inList) exhPreferences.ehIncognitoMode().set(inList)
+            Unit
+        }
         return Preference.PreferenceItem.SwitchPreference(
             preference = exhPreferences.ehIncognitoMode(),
             title = stringResource(MR.strings.pref_incognito_mode),

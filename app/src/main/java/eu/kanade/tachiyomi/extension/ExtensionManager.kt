@@ -34,6 +34,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import logcat.LogPriority
+import mihon.data.extension.service.ExtensionStoreUrls
+import mihon.domain.extension.model.ExtensionStore
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.source.model.StubSource
@@ -256,12 +258,9 @@ class ExtensionManager(
 
         enableAdditionalSubLanguages(extensions)
 
-        availableExtensionMapFlow.value = extensions.associateBy {
-            it.pkgName +
-                // KMK -->
-                "_${it.signatureHash}"
-            // KMK <--
-        }
+        // KMK: one entry per package, signature and repo: two repos with the same (or no) signing key offering the
+        // same package used to overwrite each other, so one of them showed fewer packages
+        availableExtensionMapFlow.value = extensions.associateBy { availableKey(it) }
         updatedInstalledExtensionsStatuses(extensions)
         setupAvailableExtensionsSourcesDataMap(extensions)
     }
@@ -305,16 +304,9 @@ class ExtensionManager(
         val installedExtensionsMap = installedExtensionMapFlow.value.toMutableMap()
         var changed = false
         for ((pkgName, extension) in installedExtensionsMap) {
-            val availableExt = availableExtensions.find {
-                // KMK -->
-                it.signatureHash == extension.signatureHash &&
-                    // KMK <--
-                    it.pkgName == pkgName
-            }
-                // KMK: a repo with no signing fingerprint can only be matched by package name
-                ?: availableExtensions.find {
-                    it.pkgName == pkgName && !mihon.data.extension.service.ExtensionStoreUrls.hasFingerprint(it.signatureHash)
-                }
+            // KMK: same signature (or, for a repo with no signing fingerprint, the package name), from the repo it
+            // came from when that one still offers it
+            val availableExt = availableExtensions.copyFor(pkgName, extension.signatureHash, extension.store)
 
             if (availableExt == null &&
                 (!extension.isObsolete || /* KMK --> */ extension.hasUpdate /* KMK <-- */)
@@ -373,17 +365,9 @@ class ExtensionManager(
      * @param extension The extension to be updated.
      */
     fun updateExtension(extension: Extension.Installed): Flow<InstallStep> {
-        val availableExt = availableExtensionMapFlow.value[
-            extension.pkgName +
-                // KMK -->
-                "_${extension.signatureHash}",
-            // KMK <--
-        ]
-            // KMK: a repo with no signing fingerprint is matched by package name
-            ?: availableExtensionMapFlow.value.values.firstOrNull {
-                it.pkgName == extension.pkgName &&
-                    !mihon.data.extension.service.ExtensionStoreUrls.hasFingerprint(it.signatureHash)
-            }
+        // KMK: the copy of the repo it came from (else same signature, else a repo with no fingerprint by name)
+        val availableExt = availableExtensionMapFlow.value.values
+            .copyFor(extension.pkgName, extension.signatureHash, extension.store)
             ?: return emptyFlow()
         // KMK: updated the way it was installed: sideloaded stays sideloaded
         return installExtension(availableExt, sideload = !extension.isShared)
@@ -529,7 +513,8 @@ class ExtensionManager(
 
     private fun Extension.Installed.updateExists(availableExtension: Extension.Available? = null): Boolean {
         val availableExt = availableExtension
-            ?: availableExtensionMapFlow.value[pkgName]
+            // KMK: the map is keyed by package, signature and repo (looking up by package alone never matched)
+            ?: availableExtensionMapFlow.value.values.copyFor(pkgName, signatureHash, store)
             ?: return false
 
         return (availableExt.versionCode > versionCode || availableExt.libVersion > libVersion)
@@ -549,3 +534,32 @@ class ExtensionManager(
         return map { it.values.toList() }.stateIn(scope, SharingStarted.Lazily, value.values.toList())
     }
 }
+
+// KMK -->
+/** The key of a repo's copy of a package in the available-extension maps (manga and anime) */
+internal fun availableKey(ext: Extension.Available): String =
+    "${ext.pkgName}_${ext.signatureHash}@${ExtensionStoreUrls.key(ext.store.indexUrl)}"
+
+/**
+ * The repo copy that stands for an installed (or untrusted) package [pkgName] signed with [signatureHash]: one with the
+ * same signature, or else one from a repo with no signing fingerprint (only matchable by name). Among those, the copy
+ * from [store] (the repo it came from) is preferred, else the first.
+ */
+fun Collection<Extension.Available>.copyFor(
+    pkgName: String,
+    signatureHash: String,
+    store: ExtensionStore?,
+): Extension.Available? {
+    val offers = filter { it.pkgName == pkgName }
+    if (offers.isEmpty()) return null
+    val signed = offers.filter { it.signatureHash == signatureHash }
+    val byName = offers.filter {
+        it.signatureHash != signatureHash && !ExtensionStoreUrls.hasFingerprint(it.signatureHash)
+    }
+    val repoKey = store?.let { ExtensionStoreUrls.key(it.indexUrl) }
+    if (repoKey != null) {
+        (signed + byName).firstOrNull { ExtensionStoreUrls.key(it.store.indexUrl) == repoKey }?.let { return it }
+    }
+    return signed.firstOrNull() ?: byName.firstOrNull()
+}
+// KMK <--

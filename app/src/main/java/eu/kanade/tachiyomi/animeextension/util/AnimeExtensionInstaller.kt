@@ -11,12 +11,14 @@ import eu.kanade.tachiyomi.extension.model.Extension
 import eu.kanade.tachiyomi.extension.model.InstallStep
 import eu.kanade.tachiyomi.extension.util.ExtensionInstallActivity
 import eu.kanade.tachiyomi.extension.util.ExtensionInstallReceiver
-import eu.kanade.tachiyomi.extension.util.SideloadFolder
 import eu.kanade.tachiyomi.extension.util.ExtensionInstallService
+import eu.kanade.tachiyomi.extension.util.SideloadFolder
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.util.storage.getUriCompat
+import eu.kanade.tachiyomi.util.system.AppLog
 import eu.kanade.tachiyomi.util.system.isPackageInstalled
 import eu.kanade.tachiyomi.util.system.toast
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -51,6 +53,9 @@ internal class AnimeExtensionInstaller(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val activeJobs = ConcurrentHashMap<String, Job>()
     private val activeSteps = ConcurrentHashMap<Long, MutableStateFlow<InstallStep>>()
+
+    // KMK: the extension's name by download id, for the "Couldn't install" message
+    private val names = ConcurrentHashMap<Long, String>()
     // KMK <--
     private val extensionInstaller = Injekt.get<BasePreferences>().extensionInstaller()
 
@@ -74,6 +79,7 @@ internal class AnimeExtensionInstaller(
 
         val step = MutableStateFlow(InstallStep.Pending)
         activeSteps[downloadId] = step
+        names[downloadId] = extension.name
 
         val job = scope.launch {
             val tmpFile = File(context.cacheDir, "anime_extension_$pkgName.apk")
@@ -105,17 +111,8 @@ internal class AnimeExtensionInstaller(
                 } else {
                     logcat(LogPriority.ERROR, e)
                     step.value = InstallStep.Error
-                    // KMK: say why instead of only showing the retry button
-                    withUIContext {
-                        context.toast(
-                            context.stringResource(
-                                KMR.strings.anime_ext_install_failed,
-                                extension.name,
-                                e.message ?: e.javaClass.simpleName,
-                            ),
-                            Toast.LENGTH_LONG,
-                        )
-                    }
+                    // KMK: say why instead of only showing the retry button (a cancel isn't a failure)
+                    if (e !is CancellationException) reportFailure(downloadId, e.message ?: e.javaClass.simpleName)
                 }
                 // KMK -->
                 tmpFile.delete()
@@ -162,17 +159,9 @@ internal class AnimeExtensionInstaller(
                         pkgName?.let { SideloadFolder.save(SideloadFolder.Kind.ANIME, it, tempFile) }
                         updateInstallStep(downloadId, InstallStep.Installed)
                     } else {
+                        // KMK: the loader's reason goes into the "Couldn't install" message
+                        AnimeExtensionLoader.lastError?.let { Installer.failureReasons[downloadId] = it }
                         updateInstallStep(downloadId, InstallStep.Error)
-                        AnimeExtensionLoader.lastError?.let { reason ->
-                            scope.launch {
-                                withUIContext {
-                                    context.toast(
-                                        context.stringResource(KMR.strings.anime_ext_install_failed, tempFile.name, reason),
-                                        Toast.LENGTH_LONG,
-                                    )
-                                }
-                            }
-                        }
                     }
                 } catch (e: Exception) {
                     logcat(LogPriority.ERROR, e) { "Failed to read downloaded extension file." }
@@ -227,7 +216,29 @@ internal class AnimeExtensionInstaller(
      * @param step New install step.
      */
     fun updateInstallStep(downloadId: Long, step: InstallStep) {
-        activeSteps[downloadId]?.let { it.value = step }
+        val flow = activeSteps[downloadId] ?: return
+        val before = flow.value
+        flow.value = step
+        // KMK: a failed install says so, instead of the row silently going back to Install
+        if (step == InstallStep.Error && before != InstallStep.Error) {
+            reportFailure(downloadId, Installer.failureReasons.remove(downloadId))
+        }
+    }
+
+    // KMK: "Couldn't install <name>: <reason>" as a toast, and a line in the Logs
+    private fun reportFailure(downloadId: Long, reason: String?) {
+        val name = names[downloadId] ?: "the extension"
+        AppLog.add('W', "extensions", "Couldn't install $name (anime): ${reason ?: "no reason given"}")
+        scope.launch {
+            withUIContext {
+                val text = if (reason.isNullOrBlank()) {
+                    context.stringResource(KMR.strings.ext_install_failed_no_reason, name)
+                } else {
+                    context.stringResource(KMR.strings.anime_ext_install_failed, name, reason)
+                }
+                context.toast(text, Toast.LENGTH_LONG)
+            }
+        }
     }
 
     companion object {

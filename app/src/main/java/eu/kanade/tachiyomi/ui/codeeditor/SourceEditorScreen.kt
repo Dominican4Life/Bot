@@ -1,8 +1,10 @@
 package eu.kanade.tachiyomi.ui.codeeditor
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.net.Uri
 import android.provider.OpenableColumns
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -139,10 +141,29 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
         var showSaved by remember { mutableStateOf(false) }
         var confirmDelete by remember { mutableStateOf(false) }
         var query by rememberSaveable { mutableStateOf("") }
+        // KMK: leaving with unsaved changes asks first (back button and back arrow); Save there leaves once saved
+        var confirmLeave by remember { mutableStateOf(false) }
+        var leaveAfterSave by remember { mutableStateOf(false) }
+        val leave: () -> Unit = {
+            if (state.dirty) {
+                confirmLeave = true
+            } else {
+                navigator.pop()
+            }
+        }
+        BackHandler(enabled = state.dirty) { confirmLeave = true }
+        LaunchedEffect(state.saveError) {
+            if (state.saveError != null) leaveAfterSave = false
+        }
 
         LaunchedEffect(state.justSaved) {
             val info = state.justSaved ?: return@LaunchedEffect
             model.consumeSaved()
+            if (leaveAfterSave) {
+                leaveAfterSave = false
+                navigator.pop()
+                return@LaunchedEffect
+            }
             val result = snackbar.showSnackbar(
                 message = "Saved. ${info.name} is in Browse → Sources (${if (info.anime) "anime" else "manga"})",
                 actionLabel = "Open",
@@ -228,7 +249,7 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
                     ) {
-                        IconButton(onClick = navigator::pop) {
+                        IconButton(onClick = leave) {
                             Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = null)
                         }
                         Column(modifier = Modifier.padding(start = 4.dp, end = 12.dp).weight(if (wide) 0.35f else 1f)) {
@@ -399,6 +420,33 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
                 },
             )
         }
+        if (confirmLeave) {
+            AlertDialog(
+                onDismissRequest = { confirmLeave = false },
+                title = { Text("Leave without saving?") },
+                text = { Text("Your changes to ${state.name.ifBlank { "this source" }} aren't saved yet.") },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            confirmLeave = false
+                            leaveAfterSave = true
+                            model.save()
+                        },
+                    ) { Text("Save") }
+                },
+                dismissButton = {
+                    Row {
+                        TextButton(onClick = { confirmLeave = false }) { Text("Cancel") }
+                        TextButton(
+                            onClick = {
+                                confirmLeave = false
+                                navigator.pop()
+                            },
+                        ) { Text("Discard") }
+                    }
+                },
+            )
+        }
         if (confirmDelete) {
             AlertDialog(
                 onDismissRequest = { confirmDelete = false },
@@ -418,7 +466,9 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
         state.settings?.let { definitions ->
             SourceSettingsDialog(
                 definitions = definitions,
-                sourceId = model.sourceId(state.key),
+                // KMK: the test copy of the settings, which the editor's tests use (the saved source's settings
+                // screen still edits the real ones)
+                preferences = model.testPreferences(),
                 onDismiss = model::closeSettings,
             )
         }
@@ -793,11 +843,9 @@ private fun SavedSourcesDialog(
 @Composable
 private fun SourceSettingsDialog(
     definitions: List<JsPreferences.Definition>,
-    sourceId: Long,
+    preferences: SharedPreferences,
     onDismiss: () -> Unit,
 ) {
-    val context = LocalContext.current
-    val preferences = remember(sourceId) { JsPreferences.of(context, sourceId) }
     var version by remember { mutableIntStateOf(0) }
     AlertDialog(
         onDismissRequest = onDismiss,

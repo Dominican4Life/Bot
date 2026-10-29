@@ -1,5 +1,9 @@
 package eu.kanade.tachiyomi.data.backup.create.creators
 
+import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
+import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
+import eu.kanade.tachiyomi.animesource.preferenceKey
+import eu.kanade.tachiyomi.animesource.sourcePreferences
 import eu.kanade.tachiyomi.data.backup.models.BackupPreference
 import eu.kanade.tachiyomi.data.backup.models.BackupSourcePreferences
 import eu.kanade.tachiyomi.data.backup.models.BooleanPreferenceValue
@@ -39,6 +43,24 @@ class PreferenceBackupCreator(
             }
             .filter { it.prefs.isNotEmpty() }
     }
+
+    /**
+     * KMK (r86): the settings of anime extension (Aniyomi) and JS anime sources, kept in the same `source_<id>` files
+     * as manga extensions' settings. Restored like [createSource]'s.
+     */
+    fun createAnimeSource(includePrivatePreferences: Boolean): List<BackupSourcePreferences> = runCatching {
+        Injekt.get<AnimeSourceManager>().getCatalogueSources()
+            .filterIsInstance<ConfigurableAnimeSource>()
+            .map {
+                BackupSourcePreferences(
+                    it.preferenceKey(),
+                    it.sourcePreferences().all.toBackupPreferences()
+                        .withPrivatePreferences(includePrivatePreferences),
+                )
+            }
+            .filter { it.prefs.isNotEmpty() }
+            .distinctBy { it.sourceKey }
+    }.getOrDefault(emptyList())
 
     @Suppress("UNCHECKED_CAST")
     private fun Map<String, *>.toBackupPreferences(): List<BackupPreference> {

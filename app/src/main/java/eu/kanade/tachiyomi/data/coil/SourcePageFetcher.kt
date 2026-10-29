@@ -30,7 +30,7 @@ class SourcePageFetcher(
 ) : Fetcher {
 
     private val diskCacheKey: String
-        get() = "source-page;${data.source.id};${data.chapterUrl};${data.page.index}"
+        get() = diskCacheKeyOf(data.source.id, data.chapterUrl, data.page.index)
 
     override suspend fun fetch(): FetchResult = withIOContext {
         val diskCache = imageLoader.diskCache
@@ -58,6 +58,9 @@ class SourcePageFetcher(
         if (diskCache != null && editor != null) {
             val snapshot = try {
                 diskCache.fileSystem.write(editor.data) { body.source().use { writeAll(it) } }
+                // KMK: the picture's address, so the reader can reuse this download (HttpPageLoader) only when it
+                // is the same picture it would download
+                page.imageUrl?.let { url -> diskCache.fileSystem.write(editor.metadata) { writeUtf8(url) } }
                 editor.commitAndOpenSnapshot()
             } catch (e: Exception) {
                 runCatching { editor.abort() }
@@ -94,6 +97,12 @@ class SourcePageFetcher(
         )
     }
 
+    companion object {
+        /** KMK: also used by the reader (HttpPageLoader) to find a page the preview already downloaded */
+        fun diskCacheKeyOf(sourceId: Long, chapterUrl: String, pageIndex: Int): String =
+            "source-page;$sourceId;$chapterUrl;$pageIndex"
+    }
+
     class Factory : Fetcher.Factory<SourcePageThumbnail> {
         override fun create(data: SourcePageThumbnail, options: Options, imageLoader: ImageLoader): Fetcher {
             return SourcePageFetcher(data, options, imageLoader)
@@ -103,6 +112,6 @@ class SourcePageFetcher(
 
 class SourcePageKeyer : Keyer<SourcePageThumbnail> {
     override fun key(data: SourcePageThumbnail, options: Options): String {
-        return "source-page;${data.source.id};${data.chapterUrl};${data.page.index}"
+        return SourcePageFetcher.diskCacheKeyOf(data.source.id, data.chapterUrl, data.page.index)
     }
 }

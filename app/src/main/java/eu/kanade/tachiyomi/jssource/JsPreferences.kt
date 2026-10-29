@@ -50,6 +50,32 @@ object JsPreferences {
     fun of(context: Context, sourceId: Long): SharedPreferences =
         context.getSharedPreferences("source_$sourceId", Context.MODE_PRIVATE)
 
+    /**
+     * KMK: the Code editor's test copy of a source's settings ("source_<id>_editor"), so testing doesn't change the
+     * saved source. The normal source settings screen keeps using [of].
+     */
+    fun testOf(context: Context, sourceId: Long): SharedPreferences =
+        context.getSharedPreferences("source_${sourceId}_editor", Context.MODE_PRIVATE)
+
+    /** KMK: makes [to] hold exactly what [from] holds (the editor's test copy, filled from the saved settings) */
+    fun copyAll(from: SharedPreferences, to: SharedPreferences) {
+        val values = from.all
+        to.edit(commit = true) {
+            clear()
+            values.forEach { (key, value) ->
+                when (value) {
+                    is Boolean -> putBoolean(key, value)
+                    is Int -> putInt(key, value)
+                    is Long -> putLong(key, value)
+                    is Float -> putFloat(key, value)
+                    is String -> putString(key, value)
+                    is Set<*> -> putStringSet(key, value.filterIsInstance<String>().toSet())
+                    else -> Unit
+                }
+            }
+        }
+    }
+
     /** The usual shape ({key, title, type, options:[{label,value}]}) and Mangayomi's (entries / entryValues) */
     fun parse(element: JsonElement): List<Definition> {
         val list = element as? JsonArray ?: return emptyList()

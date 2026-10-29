@@ -152,6 +152,17 @@ class BackupCreator(
                 } else {
                     emptyList()
                 },
+                // KMK (r86): anime extension settings go with "Source settings", player buttons with "App settings"
+                backupAnimeSourcePreferences = if (options.sourceSettings) {
+                    preferenceBackupCreator.createAnimeSource(includePrivatePreferences = options.privateSettings)
+                } else {
+                    emptyList()
+                },
+                backupCustomButtons = if (options.appSettings) {
+                    AnimeBackupHelper().createCustomButtons()
+                } else {
+                    emptyList()
+                },
                 // KMK <--
             )
 

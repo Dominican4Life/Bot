@@ -3,11 +3,11 @@ package eu.kanade.tachiyomi.extension.util
 import android.content.Context
 import eu.kanade.tachiyomi.animeextension.util.AnimeExtensionLoader
 import eu.kanade.tachiyomi.util.system.AppLog
+import kotlinx.coroutines.flow.first
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.domain.storage.service.StorageManager
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import kotlinx.coroutines.flow.first
 import java.io.File
 
 /**
@@ -62,12 +62,39 @@ object SideloadFolder {
     /**
      * The folder and the app made to agree: an APK in the folder the app doesn't have is copied in, and a sideloaded
      * extension whose APK was deleted from the folder is taken out of the app. Nothing is taken out when the folder
-     * can't be read (no folder picked, permission lost), so a missing folder never removes extensions.
+     * can't be read (no folder picked, permission lost), so a missing folder never removes extensions, nor when it
+     * has no APKs at all (KMK: moved or cleared storage); only an APK gone from a folder that still lists others.
      */
     fun sync(context: Context, kind: Kind) {
+        // KMK: what this kind has tracked as sideloaded, for the checks below
+        val trackedHere = tracked.get().filter { it.startsWith(kind.prefix) }
         val folder = dir(kind, create = false)
-        if (folder == null || !folder.isDirectory) return
-        val apks = folder.listFiles().orEmpty()
+        if (folder == null || !folder.isDirectory) {
+            // A missing folder (not picked yet, moved, permission lost) never removes extensions
+            if (trackedHere.isNotEmpty()) {
+                AppLog.add(
+                    'W',
+                    "Sideload",
+                    "The Sideloaded/${kind.folder} folder is missing or can't be reached; " +
+                        "kept the ${trackedHere.size} sideloaded extensions",
+                )
+            }
+            return
+        }
+        // KMK: null means the folder couldn't be listed (unreadable): nothing is removed then either
+        val listed = runCatching { folder.listFiles() }.getOrNull()
+        if (listed == null) {
+            if (trackedHere.isNotEmpty()) {
+                AppLog.add(
+                    'W',
+                    "Sideload",
+                    "The Sideloaded/${kind.folder} folder couldn't be read; " +
+                        "kept the ${trackedHere.size} sideloaded extensions",
+                )
+            }
+            return
+        }
+        val apks = listed
             .filter { it.isFile && it.name?.endsWith(".apk", ignoreCase = true) == true }
         val inFolder = apks.mapNotNull { it.name?.removeSuffix(".apk")?.removeSuffix(".APK") }.toSet()
         val inApp = when (kind) {
@@ -100,17 +127,28 @@ object SideloadFolder {
         }
 
         // Deleted from the folder -> out of the app (only what was sideloaded through the folder)
-        tracked.get().filter { it.startsWith(kind.prefix) }.map { it.removePrefix(kind.prefix) }
+        val gone = tracked.get().filter { it.startsWith(kind.prefix) }.map { it.removePrefix(kind.prefix) }
             .filter { it !in inFolder && it in inApp }
-            .forEach { pkgName ->
-                when (kind) {
-                    Kind.MANGA -> ExtensionLoader.uninstallPrivateExtension(context, pkgName)
-                    Kind.ANIME -> AnimeExtensionLoader.uninstallPrivateExtension(context, pkgName)
-                }
-                ExtensionInstallReceiver.notifyRemoved(context, pkgName)
-                tracked.set(tracked.get() - (kind.prefix + pkgName))
-                AppLog.add('I', "Sideload", "Removed $pkgName: its APK was deleted from the Sideloaded folder")
+        // KMK: a folder with no APKs at all while extensions are tracked was most likely moved or cleared (storage
+        // wiped, another folder picked), not emptied one by one: nothing is removed then
+        if (gone.isNotEmpty() && apks.isEmpty()) {
+            AppLog.add(
+                'W',
+                "Sideload",
+                "The Sideloaded/${kind.folder} folder has no APKs; kept the ${gone.size} sideloaded extensions " +
+                    "(put their APKs back, or remove them in Extensions)",
+            )
+            return
+        }
+        gone.forEach { pkgName ->
+            when (kind) {
+                Kind.MANGA -> ExtensionLoader.uninstallPrivateExtension(context, pkgName)
+                Kind.ANIME -> AnimeExtensionLoader.uninstallPrivateExtension(context, pkgName)
             }
+            ExtensionInstallReceiver.notifyRemoved(context, pkgName)
+            tracked.set(tracked.get() - (kind.prefix + pkgName))
+            AppLog.add('I', "Sideload", "Removed $pkgName: its APK was deleted from the Sideloaded folder")
+        }
     }
 
     /**

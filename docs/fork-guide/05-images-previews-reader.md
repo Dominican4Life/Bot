@@ -197,9 +197,10 @@ The decoder is then chosen like this:
 3. **Full pages from the site**: `chapterCache.getPageListFromCache(chapter)`, else `httpSource.getPageList()` (then cached), re-indexed as `Page(index, url, imageUrl)` "like the reader does". Each tile is `SourcePageThumbnail(source, chapterUrl, page)`.
 
 **Fetchers:**
-- `LocalPageFetcher`: a single file is streamed. A CBZ entry is **copied whole into an `okio.Buffer`** so the archive can be closed at once; it opens a new `archiveReader` per tile.
-- `SourcePageFetcher` (r80, f6681dee, the "preview disk cache"): the downloaded page is written into the **Coil disk cache** under `source-page;<sourceId>;<chapterUrl>;<pageIndex>`, and later loads open that snapshot. Before r80, tapping an animated tile to play it downloaded the whole file again (5–20 s for a big GIF), because the still had been decoded straight from the response.
-- `SourcePageKeyer` returns the same string as the disk key.
+- `LocalPageFetcher`: a single file is streamed. A CBZ entry is **streamed too since r86** (`ArchiveEntrySource`, an okio `ForwardingSource` over the entry's `ArchiveInputStream`). Before r86 it was copied whole into an `okio.Buffer` (up to 8 tiles at once). The archive (`ArchiveReader`, a memory-mapped file) now stays open until the stream reaches its end or is closed, and is released exactly once; reads after release return -1 so libarchive is never touched after it is freed. It still opens a new `archiveReader` per tile.
+- `SourcePageFetcher` (r80, f6681dee, the "preview disk cache"): the downloaded page is written into the **Coil disk cache** under `source-page;<sourceId>;<chapterUrl>;<pageIndex>`, and later loads open that snapshot. Before r80, tapping an animated tile to play it downloaded the whole file again (5–20 s for a big GIF), because the still had been decoded straight from the response. Since r86 the entry's metadata file holds the page's `imageUrl`.
+- `SourcePageKeyer` returns the same string as the disk key; both now call `SourcePageFetcher.diskCacheKeyOf(...)`.
+- **Reader reuse (r86):** `HttpPageLoader.internalLoadPage` calls `reuseFromPreview()` before downloading. It opens `source-page;<source.id>;<chapter.url>;<page.index>` in Coil's disk cache and, only if the saved metadata equals the reader's `imageUrl`, copies the file into `ChapterCache` (`putImageToCache(imageUrl, BufferedSource)`). The preview's copy is left in place, so each cache keeps its own limit and keys. Logs: `pages` I `Page N: reused the preview's download` (W `couldn't reuse …` on an error). Entries saved before r86 have no metadata and are never reused; neither are sources whose image URLs change per request (E-Hentai). With Data saver on, the reused copy is the original, not the compressed one.
 
 **Tap handling (`AnimatedTap`):** `active` = the playing index, `animated[index]` = from `onAnimated`. `onTap(i)`: if `animated[i] == true` and `active != i`, play it; otherwise open the page in the reader. **Video tiles** (r82, aa5d1710) skip all of this and call `onOpenPage(chapter, index, true)` → `ReaderActivity.newIntent(..., page = index, playVideo = true)` (§7).
 
@@ -209,8 +210,8 @@ The decoder is then chosen like this:
 - `SourcePageKeyer.key()` and `SourcePageFetcher.diskCacheKey` build the same string in two places. Change both together.
 
 **Predictable failure modes**
-- The preview's page files live in Coil's ≤ 250 MB image cache, **not** in the reader's chapter cache. Opening the reader from a preview downloads the pages again. A big animated gallery in the preview also pushes other entries (non-library covers) out of that 250 MB.
-- `LocalPageFetcher` buffers a whole CBZ entry per tile, up to 8 at once (fetcher slots). CBZs of 20–50 MB GIFs can spike memory. If a downloaded-gallery out-of-memory crash appears, look here first (stream from a temp file instead).
+- The preview's page files live in Coil's ≤ 250 MB image cache, **not** in the reader's chapter cache. Since r86 the reader copies them across instead of downloading again (see "Reader reuse" above); a preview file already evicted from the 250 MB is downloaded as before. A big animated gallery in the preview also pushes other entries (non-library covers) out of that 250 MB.
+- `LocalPageFetcher` streamed CBZ entries since r86. The one playing tile can still hold its whole file (the animated decoders need it), as before. A native crash in libarchive on downloaded tiles would point at `ArchiveEntrySource` releasing the archive too early.
 - Opening an archive per tile is slow for big CBZ/CBR files (shows as "reading the file" in tile logs).
 - r65's "loaded two at a time" and r66's "loads only the pages shown" were undone. The panel now relies on `LazyVerticalGrid` composing only visible tiles and on Coil's 8 fetch slots.
 

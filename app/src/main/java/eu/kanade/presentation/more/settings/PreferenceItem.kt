@@ -74,6 +74,7 @@ internal fun PreferenceItem(
                     subtitle = item.subtitle,
                     icon = item.icon,
                     checked = value,
+                    locked = item.locked, // KMK
                     onCheckedChanged = { newValue ->
                         scope.launch {
                             if (item.onValueChanged(newValue)) {

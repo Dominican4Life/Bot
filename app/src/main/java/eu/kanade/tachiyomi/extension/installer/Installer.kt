@@ -12,6 +12,7 @@ import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.extension.model.InstallStep
 import uy.kohesive.injekt.injectLazy
 import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
@@ -90,6 +91,13 @@ abstract class Installer(private val service: Service) {
         }
     }
 
+    // KMK: the same, with why the install failed (when known), for the message the extension installers show
+    fun continueQueue(resultStep: InstallStep, reason: String?) {
+        val entry = waitingInstall.load()
+        if (entry != null && reason != null) failureReasons[entry.downloadId] = reason
+        continueQueue(resultStep)
+    }
+
     /**
      * Checks the queue. The provided service will be stopped if the queue is empty.
      * Will not be run when not ready.
@@ -119,7 +127,11 @@ abstract class Installer(private val service: Service) {
     @CallSuper
     open fun onDestroy() {
         LocalBroadcastManager.getInstance(service).unregisterReceiver(cancelReceiver)
-        queue.forEach { extensionManager.updateInstallStep(it.downloadId, InstallStep.Error) }
+        queue.forEach {
+            // KMK: said in the "Couldn't install" message
+            failureReasons[it.downloadId] = "the install service stopped"
+            extensionManager.updateInstallStep(it.downloadId, InstallStep.Error)
+        }
         queue.clear()
         waitingInstall.store(null)
     }
@@ -165,6 +177,9 @@ abstract class Installer(private val service: Service) {
     companion object {
         private const val ACTION_CANCEL_QUEUE = "Installer.action.CANCEL_QUEUE"
         private const val EXTRA_DOWNLOAD_ID = "Installer.extra.DOWNLOAD_ID"
+
+        // KMK: why an install failed, by download id; taken by the extension installer that owns the id
+        val failureReasons = ConcurrentHashMap<Long, String>()
 
         /**
          * Attempts to cancel the installation entry for the provided download ID.

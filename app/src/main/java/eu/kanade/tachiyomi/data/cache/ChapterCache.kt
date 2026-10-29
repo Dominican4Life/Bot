@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.serialization.json.Json
 import logcat.LogPriority
 import okhttp3.Response
+import okio.BufferedSource
 import okio.buffer
 import okio.sink
 import tachiyomi.core.common.util.system.logcat
@@ -188,6 +189,25 @@ class ChapterCache(
             editor.commit()
         } finally {
             response.body.close()
+            editor?.abortUnlessCommitted()
+        }
+    }
+
+    /**
+     * KMK: Adds an image that is already on the device (a page a preview panel downloaded) to the cache.
+     *
+     * @return true if the image was saved.
+     */
+    @Throws(IOException::class)
+    fun putImageToCache(imageUrl: String, source: BufferedSource): Boolean {
+        var editor: DiskLruCache.Editor? = null
+        try {
+            editor = diskCache.edit(DiskUtil.hashKeyForDisk(imageUrl)) ?: return false
+            source.saveTo(editor.newOutputStream(0))
+            diskCache.flush()
+            editor.commit()
+            return true
+        } finally {
             editor?.abortUnlessCommitted()
         }
     }

@@ -1,5 +1,7 @@
 package eu.kanade.tachiyomi.data.backup
 
+import app.cash.sqldelight.db.QueryResult
+import app.cash.sqldelight.db.SqlDriver
 import eu.kanade.tachiyomi.animesource.model.FetchType
 import eu.kanade.tachiyomi.data.anime.Anime
 import eu.kanade.tachiyomi.data.anime.AnimeCustomInfo
@@ -14,6 +16,7 @@ import eu.kanade.tachiyomi.data.backup.models.BackupAnimeCategory
 import eu.kanade.tachiyomi.data.backup.models.BackupAnimeCustomInfo
 import eu.kanade.tachiyomi.data.backup.models.BackupAnimeHistory
 import eu.kanade.tachiyomi.data.backup.models.BackupAnimeTrack
+import eu.kanade.tachiyomi.data.backup.models.BackupCustomButton
 import eu.kanade.tachiyomi.data.backup.models.BackupEpisode
 import eu.kanade.tachiyomi.data.backup.models.BackupExtensionStore
 import eu.kanade.tachiyomi.data.backup.models.BackupPreference
@@ -44,6 +47,8 @@ class AnimeBackupHelper(
     /** KMK: [animes] with their episodes, and their watch history when [includeHistory] (device sync picks these) */
     suspend fun createAnime(animes: List<Anime>, includeHistory: Boolean): List<BackupAnime> {
         val history = if (includeHistory) repository.getAllHistory() else emptyMap()
+        // KMK (r86): watched milliseconds per episode (Stats), with the history
+        val timeWatch = if (includeHistory) timeWatched() else emptyMap()
         val categoryNames = repository.getCategories().associate { it.id to it.name }
         val tracks = trackRepository.getAll().groupBy { it.animeId }
         val customInfo = database.anime_custom_infoQueries
@@ -103,7 +108,9 @@ class AnimeBackupHelper(
                     )
                 },
                 history = episodes.mapNotNull { ep ->
-                    history[ep.id]?.let { BackupAnimeHistory(episodeUrl = ep.url, lastSeen = it) }
+                    history[ep.id]?.let {
+                        BackupAnimeHistory(episodeUrl = ep.url, lastSeen = it, timeWatch = timeWatch[ep.id] ?: 0L)
+                    }
                 },
                 categories = repository.getCategoryIds(anime.id).mapNotNull { categoryNames[it] },
                 tracking = tracks[anime.id].orEmpty().map { track ->
@@ -232,8 +239,140 @@ class AnimeBackupHelper(
             },
             history = backup.history.associate { it.episodeUrl to it.lastSeen },
         )
+        // KMK (r86): a failure here must not cost the anime its tracks, notes and Edit info
+        runCatching { restoreTimeWatch(anime.id, backup.history) }
         restoreExtras(anime.id, backup)
     }
+
+    /** KMK (r86): episodes whose watch time came back during this helper's restore, and the milliseconds added */
+    var timeWatchEpisodes = 0
+        private set
+    var timeWatchMillis = 0L
+        private set
+
+    /** KMK (r86): every episode's watched milliseconds, by episode id (no generated query reads time_watch) */
+    private fun timeWatched(): Map<Long, Long> = runCatching {
+        Injekt.get<SqlDriver>().executeQuery(
+            identifier = null,
+            sql = "SELECT episode_id, time_watch FROM anime_history WHERE time_watch > 0",
+            mapper = { cursor ->
+                val found = mutableMapOf<Long, Long>()
+                while (cursor.next().value) {
+                    val episodeId = cursor.getLong(0)
+                    val millis = cursor.getLong(1)
+                    if (episodeId != null && millis != null) found[episodeId] = millis
+                }
+                QueryResult.Value(found.toMap())
+            },
+            parameters = 0,
+        ).value
+    }.getOrDefault(emptyMap())
+
+    /**
+     * KMK (r86): the backup's watch time of each episode, keeping the larger of what is here and the backup's.
+     * Older backups have 0 everywhere, so nothing is written for them.
+     */
+    private suspend fun restoreTimeWatch(animeId: Long, history: List<BackupAnimeHistory>) {
+        val watched = history.filter { it.timeWatch > 0L }
+        if (watched.isEmpty()) return
+        val episodeIds = repository.getEpisodes(animeId).associate { it.url to it.id }
+        val driver = Injekt.get<SqlDriver>()
+        watched.forEach { entry ->
+            val episodeId = episodeIds[entry.episodeUrl] ?: return@forEach
+            driver.execute(
+                identifier = null,
+                sql = "INSERT INTO anime_history(episode_id, last_seen, time_watch) VALUES (?, ?, ?) " +
+                    "ON CONFLICT(episode_id) DO UPDATE SET time_watch = MAX(time_watch, excluded.time_watch)",
+                parameters = 3,
+            ) {
+                bindLong(0, episodeId)
+                bindLong(1, entry.lastSeen)
+                bindLong(2, entry.timeWatch)
+            }
+            timeWatchEpisodes++
+            timeWatchMillis += entry.timeWatch
+        }
+    }
+
+    /** KMK (r86): every player custom button, in their order */
+    fun createCustomButtons(): List<BackupCustomButton> = runCatching {
+        database.custom_buttonsQueries
+            .findAll { _, name, isFavorite, sortIndex, content, longPressContent, onStartup ->
+                BackupCustomButton(
+                    name = name,
+                    isFavorite = isFavorite,
+                    sortIndex = sortIndex,
+                    content = content,
+                    longPressContent = longPressContent,
+                    onStartup = onStartup,
+                )
+            }
+            .executeAsList()
+    }.getOrDefault(emptyList())
+
+    /**
+     * KMK (r86): puts back the backed up player custom buttons. A button with the same name here (like the seeded
+     * "+85 s") gets the backup's code instead of a second copy; the others are added after the ones here, in the
+     * backup's order. When the backup has a favorite (primary) button, it becomes the only favorite.
+     *
+     * @return the buttons added and the buttons replaced
+     */
+    fun restoreCustomButtons(buttons: List<BackupCustomButton>): Pair<Int, Int> {
+        val unique = buttons.filter { it.name.isNotBlank() }.distinctBy { it.name.trim().lowercase() }
+        if (unique.isEmpty()) return 0 to 0
+        var added = 0
+        var replaced = 0
+        database.transaction {
+            val existing = database.custom_buttonsQueries
+                .findAll { id, name, isFavorite, sortIndex, _, _, _ -> ExistingButton(id, name, isFavorite, sortIndex) }
+                .executeAsList()
+            val byName = existing.associateBy { it.name.trim().lowercase() }
+            val backupHasFavorite = unique.any { it.isFavorite }
+            if (backupHasFavorite) {
+                existing.filter { it.isFavorite }.forEach {
+                    database.custom_buttonsQueries.update(
+                        name = null,
+                        isFavorite = false,
+                        sortIndex = null,
+                        content = null,
+                        longPressContent = null,
+                        onStartup = null,
+                        customButtonId = it.id,
+                    )
+                }
+            }
+            var next = (existing.maxOfOrNull { it.sortIndex } ?: -1L) + 1
+            unique.sortedBy { it.sortIndex }.forEach { button ->
+                val here = byName[button.name.trim().lowercase()]
+                if (here != null) {
+                    database.custom_buttonsQueries.update(
+                        name = null,
+                        // Without a favorite in the backup, the one here stays
+                        isFavorite = if (backupHasFavorite) button.isFavorite else null,
+                        sortIndex = null,
+                        content = button.content,
+                        longPressContent = button.longPressContent,
+                        onStartup = button.onStartup,
+                        customButtonId = here.id,
+                    )
+                    replaced++
+                } else {
+                    database.custom_buttonsQueries.insert(
+                        name = button.name,
+                        isFavorite = button.isFavorite,
+                        sortIndex = next++,
+                        content = button.content,
+                        longPressContent = button.longPressContent,
+                        onStartup = button.onStartup,
+                    )
+                    added++
+                }
+            }
+        }
+        return added to replaced
+    }
+
+    private class ExistingButton(val id: Long, val name: String, val isFavorite: Boolean, val sortIndex: Long)
 
     /**
      * KMK: Links a restored season to its parent. Run after every anime of the backup is restored, so the

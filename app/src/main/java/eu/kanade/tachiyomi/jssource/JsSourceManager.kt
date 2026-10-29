@@ -227,6 +227,20 @@ class JsSourceManager(private val context: Application) {
     /** The id a source's settings and videos go by: its own id once saved, or the one made from its key */
     fun idOf(key: String): Long = get(key)?.id ?: JsSourceInfo.idFor(key)
 
+    /**
+     * KMK: Fills the Code editor's test copy of [key] (its own settings and storage) from the saved source's current
+     * ones, so tests behave like the real source without changing it. The editor calls it once per source it opens.
+     */
+    fun prepareTestCopy(key: String) {
+        val id = idOf(key)
+        runCatching { JsPreferences.copyAll(JsPreferences.of(context, id), JsPreferences.testOf(context, id)) }
+            .onFailure { AppLog.add('W', "js", "Couldn't copy the settings for testing: ${it.message}") }
+        runCatching {
+            val saved = JsStorage.of(JsRuntime.storageDir(context, key)).all()
+            JsStorage.of(JsRuntime.storageDir(context, JsRuntime.testStorageKey(key))).replaceAll(saved)
+        }.onFailure { AppLog.add('W', "js", "Couldn't copy the saved data for testing: ${it.message}") }
+    }
+
     /** A saved source is listed in Browse even when its language was turned off there */
     private fun showLanguage(info: JsSourceInfo) {
         runCatching {
@@ -257,7 +271,13 @@ class JsSourceManager(private val context: Application) {
      * device already has the same or a newer copy.
      */
     fun importSource(infoJson: String, code: String): Boolean {
-        val info = jsJson.decodeFromString(JsSourceInfo.serializer(), infoJson)
+        val incoming = jsJson.decodeFromString(JsSourceInfo.serializer(), infoJson)
+        // KMK: the same id rule as a save: an id that belongs to the app's own sources or to another saved source is
+        // dropped (the source keeps its own id), so an import can't take another source's place
+        val info = incoming.customId
+            ?.takeIf { customId(it.toString(), incoming.key, incoming.name) == null }
+            ?.let { incoming.copy(customId = null) }
+            ?: incoming
         if (!isSafeKey(info.key)) {
             AppLog.add('W', "js", "Skipped ${info.name}: its key \"${info.key.take(40)}\" isn't a valid folder name")
             return false
@@ -324,8 +344,15 @@ class JsSourceManager(private val context: Application) {
         get(key)?.customId?.let { setApkEnabled(it, true) }
         runCatching { tabPrefs.edit().remove(key).apply() }
         invalidate(key)
+        // KMK: and the Code editor's test copy of its settings and storage
+        runCatching { JsPreferences.testOf(context, idOf(key)).edit().clear().apply() }
         dir(key).deleteRecursively()
-        File(context.filesDir, "js_storage/$key").deleteRecursively()
+        // KMK: the shared copies in memory go too, so nothing old is written back (JsStorage)
+        listOf(key, JsRuntime.testStorageKey(key)).forEach {
+            val storage = JsRuntime.storageDir(context, it)
+            storage.deleteRecursively()
+            JsStorage.forget(storage)
+        }
         tags.forget(key)
         _saved.value = _saved.value.filterNot { it.key == key }
     }

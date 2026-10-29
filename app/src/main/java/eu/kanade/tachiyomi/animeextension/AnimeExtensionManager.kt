@@ -9,6 +9,8 @@ import eu.kanade.tachiyomi.animeextension.model.AnimeLoadResult
 import eu.kanade.tachiyomi.animeextension.util.AnimeExtensionInstallReceiver
 import eu.kanade.tachiyomi.animeextension.util.AnimeExtensionInstaller
 import eu.kanade.tachiyomi.animeextension.util.AnimeExtensionLoader
+import eu.kanade.tachiyomi.extension.availableKey
+import eu.kanade.tachiyomi.extension.copyFor
 import eu.kanade.tachiyomi.extension.model.Extension
 import eu.kanade.tachiyomi.extension.model.InstallStep
 import eu.kanade.tachiyomi.util.system.toast
@@ -152,7 +154,9 @@ class AnimeExtensionManager(
             return
         }
 
-        availableExtensionMapFlow.value = extensions.associateBy { it.pkgName + "_${it.signatureHash}" }
+        // KMK: one entry per package, signature and repo: two repos with the same (or no) signing key offering the
+        // same package used to overwrite each other, so one of them showed fewer packages
+        availableExtensionMapFlow.value = extensions.associateBy { availableKey(it) }
         updatedInstalledExtensionsStatuses(extensions)
     }
 
@@ -160,13 +164,9 @@ class AnimeExtensionManager(
         val installedExtensionsMap = installedExtensionMapFlow.value.toMutableMap()
         var changed = false
         for ((pkgName, extension) in installedExtensionsMap) {
-            val availableExt = availableExtensions.find {
-                it.signatureHash == extension.signatureHash && it.pkgName == pkgName
-            }
-                // KMK: a repo with no signing fingerprint can only be matched by package name
-                ?: availableExtensions.find {
-                    it.pkgName == pkgName && !mihon.data.extension.service.ExtensionStoreUrls.hasFingerprint(it.signatureHash)
-                }
+            // KMK: same signature (or, for a repo with no signing fingerprint, the package name), from the repo it
+            // came from when that one still offers it
+            val availableExt = availableExtensions.copyFor(pkgName, extension.signatureHash, extension.store)
             if (availableExt == null) {
                 if (!extension.isObsolete || extension.hasUpdate) {
                     installedExtensionsMap[pkgName] = extension.copy(isObsolete = true, hasUpdate = false)
@@ -191,12 +191,9 @@ class AnimeExtensionManager(
     }
 
     fun updateExtension(extension: AnimeExtension): Flow<InstallStep> {
-        val availableExt = availableExtensionMapFlow.value[extension.pkgName + "_${extension.signatureHash}"]
-            // KMK: a repo with no signing fingerprint is matched by package name
-            ?: availableExtensionMapFlow.value.values.firstOrNull {
-                it.pkgName == extension.pkgName &&
-                    !mihon.data.extension.service.ExtensionStoreUrls.hasFingerprint(it.signatureHash)
-            }
+        // KMK: the copy of the repo it came from (else same signature, else a repo with no fingerprint by name)
+        val availableExt = availableExtensionMapFlow.value.values
+            .copyFor(extension.pkgName, extension.signatureHash, extension.store)
             ?: return emptyFlow()
         // KMK: updated the way it was installed: sideloaded stays sideloaded
         return installExtension(availableExt, sideload = !extension.isShared)
@@ -264,7 +261,8 @@ class AnimeExtensionManager(
 
     private fun AnimeExtension.updateExists(availableExtension: Extension.Available? = null): Boolean {
         val availableExt = availableExtension
-            ?: availableExtensionMapFlow.value[pkgName + "_$signatureHash"]
+            // KMK: the map is keyed by package, signature and repo
+            ?: availableExtensionMapFlow.value.values.copyFor(pkgName, signatureHash, store)
             ?: return false
         return availableExt.versionCode > versionCode || availableExt.libVersion > libVersion
     }

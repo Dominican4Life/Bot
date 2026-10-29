@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Label
 import androidx.compose.material.icons.automirrored.outlined.PlaylistAdd
+import androidx.compose.material.icons.outlined.BugReport
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.GetApp
 import androidx.compose.material.icons.outlined.History
@@ -64,6 +65,8 @@ fun MoreScreen(
     onClickHistory: () -> Unit,
     // KMK -->
     onClickLibraryUpdateErrors: () -> Unit,
+    /** The in-app Logs (the tablet rail has its own button; phones had no way in) */
+    onClickLogs: () -> Unit = {},
     // KMK <--
 ) {
     // SY -->
@@ -219,6 +222,13 @@ fun MoreScreen(
                     title = stringResource(AMR.strings.label_player_settings),
                     icon = Icons.Outlined.VideoSettings,
                     onPreferenceClick = onClickPlayerSettings,
+                )
+            }
+            item {
+                TextPreferenceWidget(
+                    title = "Logs",
+                    icon = Icons.Outlined.BugReport,
+                    onPreferenceClick = onClickLogs,
                 )
             }
             // KMK <--

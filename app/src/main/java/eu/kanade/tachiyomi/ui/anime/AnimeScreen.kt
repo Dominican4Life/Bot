@@ -67,6 +67,8 @@ import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
+import coil3.asDrawable
+import coil3.imageLoader
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.presentation.anime.AnimeCategoryDialog
@@ -83,33 +85,39 @@ import eu.kanade.presentation.manga.components.ChapterDownloadAction
 import eu.kanade.presentation.manga.components.ExpandableMangaDescription
 import eu.kanade.presentation.manga.components.MangaActionRow
 import eu.kanade.presentation.manga.components.MangaChapterListItem
-import eu.kanade.presentation.manga.components.getSwipeAction
-import eu.kanade.presentation.manga.components.swipeActionThreshold
 import eu.kanade.presentation.manga.components.MangaInfoBox
 import eu.kanade.presentation.manga.components.MangaToolbar
 import eu.kanade.presentation.manga.components.OutlinedButtonWithArrow
 import eu.kanade.presentation.manga.components.ScanlatorFilterDialog
+import eu.kanade.presentation.manga.components.getSwipeAction
+import eu.kanade.presentation.manga.components.swipeActionThreshold
 import eu.kanade.presentation.theme.CoverSeedTheme
 import eu.kanade.presentation.util.Screen
 import eu.kanade.presentation.util.isTabletUi
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.data.anime.Anime
+import eu.kanade.tachiyomi.data.anime.AnimeEpisodeSeasons
 import eu.kanade.tachiyomi.data.anime.AnimeSeasonFlags
+import eu.kanade.tachiyomi.data.anime.Episode
 import eu.kanade.tachiyomi.data.anime.seasonLayout
 import eu.kanade.tachiyomi.data.anime.seasonShowTitles
-import eu.kanade.tachiyomi.data.anime.Episode
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.ui.anime.source.AnimeSourceScreen
 import eu.kanade.tachiyomi.ui.player.PlayerActivity
 import eu.kanade.tachiyomi.ui.player.settings.PlayerPreferences
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
 import eu.kanade.tachiyomi.util.lang.toRelativeString
+import eu.kanade.tachiyomi.util.system.getBitmapOrNull
+import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableSet
+import kotlinx.coroutines.launch
+import logcat.LogPriority
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.preference.TriState
+import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.ank.AMR
@@ -133,14 +141,6 @@ import tachiyomi.presentation.core.util.collectAsState
 import tachiyomi.presentation.core.util.shouldExpandFAB
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import kotlinx.coroutines.launch
-import coil3.imageLoader
-import coil3.asDrawable
-import eu.kanade.tachiyomi.util.system.getBitmapOrNull
-import eu.kanade.tachiyomi.util.system.toShareIntent
-import tachiyomi.core.common.util.system.logcat
-import logcat.LogPriority
-import eu.kanade.tachiyomi.data.anime.AnimeEpisodeSeasons
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -1302,8 +1302,39 @@ private fun EpisodeCardItem(
 ) {
     val context = LocalContext.current
     val uiPreferences = remember { Injekt.get<UiPreferences>() }
+    val libraryPreferences = remember { Injekt.get<LibraryPreferences>() }
     val relativeTime by uiPreferences.relativeTime().collectAsState()
     val dateFormat by uiPreferences.dateFormat().collectAsState()
+    // KMK: cards swipe like the episode rows, with the same settings ("swipe to right" reveals the start side)
+    val swipeStart by libraryPreferences.episodeSwipeToEndAction().collectAsState()
+    val swipeEnd by libraryPreferences.episodeSwipeToStartAction().collectAsState()
+    val downloadState = state.downloadState(episode)
+    val onSwipe: (LibraryPreferences.ChapterSwipeAction) -> Unit = { action ->
+        when (action) {
+            LibraryPreferences.ChapterSwipeAction.ToggleRead -> actions.onToggleSeen(episode)
+            LibraryPreferences.ChapterSwipeAction.ToggleBookmark -> actions.onToggleBookmark(episode)
+            LibraryPreferences.ChapterSwipeAction.Download -> actions.onEpisodeDownload(
+                episode,
+                when (downloadState) {
+                    Download.State.NOT_DOWNLOADED, Download.State.ERROR -> ChapterDownloadAction.START_NOW
+                    Download.State.QUEUE, Download.State.DOWNLOADING -> ChapterDownloadAction.CANCEL
+                    Download.State.DOWNLOADED -> ChapterDownloadAction.DELETE
+                },
+            )
+            LibraryPreferences.ChapterSwipeAction.Disabled -> Unit
+        }
+    }
+    val swipeBackground = MaterialTheme.colorScheme.primaryContainer
+    val startAction = remember(swipeStart, episode.seen, episode.bookmark, downloadState, onSwipe) {
+        getSwipeAction(swipeStart, episode.seen, episode.bookmark, downloadState, swipeBackground) {
+            onSwipe(swipeStart)
+        }
+    }
+    val endAction = remember(swipeEnd, episode.seen, episode.bookmark, downloadState, onSwipe) {
+        getSwipeAction(swipeEnd, episode.seen, episode.bookmark, downloadState, swipeBackground) {
+            onSwipe(swipeEnd)
+        }
+    }
     val aniList = state.episodeInfo?.of(episode.episodeNumber)
     val sourceDate = remember(episode.dateUpload, relativeTime, dateFormat) {
         episode.dateUpload.takeIf { it > 0L }?.let {
@@ -1354,24 +1385,32 @@ private fun EpisodeCardItem(
         state.memberSources[episode.animeId],
         episode.scanlator?.takeIf { it.isNotBlank() },
     ).joinToString(" • ").ifEmpty { null }
-    AnimeEpisodeCard(
-        title = title,
-        image = image,
-        minutes = aniList?.minutes,
-        rating = aniList?.rating,
-        summary = summary,
-        info = info,
-        filler = aniList?.filler == true || episode.fillermark,
-        seen = episode.seen,
-        bookmark = episode.bookmark,
-        selected = episode.id in actions.selection,
-        downloadState = state.downloadState(episode),
-        downloadProgress = state.downloadProgress(episode),
-        onDownload = { action -> actions.onEpisodeDownload(episode, action) },
-        onClick = { actions.onEpisodeClick(episode) },
-        onLongClick = { actions.onEpisodeLongClick(episode) },
-        modifier = modifier,
-    )
+    me.saket.swipe.SwipeableActionsBox(
+        modifier = modifier.clip(RoundedCornerShape(8.dp)),
+        startActions = listOfNotNull(startAction),
+        endActions = listOfNotNull(endAction),
+        swipeThreshold = swipeActionThreshold,
+        backgroundUntilSwipeThreshold = MaterialTheme.colorScheme.surfaceContainerLowest,
+    ) {
+        AnimeEpisodeCard(
+            title = title,
+            image = image,
+            minutes = aniList?.minutes,
+            rating = aniList?.rating,
+            summary = summary,
+            info = info,
+            filler = aniList?.filler == true || episode.fillermark,
+            seen = episode.seen,
+            bookmark = episode.bookmark,
+            selected = episode.id in actions.selection,
+            downloadState = downloadState,
+            downloadProgress = state.downloadProgress(episode),
+            onDownload = { action -> actions.onEpisodeDownload(episode, action) },
+            onClick = { actions.onEpisodeClick(episode) },
+            onLongClick = { actions.onEpisodeLongClick(episode) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
 }
 
 /** KMK: "Season 2", "Specials" or "Extras" for a season key from AnimeEpisodeSeasons */

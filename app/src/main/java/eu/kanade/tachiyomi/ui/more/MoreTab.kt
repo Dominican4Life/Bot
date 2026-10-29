@@ -30,6 +30,7 @@ import eu.kanade.tachiyomi.ui.category.CategoryScreen
 import eu.kanade.tachiyomi.ui.download.DownloadQueueScreen
 import eu.kanade.tachiyomi.ui.history.HistoryTab
 import eu.kanade.tachiyomi.ui.libraryUpdateError.LibraryUpdateErrorScreen
+import eu.kanade.tachiyomi.ui.logs.LogsScreen
 import eu.kanade.tachiyomi.ui.setting.PlayerSettingsScreen
 import eu.kanade.tachiyomi.ui.setting.SettingsScreen
 import eu.kanade.tachiyomi.ui.stats.StatsScreen
@@ -97,6 +98,8 @@ data object MoreTab : Tab {
             // SY <--
             // KMK -->
             onClickLibraryUpdateErrors = { navigator.push(LibraryUpdateErrorScreen()) },
+            // Logs was only on the tablet navigation rail; this opens the same screen on phones too
+            onClickLogs = { navigator.push(LogsScreen()) },
             // KMK <--
         )
 

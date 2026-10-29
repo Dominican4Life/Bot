@@ -66,7 +66,8 @@ class ShizukuInstaller(private val service: Service) : Installer(service) {
                 continueQueue(InstallStep.Installed)
             } else {
                 logcat(LogPriority.ERROR) { "Failed to install extension $packageName: $message" }
-                continueQueue(InstallStep.Error)
+                // KMK: said in the "Couldn't install" message
+                continueQueue(InstallStep.Error, message)
             }
         }
     }
@@ -124,7 +125,8 @@ class ShizukuInstaller(private val service: Service) : Installer(service) {
             service.contentResolver.delete(entry.uri, null, null)
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, e) { "Failed to install extension ${entry.downloadId} ${entry.uri}" }
-            continueQueue(InstallStep.Error)
+            // KMK: said in the "Couldn't install" message
+            continueQueue(InstallStep.Error, e.message ?: e.javaClass.simpleName)
         }
     }
 

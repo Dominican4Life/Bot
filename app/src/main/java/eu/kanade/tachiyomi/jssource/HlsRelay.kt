@@ -56,11 +56,21 @@ object HlsRelay {
     }
 
     /** The address mpv should open instead of [url], an HLS playlist fetched with [headers] */
+    @Synchronized
     fun wrap(url: String, headers: Headers): String {
         val id = nextId.getAndIncrement().toString()
         sessions[id] = headers
         originals[id] = url
-        if (sessions.size > 500) sessions.keys.take(100).forEach { sessions.remove(it); originals.remove(it) }
+        // KMK: past 500, the 100 oldest go (ids only grow). take(100) on the map dropped them in hash order, which
+        // could be a stream that was playing: its next playlist or piece then got 404
+        if (sessions.size > 500) {
+            val oldest = sessions.keys.sortedBy { it.toLongOrNull() ?: Long.MIN_VALUE }.take(100)
+            oldest.forEach {
+                sessions.remove(it)
+                originals.remove(it)
+            }
+            AppLog.add('D', "hls", "Let go of the ${oldest.size} oldest stream addresses (more than 500 handed out)")
+        }
         return relayUrl(id, url, playlist = true)
     }
 

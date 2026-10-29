@@ -20,6 +20,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
+import okhttp3.Headers
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
@@ -45,22 +46,27 @@ object HlsVariants {
     private fun preferredHeight(): Int =
         Injekt.get<PlayerPreferences>().preferredQuality().get().filter { it.isDigit() }.toIntOrNull() ?: 1080
 
-    suspend fun split(videos: List<Video>): List<Video> {
+    /**
+     * [sourceHeaders]: the source's own headers (Referer, cookies…), sent when reading the list of a video that has
+     * none of its own, like the player does when it plays it
+     */
+    suspend fun split(videos: List<Video>, sourceHeaders: Headers? = null): List<Video> {
         if (videos.isEmpty() || videos.size > MAX_VIDEOS) return videos
         val preferred = preferredHeight()
         return coroutineScope {
             videos.map { video ->
-                async { localQualities(video, preferred) ?: expand(video, preferred) }
+                async { localQualities(video, preferred) ?: expand(video, preferred, sourceHeaders) }
             }.awaitAll().flatten()
         }
     }
 
     /**
      * For a download: the one quality to save (the best) of a stream that holds several, so the file has one
-     * picture and one sound instead of all of them; else [video] as it is.
+     * picture and one sound instead of all of them; else [video] as it is. [headers]: the ones the download sends
+     * (the video's, else the source's), used to read the list when the video has none of its own.
      */
-    suspend fun forDownload(video: Video): Video {
-        val chosen = expand(video, Int.MAX_VALUE).first()
+    suspend fun forDownload(video: Video, headers: Headers? = null): Video {
+        val chosen = expand(video, BEST, headers).first()
         return if (chosen.videoUrl != video.videoUrl) chosen else video
     }
 
@@ -151,11 +157,11 @@ object HlsVariants {
 
     fun isProbeOutput(text: String): Boolean = isProbing && PROBE_LINE.matches(text.trimEnd())
 
-    private suspend fun expand(video: Video, preferredHeight: Int): List<Video> {
+    private suspend fun expand(video: Video, preferredHeight: Int, sourceHeaders: Headers? = null): List<Video> {
         val url = video.videoUrl
         if (!url.startsWith("http", ignoreCase = true) || !isPlaylist(video)) return listOf(video)
         val variants = try {
-            withTimeoutOrNull(TIMEOUT_MS) { read(video) }
+            withTimeoutOrNull(TIMEOUT_MS) { read(video, sourceHeaders) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -163,11 +169,19 @@ object HlsVariants {
         } ?: return listOf(video)
         if (variants.size < 2) return listOf(video)
 
-        // Best first, the preferred quality (or the best below it) at the top
-        val sorted = variants.sortedByDescending { it.height ?: ((it.bandwidth ?: 0) / 10_000) }
-        val pick = sorted.firstOrNull { it.height == preferredHeight }
-            ?: sorted.firstOrNull { (it.height ?: 0) in 1..preferredHeight }
-            ?: sorted.last()
+        // Best first, the preferred quality (or the best below it) at the top.
+        // KMK: by size, then bandwidth; a list that gives no sizes (only BANDWIDTH) is ranked by bandwidth and
+        // starts on (and downloads) the highest, where it used to fall to the lowest
+        val sorted = variants.sortedWith(
+            compareByDescending<Variant> { it.height ?: 0 }.thenByDescending { it.bandwidth ?: 0 },
+        )
+        val sized = sorted.filter { (it.height ?: 0) > 0 }
+        val pick = when {
+            sized.isEmpty() || preferredHeight == BEST -> sorted.first()
+            else -> sized.firstOrNull { it.height == preferredHeight }
+                ?: sized.firstOrNull { (it.height ?: 0) <= preferredHeight }
+                ?: sized.last()
+        }
         val ordered = listOf(pick) + (sorted - pick)
         val base = video.videoTitle.trim()
         val generic = base.isEmpty() || base.lowercase() in GENERIC_TITLES
@@ -197,7 +211,9 @@ object HlsVariants {
         return out
     }
 
-    private fun heightLabel(variant: Variant): String = variant.height?.let { "${it}p" } ?: "?"
+    private fun heightLabel(variant: Variant): String = variant.height?.let { "${it}p" }
+        ?: variant.bandwidth?.let { "%.1f Mbps".format(it / 1_000_000.0) }
+        ?: "?"
 
     // Anywhere in the address: a stream played through the app's relay (HlsRelay) reads
     // "http://127.0.0.1:…/p/…?u=…&x=list.m3u8", with the name after the "?"
@@ -205,13 +221,17 @@ object HlsVariants {
         video.videoUrl.contains("m3u8", ignoreCase = true) ||
             video.mimeType?.contains("mpegurl", ignoreCase = true) == true
 
-    private suspend fun read(video: Video): List<Variant>? {
+    private suspend fun read(video: Video, sourceHeaders: Headers?): List<Variant>? {
+        // KMK: the video's own headers, else the source's (a host that wants the site's Referer answered 403)
         val request = Request.Builder().url(video.videoUrl).apply {
-            video.headers?.let { headers(it) }
+            (video.headers ?: sourceHeaders)?.let { headers(it) }
         }.build()
         val client = Injekt.get<NetworkHelper>().client
         val (text, finalUrl) = client.newCall(request).await().use { response ->
-            if (!response.isSuccessful) return null
+            if (!response.isSuccessful) {
+                AppLog.add('W', "hls", "Couldn't read the quality list (HTTP ${response.code}), left as one stream")
+                return null
+            }
             // A media playlist can be large; a master list is small, so only its start is needed
             response.body.source().let { source ->
                 source.request(MAX_BYTES)
@@ -248,4 +268,7 @@ object HlsVariants {
     private const val TIMEOUT_MS = 4_000L
     private const val MAX_BYTES = 256L * 1024
     private const val MAX_VIDEOS = 6
+
+    /** "The best there is", for downloads */
+    private const val BEST = Int.MAX_VALUE
 }

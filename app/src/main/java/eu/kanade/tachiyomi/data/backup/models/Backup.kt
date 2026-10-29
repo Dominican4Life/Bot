@@ -22,6 +22,10 @@ data class Backup(
     @ProtoNumber(701) var backupAnimeExtensionStores: List<BackupExtensionStore> = emptyList(),
     // Anime categories with their order
     @ProtoNumber(702) var backupAnimeCategories: List<BackupAnimeCategory> = emptyList(),
+    // KMK (r86): anime extension (Aniyomi) source settings, like 105 for manga, under the "Source settings" option
+    @ProtoNumber(703) var backupAnimeSourcePreferences: List<BackupSourcePreferences> = emptyList(),
+    // KMK (r86): player custom buttons (custom_buttons table), under the "App settings" option
+    @ProtoNumber(704) var backupCustomButtons: List<BackupCustomButton> = emptyList(),
     // Sources made in the Code editor
     @ProtoNumber(710) var backupJsSources: List<BackupJsSource> = emptyList(),
     // KMK <--

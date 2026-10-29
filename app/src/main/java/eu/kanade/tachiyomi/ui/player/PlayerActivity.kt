@@ -22,14 +22,6 @@
 
 package eu.kanade.tachiyomi.ui.player
 
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
-import eu.kanade.domain.ui.UiPreferences
-import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
-import tachiyomi.presentation.core.util.collectAsState as collectAsStatePref
-
-
 import android.annotation.SuppressLint
 import android.app.PictureInPictureParams
 import android.content.BroadcastReceiver
@@ -58,6 +50,9 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -74,11 +69,13 @@ import androidx.media.AudioManagerCompat
 import animiru.feature.mpvfiles.MpvConfig
 import animiru.feature.mpvfiles.MpvConfig.Companion.MPV_DIR
 import com.hippo.unifile.UniFile
+import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.presentation.theme.TachiyomiTheme
 import eu.kanade.tachiyomi.animesource.model.ChapterType
 import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SerializableHoster.Companion.serialize
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.data.torrentServer.service.TorrentServerService
 import eu.kanade.tachiyomi.torrentServer.TorrentServerApi
 import eu.kanade.tachiyomi.torrentServer.TorrentServerUtils
@@ -91,6 +88,7 @@ import eu.kanade.tachiyomi.ui.player.settings.GesturePreferences
 import eu.kanade.tachiyomi.ui.player.settings.PlayerPreferences
 import eu.kanade.tachiyomi.ui.player.settings.SubtitlePreferences
 import eu.kanade.tachiyomi.ui.player.utils.ChapterUtils.Companion.getStringRes
+import eu.kanade.tachiyomi.util.system.AppLog
 import eu.kanade.tachiyomi.util.system.powerManager
 import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
@@ -114,7 +112,7 @@ import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.ank.AMR
-
+import tachiyomi.presentation.core.util.collectAsState as collectAsStatePref
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.util.Calendar
@@ -134,6 +132,9 @@ class PlayerActivity : BaseActivity() {
     private val inputMethodManager by lazy { getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager }
 
     private var mediaSession: MediaSession? = null
+
+    // KMK: the remembered volume is applied only on the first onStart of this player
+    private var volumeRestored = false
     private val gesturePreferences: GesturePreferences = Injekt.get()
     private val playerPreferences: PlayerPreferences = Injekt.get()
     private val audioPreferences: AudioPreferences = Injekt.get()
@@ -499,6 +500,10 @@ class PlayerActivity : BaseActivity() {
                 playerPreferences.playerBrightnessValue().set(it)
             }
         }
+        // KMK: "Remember and switch to the last used volume" was never read; save the media volume as a fraction
+        if (playerPreferences.rememberPlayerVolume().get() && viewModel.maxVolume > 0) {
+            playerPreferences.playerVolumeValue().set(viewModel.currentVolume.value.toFloat() / viewModel.maxVolume)
+        }
 
         // ANZ -->
         // Either signal means we are leaving a PiP window: the latched flag covers devices that
@@ -593,6 +598,17 @@ class PlayerActivity : BaseActivity() {
         if (playerPreferences.rememberPlayerBrightness().get()) {
             playerPreferences.playerBrightnessValue().get().let {
                 if (it != -1f) viewModel.changeBrightnessTo(it)
+            }
+        }
+        // KMK: restore the remembered volume once per player open (not on every return from the background)
+        if (!volumeRestored && playerPreferences.rememberPlayerVolume().get()) {
+            volumeRestored = true
+            playerPreferences.playerVolumeValue().get().let {
+                if (it in 0f..1f) {
+                    val volume = Math.round(it * viewModel.maxVolume)
+                    viewModel.changeVolumeTo(volume)
+                    AppLog.add('I', "Player", "Restored last used volume: $volume / ${viewModel.maxVolume}")
+                }
             }
         }
 

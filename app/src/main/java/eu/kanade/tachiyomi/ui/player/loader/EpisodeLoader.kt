@@ -167,8 +167,10 @@ class EpisodeLoader {
                 videos
             }
 
-            // KMK: a stream holding several qualities becomes one video per quality (quality menu, quick start)
-            return HlsVariants.split(sortedVideos.resolveSubtitles())
+            // KMK: a stream holding several qualities becomes one video per quality (quality menu, quick start).
+            // Its list is read with the source's headers when the video has none, as the player sends them
+            val sourceHeaders = (source as? AnimeHttpSource)?.headers ?: (source as? JsAnimeSource)?.headers
+            return HlsVariants.split(sortedVideos.resolveSubtitles(), sourceHeaders)
         }
 
         private suspend fun List<Video>.resolveSubtitles(): List<Video> {

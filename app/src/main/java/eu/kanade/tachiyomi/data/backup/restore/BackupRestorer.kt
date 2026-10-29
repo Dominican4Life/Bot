@@ -199,7 +199,11 @@ class BackupRestorer(
                 restoreAppPreferences(backup.backupPreferences, backup.backupCategories.takeIf { options.categories })
             }
             if (options.sourceSettings) {
-                restoreSourcePreferences(backup.backupSourcePreferences)
+                restoreSourcePreferences(
+                    backup.backupSourcePreferences,
+                    // KMK (r86): anime extension settings, empty in older backups
+                    backup.backupAnimeSourcePreferences,
+                )
             }
             if (options.libraryEntries) {
                 restoreManga(backup.backupManga, if (options.categories) backup.backupCategories else emptyList())
@@ -220,6 +224,10 @@ class BackupRestorer(
             }
             if (options.jsSources && backup.backupJsSources.isNotEmpty()) {
                 restoreJsSources(backup.backupJsSources)
+            }
+            // KMK (r86): player custom buttons go with app settings (none in older backups)
+            if (options.appSettings && backup.backupCustomButtons.isNotEmpty()) {
+                restoreCustomButtons(backup.backupCustomButtons)
             }
             // KMK <--
 
@@ -330,9 +338,23 @@ class BackupRestorer(
         }
     }
 
-    private fun CoroutineScope.restoreSourcePreferences(preferences: List<BackupSourcePreferences>) = launch {
+    private fun CoroutineScope.restoreSourcePreferences(
+        preferences: List<BackupSourcePreferences>,
+        // KMK -->
+        animePreferences: List<BackupSourcePreferences> = emptyList(),
+        // KMK <--
+    ) = launch {
         ensureActive()
         preferenceRestorer.restoreSource(preferences)
+        // KMK (r86): anime extension settings live in the same kind of source_<id> files
+        if (animePreferences.isNotEmpty()) {
+            try {
+                preferenceRestorer.restoreSource(animePreferences)
+                log("Anime extension settings: ${animePreferences.size} sources")
+            } catch (e: Exception) {
+                errors.add(Date() to "Anime extension settings: ${e.message}")
+            }
+        }
 
         restoreProgress += 1
         with(notifier) {
@@ -410,6 +432,11 @@ class BackupRestorer(
                 }
             }
             timing("Anime (${backupAnime.size})", started)
+            // KMK (r86): watch time (Stats) that came back with the anime's history
+            if (backupAnime.any { anime -> anime.history.any { it.timeWatch > 0L } }) {
+                val hours = "%.1f".format(Locale.US, helper.timeWatchMillis / 3_600_000.0)
+                log("Anime watch time: ${helper.timeWatchEpisodes} episodes ($hours h in the backup)")
+            }
             // Seasons find their parent once every anime is in
             backupAnime.filter { it.parentUrl != null }.forEach {
                 ensureActive()
@@ -455,6 +482,19 @@ class BackupRestorer(
         }
     }
 
+    /** KMK (r86): player custom buttons; one with the same name here is replaced rather than added twice */
+    private fun CoroutineScope.restoreCustomButtons(
+        buttons: List<eu.kanade.tachiyomi.data.backup.models.BackupCustomButton>,
+    ) = launch {
+        ensureActive()
+        try {
+            val (added, replaced) = eu.kanade.tachiyomi.data.backup.AnimeBackupHelper().restoreCustomButtons(buttons)
+            log("Player custom buttons: $added added, $replaced replaced (${buttons.size} in the backup)")
+        } catch (e: Exception) {
+            errors.add(Date() to "Player custom buttons: ${e.message}")
+        }
+    }
+
     private fun CoroutineScope.restoreAnimeExtensionStores(stores: List<BackupExtensionStore>) = launch {
         val helper = eu.kanade.tachiyomi.data.backup.AnimeBackupHelper()
         stores.forEach {
@@ -472,6 +512,11 @@ class BackupRestorer(
     private fun timing(step: String, startedAt: Long) {
         val seconds = (System.currentTimeMillis() - startedAt) / 1000.0
         eu.kanade.tachiyomi.util.system.AppLog.add('I', "Restore", "$step: ${"%.1f".format(Locale.US, seconds)} s")
+    }
+
+    /** KMK (r86): a line in the app's Logs (Restore) */
+    private fun log(message: String) {
+        eu.kanade.tachiyomi.util.system.AppLog.add('I', "Restore", message)
     }
 
     private fun writeErrorLog(): File {

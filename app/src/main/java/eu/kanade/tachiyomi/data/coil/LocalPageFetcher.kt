@@ -11,13 +11,17 @@ import coil3.fetch.SourceFetchResult
 import coil3.key.Keyer
 import coil3.request.Options
 import com.hippo.unifile.UniFile
+import mihon.core.archive.ArchiveReader
 import mihon.core.archive.archiveReader
 import okio.Buffer
+import okio.ForwardingSource
 import okio.buffer
 import okio.source
 import tachiyomi.core.common.util.lang.withIOContext
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.io.InputStream
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * KMK: A page of a downloaded chapter, read from disk instead of the source. It is either a single
@@ -46,11 +50,20 @@ class LocalPageFetcher(
             }.source().buffer()
             data.archiveUri != null && data.entryName != null -> {
                 val file = checkNotNull(UniFile.fromUri(context, data.archiveUri)) { "Archive is gone" }
-                // Copy the entry out so the archive can be closed right away
-                file.archiveReader(context).use { reader ->
-                    val input = checkNotNull(reader.getInputStream(data.entryName)) { "Missing ${data.entryName}" }
-                    Buffer().also { buffer -> input.use { buffer.readFrom(it) } }
+                // KMK: the entry is streamed to Coil instead of being copied whole into memory (up to 8 tiles at
+                // once could hold 20-50 MB GIFs each). The archive stays open until the stream is read or closed.
+                val reader = file.archiveReader(context)
+                val input = try {
+                    reader.getInputStream(data.entryName)
+                } catch (e: Throwable) {
+                    reader.close()
+                    throw e
                 }
+                if (input == null) {
+                    reader.close()
+                    error("Missing ${data.entryName}")
+                }
+                ArchiveEntrySource(input, reader).buffer()
             }
             else -> error("Nothing to load for page ${data.index + 1}")
         }
@@ -65,6 +78,39 @@ class LocalPageFetcher(
         override fun create(data: LocalPageThumbnail, options: Options, imageLoader: ImageLoader): Fetcher {
             return LocalPageFetcher(data, options)
         }
+    }
+}
+
+/**
+ * KMK: One archive entry as a stream. The archive (a memory-mapped file) is closed once, either when the entry has
+ * been read to its end (Coil may copy a source to a temp file without closing it) or when the source is closed.
+ */
+private class ArchiveEntrySource(
+    private val input: InputStream,
+    private val reader: ArchiveReader,
+) : ForwardingSource(input.source()) {
+    private val released = AtomicBoolean(false)
+
+    override fun read(sink: Buffer, byteCount: Long): Long {
+        // Never read a freed archive again (okio may ask once more after the end)
+        if (released.get()) return -1L
+        val read = super.read(sink, byteCount)
+        if (read == -1L) release()
+        return read
+    }
+
+    override fun close() {
+        try {
+            super.close()
+        } finally {
+            release()
+        }
+    }
+
+    private fun release() {
+        if (!released.compareAndSet(false, true)) return
+        runCatching { input.close() }
+        runCatching { reader.close() }
     }
 }
 

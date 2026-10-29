@@ -1145,6 +1145,22 @@ Separate SharedPreferences files and files on disk (not in the app-settings back
 Shown and read, but overridden: **Try hardware decoding / High quality scaling / Smooth Motion** whenever the
 Performance profile is not "Custom".
 
+**r86 changes to the list above:**
+- *Remember … last used volume* now works: `PlayerActivity.onStop` saves the media volume as a fraction (0–1) in
+  `player_volume_value`, and the first `onStart` of a player restores it (`I Player Restored last used volume`).
+- *Show restoring progress banner*: row **hidden** (key kept). The restore bar was removed on purpose in r33.
+- *Tap scroll by page* now works: `WebtoonViewer.scrollDown` reads the setting live (nothing passed `tapByPage`).
+- *E-Hentai Incognito mode* was not dead: its `onValueChanged` adds/removes `EH_PACKAGE` in `incognito_extensions`,
+  which `GetIncognitoState` reads. Since r86 the switch re-syncs from that list when the screen opens.
+- Left as they are (no row, so nothing to hide): `pref_top_left_controls` (would need a new layout region in
+  `PlayerControls`), `pref_use_external_downloader` (no external-download code), `anime_library_filter_tracked_<id>`
+  (per-tracker filters were dropped on purpose for "Tracked (any)"), `VideoComparator` (dead class; preferred
+  quality is read by `HlsVariants`, preferred audio by `TrackSelect`/mpv `alang`). Discord stays unreachable.
+- Decoder screen (r86): when a profile overrides a switch, the switch shows the value in use, greyed
+  (`SwitchPreference.locked`), with "Set by the <profile> profile; choose Custom to change". Best quality locks
+  only High quality scaling; Balanced/Battery saver lock all three. Note `enabled = false` *hides* a settings row in
+  this app (`StatusWrapper`), which is why `locked` exists.
+
 ### Settings that interact or conflict
 
 - **Performance profile ⟶ Decoder screen.** Balanced and Power saver force hardware decoding on and smooth motion
@@ -1159,7 +1175,9 @@ Performance profile is not "Custom".
 - **Remember default stream per anime** off disables Highlight and Auto-scroll as well.
 - **Always use external player** bypasses every internal-player setting and the AniSkip / delete-after-watching /
   download-ahead behaviour.
-- **Skip filtered chapters** (Reader) is the same stored value as the player's skip-filtered-episodes.
+- **Skip filtered chapters** (Reader) and the player's **Skip filtered episodes** have separate keys since r86
+  (`skip_filtered` / `pref_player_skip_filtered_episodes`). The player key copies `skip_filtered` the first time
+  it's read. The player switch is in Player settings › Internal player › Filler.
 - **Library display mode, items per row, category tabs, number of items and Panorama style are shared between the
   manga and anime libraries**; the Panorama library style is also used by History and Updates. The Appearance
   Panorama rows and the sheet/menu Panorama chips write the same keys.

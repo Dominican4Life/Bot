@@ -101,4 +101,17 @@ data class BackupEpisode(
 data class BackupAnimeHistory(
     @ProtoNumber(1) var episodeUrl: String,
     @ProtoNumber(2) var lastSeen: Long,
+    // KMK (r86): watched milliseconds of the episode (anime_history.time_watch, Stats). 0 in older backups.
+    @ProtoNumber(3) var timeWatch: Long = 0,
+)
+
+/** KMK (r86): a player custom button (custom_buttons table) */
+@Serializable
+data class BackupCustomButton(
+    @ProtoNumber(1) var name: String,
+    @ProtoNumber(2) var isFavorite: Boolean = false,
+    @ProtoNumber(3) var sortIndex: Long = 0,
+    @ProtoNumber(4) var content: String = "",
+    @ProtoNumber(5) var longPressContent: String = "",
+    @ProtoNumber(6) var onStartup: String = "",
 )

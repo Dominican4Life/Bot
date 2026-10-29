@@ -18,6 +18,7 @@ import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.util.storage.DiskUtil
+import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -309,7 +310,10 @@ class AnimeDownloadManager(
             try {
                 val video = AnimeVideoFetcher.resolve(source, candidate)
                 if (video.videoUrl.isBlank() || video.videoUrl == "null") continue
-                val headers = video.headers ?: (source as? AnimeHttpSource)?.headers ?: Headers.Builder().build()
+                val headers = video.headers ?: (source as? AnimeHttpSource)?.headers
+                    // KMK: Code editor sources send their headers too, as in the player
+                    ?: (source as? eu.kanade.tachiyomi.jssource.JsAnimeSource)?.headers
+                    ?: Headers.Builder().build()
                 if (isStream(video)) {
                     ffmpegDownload(video, headers, dir, base, onPercent)
                 } else {
@@ -329,7 +333,10 @@ class AnimeDownloadManager(
 
     private fun isStream(video: Video): Boolean {
         val url = video.videoUrl.substringBefore('?').lowercase()
-        return url.endsWith(".m3u8") || url.endsWith(".mpd") || url.contains("/hls/") || url.contains("m3u8")
+        // KMK: "m3u8" anywhere in the whole address: a relayed stream (HlsRelay) reads "…/p/<id>?u=…&x=list.m3u8"
+        return url.endsWith(".m3u8") || url.endsWith(".mpd") || url.contains("/hls/") ||
+            video.videoUrl.contains("m3u8", ignoreCase = true) ||
+            video.mimeType?.contains("mpegurl", ignoreCase = true) == true
     }
 
     private suspend fun httpDownload(
@@ -349,7 +356,9 @@ class AnimeDownloadManager(
             if (type.contains("mpegurl", ignoreCase = true) || type.contains("dash", ignoreCase = true)) {
                 // It was a playlist after all
                 response.close()
-                ffmpegDownload(video, headers, dir, base, onPercent)
+                // KMK: marked as one, so a list of several qualities is still cut down to the best (forDownload)
+                val playlist = video.copy(mimeType = type, videoPageUrl = video.videoPageUrl)
+                ffmpegDownload(playlist, headers, dir, base, onPercent)
                 return
             }
             val total = body.contentLength()
@@ -392,8 +401,12 @@ class AnimeDownloadManager(
         base: String,
         onPercent: (Int) -> Unit,
     ) {
-        // KMK: a stream holding several qualities is saved in one (the preferred), not all of them in one file
-        val video = eu.kanade.tachiyomi.ui.player.loader.HlsVariants.forDownload(stream)
+        // KMK: a stream holding several qualities is saved in one (the best), not all of them in one file. Its list
+        // is read with the download's headers (the source's when the video has none)
+        val video = eu.kanade.tachiyomi.ui.player.loader.HlsVariants.forDownload(stream, headers)
+        if (video.videoUrl != stream.videoUrl) {
+            AppLog.add('I', "anime", "Download: saving one quality, ${video.videoTitle}")
+        }
         val headerBlock = headers.joinToString("") { (name, value) -> "$name: $value\r\n" }
         val duration = probeDuration(video.videoUrl, headerBlock)
         // ffmpeg writes to app storage first, then the file is copied into the downloads folder

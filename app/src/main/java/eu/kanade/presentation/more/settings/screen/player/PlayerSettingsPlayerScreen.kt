@@ -400,6 +400,7 @@ object PlayerSettingsPlayerScreen : SearchableSettings {
     @Composable
     private fun getFillerSkipGroup(playerPreferences: PlayerPreferences): Preference.PreferenceGroup {
         val skipFillerEpisodes = playerPreferences.skipFillerEpisodes()
+        val skipFilteredEpisodes = remember { playerPreferences.skipFiltered() } // KMK
 
         return Preference.PreferenceGroup(
             title = stringResource(AMR.strings.pref_category_filler),
@@ -408,6 +409,12 @@ object PlayerSettingsPlayerScreen : SearchableSettings {
                     preference = skipFillerEpisodes,
                     title = stringResource(AMR.strings.pref_skip_filler_episodes),
                     subtitle = stringResource(AMR.strings.pref_skip_filler_episodes_summary),
+                ),
+                // KMK: its own key now, separate from the reader's "Skip filtered chapters"
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = skipFilteredEpisodes,
+                    title = stringResource(AMR.strings.pref_skip_filtered_episodes),
+                    subtitle = stringResource(KMR.strings.pref_skip_filtered_episodes_summary),
                 ),
             ),
         )

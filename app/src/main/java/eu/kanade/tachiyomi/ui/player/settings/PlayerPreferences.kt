@@ -1,8 +1,9 @@
 package eu.kanade.tachiyomi.ui.player.settings
 
-import eu.kanade.tachiyomi.ui.player.PreloadMode
 import eu.kanade.tachiyomi.ui.player.PlayerOrientation
+import eu.kanade.tachiyomi.ui.player.PreloadMode
 import eu.kanade.tachiyomi.ui.player.VideoAspect
+import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.preference.getEnum
 
@@ -81,7 +82,19 @@ class PlayerPreferences(
     // ANZ -->
     fun folderPerAnime() = preferenceStore.getBoolean("create_folder_per_anime", false)
     fun skipSeen() = preferenceStore.getBoolean("skip_seen", false)
-    fun skipFiltered() = preferenceStore.getBoolean("skip_filtered", true)
+
+    // KMK -->
+    /**
+     * Skip episodes the anime's filters hide. It used to share "skip_filtered" with the reader's "Skip filtered
+     * chapters"; now it has its own key. The first time it's read it takes the old key's current value, so the
+     * choice made before the split is kept for both.
+     */
+    fun skipFiltered(): Preference<Boolean> {
+        val pref = preferenceStore.getBoolean("pref_player_skip_filtered_episodes", true)
+        if (!pref.isSet()) pref.set(preferenceStore.getBoolean("skip_filtered", true).get())
+        return pref
+    }
+    // KMK <--
     // ANZ <--
 
     // PiP

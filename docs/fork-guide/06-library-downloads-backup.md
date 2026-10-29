@@ -229,7 +229,7 @@ The manga side doesn't have this problem for categories: upstream `PreferenceRes
 
 ### In-app Logs (AppLog)
 
-`tachiyomi/util/system/AppLog.kt`, screen `tachiyomi/ui/logs/LogsScreen.kt` (bug button on the navigation rail). Added 4735057d (2026-10-09); Copy fix 18009078 (2026-10-11).
+`tachiyomi/util/system/AppLog.kt`, screen `tachiyomi/ui/logs/LogsScreen.kt` (bug button on the navigation rail; since r86 also More › Logs, for phones). Added 4735057d (2026-10-09); Copy fix 18009078 (2026-10-11).
 
 - **How lines get in:** `AppLog.Logger` (installed as the logcat logger, priority ≥ DEBUG; tag = the logcat tag, normally the calling class's simple name), `AppLog.XLogPrinter` (XLog `xLogD/E…`), the crash handler, and direct `AppLog.add(level, tag, msg)`.
 - **Dedupe:** logcat lines also go through XLog. The logger stores the message in a `ThreadLocal` (`lastFromLogcat`), and the XLog printer drops the identical message on the same thread. Logging the same text from a different thread is not deduped.

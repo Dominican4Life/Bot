@@ -52,7 +52,8 @@ class PackageInstallerInstaller(private val service: Service) : Installer(servic
                         }
                     if (userAction == null) {
                         xLogE("Fatal error for $intent")
-                        continueQueue(InstallStep.Error)
+                        // KMK: said in the "Couldn't install" message
+                        continueQueue(InstallStep.Error, "Android's install prompt couldn't be opened")
                         return
                     }
                     userAction.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -62,7 +63,11 @@ class PackageInstallerInstaller(private val service: Service) : Installer(servic
                     continueQueue(InstallStep.Idle)
                 }
                 PackageInstaller.STATUS_SUCCESS -> continueQueue(InstallStep.Installed)
-                else -> continueQueue(InstallStep.Error)
+                // KMK: with Android's reason, for the "Couldn't install" message
+                else -> continueQueue(
+                    InstallStep.Error,
+                    intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE),
+                )
             }
         }
     }
@@ -108,7 +113,8 @@ class PackageInstallerInstaller(private val service: Service) : Installer(servic
             activeSession?.let { (_, sessionId) ->
                 packageInstaller.abandonSession(sessionId)
             }
-            continueQueue(InstallStep.Error)
+            // KMK: said in the "Couldn't install" message
+            continueQueue(InstallStep.Error, e.message ?: e.javaClass.simpleName)
         }
     }
 

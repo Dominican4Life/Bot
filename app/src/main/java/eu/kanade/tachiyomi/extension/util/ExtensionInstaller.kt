@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.extension.util
 
 import android.content.Context
 import android.content.Intent
+import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import eu.kanade.domain.base.BasePreferences
@@ -10,7 +11,10 @@ import eu.kanade.tachiyomi.extension.model.Extension
 import eu.kanade.tachiyomi.extension.model.InstallStep
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.util.storage.getUriCompat
+import eu.kanade.tachiyomi.util.system.AppLog
 import eu.kanade.tachiyomi.util.system.isPackageInstalled
+import eu.kanade.tachiyomi.util.system.toast
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -23,7 +27,10 @@ import kotlinx.coroutines.launch
 import logcat.LogPriority
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.i18n.kmk.KMR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.File
@@ -42,6 +49,9 @@ internal class ExtensionInstaller(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val activeJobs = ConcurrentHashMap<String, Job>()
     private val activeSteps = ConcurrentHashMap<Long, MutableStateFlow<InstallStep>>()
+
+    // KMK: the extension's name by download id, for the "Couldn't install" message
+    private val names = ConcurrentHashMap<Long, String>()
     // KMK <--
     private val extensionInstaller = Injekt.get<BasePreferences>().extensionInstaller()
 
@@ -65,6 +75,7 @@ internal class ExtensionInstaller(
 
         val step = MutableStateFlow(InstallStep.Pending)
         activeSteps[downloadId] = step
+        names[downloadId] = extension.name
 
         val job = scope.launch {
             val tmpFile = File(context.cacheDir, "extension_$pkgName.apk")
@@ -96,6 +107,8 @@ internal class ExtensionInstaller(
                 } else {
                     logcat(LogPriority.ERROR, e)
                     step.value = InstallStep.Error
+                    // KMK: say why (a cancel isn't a failure)
+                    if (e !is CancellationException) reportFailure(downloadId, e.message ?: e.javaClass.simpleName)
                 }
                 // KMK -->
                 tmpFile.delete()
@@ -197,7 +210,29 @@ internal class ExtensionInstaller(
      * @param step New install step.
      */
     fun updateInstallStep(downloadId: Long, step: InstallStep) {
-        activeSteps[downloadId]?.let { it.value = step }
+        val flow = activeSteps[downloadId] ?: return
+        val before = flow.value
+        flow.value = step
+        // KMK: a failed install says so, instead of the row silently going back to Install
+        if (step == InstallStep.Error && before != InstallStep.Error) {
+            reportFailure(downloadId, Installer.failureReasons.remove(downloadId))
+        }
+    }
+
+    // KMK: "Couldn't install <name>: <reason>" as a toast, and a line in the Logs
+    private fun reportFailure(downloadId: Long, reason: String?) {
+        val name = names[downloadId] ?: "the extension"
+        AppLog.add('W', "extensions", "Couldn't install $name (manga): ${reason ?: "no reason given"}")
+        scope.launch {
+            withUIContext {
+                val text = if (reason.isNullOrBlank()) {
+                    context.stringResource(KMR.strings.ext_install_failed_no_reason, name)
+                } else {
+                    context.stringResource(KMR.strings.anime_ext_install_failed, name, reason)
+                }
+                context.toast(text, Toast.LENGTH_LONG)
+            }
+        }
     }
 
     companion object {

@@ -8,9 +8,9 @@ import eu.kanade.tachiyomi.data.connections.ConnectionsService
 import eu.kanade.tachiyomi.data.track.Tracker
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.ImmutableMap
+import tachiyomi.core.common.preference.Preference as PreferenceData
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
-import tachiyomi.core.common.preference.Preference as PreferenceData
 
 sealed class Preference {
     abstract val title: String
@@ -45,6 +45,8 @@ sealed class Preference {
             override val title: String,
             override val subtitle: CharSequence? = null,
             override val enabled: Boolean = true,
+            // KMK: shown (greyed) but can't be changed here; `enabled = false` would hide the row instead
+            val locked: Boolean = false,
             override val onValueChanged: suspend (value: Boolean) -> Boolean = { true },
         ) : PreferenceItem<Boolean, Boolean>() {
             override val icon: ImageVector? = null

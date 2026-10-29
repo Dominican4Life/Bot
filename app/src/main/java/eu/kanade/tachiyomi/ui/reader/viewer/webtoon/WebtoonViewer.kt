@@ -362,7 +362,8 @@ class WebtoonViewer(
     /* [EXH] private */
     fun scrollDown() {
         // SY -->
-        if (!isContinuous && tapByPage) {
+        // KMK: nothing passed tapByPage, so "Tap scroll by page" did nothing; read the setting live as well
+        if (!isContinuous && (tapByPage || readerPreferences.continuousVerticalTappingByPage().get())) {
             val currentPage = currentPage
             if (currentPage is ReaderPage) {
                 val position = adapter.items.indexOf(currentPage)

@@ -7,8 +7,11 @@ import androidx.compose.runtime.remember
 import eu.kanade.presentation.more.settings.Preference
 import eu.kanade.presentation.more.settings.screen.SearchableSettings
 import eu.kanade.tachiyomi.ui.player.Debanding
+import eu.kanade.tachiyomi.ui.player.PlayerEfficiency
+import eu.kanade.tachiyomi.ui.player.effectiveVideoSettings
 import eu.kanade.tachiyomi.ui.player.settings.DecoderPreferences
 import kotlinx.collections.immutable.toImmutableMap
+import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.i18n.ank.AMR
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.i18n.stringResource
@@ -38,10 +41,49 @@ object PlayerSettingsDecoderScreen : SearchableSettings {
         val interpolationFPSLimitValue by interpolationFPSLimit.collectAsState()
         val adaptiveScaling = decoderPreferences.adaptiveShaderScaling()
 
+        // KMK -->
+        // A performance profile other than Custom overrides some of these switches (PlayerProfiles.kt). Show the
+        // value the player really uses, greyed, with a note, instead of the user's own (unused) value.
+        val profile by decoderPreferences.performanceProfile().collectAsState()
+        val tryHwValue by tryHw.collectAsState()
+        val highQualityScalingValue by highQualityScaling.collectAsState()
+        val effective = remember(profile, tryHwValue, highQualityScalingValue, smoothMotionValue) {
+            decoderPreferences.effectiveVideoSettings()
+        }
+        // Must match what effectiveVideoSettings() overrides for each profile
+        val forcesHwAndSmoothMotion = profile == PlayerEfficiency.Balanced || profile == PlayerEfficiency.PowerSaver
+        val hwLocked = forcesHwAndSmoothMotion
+        val highQualityScalingLocked = profile != PlayerEfficiency.Automatic
+        val smoothMotionLocked = forcesHwAndSmoothMotion
+        val lockedNote = stringResource(KMR.strings.pref_decoder_set_by_profile, stringResource(profile.titleRes))
+        val hwShown = remember(effective.hardwareDecoding) {
+            InMemoryPreferenceStore.InMemoryPreference(tryHw.key(), effective.hardwareDecoding, false)
+        }
+        val highQualityScalingShown = remember(effective.highQualityScaling) {
+            InMemoryPreferenceStore.InMemoryPreference(
+                highQualityScaling.key(),
+                effective.highQualityScaling,
+                false,
+            )
+        }
+        val smoothMotionShown = remember(effective.smoothMotion) {
+            InMemoryPreferenceStore.InMemoryPreference(smoothMotion.key(), effective.smoothMotion, false)
+        }
+        val highQualityScalingSummary = stringResource(AMR.strings.pref_high_quality_scaling_summary)
+        val smoothMotionSummary = stringResource(AMR.strings.pref_interpolation_summary)
+        // KMK <--
+
         return listOf(
             Preference.PreferenceItem.SwitchPreference(
-                preference = tryHw,
+                // KMK -->
+                preference = if (hwLocked) hwShown else tryHw,
+                // KMK <--
                 title = stringResource(AMR.strings.pref_try_hw),
+                // KMK -->
+                subtitle = if (hwLocked) lockedNote else null,
+                onValueChanged = { !hwLocked },
+                locked = hwLocked,
+                // KMK <--
             ),
             Preference.PreferenceItem.SwitchPreference(
                 preference = useGpuNext,
@@ -56,14 +98,30 @@ object PlayerSettingsDecoderScreen : SearchableSettings {
                 }.toImmutableMap(),
             ),
             Preference.PreferenceItem.SwitchPreference(
-                preference = highQualityScaling,
+                // KMK -->
+                preference = if (highQualityScalingLocked) highQualityScalingShown else highQualityScaling,
+                // KMK <--
                 title = stringResource(AMR.strings.pref_high_quality_scaling),
-                subtitle = stringResource(AMR.strings.pref_high_quality_scaling_summary),
+                // KMK -->
+                subtitle = if (highQualityScalingLocked) {
+                    "$highQualityScalingSummary\n$lockedNote"
+                } else {
+                    highQualityScalingSummary
+                },
+                onValueChanged = { !highQualityScalingLocked },
+                locked = highQualityScalingLocked,
+                // KMK <--
             ),
             Preference.PreferenceItem.SwitchPreference(
-                preference = smoothMotion,
+                // KMK -->
+                preference = if (smoothMotionLocked) smoothMotionShown else smoothMotion,
+                // KMK <--
                 title = stringResource(AMR.strings.pref_interpolation),
-                subtitle = stringResource(AMR.strings.pref_interpolation_summary),
+                // KMK -->
+                subtitle = if (smoothMotionLocked) "$smoothMotionSummary\n$lockedNote" else smoothMotionSummary,
+                onValueChanged = { !smoothMotionLocked },
+                locked = smoothMotionLocked,
+                // KMK <--
             ),
             Preference.PreferenceItem.ListPreference(
                 preference = interpolationMode,
@@ -72,14 +130,14 @@ object PlayerSettingsDecoderScreen : SearchableSettings {
                 entries = eu.kanade.tachiyomi.ui.player.settings.InterpolationMode.entries.associateWith {
                     it.title
                 }.toImmutableMap(),
-                enabled = smoothMotionValue,
+                enabled = effective.smoothMotion, // KMK: the value in use (a profile can force it off)
             ),
             Preference.PreferenceItem.SliderPreference(
                 value = interpolationFPSLimitValue,
                 valueRange = 0..144,
                 title = "Smooth Motion FPS Limit",
                 subtitle = if (interpolationFPSLimitValue == 0) "Auto (Matches Display)" else "$interpolationFPSLimitValue FPS",
-                enabled = smoothMotionValue,
+                enabled = effective.smoothMotion, // KMK: the value in use (a profile can force it off)
                 onValueChanged = {
                     interpolationFPSLimit.set(it)
                     true

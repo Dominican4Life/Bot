@@ -8,9 +8,11 @@ import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -28,6 +30,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import uy.kohesive.injekt.injectLazy
 import java.io.File
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * KMK: Runs one JS / JSON source in QuickJS: its prelude and standard library
@@ -38,6 +41,7 @@ import java.util.concurrent.TimeUnit
 class JsRuntime private constructor(
     private val qjs: QuickJs,
     private val host: Host,
+    private val watchdog: Watchdog,
 ) {
 
     private val mutex = Mutex()
@@ -49,7 +53,7 @@ class JsRuntime private constructor(
 
     /** name, lang, iconUrl, baseUrl, hasPopular, hasLatest, hasDetails, hasFilters, hasTags, hasRelated, hasCatalogs, hasPreferences, rateLimitMs, headers */
     suspend fun metadata(): JsonObject = mutex.withLock {
-        val text = qjs.evaluate<String>(METADATA_SCRIPT, "<metadata>")
+        val text = watchdog.guard { qjs.evaluate<String>(METADATA_SCRIPT, "<metadata>") }
         jsJson.parseToJsonElement(text).jsonObject.also { meta ->
             host.rateLimitMs = meta.long("rateLimitMs") ?: 0L
         }
@@ -57,7 +61,7 @@ class JsRuntime private constructor(
 
     /** Which of the main methods the source defines */
     suspend fun has(method: String): Boolean = mutex.withLock {
-        qjs.evaluate<Boolean>("typeof extension.$method === 'function'", "<has>")
+        watchdog.guard { qjs.evaluate<Boolean>("typeof extension.$method === 'function'", "<has>") }
     }
 
     /**
@@ -78,7 +82,7 @@ class JsRuntime private constructor(
             })()
         """.trimIndent()
         val text = try {
-            withContext(Dispatchers.Default) { qjs.evaluate<String?>(code, "<$method>") }
+            withContext(Dispatchers.Default) { watchdog.guard { qjs.evaluate<String?>(code, "<$method>") } }
         } catch (e: Throwable) {
             // The caller stopped waiting (e.g. the user left Browse): let the cancellation through instead of
             // turning it into a source error, which was logged as "getLatest failed: Job was cancelled"
@@ -100,11 +104,85 @@ class JsRuntime private constructor(
 
     class JsException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
+    /**
+     * KMK: A time limit on JS that runs without stopping. A source whose code loops without awaiting held its only
+     * engine forever (Browse, details, player and downloads of that source all hung until a restart). Only time
+     * spent running JS counts: while a host call (fetch, render, sleep…) is being answered the clock doesn't run,
+     * so a slow but working source (a tag download of several minutes) isn't stopped. Past [LIMIT_MS] of JS without
+     * a host call answered, the evaluation is interrupted through QuickJS's interrupt handler
+     * ([QuickJs.interruptEvaluation]), which stops even `while (true) {}`, and the engine stays usable.
+     *
+     * quickjs-kt's own evaluationTimeoutMillis isn't used: it is a deadline from the start of the evaluation, so it
+     * would also stop a long download as soon as its JS ran again after the deadline.
+     */
+    internal class Watchdog(private val name: String) {
+
+        @Volatile
+        var qjs: QuickJs? = null
+
+        private val hostCalls = AtomicInteger(0)
+
+        /** When JS last got control back (an evaluation started or a host call was answered), System.nanoTime */
+        @Volatile
+        private var lastReturn = 0L
+
+        @Volatile
+        private var fired = false
+
+        val message: String get() = "$name: its code ran for ${LIMIT_MS / 1000} s without stopping, so it was stopped"
+
+        fun hostCallStarted() {
+            hostCalls.incrementAndGet()
+        }
+
+        fun hostCallFinished() {
+            lastReturn = System.nanoTime()
+            hostCalls.decrementAndGet()
+        }
+
+        /**
+         * Runs [block] (one evaluation) with the time limit watched. When the limit stopped it, it fails with a
+         * [JsException] that says so (and an E "js" line in Logs).
+         */
+        suspend fun <T> guard(block: suspend () -> T): T = coroutineScope {
+            fired = false
+            lastReturn = System.nanoTime()
+            val watcher = launch(Dispatchers.Default) {
+                while (true) {
+                    delay(CHECK_EVERY_MS)
+                    val runningMs = (System.nanoTime() - lastReturn) / 1_000_000
+                    if (hostCalls.get() <= 0 && runningMs >= LIMIT_MS) {
+                        fired = true
+                        runCatching { qjs?.interruptEvaluation() }
+                        break
+                    }
+                }
+            }
+            try {
+                block()
+            } catch (e: Throwable) {
+                if (e !is CancellationException && fired) {
+                    fired = false
+                    AppLog.add('E', "js", message)
+                    throw JsException(message, e)
+                }
+                throw e
+            } finally {
+                watcher.cancel()
+            }
+        }
+
+        companion object {
+            const val LIMIT_MS = 30_000L
+            private const val CHECK_EVERY_MS = 1_000L
+        }
+    }
+
     /** Everything the source can ask of the app */
     internal class Host(
         private val context: Context,
         private val tag: String,
-        private val storageDir: File,
+        storageDir: File,
         private val preferences: SharedPreferences,
         val testing: Boolean,
     ) {
@@ -254,20 +332,20 @@ class JsRuntime private constructor(
                             payload.str("output"),
                         ),
                     )
-                    "storageGet" -> mapOf("value" to storage()[payload.str("key").orEmpty()])
+                    "storageGet" -> mapOf("value" to storage.get(payload.str("key").orEmpty()))
                     "storageSet" -> {
-                        editStorage { it[payload.str("key").orEmpty()] = payload["value"] ?: JsonNull }
+                        storage.edit { it[payload.str("key").orEmpty()] = payload["value"] ?: JsonNull }
                         mapOf("ok" to true)
                     }
                     "storageDelete" -> {
-                        editStorage { it.remove(payload.str("key").orEmpty()) }
+                        storage.edit { it.remove(payload.str("key").orEmpty()) }
                         mapOf("ok" to true)
                     }
                     "storageClear" -> {
-                        editStorage { it.clear() }
+                        storage.edit { it.clear() }
                         mapOf("ok" to true)
                     }
-                    "storageAll" -> mapOf("values" to storage())
+                    "storageAll" -> mapOf("values" to storage.all())
                     "preferenceGet" -> mapOf("value" to preference(payload.str("key").orEmpty()))
                     "preferenceSet" -> {
                         JsPreferences.write(preferences, payload.str("key").orEmpty(), payload["value"])
@@ -298,25 +376,9 @@ class JsRuntime private constructor(
             return mapOf("value" to JsBytes.encode(op(bytes), payload.str("output") ?: outputEncoding))
         }
 
-        // Storage: one JSON file per source, as storage.json
-
-        private val storageFile get() = File(storageDir, "storage.json")
-        private var storageCache: MutableMap<String, JsonElement>? = null
-
-        @Synchronized
-        private fun storage(): MutableMap<String, JsonElement> = storageCache ?: runCatching {
-            (jsJson.parseToJsonElement(storageFile.readText()) as JsonObject).toMutableMap()
-        }.getOrElse { mutableMapOf() }.also { storageCache = it }
-
-        @Synchronized
-        private fun editStorage(change: (MutableMap<String, JsonElement>) -> Unit) {
-            val map = storage()
-            change(map)
-            runCatching {
-                storageDir.mkdirs()
-                storageFile.writeText(JsonObject(map).toString())
-            }
-        }
+        // Storage: one JSON file per source, as storage.json. KMK: one shared copy in memory per folder, so every
+        // runtime of the same source sees what the others wrote (JsStorage)
+        private val storage = JsStorage.of(storageDir)
 
         // Requests
 
@@ -403,6 +465,12 @@ class JsRuntime private constructor(
             nativeLoaded = true
         }
 
+        /** KMK: where a source's host.storage is kept */
+        internal fun storageDir(context: Context, key: String): File = File(context.filesDir, "js_storage/$key")
+
+        /** KMK: the storage folder of the Code editor's test copy of [key] */
+        internal fun testStorageKey(key: String): String = "${key}_editor"
+
         private fun asset(context: Context, name: String): String =
             context.assets.open("jssource/$name").bufferedReader().use { it.readText() }
 
@@ -418,23 +486,37 @@ class JsRuntime private constructor(
             code: String,
             json: Boolean,
             testing: Boolean = false,
+            // KMK: the Code editor's test copy: its own settings and storage (testStorageKey, JsPreferences.testOf),
+            // so a test doesn't change the saved source
+            testCopy: Boolean = false,
         ): JsRuntime {
             val host = Host(
                 context = context.applicationContext,
                 tag = "js:$name",
-                storageDir = File(context.filesDir, "js_storage/$key"),
-                preferences = JsPreferences.of(context, sourceId),
+                storageDir = storageDir(context, if (testCopy) testStorageKey(key) else key),
+                preferences = if (testCopy) {
+                    JsPreferences.testOf(context, sourceId)
+                } else {
+                    JsPreferences.of(context, sourceId)
+                },
                 testing = testing,
             )
             loadNativeLibrary()
             val qjs = QuickJs.create(jobDispatcher = Dispatchers.Default)
+            val watchdog = Watchdog(name).also { it.qjs = qjs }
             try {
                 qjs.maxStackSize = 2L shl 20
                 qjs.memoryLimit = 128L shl 20
                 qjs.defineBinding(
                     "sendMessage",
                     AsyncFunctionBinding<String> { args ->
-                        host.handle(args.getOrNull(0)?.toString().orEmpty(), args.getOrNull(1)?.toString() ?: "{}")
+                        // KMK: time spent answering doesn't count towards the JS time limit
+                        watchdog.hostCallStarted()
+                        try {
+                            host.handle(args.getOrNull(0)?.toString().orEmpty(), args.getOrNull(1)?.toString() ?: "{}")
+                        } finally {
+                            watchdog.hostCallFinished()
+                        }
                     },
                 )
                 qjs.evaluate<Any?>(asset(context, "prelude.js"), "prelude.js")
@@ -452,14 +534,15 @@ class JsRuntime private constructor(
                 } else {
                     code
                 }
-                qjs.evaluate<Any?>(source, if (json) "source.json" else "source.js")
+                // KMK: the source's top-level code is watched too (a loop there hung the save or the first Browse)
+                watchdog.guard { qjs.evaluate<Any?>(source, if (json) "source.json" else "source.js") }
                 val problem = qjs.evaluate<String>(CONTRACT_SCRIPT, "<contract>")
                 if (problem.isNotEmpty()) throw JsException(problem)
             } catch (e: Throwable) {
                 qjs.close()
                 throw if (e is JsException) e else JsException(e.message ?: e.toString(), e)
             }
-            return JsRuntime(qjs, host).also { runtime ->
+            return JsRuntime(qjs, host, watchdog).also { runtime ->
                 // Defaults for host.preference.get before the user has changed anything
                 if (runtime.has("getSourcePreferences") || runCatching {
                         qjs.evaluate<Boolean>("typeof getSourcePreferences === 'function'", "<prefs>")

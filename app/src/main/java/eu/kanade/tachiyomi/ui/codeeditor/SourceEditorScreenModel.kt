@@ -1,16 +1,17 @@
 package eu.kanade.tachiyomi.ui.codeeditor
 
 import android.app.Application
+import android.content.SharedPreferences
 import androidx.compose.runtime.Immutable
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
 import eu.kanade.tachiyomi.jssource.JsFilters
-import eu.kanade.tachiyomi.jssource.JsSourceManager
 import eu.kanade.tachiyomi.jssource.JsPreferences
 import eu.kanade.tachiyomi.jssource.JsRuntime
 import eu.kanade.tachiyomi.jssource.JsSourceInfo
-import eu.kanade.tachiyomi.jssource.str
+import eu.kanade.tachiyomi.jssource.JsSourceManager
 import eu.kanade.tachiyomi.jssource.jsJson
+import eu.kanade.tachiyomi.jssource.str
 import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
@@ -311,6 +312,7 @@ class SourceEditorScreenModel(
         val current = runtime
         if (current != null && runtimeCode == s.json.toString() + s.code) return@withLock current
         current?.close()
+        ensureTestCopy(s.key)
         JsRuntime.create(
             context = context,
             key = s.key,
@@ -319,10 +321,31 @@ class SourceEditorScreenModel(
             code = s.code,
             json = s.json,
             testing = true,
+            // KMK: tests use their own copy of the settings and storage, so they don't change the saved source
+            testCopy = true,
         ).also {
             runtime = it
             runtimeCode = s.json.toString() + s.code
         }
+    }
+
+    /** KMK: which source (key and id) the test copy of the settings and storage was last filled for */
+    private var testCopyOf: String? = null
+
+    /** KMK: fills the test copy from the saved source's settings and storage once per source opened here */
+    @Synchronized
+    private fun ensureTestCopy(key: String) {
+        val which = "$key:${manager.idOf(key)}"
+        if (testCopyOf == which) return
+        manager.prepareTestCopy(key)
+        testCopyOf = which
+    }
+
+    /** KMK: the settings the editor's Settings dialog edits: the test copy, not the saved source's */
+    fun testPreferences(): SharedPreferences {
+        val key = state.value.key
+        ensureTestCopy(key)
+        return JsPreferences.testOf(context, manager.idOf(key))
     }
 
     private fun closeRuntime() {

@@ -16,11 +16,12 @@ import eu.kanade.tachiyomi.data.anime.Anime
 import eu.kanade.tachiyomi.data.anime.AnimeEpisodeDefaults
 import eu.kanade.tachiyomi.data.anime.AnimeEpisodeSeasons
 import eu.kanade.tachiyomi.data.anime.AnimeLibraryStats
+import eu.kanade.tachiyomi.data.anime.AnimeRepository
 import eu.kanade.tachiyomi.data.anime.AnimeSeasonFlags
 import eu.kanade.tachiyomi.data.anime.AnimeSeasonGrouping
-import eu.kanade.tachiyomi.data.anime.AnimeRepository
 import eu.kanade.tachiyomi.data.anime.AnimeVideoFetcher
 import eu.kanade.tachiyomi.data.anime.Episode
+import eu.kanade.tachiyomi.data.anime.download.AnimeDownloadManager
 import eu.kanade.tachiyomi.data.anime.seasonCompletedFilter
 import eu.kanade.tachiyomi.data.anime.seasonDownloadedFilter
 import eu.kanade.tachiyomi.data.anime.seasonFilterActive
@@ -28,7 +29,6 @@ import eu.kanade.tachiyomi.data.anime.seasonSortDescending
 import eu.kanade.tachiyomi.data.anime.seasonSortMode
 import eu.kanade.tachiyomi.data.anime.seasonStartedFilter
 import eu.kanade.tachiyomi.data.anime.seasonUnseenFilter
-import eu.kanade.tachiyomi.data.anime.download.AnimeDownloadManager
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.ui.player.settings.PlayerPreferences
 import eu.kanade.tachiyomi.util.system.toast
@@ -330,15 +330,20 @@ class AnimeScreenModel(
             mutableState.update { it.copy(sourceName = label, sourceMissing = found == null) }
             loadSuggestions()
             val anime = repository.getAnime(animeId) ?: return@launchIO
-            if (found != null && (!anime.initialized || anime.fetchType == FetchType.Seasons || !anime.favorite)) {
+            // KMK: just loaded (by the Browse / library preview a moment ago): not again. A load still running is
+            // joined by refresh() rather than started twice (AnimeRepository.refreshFromSource)
+            val recent = System.currentTimeMillis() - repository.lastRefreshed(animeId) < 60_000L
+            if (found != null && !recent &&
+                (!anime.initialized || anime.fetchType == FetchType.Seasons || !anime.favorite)
+            ) {
                 refresh()
             } else if (found != null) {
                 val episodes = repository.getEpisodes(animeId)
                 // KMK: episodes saved before thumbnails / summaries were kept get them once per run
-                val bare = episodes.isNotEmpty() &&
+                val bare = !recent && episodes.isNotEmpty() &&
                     episodes.all { it.previewUrl.isNullOrBlank() && it.summary.isNullOrBlank() } &&
                     refreshedThisRun.add(animeId)
-                if (episodes.isEmpty() || bare) refresh()
+                if ((episodes.isEmpty() && !(recent && anime.fetchType == FetchType.Seasons)) || bare) refresh()
             }
         }
     }

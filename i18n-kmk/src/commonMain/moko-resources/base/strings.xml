@@ -382,6 +382,7 @@
     <string name="anime_merge_open">Open</string>
     <string name="anime_repo_moved">That repo has anime extensions, so it was added to the anime repos</string>
     <string name="anime_ext_install_failed">Couldn\'t install %1$s: %2$s</string>
+    <string name="ext_install_failed_no_reason">Couldn\'t install %1$s</string>
     <string name="anime_ext_not_loaded">%1$s was installed but can\'t be used: %2$s</string>
     <string name="pref_badges">Badges</string>
     <string name="pref_cover_badges">Cover badges</string>
@@ -689,6 +690,8 @@
     <string name="player_profile_best_quality">Best quality</string>
     <string name="player_profile_balanced">Balanced</string>
     <string name="player_profile_battery_saver">Battery saver</string>
+    <string name="pref_decoder_set_by_profile">Set by the %1$s profile; choose Custom to change</string>
+    <string name="pref_skip_filtered_episodes_summary">When moving to the next or previous episode, skip the ones this anime\'s episode filters hide</string>
     <string name="pref_network_aware_playback">Network-aware playback</string>
     <string name="pref_network_aware_playback_summary">On mobile or metered networks, picks 720p or lower by default, uses a smaller cache and holds preloading while the video buffers</string>
     <string name="pref_self_healing_links_details">When a video link fails, gets fresh links from the source and resumes where you were, then moves on to the next video</string>

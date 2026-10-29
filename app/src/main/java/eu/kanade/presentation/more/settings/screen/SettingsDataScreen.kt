@@ -324,12 +324,9 @@ object SettingsDataScreen : SearchableSettings {
                     stringResource(MR.strings.backup_info) + "\n\n" +
                         stringResource(MR.strings.last_auto_backup_info, relativeTimeSpanString(lastAutoBackup)),
                 ),
-                // KMK -->
-                Preference.PreferenceItem.SwitchPreference(
-                    preference = backupPreferences.showRestoringProgressBanner(),
-                    title = stringResource(KMR.strings.pref_show_restoring_progress_banner),
-                ),
-                // KMK <--
+                // KMK: "Show restoring progress banner" hidden: the restore top bar was removed on purpose in r33
+                // (it redrew the whole app for every title restored); progress is in the notification. The key
+                // (backupPreferences.showRestoringProgressBanner()) is kept.
             ),
         )
     }

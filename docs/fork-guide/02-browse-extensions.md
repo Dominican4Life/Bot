@@ -253,7 +253,7 @@ The Sources tab has a manga/anime toggle in its toolbar (`withAnimeSwitch`, pref
 **Install / update / cancel / trust actions.**
 - `install(item, sideload)` calls `mangaManager.installExtension(ext, sideload)` or `animeManager.installExtension(...)` and `.track(item.key)`.
 - `track` collects steps into `steps` until `Installed`, then removes the key.
-- A row shows INSTALLING while `steps[key]?.isCompleted() == false`. `InstallStep.isCompleted()` is true for `Installed`, `Error` and `Idle`. So `Error` silently puts the row back to Install, with **no error shown on the row**. Anime installs toast the reason (`KMR.anime_ext_install_failed`); manga installs don't.
+- A row shows INSTALLING while `steps[key]?.isCompleted() == false`. `InstallStep.isCompleted()` is true for `Installed`, `Error` and `Idle`. So `Error` puts the row back to Install. Since r86 both installers (manga and anime) report it: a long toast "Couldn't install <name>: <reason>" (`KMR.anime_ext_install_failed`, or `KMR.ext_install_failed_no_reason` without a reason) and `W extensions Couldn't install <name> (manga|anime): <reason>`. The reason comes from the download exception, the anime loader's `lastError`, or Android's `EXTRA_STATUS_MESSAGE` (PackageInstaller/Shizuku, passed through `Installer.continueQueue(step, reason)` into `Installer.failureReasons`). A cancel (`CancellationException`) is not reported.
 - `update(item)` uses `updateExtension`, which installs the repo's copy with `sideload = !ext.isShared`. So a sideloaded extension stays sideloaded.
 - `cancel(item)` calls `cancelInstallUpdateExtension(...)` with `"<pkg>_<item.signatureHash>"` and removes the key from `steps`.
 - `trust(item)` calls `manager.trust(untrusted)`. In practice it never runs: `TrustExtension.TRUST_ALL = true` (4735057d) means every installed extension is trusted without a prompt, like AniZen. `trusted_extensions` and "Revoke trusted extensions" are effectively dead. The Untrusted paths stay for safety.
@@ -324,8 +324,9 @@ The Sources tab has a manga/anime toggle in its toolbar (`withAnimeSwitch`, pref
 - Kind sorting:
   - The manga side partitions out packages containing `.animeextension.`. If a manga repo has anime packages, the repo is **inserted into the anime table**, removed from the manga table if it has nothing for manga, and the user sees the toast `anime_repo_moved`.
   - The anime side drops packages containing `.tachiyomi.extension.` and strips the `"Aniyomi: "` name prefix.
-- `availableExtensionMapFlow` is keyed by `pkgName + "_" + signatureHash`. **`signatureHash` of an available package is the repo's `signingKey`** (`NetworkExtensionStore.kt:109`, `NetworkLegacyExtension.kt:40`).
-- Installed-to-repo matching (`updatedInstalledExtensionsStatuses`): first by same signature and package name, then (r75) by package name alone against a repo whose `signingKey` is not a real fingerprint (`ExtensionStoreUrls.hasFingerprint`: 32 hex bytes, colons optional). This exists for LIVID(18+), whose repo.json has no fingerprint, so installed LIVID packages never matched and their repo showed nothing installed.
+- `availableExtensionMapFlow` is keyed by `availableKey()` = `"<pkg>_<signatureHash>@<ExtensionStoreUrls.key(indexUrl)>"` (r86; before it was `pkg_signatureHash`, so two repos with the same or no key overwrote each other). **`signatureHash` of an available package is the repo's `signingKey`** (`NetworkExtensionStore.kt:109`, `NetworkLegacyExtension.kt:40`).
+- Every lookup of "the" copy for an installed package goes through `Collection<Extension.Available>.copyFor(pkg, signatureHash, store)` (top of `ExtensionManager.kt`, used by both managers and the unified screen): same signature, else a no-fingerprint repo by name; among those the copy from the installed extension's `store` first, else the first.
+- Installed-to-repo matching (`updatedInstalledExtensionsStatuses`, via `copyFor` since r86): first by same signature and package name, then (r75) by package name alone against a repo whose `signingKey` is not a real fingerprint (`ExtensionStoreUrls.hasFingerprint`: 32 hex bytes, colons optional). This exists for LIVID(18+), whose repo.json has no fingerprint, so installed LIVID packages never matched and their repo showed nothing installed.
 
 **Repo enable switch.** Pref `disabled_repos` is a string set of **exact** `indexUrl`s. Disabled repos are skipped in `fetchExtensions`, so they never get a status entry.
 
@@ -346,7 +347,8 @@ The Sources tab has a manga/anime toggle in its toolbar (`withAnimeSwitch`, pref
 - `ExtensionStoreStatus` and `disabled_repos` use the **exact** `indexUrl`, while counts use `key()`. `refreshAll()` can rewrite a store's `indexUrl` (it deletes the old row when `fetch` returns a different one). When that happens, the repo's status line and its disabled flag no longer match it.
 
 **Predictable failure modes.**
-- Two repos with the **same signing key** (mirrors, or two `NO_SIGNING_KEY` repos) offering the same package collide in `availableExtensionMapFlow` (last one wins). One repo then shows fewer packages, even though the screen-level fix (`distinctBy pkg+repo`) is in place. This is the most likely cause of the next "repo shows 0 / fewer packages" report. Check the `Repo X: N packages read` line in Logs against the count on the repo's row. If the log says N but the row says less, the map collision is the cause.
+- Fixed in r86: two repos with the **same signing key** (mirrors, or two `NO_SIGNING_KEY` repos) offering the same package used to collide in `availableExtensionMapFlow` (last one wins). The key now includes the repo. A package installed from repo A that repo B offers with the same signature is not listed under B (the installed row stands for it), but B's row counts it in "N packages · M installed". So tapping B's row can list fewer rows than its count. Check the `Repo X: N packages read` line in Logs against the count on the repo's row.
+- Two repos' copies with the same package and signature share one install download id (`pkg_sig`), so installing one cancels an install of the other in progress.
 - `ExtensionApi.checkForUpdates` (the background update notifier, upstream) matches by package name only. It can announce an update that comes from another repo's copy.
 - A manga repo that briefly serves only anime packages is moved out of the manga table. This is automatic and not undone.
 - Disabled repos never get a status entry, so the "unread repos" check in `UnifiedExtensionsScreenModel.init` triggers a full read on **every** screen-model creation while any repo is disabled. The read is folded by `findLock`, but it still costs network.
@@ -395,8 +397,8 @@ The Sources tab has a manga/anime toggle in its toolbar (`withAnimeSwitch`, pref
 **Sideloaded folder (r75).**
 - `SideloadFolder.sync(kind)` runs on each manager's init:
   - An APK in the folder that the app doesn't have is installed privately.
-  - A package tracked as sideloaded whose APK was deleted from the folder is **uninstalled from the app**.
-  - Nothing is removed when the folder can't be read.
+  - A package tracked as sideloaded whose APK was deleted from the folder is **uninstalled from the app**, but only when the folder is readable and still lists other APKs (r86).
+  - Nothing is removed when the folder is missing, can't be listed, or has no APKs at all while extensions are tracked (moved or cleared storage). Logs: `W Sideload The Sideloaded/<Manga|Anime> folder is missing or can't be reached / couldn't be read / has no APKs; kept the N sideloaded extensions`.
 - Tracking pref: `sideloaded_extensions`, a string set of `manga:<pkg>` / `anime:<pkg>`. It is backed up.
 - After a restore, `afterRestore` syncs, then re-downloads (sideloaded) the tracked packages that are missing, one after another, from whichever repo offers them.
 - Logs (tag `Sideload`): `Put back …`, `Removed …: its APK was deleted from the Sideloaded folder`, `… was sideloaded, but no repo offers it now`, `Downloading … again from <repo>`, `Couldn't save … to the Sideloaded folder: …`.
@@ -414,7 +416,7 @@ The Sources tab has a manga/anime toggle in its toolbar (`withAnimeSwitch`, pref
 - `SideloadFolder` file names must be `<packageName>.apk`. `sync` derives the package from the file name. If a user drops a renamed APK (e.g. `Hiperdex.apk`), it is installed under its real package but tracked as `Hiperdex`: it is re-installed on every start and never removed when deleted. A predictable failure.
 
 **How to check (Logs).**
-- Successful installs via PackageInstaller / Legacy write **no** line of their own. Only failures do: `PackageInstallerInstaller` `xLogE "Failed to install extension <downloadId> <uri>"` and `Fatal error for <intent>`; `ExtensionInstaller` logcat errors on download failure. Shizuku logs `Shizuku is not ready to use`.
+- Successful installs via PackageInstaller / Legacy write **no** line of their own. Failures write `W extensions Couldn't install …` (r86) and also: `PackageInstallerInstaller` `xLogE "Failed to install extension <downloadId> <uri>"` and `Fatal error for <intent>`; `ExtensionInstaller` logcat errors on download failure. Shizuku logs `Shizuku is not ready to use`.
 - To debug an install, look for the absence of these and check whether the row's state changes. Adding an AppLog line per install step would make this traceable.
 
 ---

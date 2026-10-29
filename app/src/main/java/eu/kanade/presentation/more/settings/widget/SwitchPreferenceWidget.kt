@@ -23,6 +23,8 @@ fun SwitchPreferenceWidget(
     icon: Any? = null,
     // KMK <--
     checked: Boolean = false,
+    // KMK: greyed switch, taps ignored (the value is set elsewhere)
+    locked: Boolean = false,
     onCheckedChanged: (Boolean) -> Unit,
 ) {
     TextPreferenceWidget(
@@ -34,10 +36,11 @@ fun SwitchPreferenceWidget(
             Switch(
                 checked = checked,
                 onCheckedChange = null,
+                enabled = !locked, // KMK
                 modifier = Modifier.padding(start = TrailingWidgetBuffer),
             )
         },
-        onPreferenceClick = { onCheckedChanged(!checked) },
+        onPreferenceClick = { if (!locked) onCheckedChanged(!checked) },
     )
 }
 

@@ -4,6 +4,7 @@ import eu.kanade.tachiyomi.animesource.AnimeSource
 import eu.kanade.tachiyomi.animesource.model.FetchType
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -415,6 +416,39 @@ class AnimeRepository(
      * a failing details page still leaves the episodes loaded (with their thumbnails, summaries and Sub / Dub).
      */
     suspend fun refreshFromSource(anime: Anime, source: AnimeSource): Int {
+        // KMK: one load per anime at a time. Opening an anime from a Browse / library preview started a second load
+        // of its episodes while the preview's was still running (the JS source logged "episodes" twice); a caller
+        // that comes while one runs waits for it and gets its answer. It runs outside the caller, so leaving the
+        // preview doesn't cancel the load the details page is waiting for.
+        val key = anime.id to source.id
+        val load = synchronized(refreshing) {
+            refreshing[key]?.takeIf { it.isActive }?.also {
+                logcat(LogPriority.INFO, tag = "anime") { "${anime.title}: already loading, waiting for that load" }
+            } ?: refreshScope.async { loadFromSource(anime, source) }.also { refreshing[key] = it }
+        }
+        try {
+            return load.await()
+        } finally {
+            synchronized(refreshing) { if (refreshing[key] === load && !load.isActive) refreshing.remove(key) }
+        }
+    }
+
+    /** When [animeId] last finished loading from its source (this run), for skipping a reload right after one */
+    fun lastRefreshed(animeId: Long): Long = refreshedAt[animeId] ?: 0L
+
+    private val refreshScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO,
+    )
+    private val refreshing = HashMap<Pair<Long, Long>, kotlinx.coroutines.Deferred<Int>>()
+    private val refreshedAt = java.util.concurrent.ConcurrentHashMap<Long, Long>()
+
+    private suspend fun loadFromSource(anime: Anime, source: AnimeSource): Int {
+        val result = loadFromSourceNow(anime, source)
+        refreshedAt[anime.id] = System.currentTimeMillis()
+        return result
+    }
+
+    private suspend fun loadFromSourceNow(anime: Anime, source: AnimeSource): Int {
         val base = anime.toSAnime()
         val detailsError = runCatching {
             val details = source.getAnimeEpisodeUpdate(base, emptyList(), fetchDetails = true, fetchEpisodes = false).anime

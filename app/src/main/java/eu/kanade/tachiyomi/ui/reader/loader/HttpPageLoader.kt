@@ -1,13 +1,17 @@
 package eu.kanade.tachiyomi.ui.reader.loader
 
+import android.app.Application
+import coil3.imageLoader
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.tachiyomi.data.cache.ChapterCache
+import eu.kanade.tachiyomi.data.coil.SourcePageFetcher
 import eu.kanade.tachiyomi.data.database.models.toDomainChapter
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+import eu.kanade.tachiyomi.util.system.AppLog
 import exh.source.isEhBasedSource
 import exh.util.DataSaver
 import exh.util.DataSaver.Companion.getImage
@@ -221,7 +225,8 @@ internal class HttpPageLoader(
             }
             val imageUrl = page.imageUrl!!
 
-            if (!chapterCache.isImageInCache(imageUrl)) {
+            // KMK: a page a Browse/library preview panel already downloaded is copied, not downloaded again
+            if (!chapterCache.isImageInCache(imageUrl) && !reuseFromPreview(page, imageUrl)) {
                 page.status = Page.State.DownloadImage
                 val imageResponse = source.getImage(page, dataSaver)
                 chapterCache.putImageToCache(imageUrl, imageResponse)
@@ -234,6 +239,36 @@ internal class HttpPageLoader(
             if (e is CancellationException) {
                 throw e
             }
+        }
+    }
+
+    /**
+     * KMK: Copies [page] from Coil's image cache into the reader cache when a preview panel downloaded it
+     * ([SourcePageFetcher] keeps it there with its image address). The preview's copy stays where it is, so both
+     * caches keep their own sizes and keys. Only an entry saved with the same [imageUrl] is used.
+     *
+     * @return true if the page is now in the reader cache.
+     */
+    private fun reuseFromPreview(page: ReaderPage, imageUrl: String): Boolean {
+        return try {
+            val diskCache = Injekt.get<Application>().imageLoader.diskCache ?: return false
+            val key = SourcePageFetcher.diskCacheKeyOf(source.id, chapter.chapter.url, page.index)
+            val snapshot = diskCache.openSnapshot(key) ?: return false
+            val saved = snapshot.use {
+                val fileSystem = diskCache.fileSystem
+                val savedUrl = fileSystem.read(snapshot.metadata) { readUtf8() }
+                savedUrl == imageUrl &&
+                    fileSystem.read(snapshot.data) { chapterCache.putImageToCache(imageUrl, this) }
+            }
+            if (saved) {
+                AppLog.add('I', "pages", "Page ${page.number}: reused the preview's download")
+            }
+            saved && chapterCache.isImageInCache(imageUrl)
+        } catch (e: Exception) {
+            logcat.logcat("pages", logcat.LogPriority.WARN) {
+                "Page ${page.number}: couldn't reuse the preview's download (${e.javaClass.simpleName})"
+            }
+            false
         }
     }
 
