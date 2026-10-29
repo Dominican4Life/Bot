@@ -82,9 +82,19 @@ object HlsVariants {
         val streams = withIOContext {
             withTimeoutOrNull(TIMEOUT_MS) {
                 runCatching {
-                    val session = FFprobeKit.executeWithArguments(
-                        arrayOf("-v", "quiet", "-show_entries", "stream=index,codec_type,height", "-of", "json", input),
-                    )
+                    // KMK: the probe prints its answer through the same FFmpeg log as the player, which put it in
+                    // Logs as "E mpv/ffmpeg" lines; PlayerObserver leaves those out while this runs (isProbing)
+                    probing.incrementAndGet()
+                    val session = try {
+                        FFprobeKit.executeWithArguments(
+                            arrayOf(
+                                "-v", "quiet", "-show_entries", "stream=index,codec_type,height", "-of", "json", input,
+                            ),
+                        )
+                    } finally {
+                        probing.decrementAndGet()
+                        lastProbeEnd = System.currentTimeMillis()
+                    }
                     val root = Json.parseToJsonElement(session.output.orEmpty()) as? JsonObject
                     (root?.get("streams") as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
                 }.getOrNull()
@@ -124,6 +134,22 @@ object HlsVariants {
         video?.internalData?.takeIf { it.startsWith(QUALITY_TRACK) }?.removePrefix(QUALITY_TRACK)?.toIntOrNull()
 
     private const val QUALITY_TRACK = "kmk-quality-track:"
+
+    private val probing = java.util.concurrent.atomic.AtomicInteger(0)
+
+    @Volatile
+    private var lastProbeEnd = 0L
+
+    /**
+     * True while a downloaded file is being probed for its qualities (see [localQualities]), and for a moment after:
+     * the player's log hands the lines over a little later
+     */
+    val isProbing: Boolean get() = probing.get() > 0 || System.currentTimeMillis() - lastProbeEnd < 3_000
+
+    /** A line of the probe's JSON answer ("{", "\"height\": 1080", "],", …), as FFmpeg logs it */
+    private val PROBE_LINE = Regex("""^\s*([{}\[\],]*|"[a-z_]+": .*)$""")
+
+    fun isProbeOutput(text: String): Boolean = isProbing && PROBE_LINE.matches(text.trimEnd())
 
     private suspend fun expand(video: Video, preferredHeight: Int): List<Video> {
         val url = video.videoUrl

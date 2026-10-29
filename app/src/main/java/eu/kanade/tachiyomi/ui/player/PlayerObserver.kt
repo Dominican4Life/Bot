@@ -39,6 +39,8 @@ class PlayerObserver(val activity: PlayerActivity) :
     }
 
     override fun logMessage(prefix: String, level: Int, text: String) {
+        // KMK: the answer of the quality check on a downloaded file isn't an error (HlsVariants.localQualities)
+        if (prefix == "ffmpeg" && eu.kanade.tachiyomi.ui.player.loader.HlsVariants.isProbeOutput(text)) return
         if (level == MPV.mpvLogLevel.MPV_LOG_LEVEL_ERROR) {
             if (text.startsWith(TRACK_LOAD_FAILURE)) {
                 val url = text.removePrefix(TRACK_LOAD_FAILURE).substringBeforeLast(".")

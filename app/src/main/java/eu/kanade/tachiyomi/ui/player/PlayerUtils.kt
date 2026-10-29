@@ -52,6 +52,8 @@ internal fun Uri.resolveUri(context: Context): String? {
         "content" -> openContentFd(context)
         "data" -> "data://$schemeSpecificPart"
         in Utils.PROTOCOLS -> toString()
+        // KMK: a plain file path (a saved chapter video in the cache) is used as it is, without an error in Logs
+        null -> path?.takeIf { it.startsWith("/") }
         else -> null
     }
 
