@@ -157,6 +157,52 @@ Collected from all sections. These are what to look at first when something odd 
   - `JsStorage.forget` closes stores.
   - CI concurrency is repo-wide, with no parallel builds, and publishing skips taken tags.
 
+## Changes in r88 (29 October 2026)
+
+- **Player:**
+  - `PlayerActivity` no longer replaces the app's uncaught-exception handler. Errors go through `SetVideoLoadError` and `setInitialEpisodeError`.
+  - `loadEpisode` clears `currentHosterList`, and a failure arrives as `EpisodeLoadResult.error`.
+  - `hosterGeneration` guards every late write from `loadVideo`, `loadHosters`, `loadBestVideo`, `onVideoClicked` and `onHosterClicked`. `updateAt` ignores out-of-range indexes.
+  - Progress, history and watch-time saves are caught. If the episode row is gone, `findReplacedEpisodeId` re-points them, and `episodeIdRemap` keeps the mapping.
+  - `init` resets the quality index and hoster state when a new episode opens in the running player.
+  - Self-heal resets the selection.
+  - Preloaded hosters aren't split twice (`alreadySplit`).
+  - `filterEpisodeList` drops excluded scanlators.
+  - Reverse landscape now uses `SCREEN_ORIENTATION_REVERSE_LANDSCAPE`.
+  - `CastManager` registers one callback and stops the previous collector.
+- **Downloads:**
+  - Each running episode is its own Job. Cancel and delete stop it and remove its pieces and `.tmp` file.
+  - The same episode can't run twice at once.
+  - Old-name and prefix lookups are used only when exactly one episode has that name.
+  - `ParallelVideoDownload.cleanUp` runs at manager start and when the queue empties. Pieces are discarded on cancel, delete and final failure.
+  - The resume fingerprint keeps the query when two piece addresses would be the same. Keys are re-checked on resume.
+  - HTML or non-media pieces are rejected.
+  - A failed rename fails the download.
+  - The summary speed counts only this run's bytes, and progress never goes backwards (`monotonic`).
+  - Pieces with no extension are saved as `.m4s` when the playlist has `#EXT-X-MAP`.
+  - `downloadedCount` and name matching count only video files (`isEpisodeVideo`), so `cover.jpg` no longer shows as "2 downloaded".
+  - `ChapterVideoDownloads.isStream` matches the anime side.
+- **Library and backup:**
+  - `syncEpisodesNew` returns the truly new ids, and auto-download uses them.
+  - `refreshFromSourceResult` doesn't throw on a details-only failure.
+  - Restore maps anime category settings with the unfiltered category list, also when only App settings is chosen.
+  - `anime_airing_cache` and `__PRIVATE_anime_track_pending` are in `ID_KEYS`.
+  - Webtoon "tap scroll by page" works in both directions.
+  - Anime update counts and a failure notification (id −1814).
+  - Global search doesn't cache errors.
+  - Browse writes results only when the load generation still matches.
+  - `LocalPageFetcher` closes the source when a fetch is cancelled.
+- **Extensions and editor:**
+  - Repo chips and source rows have unique keys.
+  - `ExtensionsReturn` is taken before the tabs are composed and cleared when no install is left running.
+  - The editor keeps edits made during a save, cancels `detectJob` when the source changes, and shows snackbars until they're dismissed. Test copies of unsaved keys are dropped.
+  - The relay trims using a snapshot.
+  - `InstallOrigins` records the repo an install came from, and `copyFor(installedFrom)` prefers it.
+  - `SideloadFolder` tracking is locked.
+- **Anime preview panels:**
+  - Each episode row has a download button (`AnimeEpisodeDownloadIndicator`), and there's a download menu.
+  - The preview player's Qualities menu is grouped by server (`AnimeVideoFetcher.fetchServerVideos`, sorted with `QualityOrder`).
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
