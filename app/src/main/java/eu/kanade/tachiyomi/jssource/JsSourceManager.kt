@@ -162,7 +162,7 @@ class JsSourceManager(private val context: Application) {
         invalidate(key)
         // the `id` line was removed or changed: an APK switched off for the old id is used again
         existing?.customId?.takeIf { it != info.customId }?.let { setApkEnabled(it, true) }
-        showLanguage(info)
+        showLanguage(info, newSource = existing == null)
         JsIcons.prepare(context, listOf(info))
         _saved.value = (listOf(info) + _saved.value.filterNot { it.key == key }).sortedByDescending { it.updatedAt }
         AppLog.add('I', "js", "Saved ${if (info.anime) "anime" else "manga"} source ${info.name} (${if (json) "JSON" else "JS"})")
@@ -294,7 +294,7 @@ class JsSourceManager(private val context: Application) {
         JsRuntime.legacyTestStorageKey(key).takeIf { get(it) == null }
 
     /** A saved source is listed in Browse even when its language was turned off there */
-    private fun showLanguage(info: JsSourceInfo) {
+    private fun showLanguage(info: JsSourceInfo, newSource: Boolean) {
         runCatching {
             val preferences = Injekt.get<SourcePreferences>()
             if (info.anime) {
@@ -304,8 +304,14 @@ class JsSourceManager(private val context: Application) {
                 val enabled = preferences.enabledLanguages()
                 if (info.displayLang !in enabled.get()) enabled.set(enabled.get() + info.displayLang)
             }
-            val disabledSources = preferences.disabledSources()
-            if (info.id.toString() in disabledSources.get()) disabledSources.set(disabledSources.get() - info.id.toString())
+            // KMK: only for a source that is new here. Saving or updating one the user turned off in Browse
+            // used to turn it back on
+            if (newSource) {
+                val disabledSources = preferences.disabledSources()
+                if (info.id.toString() in disabledSources.get()) {
+                    disabledSources.set(disabledSources.get() - info.id.toString())
+                }
+            }
         }
     }
 
@@ -341,7 +347,7 @@ class JsSourceManager(private val context: Application) {
         File(folder, codeFile(info.json)).writeText(code)
         File(folder, META).writeText(jsJson.encodeToString(JsSourceInfo.serializer(), info))
         invalidate(info.key)
-        showLanguage(info)
+        showLanguage(info, newSource = existing == null)
         JsIcons.prepare(context, listOf(info))
         _saved.value = (listOf(info) + _saved.value.filterNot { it.key == info.key }).sortedByDescending { it.updatedAt }
         AppLog.add('I', "js", "Got ${info.name} from a paired device")

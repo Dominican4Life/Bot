@@ -10,6 +10,10 @@ import android.os.storage.StorageManager
 import android.provider.MediaStore
 import androidx.core.content.ContextCompat
 import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.runBlocking
 import tachiyomi.core.common.preference.PreferenceStore
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -65,14 +69,24 @@ data class DeviceFile(
     val isHidden: Boolean get() = name.startsWith(".")
 
     companion object {
-        fun of(file: File, countChildren: Boolean = false): DeviceFile = DeviceFile(
-            path = file.path,
-            name = file.name,
-            isDirectory = file.isDirectory,
-            size = if (file.isDirectory) 0L else file.length(),
-            modified = file.lastModified(),
-            childCount = if (file.isDirectory && countChildren) file.list()?.size ?: 0 else null,
-        )
+        fun of(file: File, countChildren: Boolean = false): DeviceFile {
+            // KMK: one stat for type, size and date (three separate ones were slow for big folders on shared storage)
+            val attrs = runCatching {
+                java.nio.file.Files.readAttributes(
+                    file.toPath(),
+                    java.nio.file.attribute.BasicFileAttributes::class.java,
+                )
+            }.getOrNull()
+            val isDirectory = attrs?.isDirectory ?: file.isDirectory
+            return DeviceFile(
+                path = file.path,
+                name = file.name,
+                isDirectory = isDirectory,
+                size = if (isDirectory) 0L else attrs?.size() ?: file.length(),
+                modified = attrs?.lastModifiedTime()?.toMillis() ?: file.lastModified(),
+                childCount = if (isDirectory && countChildren) file.list()?.size ?: 0 else null,
+            )
+        }
     }
 }
 
@@ -224,7 +238,13 @@ object DeviceFilesRepository {
     }
 
     /** Files whose name has [text] in it, anywhere on the device */
-    fun search(context: Context, text: String, showHidden: Boolean): List<DeviceFile> {
+    fun search(
+        context: Context,
+        text: String,
+        showHidden: Boolean,
+        // KMK: the folder walk stops early once a newer search replaced this one
+        isCancelled: () -> Boolean = { false },
+    ): List<DeviceFile> {
         if (text.isBlank()) return emptyList()
         val escaped = text.trim().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         // MTP format column (not in the public constants)
@@ -236,13 +256,56 @@ object DeviceFilesRepository {
             limit = 500,
             showHidden = showHidden,
         )
-        return fromIndex
+        // KMK: plus files the media index doesn't know yet
+        val known = fromIndex.mapTo(HashSet()) { it.path }
+        val walked = runCatching { walkSearch(context, text, showHidden, limit = 500, isCancelled) }
+            .getOrDefault(emptyList())
+        return fromIndex + walked.filter { it.path !in known }.take((500 - fromIndex.size).coerceAtLeast(0))
     }
 
-    fun list(dir: File, showHidden: Boolean): List<DeviceFile> =
-        dir.listFiles().orEmpty()
-            .filter { showHidden || !it.name.startsWith(".") }
-            .map { DeviceFile.of(it, countChildren = true) }
+    // KMK: the entries are read several at a time (a folder of ~2,300 items took over ten seconds one by one)
+    fun list(dir: File, showHidden: Boolean): List<DeviceFile> {
+        val files = dir.listFiles().orEmpty().filter { showHidden || !it.name.startsWith(".") }
+        if (files.size < PARALLEL_FROM) return files.map { DeviceFile.of(it, countChildren = true) }
+        return runBlocking(Dispatchers.IO.limitedParallelism(LIST_THREADS)) {
+            files.map { async { DeviceFile.of(it, countChildren = true) } }.awaitAll()
+        }
+    }
+
+    /**
+     * KMK: Android's media index misses files it hasn't scanned yet (just copied or downloaded), so the folders are
+     * also walked by name, for a few seconds at most, and the two results are merged.
+     */
+    private fun walkSearch(
+        context: Context,
+        text: String,
+        showHidden: Boolean,
+        limit: Int,
+        isCancelled: () -> Boolean,
+    ): List<DeviceFile> {
+        val needle = text.trim().lowercase()
+        val found = ArrayList<DeviceFile>()
+        val deadline = System.currentTimeMillis() + WALK_MS
+        val pending = ArrayDeque(storageRoots(context).map { File(it.path) })
+        while (pending.isNotEmpty() && found.size < limit && System.currentTimeMillis() < deadline && !isCancelled()) {
+            val dir = pending.removeFirst()
+            dir.listFiles().orEmpty().forEach { child ->
+                val name = child.name
+                if (!showHidden && name.startsWith(".")) return@forEach
+                if (child.isDirectory) {
+                    // app-private data: not readable, and huge
+                    if (!(name == "data" || name == "obb") || dir.name != "Android") pending.addLast(child)
+                } else if (needle in name.lowercase()) {
+                    found += DeviceFile.of(child)
+                }
+            }
+        }
+        return found
+    }
+
+    private const val PARALLEL_FROM = 64
+    private const val LIST_THREADS = 8
+    private const val WALK_MS = 4_000L
 
     fun sorted(files: List<DeviceFile>, sort: FileSort, descending: Boolean): List<DeviceFile> {
         val byName = Comparator<DeviceFile> { a, b -> a.name.compareToCaseInsensitiveNaturalOrder(b.name) }

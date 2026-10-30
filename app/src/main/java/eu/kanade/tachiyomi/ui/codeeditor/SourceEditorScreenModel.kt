@@ -588,7 +588,8 @@ class SourceEditorScreenModel(
                     url = e.s("url").orEmpty(),
                 )
             },
-            text = "${list.size} entries",
+            // KMK: an empty answer says so (it read "0 entries" before)
+            text = if (list.isEmpty()) "No results: the source returned an empty list." else "${list.size} entries",
         )
     }
 

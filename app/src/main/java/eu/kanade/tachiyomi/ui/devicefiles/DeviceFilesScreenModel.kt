@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withIOContext
 import java.io.File
@@ -159,7 +160,8 @@ class DeviceFilesScreenModel(
         }
         searchJob = screenModelScope.launchIO {
             delay(250)
-            _searchResults.value = DeviceFilesRepository.search(context, text, prefs.showHidden.get())
+            val results = DeviceFilesRepository.search(context, text, prefs.showHidden.get()) { !isActive }
+            if (isActive) _searchResults.value = results
         }
     }
 
