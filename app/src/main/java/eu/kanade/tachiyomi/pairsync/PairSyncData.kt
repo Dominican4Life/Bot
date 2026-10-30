@@ -22,6 +22,7 @@ import eu.kanade.tachiyomi.jssource.JsSourceManager
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.protobuf.ProtoBuf
@@ -80,6 +81,19 @@ data class SyncSelection(
     /** The sideloaded extensions (package names) whose APKs this device may send; null = all */
     val apkKeys: Set<String>? = null,
     // KMK <--
+    // KMK (r92): covers and downloads, sent only over Wi-Fi or Wi-Fi Direct (see PairSyncExtras) -->
+    /** The covers of the manga / anime this device sends (library and history) */
+    val mangaCovers: Boolean = true,
+    val animeCovers: Boolean = true,
+    /** Downloaded chapters / episodes of the picked titles ([DownloadedTitle.key]; null = all) */
+    val mangaDownloads: Boolean = false,
+    val animeDownloads: Boolean = false,
+    val mangaDownloadKeys: Set<String>? = null,
+    val animeDownloadKeys: Set<String>? = null,
+    /** "all", "unread" (unwatched) or "last10" */
+    val mangaDownloadMode: String = "all",
+    val animeDownloadMode: String = "all",
+    // KMK <--
 ) {
     val syncsSources: Boolean get() = extensions && sources
     val syncsRepos: Boolean get() = extensions && repos
@@ -89,6 +103,14 @@ data class SyncSelection(
     val isEmpty: Boolean
         get() = !mangaLibrary && !animeLibrary && !mangaHistory && !animeHistory &&
             !syncsSources && !syncsRepos && !syncsInstalled && !syncsApks
+
+    /**
+     * KMK (r92): covers or downloads would go (over Wi-Fi or Wi-Fi Direct). Downloads only with their library tile on
+     * (the other device takes downloads only for titles it has)
+     */
+    val hasExtras: Boolean
+        get() = (mangaCovers && (mangaLibrary || mangaHistory)) || (animeCovers && (animeLibrary || animeHistory)) ||
+            (mangaDownloads && mangaLibrary) || (animeDownloads && animeLibrary)
 
     /** KMK (r91): every tile and switch on, nothing narrowed (the pop-up's lines then say "everything") */
     val isEverything: Boolean
@@ -110,6 +132,11 @@ data class SyncSelection(
         if (syncsInstalled) add("installed extensions")
         if (syncsApks) add("sideloaded APKs")
         if (syncsSources) add("code sources")
+        // KMK (r92)
+        if ((mangaCovers && (mangaLibrary || mangaHistory)) || (animeCovers && (animeLibrary || animeHistory))) {
+            add("covers")
+        }
+        if ((mangaDownloads && mangaLibrary) || (animeDownloads && animeLibrary)) add("downloads")
     }.joinToString(", ").ifEmpty { "nothing" }
 
     /** KMK (r91): an empty category set never means "send none" silently: it counts as all */
@@ -258,6 +285,16 @@ data class SyncSummary(
     val sentExtensions: Int = 0,
     val sentApks: Int = 0,
     // KMK <--
+    // KMK (r92): covers and downloaded chapters / episodes, both ways -->
+    val sentCovers: Int = 0,
+    val gotCovers: Int = 0,
+    val sentDownloadItems: Int = 0,
+    val gotDownloadItems: Int = 0,
+    val sentExtraBytes: Long = 0L,
+    val gotExtraBytes: Long = 0L,
+    /** Why covers and downloads didn't go (Bluetooth, an older version), or null */
+    val extrasSkipped: String? = null,
+    // KMK <--
 ) {
     /** What was received, in words */
     fun receivedText(): String = buildList {
@@ -268,6 +305,9 @@ data class SyncSummary(
         if (reposAdded > 0) add(if (reposAdded == 1) "1 repo" else "$reposAdded repos")
         if (missing.isNotEmpty() || apks.isNotEmpty()) add("${missing.size + apks.size} extensions to install")
         if (updates.isNotEmpty()) add("${updates.size} updates")
+        // KMK (r92)
+        if (gotCovers > 0) add(if (gotCovers == 1) "1 cover" else "$gotCovers covers")
+        if (gotDownloadItems > 0) add("$gotDownloadItems downloads")
         if (errors > 0) add("$errors couldn't be added")
     }.joinToString(", ")
 
@@ -280,6 +320,9 @@ data class SyncSummary(
         if (sentRepos > 0) add(if (sentRepos == 1) "1 repo" else "$sentRepos repos")
         if (sentExtensions > 0) add("$sentExtensions extensions listed")
         if (sentApks > 0) add(if (sentApks == 1) "1 APK" else "$sentApks APKs")
+        // KMK (r92)
+        if (sentCovers > 0) add(if (sentCovers == 1) "1 cover" else "$sentCovers covers")
+        if (sentDownloadItems > 0) add("$sentDownloadItems downloads")
     }.joinToString(", ")
 
     override fun toString(): String = "got ${receivedText()}; sent ${sentText()}"
@@ -943,7 +986,7 @@ object PairSyncData {
      * KMK (r91): what this device sends with [selection], as summary rows (empty = nothing). Quick: database counts
      * and what's in memory, no network (the repos' lists count only once read). History counts titles.
      */
-    suspend fun summarizeSend(selection: SyncSelection): List<SummaryRow> {
+    suspend fun summarizeSend(selection: SyncSelection, extrasWait: Long = EXTRAS_WAIT): List<SummaryRow> {
         val own = selection.normalized()
         val rows = mutableListOf<SummaryRow>()
         val animeRepository = Injekt.get<AnimeRepository>()
@@ -1050,8 +1093,42 @@ object PairSyncData {
             0
         }
         extensionsRow(repos, extensions, apks, sources)?.let { rows += it }
+        // KMK (r92): covers and downloads with their sizes; counted in the background (a live check-in can't wait
+        // long: "checking…" until they're counted)
+        if (own.hasExtras) {
+            val extras = runCatching {
+                withTimeoutOrNull(extrasWait) { PairSyncExtras.summaryRows(own) }
+            }.getOrNull()
+            if (extras != null) {
+                rows.addAll(extras)
+            } else {
+                rows.add(SummaryRow("Covers and downloads", EXTRAS_CHECKING))
+            }
+        }
         return rows
     }
+
+    /** KMK (r92): how long [summarizeSend] waits for the covers and downloads to be counted */
+    private const val EXTRAS_WAIT = 2_500L
+
+    /**
+     * KMK (r92): the Covers and downloads row's detail while they're still counted; the pop-up asks again while a row
+     * says it, and the core sends live devices the new summary once they're counted
+     */
+    const val EXTRAS_CHECKING = "checking…"
+
+    /** KMK (r92): this device's titles with downloads of one kind, biggest first (the scan is kept a while) */
+    suspend fun downloadedTitles(anime: Boolean): List<DownloadedTitle> = PairSyncExtras.downloadedTitles(anime)
+
+    /** KMK (r92): [downloadedTitles] when they're counted already, else null (nothing is read) */
+    fun downloadedTitlesNow(anime: Boolean): List<DownloadedTitle>? = PairSyncExtras.downloadedTitlesNow(anime)
+
+    /** KMK (r92): "41 GB", "0.6 GB", "210 MB", "48 KB": one way of writing sizes for the core and the pop-up */
+    fun sizeText(bytes: Long): String = PairSyncExtras.sizeText(bytes)
+
+    /** KMK (r92): the covers found on this device for the titles [selection] sends of one kind */
+    suspend fun coversEstimate(anime: Boolean, selection: SyncSelection): CoversEstimate =
+        PairSyncExtras.coversEstimate(anime, selection)
 
     /** KMK (r91): the Extensions row's APK part before the repos' lists are read */
     internal const val APKS_CHECKING = "APKs: checking"

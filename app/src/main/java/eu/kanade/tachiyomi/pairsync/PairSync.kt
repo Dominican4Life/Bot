@@ -1,13 +1,16 @@
 package eu.kanade.tachiyomi.pairsync
 
 import android.annotation.SuppressLint
+import android.app.Application
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothServerSocket
 import android.bluetooth.BluetoothSocket
 import android.content.Context
+import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.PowerManager
 import android.provider.Settings
 import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.CancellationException
@@ -66,6 +69,7 @@ import java.util.Date
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import javax.crypto.Cipher
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
@@ -105,6 +109,15 @@ import javax.crypto.spec.SecretKeySpec
  *    did; what is sent is cut to what its payload's "wants" takes. An r89 waiting device ignores "transport" and sends
  *    its gzipped payload at once: the initiator sees a first frame that isn't JSON and carries on over Bluetooth the
  *    r89 way. An r89 initiator (no "transport") gets pure Bluetooth, the backup inside the JSON, and no APKs.
+ * 10. Covers and downloads (r92): the request has "extras" (the version), "extrasOn" (its tiles send some),
+ *    "extrasBytes" / "downloadBytes" (estimates, for the prompt's sizes); "accepted" has "extras" and "extrasOn". Only
+ *    when both said "extras" and the data link isn't Bluetooth: after the library both ways, each side merges (with
+ *    "wait"s over Wi-Fi meanwhile), then: the waiting device sends its manifest (gzipped JSON of items: covers, then
+ *    downloaded chapters / episodes, each with its files' names and sizes), the initiator sends its own; the waiting
+ *    device answers which of the initiator's items it needs (indexes), the initiator answers likewise; the waiting
+ *    device sends the files it was asked for, then the initiator does. Each file goes in frames of at most 4 MiB, the
+ *    first byte 0 (more follows), 1 (the end) or 2 (couldn't be read: dropped). Then "done" as before. The receiver
+ *    finds each title by source + url and writes to its own places (temporary names, renamed when complete).
  */
 
 /** KMK: A device this one has been paired with: its Bluetooth address, its name, and the key the two share */
@@ -249,6 +262,13 @@ data class IncomingRequest(
     val sizeText: String?,
     val via: SyncTransport?,
     val expiresAt: Long,
+    // KMK (r92): the covers and downloads coming (estimated), this device's free space for them, the time they take
+    // at the way's usual speed; [extrasNeedWifi]: they'd come but the link will be Bluetooth (skipped then)
+    val totalBytes: Long? = null,
+    val freeBytes: Long? = null,
+    val enoughSpace: Boolean = true,
+    val etaText: String? = null,
+    val extrasNeedWifi: Boolean = false,
 )
 
 /**
@@ -320,6 +340,23 @@ object PairSync {
     /** KMK (r91): how long this device's lost tie-break counts (the other device's request comes right after) */
     private const val TIE_FOR = 15_000L
 
+    /** KMK (r92): how long a sync waits for its covers and downloads to be counted (for the other device's prompt) */
+    private const val ESTIMATE_WAIT = 10_000L
+
+    /** KMK (r92): the covers and downloads bars move at most this often (ms; covers come hundreds a second) */
+    private const val EXTRAS_EVERY = 150L
+
+    /** KMK (r92): how often the extras phase checks that its writes still move (see [Link.stalledMillis]) */
+    private const val WRITE_CHECK = 10_000L
+
+    // KMK (r92): the first byte of a file's frames in the extras phase
+    private const val FILE_MORE: Byte = 0
+    private const val FILE_END: Byte = 1
+    private const val FILE_FAILED: Byte = 2
+
+    /** KMK (r92): the result card's line when covers and downloads couldn't go over Bluetooth */
+    private const val EXTRAS_NEED_WIFI = "Covers and downloads need Wi-Fi or Wi-Fi Direct"
+
     // KMK (r91): the prompt's outcomes
     private const val ACCEPT = 1
     private const val DECLINE = 2
@@ -346,6 +383,8 @@ object PairSync {
         val lastError: String? = null,
         val errorAddress: String? = null,
         val waitingForAccept: Boolean = false,
+        /** KMK (r92): one bar per part (library, covers, downloads) while covers and downloads move */
+        val parts: List<TransferPart> = emptyList(),
     )
 
     /**
@@ -519,6 +558,7 @@ object PairSync {
             via = null,
             bytesPerSecond = 0L,
             waitingForAccept = false,
+            parts = emptyList(),
         )
     }
 
@@ -565,6 +605,7 @@ object PairSync {
                 lastError = null,
                 errorAddress = null,
                 waitingForAccept = false,
+                parts = emptyList(),
             )
         }
         id to newSession
@@ -620,6 +661,8 @@ object PairSync {
         }
         // KMK (r91): the library may have changed: this device's own summary is read again
         clearOwnRows()
+        // KMK (r92): and its covers counted again (the downloads scan only after downloads came, see afterReceive)
+        PairSyncExtras.forget()
     }
 
     /** KMK (r91): logs the VPN message once per sync, worded for [transport] (Auto goes on over Bluetooth itself) */
@@ -921,6 +964,9 @@ object PairSync {
             own.within(PairSyncPreferences.parseSelection(message.string("selection").orEmpty()))
         }
         val vpn = PairSyncWifi.vpnOn(context) || message.string("vpn") == "true"
+        // KMK (r92): an r92 device sends and takes covers and downloads too (only over Wi-Fi or Wi-Fi Direct)
+        val theirExtras = asks && (message.int("extras") ?: 0) >= PairSyncExtras.VERSION
+        val theirExtrasOn = message.string("extrasOn") == "true"
         try {
             session.add(bt)
             bt.counter = rate::add
@@ -965,7 +1011,18 @@ object PairSync {
             val received = receivePayload(link)
             log("Got ${size(rate.total)} in all from $name")
             step("Merging…")
-            val summary = PairSyncData.import(received, ::log).withSent(mine.summary)
+            // KMK (r92): covers and downloads follow, so the other device waits for this merge ("wait"s meanwhile)
+            val extras = theirExtras && via != SyncTransport.Bluetooth
+            val summary = keepAlive(link, extras) { PairSyncData.import(received, ::log) }.withSent(mine.summary)
+                .copy(
+                    extrasSkipped = extrasSkipped(
+                        name,
+                        theirExtras,
+                        via,
+                        sends.hasExtras || theirExtrasOn,
+                        sends.hasExtras,
+                    ),
+                )
             // KMK (r91): what it really sent is what it sends, until the next live check
             received.sentRows?.let { seen(peer.address, it, it.isEmpty(), live = null) }
             // KMK (r90): merged, so saved and shown first; "done" only tells the other device, which may have stopped
@@ -985,10 +1042,16 @@ object PairSync {
                     ),
                 )
                 log("Synced with $name over ${via.label}: $summary")
+                summary.extrasSkipped?.let { log(it) }
             }
-            runCatching {
-                link.sendJson(buildJsonObject { put("t", "done") })
-                link.receive()
+            // KMK (r92): then covers and downloads, this device first (it sent its library first too)
+            val extrasOk = !extras ||
+                extrasPhase(id, link, waiting = true, sends, name, peer.address, startTime, synced.lastSync)
+            if (extrasOk) {
+                runCatching {
+                    link.sendJson(buildJsonObject { put("t", "done") })
+                    link.receive()
+                }
             }
         } catch (e: CancellationException) {
             throw e
@@ -1035,11 +1098,13 @@ object PairSync {
             }
             if (yielded) {
                 if (!asks) return true
-                sendAccepted(context, bt, youSend, sends.isEverything, repos?.await())
+                sendAccepted(context, bt, youSend, sends.isEverything, repos?.await(), sends.hasExtras)
                 return isStart(bt.receiveJson(), name, run, peer.address)
             }
             if (asks) bt.sendJson(buildJsonObject { put("t", "asking") })
             val decision = CompletableDeferred<Int>()
+            // KMK (r92): the covers and downloads coming, and the room for them here
+            val sizes = if (asks) runCatching { promptSize(context, message, modern) }.getOrNull() else null
             val request = IncomingRequest(
                 id = synchronized(lock) { ++incomingIds },
                 peerAddress = peer.address,
@@ -1049,12 +1114,29 @@ object PairSync {
                 sizeText = null,
                 via = if (modern) SyncTransport.of(message.string("transport")) else SyncTransport.Bluetooth,
                 expiresAt = System.currentTimeMillis() + ASK_TIMEOUT,
+                totalBytes = sizes?.total,
+                freeBytes = sizes?.free,
+                enoughSpace = sizes?.enough ?: true,
+                etaText = sizes?.eta,
+                extrasNeedWifi = sizes?.needWifi ?: false,
             )
             val asked = Pending(request, decision, run)
             synchronized(lock) { pending = asked }
             _incoming.value = request
             step("$name wants to sync")
             log("$name wants to sync: Accept or Decline")
+            // KMK (r92): covers and downloads still counted ("checking…"): the prompt's rows follow once they are
+            val latestSend = AtomicReference(youSend)
+            val refresher = if (youSend.any { it.detail == PairSyncData.EXTRAS_CHECKING }) {
+                scope.launch {
+                    val rows = runCatching { PairSyncData.summarizeSend(sends, extrasWait = ASK_TIMEOUT) }.getOrNull()
+                        ?: return@launch
+                    latestSend.set(rows)
+                    _incoming.update { if (it != null && it.id == request.id) it.copy(youSend = rows) else it }
+                }
+            } else {
+                null
+            }
             // KMK (r91): the other device's next frame is "start" (after Accept) or "cancel"; a dropped link cancels
             // too. Read apart, so the prompt closes as soon as it comes.
             val reader = if (asks) scope.async { runCatching { bt.receiveJson() } } else null
@@ -1062,13 +1144,14 @@ object PairSync {
             val answer = try {
                 withTimeoutOrNull(ASK_TIMEOUT) { decision.await() } ?: TIMEOUT
             } finally {
+                refresher?.cancel()
                 synchronized(lock) { if (pending === asked) pending = null }
                 _incoming.update { if (it?.id == request.id) null else it }
             }
             when (answer) {
                 ACCEPT -> {
                     if (reader == null) return true
-                    sendAccepted(context, bt, youSend, sends.isEverything, repos?.await())
+                    sendAccepted(context, bt, latestSend.get(), sends.isEverything, repos?.await(), sends.hasExtras)
                     return isStart(reader.await().getOrNull(), name, run, peer.address)
                 }
                 CANCELLED -> {
@@ -1093,7 +1176,14 @@ object PairSync {
         }
     }
 
-    private fun sendAccepted(context: Context, bt: Link, youSend: List<SummaryRow>, all: Boolean, repos: String?) {
+    private fun sendAccepted(
+        context: Context,
+        bt: Link,
+        youSend: List<SummaryRow>,
+        all: Boolean,
+        repos: String?,
+        extrasOn: Boolean,
+    ) {
         bt.sendJson(
             buildJsonObject {
                 put("t", "accepted")
@@ -1102,7 +1192,50 @@ object PairSync {
                 put("all", all)
                 repos?.let { put("repos", it) }
                 put("vpn", PairSyncWifi.vpnOn(context))
+                // KMK (r92): this device does covers and downloads too
+                put("extras", PairSyncExtras.VERSION)
+                put("extrasOn", extrasOn)
             },
+        )
+    }
+
+    /** KMK (r92): the prompt's sizes (see [IncomingRequest]) */
+    private class PromptSize(
+        val total: Long?,
+        val free: Long?,
+        val enough: Boolean,
+        val eta: String?,
+        val needWifi: Boolean,
+    )
+
+    /**
+     * KMK (r92): what comes besides the library (the other device's estimate), this device's free space for it and the
+     * time it takes at the usual speed of the way; null when nothing comes (or an older version asks)
+     */
+    private fun promptSize(context: Context, message: JsonObject, modern: Boolean): PromptSize? {
+        if ((message.int("extras") ?: 0) < PairSyncExtras.VERSION) return null
+        val bytes = message.string("extrasBytes")?.toLongOrNull() ?: 0L
+        if (bytes <= 0L) return null
+        val transport = if (modern) SyncTransport.of(message.string("transport")) else SyncTransport.Bluetooth
+        if (transport == SyncTransport.Bluetooth) {
+            return PromptSize(total = null, free = null, enough = true, eta = null, needWifi = true)
+        }
+        val downloads = (message.string("downloadBytes")?.toLongOrNull() ?: 0L) > 0L
+        val free = PairSyncExtras.freeBytes(downloads)
+        val direct = message.string("p2p") != "false" && PairSyncWifi.p2pUnavailable(context) == null
+        val speed = when (transport) {
+            SyncTransport.WifiDirect -> PairSyncExtras.P2P_SPEED
+            SyncTransport.Wifi -> PairSyncExtras.LAN_SPEED
+            else -> if (direct) PairSyncExtras.P2P_SPEED else PairSyncExtras.LAN_SPEED
+        }
+        return PromptSize(
+            total = bytes,
+            free = free,
+            // KMK (r92): only a warning now (Accept stays on): the estimate counts things this device already has,
+            // and the plan cuts what's asked for to the free space
+            enough = free == null || bytes <= free,
+            eta = PairSyncExtras.etaText(bytes, speed),
+            needWifi = false,
         )
     }
 
@@ -1401,6 +1534,13 @@ object PairSync {
                 )
                 // KMK (r91): for the other device's prompt, and the packages its repos offer here (it sends no APKs
                 // for them)
+                // KMK (r92): the covers and downloads this device sends, for the other device's prompt (counted
+                // first, so the rows below have them too instead of "checking…")
+                val extrasEstimate = if (own.hasExtras) {
+                    runCatching { withTimeoutOrNull(ESTIMATE_WAIT) { PairSyncExtras.estimate(own) } }.getOrNull()
+                } else {
+                    null
+                }
                 val sendRows = runCatching { PairSyncData.summarizeSend(own) }.getOrDefault(emptyList())
                 val myRepos = reposText()
                 val vpnHere = PairSyncWifi.vpnOn(context)
@@ -1440,6 +1580,13 @@ object PairSync {
                             myRepos?.let { put("repos", it) }
                             put("vpn", vpnHere)
                             // KMK <--
+                            // KMK (r92): covers and downloads (see the protocol, 10)
+                            put("extras", PairSyncExtras.VERSION)
+                            put("extrasOn", own.hasExtras)
+                            extrasEstimate?.let { (bytes, downloadBytes) ->
+                                put("extrasBytes", bytes)
+                                put("downloadBytes", downloadBytes)
+                            }
                         },
                     )
                     val answer = awaitAnswer(bt, id, peer)
@@ -1552,7 +1699,20 @@ object PairSync {
                     log("Got ${size(rate.total)} from ${peer.name}, sending ${size(mine.payload.size.toLong())}…")
                     sendExport(link, mine)
                     step("Merging…")
-                    val summary = PairSyncData.import(received, ::log).withSent(mine.summary)
+                    // KMK (r92): covers and downloads follow, so the other device waits for this merge ("wait"s)
+                    val theirExtras = answer.asked && answer.theirExtras
+                    val extras = theirExtras && via != SyncTransport.Bluetooth
+                    val summary = keepAlive(link, extras) { PairSyncData.import(received, ::log) }
+                        .withSent(mine.summary)
+                        .copy(
+                            extrasSkipped = extrasSkipped(
+                                peer.name,
+                                theirExtras,
+                                via,
+                                sends.hasExtras || answer.theirExtrasOn,
+                                sends.hasExtras,
+                            ),
+                        )
                     // KMK (r91): what it really sent is what it sends, until the next live check
                     received.sentRows?.let { seen(peer.address, it, it.isEmpty(), live = null) }
                     // KMK (r90): merged, so saved and shown first; "done" only tells the other device, which may have
@@ -1572,10 +1732,25 @@ object PairSync {
                             ),
                         )
                         log("Synced with ${peer.name} over ${via.label}: $summary")
+                        summary.extrasSkipped?.let { log(it) }
                     }
-                    runCatching {
-                        link.sendJson(buildJsonObject { put("t", "done") })
-                        link.receive()
+                    // KMK (r92): then covers and downloads, the other device first
+                    val extrasOk = !extras ||
+                        extrasPhase(
+                            id,
+                            link,
+                            waiting = false,
+                            sends,
+                            peer.name,
+                            peer.address,
+                            startTime,
+                            synced.lastSync,
+                        )
+                    if (extrasOk) {
+                        runCatching {
+                            link.sendJson(buildJsonObject { put("t", "done") })
+                            link.receive()
+                        }
                     }
                 }
             } catch (e: CancellationException) {
@@ -1603,6 +1778,9 @@ object PairSync {
         val asked: Boolean,
         val theirRepos: Map<String, List<RepoCopy>>?,
         val theirVpn: Boolean,
+        /** KMK (r92): it does covers and downloads ([theirExtrasOn]: its tiles send some) */
+        val theirExtras: Boolean = false,
+        val theirExtrasOn: Boolean = false,
     )
 
     /**
@@ -1661,6 +1839,8 @@ object PairSync {
                             asked = true,
                             theirRepos = PairSyncData.decodePackages(reply.string("repos")),
                             theirVpn = reply.string("vpn") == "true",
+                            theirExtras = (reply.int("extras") ?: 0) >= PairSyncExtras.VERSION,
+                            theirExtrasOn = reply.string("extrasOn") == "true",
                         )
                     }
                     "declined" -> throw IOException("${peer.name} declined")
@@ -1906,6 +2086,438 @@ object PairSync {
         sentExtensions = sent.sentExtensions,
         sentApks = sent.sentApks,
     )
+
+    // Covers and downloads (KMK (r92); see the protocol, 10)
+
+    /** KMK (r92): why covers and downloads didn't go, for the result card; null when they did (or none would) */
+    private fun extrasSkipped(
+        name: String,
+        theirExtras: Boolean,
+        via: SyncTransport,
+        anyWould: Boolean,
+        ownWould: Boolean,
+    ): String? = when {
+        !theirExtras -> if (ownWould) "$name is on an older version: covers and downloads weren't sent" else null
+        via == SyncTransport.Bluetooth && anyWould -> EXTRAS_NEED_WIFI
+        else -> null
+    }
+
+    /** KMK (r92): what the extras phase moved so far (kept when it stops halfway: the next sync carries on) */
+    private class ExtrasCount {
+        var sentCovers = 0
+        var gotCovers = 0
+        var sentItems = 0
+        var gotItems = 0
+        var sentBytes = 0L
+        var gotBytes = 0L
+
+        /** What this device needed but had no room for */
+        var noRoom = 0
+
+        val any: Boolean get() = sentCovers + gotCovers + sentItems + gotItems > 0
+
+        fun text(): String = "sent $sentCovers covers and $sentItems downloads, got $gotCovers covers and " +
+            "$gotItems downloads (${size(sentBytes + gotBytes)})"
+    }
+
+    /**
+     * KMK (r92): covers and downloads both ways, after the library ([waiting]: this device answered the sync and goes
+     * first). What moved goes on the result (published at [resultTime]) even when it stops halfway, Stop on this
+     * device too, with why it stopped. False when it failed (the link may be broken: no "done" then). The device
+     * stays awake meanwhile (a partial wake lock and a Wi-Fi lock).
+     */
+    private suspend fun extrasPhase(
+        id: Int,
+        link: Link,
+        waiting: Boolean,
+        own: SyncSelection,
+        name: String,
+        address: String,
+        startTime: Long,
+        resultTime: Long,
+    ): Boolean {
+        val count = ExtrasCount()
+        var why: String? = "Stop was pressed"
+        val awake = Awake(Injekt.get<Application>())
+        try {
+            awake.acquire()
+            extras(link, waiting, own, name, count)
+            why = null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            // A Stop here closes the link first: that shows as a dropped connection
+            why = if (runId != id) "Stop was pressed" else e.message ?: e::class.simpleName.orEmpty()
+            if (runId == id) log("Covers and downloads stopped: $why")
+        } finally {
+            awake.release()
+            val stopped = why?.let { "Covers and downloads stopped: $it" }
+            addExtras(address, resultTime, count, System.currentTimeMillis() - startTime, stopped)
+            if (count.any) log("Covers and downloads with $name: ${count.text()}")
+        }
+        return why == null
+    }
+
+    /**
+     * KMK (r92): what the extras phase moved on the result card (and the bytes and time with it), with why it stopped
+     * ([stopped]) and what didn't fit. Matched by device and time, not by the sync's number: on the device that pressed
+     * Stop the number has moved on already.
+     */
+    private fun addExtras(address: String, resultTime: Long, count: ExtrasCount, millis: Long, stopped: String?) {
+        val noRoom = count.noRoom.takeIf { it > 0 }?.let {
+            if (it == 1) "1 item skipped: not enough space" else "%,d items skipped: not enough space".format(it)
+        }
+        synchronized(resultLock) {
+            _result.update { last ->
+                if (last == null || last.peerAddress != address || last.time != resultTime) {
+                    last
+                } else {
+                    last.copy(
+                        summary = last.summary.copy(
+                            sentCovers = count.sentCovers,
+                            gotCovers = count.gotCovers,
+                            sentDownloadItems = count.sentItems,
+                            gotDownloadItems = count.gotItems,
+                            sentExtraBytes = count.sentBytes,
+                            gotExtraBytes = count.gotBytes,
+                            extrasSkipped = listOfNotNull(last.summary.extrasSkipped, stopped, noRoom)
+                                .joinToString("\n")
+                                .ifEmpty { null },
+                        ),
+                        bytes = rate.total,
+                        millis = millis,
+                    )
+                }
+            }
+        }
+    }
+
+    /** KMK (r92): keeps the device and its Wi-Fi awake while covers and downloads move (a long transfer, screen off) */
+    private class Awake(context: Context) {
+        private val wake: PowerManager.WakeLock? = runCatching {
+            context.getSystemService(PowerManager::class.java)
+                ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "komikku:pairsync")
+                ?.apply { setReferenceCounted(false) }
+        }.getOrNull()
+
+        private val wifi: List<WifiManager.WifiLock> = runCatching {
+            val manager = context.applicationContext.getSystemService(WifiManager::class.java)
+            if (manager == null) {
+                emptyList()
+            } else {
+                buildList<WifiManager.WifiLock> {
+                    add(manager.createWifiLock(highPerfMode(), "komikku:pairsync"))
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        add(manager.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "komikku:pairsync-ll"))
+                    }
+                }
+            }
+        }.getOrDefault(emptyList())
+
+        @Suppress("DEPRECATION")
+        private fun highPerfMode(): Int = WifiManager.WIFI_MODE_FULL_HIGH_PERF
+
+        fun acquire() {
+            runCatching { wake?.acquire(AWAKE_FOR) }
+            wifi.forEach { lock ->
+                runCatching {
+                    lock.setReferenceCounted(false)
+                    lock.acquire()
+                }
+            }
+        }
+
+        fun release() {
+            runCatching { wake?.let { if (it.isHeld) it.release() } }
+            wifi.forEach { lock -> runCatching { if (lock.isHeld) lock.release() } }
+        }
+    }
+
+    /** KMK (r92): the most the wake lock is held (it's released when the phase ends; this is only a safety net) */
+    private const val AWAKE_FOR = 6L * 60L * 60L * 1000L
+
+    /**
+     * KMK (r92): the manifests both ways, the answers (what each needs) both ways, then the files: the waiting device
+     * ([waiting]) sends each first. Frames in the same order on both sides; building a manifest or an answer sends
+     * "wait"s meanwhile, which every read here skips. A write that doesn't move for [PairSyncWifi.READ_TIMEOUT] ms
+     * closes the link (a Wi-Fi link that died left the sender waiting about 15 minutes).
+     */
+    private suspend fun extras(link: Link, waiting: Boolean, own: SyncSelection, name: String, count: ExtrasCount) {
+        coroutineScope {
+            val watchdog = launch {
+                while (true) {
+                    delay(WRITE_CHECK)
+                    if (link.stalledMillis() > PairSyncWifi.READ_TIMEOUT) {
+                        log("Covers and downloads: nothing could be sent for a while, closing the connection")
+                        link.close()
+                        break
+                    }
+                }
+            }
+            try {
+                extrasBoth(link, waiting, own, name, count)
+            } finally {
+                watchdog.cancel()
+            }
+        }
+    }
+
+    private suspend fun extrasBoth(link: Link, waiting: Boolean, own: SyncSelection, name: String, count: ExtrasCount) {
+        val library = TransferPart("Library + history", size(rate.total), 1f, true)
+        step("Finding covers and downloads…")
+        val mine = keepAlive(link, true) { PairSyncExtras.outgoing(own) }
+        // KMK (r92): a list too big for the other device goes in part (the rest next sync)
+        val encoded = PairSyncExtras.encodeManifest(mine)
+        val mineCount = encoded.items
+        val left = mine.manifest.items.size - mineCount
+        if (left > 0) log("Covers and downloads: the list is too long, %,d items wait for the next sync".format(left))
+        val theirs = if (waiting) {
+            link.send(encoded.bytes)
+            PairSyncExtras.decodeManifest(receiveData(link))
+        } else {
+            val read = PairSyncExtras.decodeManifest(receiveData(link))
+            link.send(encoded.bytes)
+            read
+        }
+        step("Checking what's here already…")
+        val plan = keepAlive(link, true) { PairSyncExtras.plan(theirs) }
+        count.noRoom = plan.noRoom
+        val myNeed = PairSyncExtras.encodeNeed(plan.need)
+        val theirNeed = if (waiting) {
+            link.send(myNeed)
+            PairSyncExtras.decodeNeed(receiveData(link), mineCount)
+        } else {
+            val read = PairSyncExtras.decodeNeed(receiveData(link), mineCount)
+            link.send(myNeed)
+            read
+        }
+        log(
+            "Covers and downloads: sending ${theirNeed.size} of $mineCount, " +
+                "getting ${plan.need.size} of ${theirs.items.size} from $name",
+        )
+        if (plan.noRoom > 0) log("Covers and downloads: ${plan.noRoom} don't fit in the free space here")
+        if (waiting) {
+            sendExtras(link, mine, theirNeed, library, count)
+            receiveExtras(link, theirs, plan, library, count)
+        } else {
+            receiveExtras(link, theirs, plan, library, count)
+            sendExtras(link, mine, theirNeed, library, count)
+        }
+    }
+
+    /** KMK (r92): the next frame that isn't a keep-alive "wait" */
+    private fun receiveData(link: Link): ByteArray {
+        var frame = link.receive()
+        while (isWait(frame)) frame = link.receive()
+        return frame
+    }
+
+    /** KMK (r92): the bars of the extras phase ([sending] or receiving) */
+    private fun showExtras(sending: Boolean, progress: PairSyncExtras.Progress, library: TransferPart) {
+        _status.update {
+            it.copy(
+                sending = sending,
+                done = progress.doneBytes,
+                total = progress.totalBytes,
+                step = null,
+                bytesPerSecond = rate.perSecond,
+                parts = progress.parts(library),
+            )
+        }
+    }
+
+    /** KMK (r92): true at most every [EXTRAS_EVERY] ms (the bars' updates) */
+    private class Every {
+        private var last = 0L
+
+        fun due(): Boolean {
+            val now = System.nanoTime() / 1_000_000L
+            if (last != 0L && now - last < EXTRAS_EVERY) return false
+            last = now
+            return true
+        }
+    }
+
+    /** KMK (r92): sends the items the other device asked for ([indexes] of [out]'s manifest), file by file */
+    private suspend fun sendExtras(
+        link: Link,
+        out: PairSyncExtras.Outgoing,
+        indexes: List<Int>,
+        library: TransferPart,
+        count: ExtrasCount,
+    ) {
+        if (indexes.isEmpty()) return
+        val items = out.manifest.items
+        val progress = PairSyncExtras.Progress(items, indexes)
+        val buffer = ByteArray(PairSyncExtras.CHUNK + 1)
+        val every = Every()
+        showExtras(sending = true, progress, library)
+        for (index in indexes) {
+            currentCoroutineContext().ensureActive()
+            val item = items[index]
+            val reader = out.readers.getOrNull(index)
+            var ok = true
+            try {
+                for (file in item.files) {
+                    val open: (() -> InputStream?)? = reader?.let { r -> fun(): InputStream? = r.open(file.name) }
+                    val sent = sendFile(link, open, file.size, buffer) { bytes ->
+                        progress.bytes(item, bytes)
+                        if (every.due()) showExtras(sending = true, progress, library)
+                    }
+                    if (!sent) ok = false
+                }
+            } finally {
+                reader?.let { runCatching { it.release() } }
+            }
+            progress.itemDone(item)
+            if (ok) {
+                count.sentBytes += item.bytes()
+                if (item.kind == PairSyncExtras.KIND_COVER) count.sentCovers++ else count.sentItems++
+            }
+            if (every.due()) showExtras(sending = true, progress, library)
+        }
+        showExtras(sending = true, progress, library)
+    }
+
+    /**
+     * KMK (r92): one file as frames of at most [PairSyncExtras.CHUNK] bytes, each starting with [FILE_MORE] or, the
+     * last, [FILE_END]; one that can't be read (or stops being readable) ends with [FILE_FAILED], and so does one whose
+     * size isn't the [expected] one (it changed since the manifest: a short page or .cbz isn't saved as complete).
+     * False when it failed.
+     */
+    private fun sendFile(
+        link: Link,
+        open: (() -> InputStream?)?,
+        expected: Long,
+        buffer: ByteArray,
+        onBytes: (Long) -> Unit,
+    ): Boolean {
+        val input = open?.let { runCatching { it() }.getOrNull() }
+        if (input == null) {
+            link.send(byteArrayOf(FILE_FAILED))
+            return false
+        }
+        try {
+            var total = 0L
+            var end = false
+            while (!end) {
+                var filled = 0
+                try {
+                    while (filled < PairSyncExtras.CHUNK && !end) {
+                        val n = input.read(buffer, 1 + filled, PairSyncExtras.CHUNK - filled)
+                        if (n < 0) end = true else filled += n
+                    }
+                } catch (_: Exception) {
+                    link.send(byteArrayOf(FILE_FAILED))
+                    return false
+                }
+                total += filled
+                // Grown past its size: what came so far is dropped there
+                val wrong = total > expected || (end && total != expected)
+                buffer[0] = when {
+                    wrong -> FILE_FAILED
+                    end -> FILE_END
+                    else -> FILE_MORE
+                }
+                link.sendPart(buffer, 1 + filled)
+                onBytes(filled.toLong())
+                if (wrong) return false
+            }
+            return true
+        } finally {
+            runCatching { input.close() }
+        }
+    }
+
+    /**
+     * KMK (r92): receives the items this device asked for ([plan]), each written where this device keeps it (a
+     * temporary name until complete); one that fails is dropped and asked for again next sync
+     */
+    private suspend fun receiveExtras(
+        link: Link,
+        theirs: ExtrasManifest,
+        plan: PairSyncExtras.Plan,
+        library: TransferPart,
+        count: ExtrasCount,
+    ) {
+        if (plan.need.isEmpty()) return
+        val items = theirs.items
+        val progress = PairSyncExtras.Progress(items, plan.need)
+        val every = Every()
+        showExtras(sending = false, progress, library)
+        try {
+            for (index in plan.need) {
+                currentCoroutineContext().ensureActive()
+                val item = items[index]
+                val writer = runCatching { PairSyncExtras.writer(plan, index, item) }.getOrNull()
+                var ok = writer != null
+                try {
+                    for (file in item.files.indices) {
+                        val out = if (ok && writer != null) {
+                            runCatching { writer.output(file, item.files[file].name) }.getOrNull()
+                        } else {
+                            null
+                        }
+                        if (out == null) ok = false
+                        val fileOk = try {
+                            receiveFile(link, out, item.files[file].size) { bytes ->
+                                progress.bytes(item, bytes)
+                                if (every.due()) showExtras(sending = false, progress, library)
+                            }
+                        } finally {
+                            runCatching { out?.close() }
+                        }
+                        if (!fileOk) ok = false
+                    }
+                } catch (e: Throwable) {
+                    writer?.let { runCatching { it.abort() } }
+                    throw e
+                }
+                val saved = writer != null && runCatching { writer.finish(ok) }.getOrDefault(false)
+                progress.itemDone(item)
+                if (saved) {
+                    count.gotBytes += item.bytes()
+                    if (item.kind == PairSyncExtras.KIND_COVER) count.gotCovers++ else count.gotItems++
+                }
+                if (every.due()) showExtras(sending = false, progress, library)
+            }
+            showExtras(sending = false, progress, library)
+        } finally {
+            runCatching { PairSyncExtras.afterReceive(plan) }
+        }
+    }
+
+    /**
+     * KMK (r92): one file's frames (see [sendFile]) into [out] (null: read and dropped); true when it all came (exactly
+     * [expected] bytes) and was written
+     */
+    private fun receiveFile(link: Link, out: OutputStream?, expected: Long, onBytes: (Long) -> Unit): Boolean {
+        var writing = out != null
+        var total = 0L
+        while (true) {
+            val frame = link.receive()
+            if (frame.isEmpty()) throw IOException("Bad data from the other device")
+            val length = frame.size - 1
+            if (length > 0) {
+                total += length
+                if (writing) {
+                    try {
+                        out?.write(frame, 1, length)
+                    } catch (_: Exception) {
+                        writing = false
+                    }
+                }
+                onBytes(length.toLong())
+            }
+            when (frame[0]) {
+                FILE_MORE -> Unit
+                // KMK (r92): a short (or long) file is dropped like a failed one
+                FILE_END -> return writing && total == expected
+                FILE_FAILED -> return false
+                else -> throw IOException("Bad data from the other device")
+            }
+        }
+    }
 
     /**
      * KMK (r89): stops the running sync (either side): closes its connections and frees the pop-up. r90: also the
@@ -2175,7 +2787,25 @@ object PairSync {
         val rows = runCatching { PairSyncData.summarizeSend(selection) }.getOrDefault(emptyList())
         val fresh = OwnSend(rows, selection.isEverything, System.currentTimeMillis())
         synchronized(lock) { if (ownVersion == version) ownSend = fresh }
+        if (rows.any { it.detail == PairSyncData.EXTRAS_CHECKING }) pushWhenCounted(selection, version)
         return fresh
+    }
+
+    /** KMK (r92): covers and downloads are being counted: live devices get the summary with them once they are */
+    private val extrasPushing = AtomicBoolean(false)
+
+    private fun pushWhenCounted(selection: SyncSelection, version: Int) {
+        if (!extrasPushing.compareAndSet(false, true)) return
+        scope.launch {
+            try {
+                // The count goes on in the background; this only waits for it (a failed one isn't pushed)
+                val counted = runCatching { PairSyncExtras.summaryRows(selection) }.isSuccess
+                val context = liveContext
+                if (counted && ownVersion == version && liveJob != null && context != null) selectionChanged(context)
+            } finally {
+                extrasPushing.set(false)
+            }
+        }
     }
 
     /**
@@ -2297,11 +2927,11 @@ object PairSync {
         return SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded
     }
 
-    private fun encrypt(key: ByteArray, data: ByteArray): ByteArray {
+    private fun encrypt(key: ByteArray, data: ByteArray, length: Int = data.size): ByteArray {
         val iv = ByteArray(12).also(random::nextBytes)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, iv))
-        return iv + cipher.doFinal(data)
+        return iv + cipher.doFinal(data, 0, length)
     }
 
     private fun decrypt(key: ByteArray, frame: ByteArray): ByteArray {
@@ -2473,18 +3103,37 @@ object PairSync {
             }
         }
 
-        fun send(data: ByteArray, progress: ((Long, Long) -> Unit)? = null) {
-            val frame = encrypt(key, data)
-            output.writeInt(frame.size)
-            var written = 0
-            while (written < frame.size) {
-                val n = minOf(chunk, frame.size - written)
-                output.write(frame, written, n)
-                written += n
-                counter?.invoke(n)
-                progress?.invoke(written.toLong(), frame.size.toLong())
+        fun send(data: ByteArray, progress: ((Long, Long) -> Unit)? = null) = write(encrypt(key, data), progress)
+
+        /** KMK (r92): the first [length] bytes of [data] as one frame (a file's piece, not copied first) */
+        fun sendPart(data: ByteArray, length: Int) = write(encrypt(key, data, length), null)
+
+        // KMK (r92): whether a write is going on and when it last moved, for [stalledMillis]
+        @Volatile private var writing = false
+
+        @Volatile private var lastWrite = 0L
+
+        /** KMK (r92): how long the write going on hasn't moved (0 when none is going on) */
+        fun stalledMillis(): Long = if (writing) System.currentTimeMillis() - lastWrite else 0L
+
+        private fun write(frame: ByteArray, progress: ((Long, Long) -> Unit)?) {
+            lastWrite = System.currentTimeMillis()
+            writing = true
+            try {
+                output.writeInt(frame.size)
+                var written = 0
+                while (written < frame.size) {
+                    val n = minOf(chunk, frame.size - written)
+                    output.write(frame, written, n)
+                    written += n
+                    lastWrite = System.currentTimeMillis()
+                    counter?.invoke(n)
+                    progress?.invoke(written.toLong(), frame.size.toLong())
+                }
+                output.flush()
+            } finally {
+                writing = false
             }
-            output.flush()
         }
 
         /** Decrypts a frame read with [readBody] */

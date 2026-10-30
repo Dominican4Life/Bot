@@ -539,6 +539,15 @@ class AnimeDownloadManager(
     // KMK: also where the anime's cover is kept (CoverFolders)
     internal fun animeDir(anime: Anime, create: Boolean): UniFile? = findAnimeFolder(anime, create)?.dir
 
+    /** KMK (r92): [animeDir] under the downloader's folder lock (pair sync writes episodes too) */
+    internal suspend fun animeDirLocked(anime: Anime, create: Boolean): UniFile? =
+        dirLock.withLock { animeDir(anime, create) }
+
+    /** KMK (r92): titles were just added (pair sync's merge): the letter-case check reads the library's names again */
+    internal fun forgetLibraryNames() {
+        libraryNames = null
+    }
+
     private fun findAnimeFolder(anime: Anime, create: Boolean): AnimeFolder? {
         // downloads/Anime (the older "anime" folder counts too)
         val animeRoot = storageManager.getAnimeDownloadsDirectory(create) ?: return null

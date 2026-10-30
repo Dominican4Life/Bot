@@ -38,7 +38,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
@@ -85,6 +89,7 @@ import androidx.compose.material3.MultiChoiceSegmentedButtonRow
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -92,6 +97,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -113,6 +119,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.buildAnnotatedString
@@ -133,8 +140,10 @@ import androidx.core.content.ContextCompat
 import androidx.core.location.LocationManagerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import eu.kanade.presentation.manga.components.MangaCover
 import eu.kanade.tachiyomi.data.anime.AnimeRepository
 import eu.kanade.tachiyomi.jssource.JsSourceManager
+import eu.kanade.tachiyomi.pairsync.DownloadedTitle
 import eu.kanade.tachiyomi.pairsync.LocalExtension
 import eu.kanade.tachiyomi.pairsync.PairSync
 import eu.kanade.tachiyomi.pairsync.PairSyncData
@@ -222,6 +231,10 @@ private enum class Page(val parent: Page?) {
     ShowCode(PairNew),
     EnterCode(PairNew),
     Activity(Main),
+
+    // KMK (r92): which downloaded titles go, per kind
+    MangaDownloads(Manga),
+    AnimeDownloads(Anime),
 }
 
 /**
@@ -417,6 +430,14 @@ fun PairSyncDialog(onDismissRequest: () -> Unit) {
     ) {
         // A sub-page goes back to its parent page; the main page closes the pop-up
         BackHandler(enabled = page != Page.Main) { goTo(page.parent ?: Page.Main) }
+        // KMK (r92): the screen stays on while a sync runs and the pop-up shows it (a long transfer stalled once the
+        // screen went off)
+        val view = LocalView.current
+        val running = status.busy && status.peerAddress != null
+        DisposableEffect(view, running) {
+            view.keepScreenOn = running
+            onDispose { view.keepScreenOn = false }
+        }
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier.fillMaxWidth().padding(16.dp),
@@ -483,6 +504,13 @@ fun PairSyncDialog(onDismissRequest: () -> Unit) {
                                 note = "This device's anime in the picked categories, with seen episodes and " +
                                     "where you stopped. The other device is asked to accept first.",
                             )
+                            // KMK (r92): covers and downloaded episodes can go too
+                            AlsoSend(
+                                anime = true,
+                                selection = selection,
+                                onChange = onChange,
+                                onOpenDownloads = { goTo(Page.AnimeDownloads) },
+                            )
                         }
                         Page.Manga -> {
                             PageTitle("Manga", back)
@@ -507,6 +535,21 @@ fun PairSyncDialog(onDismissRequest: () -> Unit) {
                                 note = "This device's manga in the picked categories, with read chapters, " +
                                     "bookmarks and page progress (progress keeps whichever device is further).",
                             )
+                            // KMK (r92): covers and downloaded chapters can go too
+                            AlsoSend(
+                                anime = false,
+                                selection = selection,
+                                onChange = onChange,
+                                onOpenDownloads = { goTo(Page.MangaDownloads) },
+                            )
+                        }
+                        Page.MangaDownloads -> {
+                            PageTitle("Manga › Downloaded chapters", back)
+                            DownloadsPicker(anime = false, selection = selection, onChange = onChange)
+                        }
+                        Page.AnimeDownloads -> {
+                            PageTitle("Anime › Downloaded episodes", back)
+                            DownloadsPicker(anime = true, selection = selection, onChange = onChange)
                         }
                         Page.History -> {
                             PageTitle("History", back)
@@ -585,6 +628,11 @@ fun PairSyncDialog(onDismissRequest: () -> Unit) {
                     sizeText = request.sizeText,
                     via = request.via,
                     expiresAt = request.expiresAt,
+                    totalBytes = request.totalBytes,
+                    freeBytes = request.freeBytes,
+                    enoughSpace = request.enoughSpace,
+                    etaText = request.etaText,
+                    extrasNeedWifi = request.extrasNeedWifi,
                     onAnswer = { accept -> PairSync.answerIncoming(request.id, accept) },
                 )
             }
@@ -605,6 +653,11 @@ private fun IncomingPrompt(
     sizeText: String?,
     via: SyncTransport?,
     expiresAt: Long,
+    totalBytes: Long?,
+    freeBytes: Long?,
+    enoughSpace: Boolean,
+    etaText: String?,
+    extrasNeedWifi: Boolean,
     onAnswer: (Boolean) -> Unit,
 ) {
     val left by produceState(((expiresAt - System.currentTimeMillis()) / 1000L).coerceIn(0L, 60L), expiresAt) {
@@ -644,9 +697,20 @@ private fun IncomingPrompt(
                     )
                     youSend.forEach { (title, detail) -> BulletRow(title, detail) }
                 }
+                // KMK (r92): "Up to 0.8 GB · 41 GB free on this device" when the free space is known (never over
+                // Bluetooth, nor without covers and downloads): only a warning when it may not fit, Accept stays on
+                // (the estimate counts what's here already; what doesn't fit is skipped)
+                val spaceLine = totalBytes != null && totalBytes > 0L && freeBytes != null
+                // KMK (r92): "Up to 0.8 GB · over Wi-Fi Direct · ≈ 40 s" (the size there only without the line below)
                 val line = listOfNotNull(
-                    sizeText?.takeIf { it.isNotBlank() },
+                    if (spaceLine) {
+                        null
+                    } else {
+                        totalBytes?.takeIf { it > 0L }?.let { "Up to ${bigSize(it)}" }
+                            ?: sizeText?.takeIf { it.isNotBlank() }
+                    },
                     via?.takeIf { it != SyncTransport.Auto }?.let { "over ${it.label}" },
+                    etaText?.takeIf { it.isNotBlank() }?.let { if (it.startsWith("≈")) it else "≈ $it" },
                 ).joinToString(" · ")
                 if (line.isNotEmpty()) {
                     Text(
@@ -656,6 +720,30 @@ private fun IncomingPrompt(
                         modifier = Modifier.padding(top = 4.dp),
                     )
                 }
+                if (spaceLine) {
+                    Text(
+                        (if (enoughSpace) "✓ " else "") +
+                            "Up to ${bigSize(totalBytes ?: 0L)} · ${bigSize(freeBytes ?: 0L)} free on this device",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (enoughSpace) LiveGreen else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (!enoughSpace) {
+                        Text(
+                            "May not all fit: what doesn't fit is skipped",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Amber,
+                        )
+                    }
+                }
+                if (extrasNeedWifi) {
+                    Text(
+                        "Covers and downloads need Wi-Fi; only the library comes over Bluetooth.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 Text(
                     "Cancelled in $left s if you don't answer. Nothing changes until you accept.",
                     style = MaterialTheme.typography.bodySmall,
@@ -663,6 +751,7 @@ private fun IncomingPrompt(
                 )
             }
         },
+        // KMK (r92): never off for the free space (see above)
         confirmButton = { Button(onClick = { onAnswer(true) }) { Text("Accept") } },
         dismissButton = { OutlinedButton(onClick = { onAnswer(false) }) { Text("Decline") } },
     )
@@ -731,11 +820,20 @@ private fun MainPage(
             }
             value = rows
             // KMK (r91): the APK count waits for the repos' lists (read in the background): asked again until then
-            if (tries++ >= 10 || rows.none { (_, detail) -> PairSyncData.APKS_CHECKING in detail }) break
+            val waitApks = tries < 10 && rows.any { (_, detail) -> PairSyncData.APKS_CHECKING in detail }
+            // KMK (r92): and the covers and downloads, still counted (a big downloads folder takes minutes)
+            val waitExtras = tries < 60 && rows.any { (_, detail) -> detail == PairSyncData.EXTRAS_CHECKING }
+            if (!waitApks && !waitExtras) break
+            tries++
             delay(3_000L)
         }
     }
     val sendsSomething = sendRows?.isNotEmpty() ?: !selection.isEmpty
+    // KMK (r92): covers and downloads never go over a forced Bluetooth: the lines leave them out then
+    val extrasGo = transport != SyncTransport.Bluetooth
+    // KMK (r92): the picked downloads still on this device (the tiles count only those)
+    val mangaDownloaded by downloadedKeys(anime = false, wanted = selection.mangaDownloadKeys != null)
+    val animeDownloaded by downloadedKeys(anime = true, wanted = selection.animeDownloadKeys != null)
     val peersVersion by remember { prefs.peersChanges }.collectAsState(initial = "")
     val peers = remember(peersVersion) { prefs.peers() }
     var removing by remember { mutableStateOf<Peer?>(null) }
@@ -835,9 +933,8 @@ private fun MainPage(
             getLine = when {
                 theirSend == null -> "unknown · sync once to see"
                 theirSend.isEmpty() || view?.theirSendsNothing == true -> "nothing"
-                // KMK (r91): every tile on there, as in the approved design
-                view?.theirSendsEverything == true -> "everything"
-                else -> joinRows(theirSend)
+                // KMK (r91): every tile on there, as in the approved design. r92: "+ covers 210 MB" after it
+                else -> lineText(theirSend, everything = view?.theirSendsEverything == true, extras = extrasGo)
             } + if (view != null && !view.live && theirSend != null && view.asOf > 0L) {
                 " · as of ${ago(view.asOf, now)}"
             } else {
@@ -847,8 +944,7 @@ private fun MainPage(
                 when {
                     rows == null -> "…"
                     rows.isEmpty() -> "nothing"
-                    selection.isEverything -> "everything"
-                    else -> joinRows(rows)
+                    else -> lineText(rows, everything = selection.isEverything, extras = extrasGo)
                 }
             },
             onSync = { onSync(peer) },
@@ -894,7 +990,10 @@ private fun MainPage(
             icon = Icons.Outlined.Movie,
             title = "Anime",
             // KMK (r90): counted like the Anime page does (Default once, even when a category is named "")
-            subtitle = categorySubtitle(selection.animeLibrary, selection.animeCategories, animeCategories),
+            // r92: with the extras ("All · covers · 3 downloads")
+            subtitle = libraryTileSubtitle(selection, anime = true, animeCategories, animeDownloaded),
+            // KMK (r92): two lines, so "All · covers · 3 downloads" fits at 360dp
+            subtitleLines = 2,
             checked = selection.animeLibrary,
             enabled = tilesEnabled,
             onToggle = { onChange(selection.copy(animeLibrary = !selection.animeLibrary)) },
@@ -904,7 +1003,8 @@ private fun MainPage(
         Tile(
             icon = Icons.Outlined.CollectionsBookmark,
             title = "Manga",
-            subtitle = categorySubtitle(selection.mangaLibrary, selection.mangaCategories, mangaCategories),
+            subtitle = libraryTileSubtitle(selection, anime = false, mangaCategories, mangaDownloaded),
+            subtitleLines = 2,
             checked = selection.mangaLibrary,
             enabled = tilesEnabled,
             onToggle = { onChange(selection.copy(mangaLibrary = !selection.mangaLibrary)) },
@@ -986,12 +1086,113 @@ private fun MainPage(
 /** KMK (r91): the green of the "Live" dot (Material has no green of its own) */
 private val LiveGreen = Color(0xFF34A853)
 
+/** KMK (r92): the prompt's "may not all fit" warning (not an error: Accept stays on) */
+private val Amber = Color(0xFFE8A000)
+
 private val PART_OF = Regex("""^(\d+ of \d+)""")
 
 /** KMK (r91): "Anime (2 of 4), Manga, History": each title, with "x of y" when only some of it goes */
 private fun joinRows(rows: List<Pair<String, String>>): String = rows.joinToString(", ") { (title, detail) ->
     PART_OF.find(detail.trim())?.let { "$title (${it.groupValues[1]})" } ?: title
 }
+
+/** KMK (r92): a Covers or Downloads row of a send summary */
+private fun isExtraRow(title: String): Boolean =
+    title.contains("cover", ignoreCase = true) || title.contains("download", ignoreCase = true)
+
+private val LEADING_COUNT = Regex("""^\d[\d,.]*""")
+
+/** KMK (r92): "3 manga" and "2 anime" in "3 manga + 2 anime titles · 1.0 GB" */
+private val KIND_COUNT = Regex("""(\d[\d,]*) (?:manga|anime)""")
+
+/**
+ * KMK (r92): ("Covers", "up to 1,520 · 210 MB") to "covers 210 MB"; ("Downloads", "3 manga + 2 anime titles ·
+ * 1.0 GB") to "5 downloads 1.0 GB"; still counted: "counting covers / downloads…"
+ */
+private fun extraText(title: String, detail: String): String {
+    if (detail == PairSyncData.EXTRAS_CHECKING) return "counting covers / downloads…"
+    val size = detail.substringAfterLast(" · ", "").removePrefix("≈").trim()
+    return if (title.contains("cover", ignoreCase = true)) {
+        listOf("covers", size).filter { it.isNotEmpty() }.joinToString(" ")
+    } else {
+        val kinds = KIND_COUNT.findAll(detail).sumOf { it.groupValues[1].replace(",", "").toIntOrNull() ?: 0 }
+        val count = kinds.takeIf { it > 0 }
+            ?: LEADING_COUNT.find(detail.trim())?.value?.replace(",", "")?.toDoubleOrNull()?.toInt()
+        val what = when (count) {
+            null -> "downloads"
+            1 -> "1 download"
+            else -> "%,d downloads".format(count)
+        }
+        listOfNotNull(what, size.ifEmpty { null }).joinToString(" ")
+    }
+}
+
+/**
+ * KMK (r92): "everything + covers 210 MB + 3 downloads 0.6 GB", or "Anime (2 of 4), Manga + covers 210 MB";
+ * without [extras] (a forced Bluetooth: they don't go) only the rest
+ */
+private fun lineText(rows: List<Pair<String, String>>, everything: Boolean, extras: Boolean = true): String {
+    val (extraRows, others) = rows.partition { (title, _) -> isExtraRow(title) }
+    val base = if (everything) "everything" else joinRows(others)
+    val shown = if (extras) extraRows.map { (title, detail) -> extraText(title, detail) } else emptyList()
+    return (listOf(base) + shown)
+        .filter { it.isNotEmpty() }
+        .joinToString(" + ")
+        .ifEmpty { "nothing" }
+}
+
+/**
+ * KMK (r92): the Anime / Manga tile's subtitle: the categories, then the extras ("All · covers · 3 downloads");
+ * [downloaded]: the titles with downloads here (picks deleted since don't count), null = not known
+ */
+private fun libraryTileSubtitle(
+    selection: SyncSelection,
+    anime: Boolean,
+    categories: List<String>?,
+    downloaded: Set<String>?,
+): String {
+    val on = if (anime) selection.animeLibrary else selection.mangaLibrary
+    val picked = if (anime) selection.animeCategories else selection.mangaCategories
+    val base = categorySubtitle(on, picked, categories)
+    val coversOn = selection.covers(anime)
+    val downloadsOn = selection.downloads(anime)
+    if (!on || (!coversOn && !downloadsOn)) return base
+    val keys = selection.downloadKeys(anime)
+    val count = keys?.let { picks -> downloaded?.let { here -> picks.count { it in here } } ?: picks.size }
+    return listOfNotNull(
+        if (picked == null) "All" else base.removeSuffix(" categories"),
+        "covers".takeIf { coversOn },
+        when {
+            !downloadsOn -> null
+            count == null -> "downloads"
+            count == 1 -> "1 download"
+            else -> "$count downloads"
+        },
+    ).joinToString(" · ")
+}
+
+// KMK (r92): the covers / downloads fields of one kind
+private fun SyncSelection.covers(anime: Boolean): Boolean = if (anime) animeCovers else mangaCovers
+
+private fun SyncSelection.downloads(anime: Boolean): Boolean = if (anime) animeDownloads else mangaDownloads
+
+private fun SyncSelection.downloadKeys(anime: Boolean): Set<String>? =
+    if (anime) animeDownloadKeys else mangaDownloadKeys
+
+private fun SyncSelection.downloadMode(anime: Boolean): String = if (anime) animeDownloadMode else mangaDownloadMode
+
+private fun SyncSelection.withCovers(anime: Boolean, on: Boolean): SyncSelection =
+    if (anime) copy(animeCovers = on) else copy(mangaCovers = on)
+
+private fun SyncSelection.withDownloads(anime: Boolean, on: Boolean, keys: Set<String>?): SyncSelection =
+    if (anime) {
+        copy(animeDownloads = on, animeDownloadKeys = keys)
+    } else {
+        copy(mangaDownloads = on, mangaDownloadKeys = keys)
+    }
+
+private fun SyncSelection.withDownloadMode(anime: Boolean, mode: String): SyncSelection =
+    if (anime) copy(animeDownloadMode = mode) else copy(mangaDownloadMode = mode)
 
 /** KMK (r91): "just now", else "5 minutes ago" */
 private fun ago(time: Long, now: Long): String = if (now - time < 60_000L) {
@@ -1017,6 +1218,9 @@ private fun categorySubtitle(on: Boolean, picked: Set<String>?, categories: List
 private fun mb(bytes: Long): String = "%.1f".format(bytes / 1024f / 1024f)
 
 private const val MIB = 1024L * 1024L
+
+/** KMK (r92): "41 GB", "0.6 GB" (from 512 MB up), "210 MB": the core's way, so the pop-up and its lines agree */
+private fun bigSize(bytes: Long): String = PairSyncData.sizeText(bytes)
 
 /** KMK (r90): "64 MB", "3.5 MB" or "420 KB" */
 private fun sizeLabel(bytes: Long): String = when {
@@ -1288,6 +1492,18 @@ private fun PeerRow(
                 } else {
                     LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 10.dp))
                 }
+                // KMK (r92): one bar per part (library, covers, downloads)
+                if (status.parts.isNotEmpty()) {
+                    status.parts.forEach { part ->
+                        PartCard(name = part.name, detail = part.detail, fraction = part.fraction, done = part.done)
+                    }
+                    Text(
+                        "Stopped halfway? The next sync carries on.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    )
+                }
             }
         }
     }
@@ -1361,6 +1577,9 @@ private fun ResultCard(
                             summary.sentSources to "code sources",
                             summary.sentRepos to "repos",
                             summary.sentApks to "APKs",
+                            // KMK (r92): covers and downloaded chapters / episodes
+                            summary.sentCovers to "covers",
+                            summary.sentDownloadItems to "downloads",
                         ),
                         style = MaterialTheme.typography.bodySmall,
                     )
@@ -1372,9 +1591,19 @@ private fun ResultCard(
                             summary.sourcesAdded to "code sources",
                             summary.reposAdded to "repos",
                             summary.apks.size to "APKs",
+                            summary.gotCovers to "covers",
+                            summary.gotDownloadItems to "downloads",
                         ),
                         style = MaterialTheme.typography.bodySmall,
                     )
+                    // KMK (r92): why covers and downloads didn't go (e.g. over Bluetooth)
+                    summary.extrasSkipped?.takeIf { it.isNotBlank() }?.let { skipped ->
+                        Text(
+                            skipped,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     if (summary.errors > 0) {
                         Text(
                             "${summary.errors} couldn't be added (see Activity)",
@@ -1501,6 +1730,8 @@ private fun Tile(
     onToggle: () -> Unit,
     onOpen: () -> Unit,
     modifier: Modifier = Modifier,
+    // KMK (r92): the library tiles' subtitles carry the extras too
+    subtitleLines: Int = 1,
 ) {
     Surface(
         shape = RoundedCornerShape(20.dp),
@@ -1541,7 +1772,7 @@ private fun Tile(
                         subtitle,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
+                        maxLines = subtitleLines,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false),
                     )
@@ -1616,6 +1847,358 @@ private fun LibraryPage(
         }
     }
     Note(note)
+}
+
+/**
+ * KMK (r92): this device's downloaded titles of one kind ([titles], biggest first; null while they're counted), or
+ * [failed] when they couldn't be counted (it looked like an empty device)
+ */
+private class DownloadedList(val titles: List<DownloadedTitle>?, val failed: Boolean = false)
+
+/**
+ * KMK (r92): [DownloadedList] for the picker and the Also send row. Counted already (the core keeps the scan): shown
+ * at once, so a rotation keeps the list (and its scroll) instead of a "Counting…" frame
+ */
+@Composable
+private fun downloadedList(anime: Boolean): State<DownloadedList> {
+    val counted = remember(anime) { runCatching { PairSyncData.downloadedTitlesNow(anime) }.getOrNull() }
+    return produceState(DownloadedList(counted), anime) {
+        value = withContext(Dispatchers.IO) {
+            runCatching { DownloadedList(PairSyncData.downloadedTitles(anime)) }
+                .getOrElse { DownloadedList(null, failed = true) }
+        }
+    }
+}
+
+/** KMK (r92): the keys of this device's downloaded titles of one kind, when [wanted] (null until known) */
+@Composable
+private fun downloadedKeys(anime: Boolean, wanted: Boolean): State<Set<String>?> {
+    val counted = remember(anime) {
+        runCatching { PairSyncData.downloadedTitlesNow(anime)?.map { it.key }?.toSet() }.getOrNull()
+    }
+    return produceState(counted, anime, wanted) {
+        if (wanted) {
+            value = withContext(Dispatchers.IO) {
+                runCatching { PairSyncData.downloadedTitles(anime).map { it.key }.toSet() }.getOrNull()
+            }
+        }
+    }
+}
+
+/** KMK (r92): "1 chapter", "2,140 chapters" */
+private fun itemsText(count: Int, anime: Boolean): String {
+    val word = if (anime) "episode" else "chapter"
+    return if (count == 1) "1 $word" else "%,d ${word}s".format(count)
+}
+
+/** KMK (r92): "1 title", "38 titles" */
+private fun titlesText(count: Int): String = if (count == 1) "1 title" else "%,d titles".format(count)
+
+/** KMK (r92): " · unread only" / " · last 10" after a downloads count; nothing for all */
+private fun modeSuffix(mode: String, anime: Boolean): String = when (mode) {
+    "unread" -> if (anime) " · unwatched only" else " · unread only"
+    "last10" -> " · last 10"
+    else -> ""
+}
+
+/** KMK (r92): the covers this device would send of one kind, or [failed] when they couldn't be counted */
+private class CoversCount(val count: Int, val bytes: Long, val failed: Boolean = false)
+
+/**
+ * KMK (r92): under a library page's categories: what each title already carries, then "Also send": covers (library
+ * and history; "up to": only ones the other device lacks go) and downloaded chapters / episodes (› picks which; only
+ * with the library tile on), with sizes that follow the Unread only / Last 10 choice
+ */
+@Composable
+private fun AlsoSend(
+    anime: Boolean,
+    selection: SyncSelection,
+    onChange: (SyncSelection) -> Unit,
+    onOpenDownloads: () -> Unit,
+) {
+    val covers by produceState<CoversCount?>(null, anime, selection) {
+        value = withContext(Dispatchers.IO) {
+            runCatching { PairSyncData.coversEstimate(anime, selection).let { CoversCount(it.count, it.bytes) } }
+                .getOrElse { CoversCount(0, 0L, failed = true) }
+        }
+    }
+    val downloaded by downloadedList(anime)
+    Note(
+        if (anime) {
+            "Each title already includes: info, episode list, seen marks, watch progress, categories, tracking."
+        } else {
+            "Each title already includes: info, chapter list, read marks, page progress, categories, tracking."
+        },
+    )
+    SectionLabel("Also send")
+    val coverCount = covers
+    ExtraRow(
+        title = "Covers",
+        subtitle = "Library + history",
+        size = when {
+            coverCount == null -> "…"
+            coverCount.failed -> "Couldn't count"
+            coverCount.count > 0 -> "Up to %,d · %s".format(coverCount.count, bigSize(coverCount.bytes))
+            else -> "None to send"
+        },
+        checked = selection.covers(anime),
+        onCheckedChange = { onChange(selection.withCovers(anime, it)) },
+    )
+    val list = downloaded.titles
+    val library = if (anime) selection.animeLibrary else selection.mangaLibrary
+    val on = selection.downloads(anime)
+    val keys = selection.downloadKeys(anime)
+    val mode = selection.downloadMode(anime)
+    val picked = list?.let { all -> if (keys == null) all else all.filter { it.key in keys } }.orEmpty()
+    val pickedBytes = picked.sumOf { it.bytesFor(mode) }
+    val pickedItems = itemsText(picked.sumOf { it.itemsFor(mode) }, anime)
+    val subtitle = when {
+        !library -> if (anime) "Turn on Send anime library first" else "Turn on Send manga library first"
+        downloaded.failed -> "Couldn't count this device's downloads"
+        list == null -> "Counting…"
+        list.isEmpty() -> "Nothing downloaded on this device"
+        keys == null -> "${titlesText(list.size)} · $pickedItems" + modeSuffix(mode, anime)
+        else -> "${picked.size} of ${titlesText(list.size)} · $pickedItems" + modeSuffix(mode, anime)
+    }
+    ExtraRow(
+        title = if (anime) "Downloaded episodes" else "Downloaded chapters",
+        subtitle = subtitle,
+        size = if (!library || list.isNullOrEmpty()) "" else bigSize(pickedBytes),
+        // KMK (r92): only with the library tile on (the other device takes downloads only for titles it has)
+        checked = on && library,
+        // Nothing downloaded: it can only be turned off
+        enabled = library && (on || !list.isNullOrEmpty()),
+        onCheckedChange = { onChange(selection.withDownloads(anime, it, keys)) },
+        onOpen = if (library) onOpenDownloads else null,
+    )
+    Note("Covers and downloads go over Wi-Fi or Wi-Fi Direct. Over Bluetooth only the library list goes.")
+}
+
+/**
+ * KMK (r92): an "Also send" row: title, subtitle and size on the left (no avatar, so the switch and "›" fit at
+ * 360dp), the switch, and with [onOpen] a "›" to its picker
+ */
+@Composable
+private fun ExtraRow(
+    title: String,
+    subtitle: String,
+    size: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    enabled: Boolean = true,
+    onOpen: (() -> Unit)? = null,
+) {
+    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerHighest) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(enabled = enabled) { onCheckedChange(!checked) }
+                .padding(start = 16.dp, top = 10.dp, bottom = 10.dp, end = if (onOpen == null) 12.dp else 4.dp),
+        ) {
+            Column(Modifier.weight(1f).padding(end = 10.dp)) {
+                Text(title, style = MaterialTheme.typography.titleSmall)
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (size.isNotEmpty()) {
+                    Text(
+                        size,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+            }
+            Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
+            if (onOpen != null) {
+                Icon(
+                    Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                    contentDescription = "Choose",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .padding(start = 2.dp)
+                        .clip(CircleShape)
+                        .clickable(onClick = onOpen)
+                        .padding(4.dp)
+                        .size(24.dp),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * KMK (r92): which downloaded titles go (keys null = all; none ticked turns the downloads switch off) and how much
+ * of each: all, unread / unwatched only, or the last 10. The list scrolls on its own (lazy: a few hundred titles
+ * don't compose, or load covers, all at once).
+ */
+@Composable
+private fun DownloadsPicker(anime: Boolean, selection: SyncSelection, onChange: (SyncSelection) -> Unit) {
+    val downloaded by downloadedList(anime)
+    val listState = rememberLazyListState()
+    val list = downloaded.titles
+    if (list == null) {
+        if (downloaded.failed) {
+            Note("Couldn't count this device's downloads. Try again in a moment.")
+            return
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 4.dp)) {
+            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+            Text(
+                "Counting this device's downloads…",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 10.dp),
+            )
+        }
+        return
+    }
+    if (list.isEmpty()) {
+        Note(if (anime) "No downloaded episodes on this device." else "No downloaded chapters on this device.")
+        return
+    }
+    val on = selection.downloads(anime)
+    val keys = selection.downloadKeys(anime)
+    val all = list.map { it.key }.toSet()
+    val ticked: Set<String> = when {
+        !on -> emptySet()
+        keys == null -> all
+        else -> keys.intersect(all)
+    }
+    val setTicked = { next: Set<String> ->
+        onChange(
+            when {
+                next.isEmpty() -> selection.withDownloads(anime, false, null)
+                next.containsAll(all) -> selection.withDownloads(anime, true, null)
+                else -> selection.withDownloads(anime, true, next)
+            },
+        )
+    }
+    val mode = selection.downloadMode(anime)
+    val bytes = list.filter { it.key in ticked }.sumOf { it.bytesFor(mode) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            "${ticked.size} of ${titlesText(list.size)} · ${bigSize(bytes)}" + modeSuffix(mode, anime),
+            style = MaterialTheme.typography.titleSmall,
+            modifier = Modifier.weight(1f).padding(start = 4.dp),
+        )
+        val everyOne = ticked.size == all.size
+        TextButton(onClick = { setTicked(if (everyOne) emptySet() else all) }) {
+            Text(if (everyOne) "Select none" else "Select all", maxLines = 1)
+        }
+    }
+    val modes = if (anime) {
+        listOf("all" to "All episodes", "unread" to "Unwatched only", "last10" to "Last 10")
+    } else {
+        listOf("all" to "All chapters", "unread" to "Unread only", "last10" to "Last 10")
+    }
+    val chosen = modes.indexOfFirst { it.first == mode }.coerceAtLeast(0)
+    // KMK (r92): one choice (screen readers said checkboxes with the multi-choice row)
+    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+        modes.forEachIndexed { index, (value, label) ->
+            SegmentedButton(
+                selected = chosen == index,
+                onClick = { onChange(selection.withDownloadMode(anime, value)) },
+                shape = SegmentedButtonDefaults.itemShape(index, modes.size),
+                // No tick, so the labels fit at 360dp
+                icon = {},
+            ) { FitText(label, color = MaterialTheme.colorScheme.onSurface) }
+        }
+    }
+    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerHighest) {
+        LazyColumn(
+            state = listState,
+            contentPadding = PaddingValues(vertical = 4.dp),
+            modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
+        ) {
+            items(list, key = { it.key }) { row ->
+                val toggle = { setTicked(if (row.key in ticked) ticked - row.key else ticked + row.key) }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = toggle)
+                        .padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+                ) {
+                    // KMK (r92): through the app's cover loader (source headers, the library's copy, custom covers)
+                    MangaCover.Book(data = row.cover ?: row.thumbnailUrl, modifier = Modifier.width(32.dp))
+                    Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                        Text(
+                            row.title,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            "${itemsText(row.itemsFor(mode), anime)} · ${bigSize(row.bytesFor(mode))}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                        )
+                    }
+                    Checkbox(checked = row.key in ticked, onCheckedChange = { toggle() })
+                }
+            }
+        }
+    }
+    Note(
+        "Biggest first. " + if (anime) {
+            "Unwatched only and Last 10 apply to each title."
+        } else {
+            "Unread only and Last 10 apply to each title."
+        },
+    )
+}
+
+/** KMK (r92): one part of a running sync: its name, its detail ("812 of 1,520") on its own line, its bar, ✓ */
+@Composable
+private fun PartCard(name: String, detail: String, fraction: Float, done: Boolean) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+    ) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    name,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                if (done) {
+                    Text(
+                        "✓",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = LiveGreen,
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
+                }
+            }
+            // KMK (r92): on its own line (next to the name it squeezed "Manga downloads" to "Mang…" at 360dp)
+            Text(
+                detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            LinearProgressIndicator(
+                progress = { if (done) 1f else fraction.coerceIn(0f, 1f) },
+                color = if (done) LiveGreen else MaterialTheme.colorScheme.primary,
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            )
+        }
+    }
 }
 
 @Composable
@@ -2386,7 +2969,14 @@ private fun PageTitle(text: String, onBack: () -> Unit) {
         IconButton(onClick = onBack) {
             Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
         }
-        Text(text, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(start = 4.dp))
+        // KMK (r92): one line ("Anime › Downloaded episodes" wrapped at 360dp with a large font)
+        Text(
+            text,
+            style = MaterialTheme.typography.titleMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f).padding(start = 4.dp),
+        )
     }
 }
 
