@@ -268,6 +268,26 @@ Commit 4cd8b984. Signing key checked (same SHA-256 as always).
   - Remove/add from the preview uses the library's normal dialogs (`openDeleteMangaDialogFor`, `addToLibraryFromPreview`).
 - **Still open:** the anime library preview probably has the same model-clearing and remove-flow issues (not in scope).
 
+## Changes in r90 (30 October 2026)
+
+Commit 97876610. Built after three rounds of independent testers (protocol, pop-up, non-sync, library/preview) and three compile reviews.
+
+- **Pair sync transports** (`pairsync/PairSync.kt`, new `PairSyncWifi.kt`):
+  - Connection choice (`pair_sync_transport`, default `auto`): Auto = Wi-Fi Direct, then same Wi-Fi (LAN), then Bluetooth; or a forced choice. Bluetooth RFCOMM stays the control channel (pairing, auth, negotiation); data frames move to a TCP socket with the same AES-GCM key.
+  - Negotiation over Bluetooth: `sync` (with `transport`, `selection`, `have`, `p2p`, `nonce`) → answerer offers `p2p` / `lan` / `bt` / `none` → initiator joins and sends `hello` on the new socket, replies `ok`/`fail` → answerer checks the hello and sends `go` or the next offer. `wait` keep-alive frames (every 30 s) cover long export builds; `READ_TIMEOUT` 180 s on Wi-Fi sockets.
+  - Wi-Fi Direct: the answerer is group owner (`createGroup` with a `WifiP2pConfig` network name/passphrase, API 29+, no accept prompt); `clearGroup` removes a stale group first (this also ends another app's Wi-Fi Direct group); the client joins with the same config and connects with retries. Everything is closed in every path (`removeGroup`, `cancelConnect`, channel close).
+  - r89 peers: detected by a gzip first frame; fall back to the r89 Bluetooth flow (no APKs).
+  - Each device decides what it **receives** (switches and categories); the **send** pickers (repos, installed extensions, sideloaded APKs, code sources) decide what it sends. History-only titles never become favourites or get categories. APKs go as raw frames (32 MB each, 128 MB total). Errors show under the device row (`Status.lastError`). Both pressing Sync: a nonce tie-break keeps one.
+  - Pairing runs in `PairSync`'s scope (`startPair`, `pairing`, `pairError`), so rotation keeps the code and the result.
+- **Chapter sync keeps chapters whose address changed** (`domain/chapter/interactor/SyncChaptersWithSource.kt`): a removed and an added chapter with the same number (rounded to 1/1000, same scanlator unless one is blank, one-to-one only) is the same chapter: the row's URL is updated in place, so its id, history, read, bookmark and last page stay, and it isn't reported as new. Writes run in one transaction under `NonCancellable`; download folders are renamed after. Cause: the Hiperdex JS source wrote `/1` where the APK had saved `/1.0` (see guide 08 › Mistakes).
+- **Library preview** (`ui/library/LibraryMangaPreview.kt`, `LibraryTab.kt`, `BrowsePreviewScreenModel.kt`):
+  - `LibraryOrderFreeze`: while a preview is open each category keeps its order (per category id + flags); badges update in place; released when the preview closes, sort/grouping/search change, pull to refresh, or the settings sheet opens. Range select uses the order on screen.
+  - The first chapter is picked after the chapter refresh (`selectDefaultChapter`); a page-list error "Refresh the chapter list" refreshes once and retries (one `Mutex` with the refresh); a vanished selected chapter is replaced by the one with the same number.
+- **Anime downloads, case twins** (`data/anime/download/AnimeDownloadManager.kt`): Android storage matches folder names ignoring case, so two titles whose names differ only by case shared one folder (both covers showed its videos; deleting one with downloads would have deleted the other's). Now a title with a case twin finds its folder by exact name, new folders get `<title> [<hash>]`, only its own episode files count, and `deleteAnime` removes only its own files. Titles without a twin are unchanged. Covers (`CoverFolders`) still match case-insensitively (open).
+- **Library crash** (`NoWhenBranchMatchedException` in the pager): `LibraryDisplayMode.default` could be stored as null through class start-up order (interface default methods in Kotlin 2.4); it's now a getter, and the pagers have `else` branches.
+- **Other:** HlsRelay passes non-playlist files through unchanged on a client with no call timeout and no cache (videos were cut after 2 minutes); What's new lists `rN` releases with the commit message as notes (CI `--notes-file`); anime Feed/TagMix wait once for sources, not 20 s per missing one; Browse filter copy falls back on failure, old listing scopes retire after 5 s, Filter chip fix; Device Files search/rename/listing races; reader hand-off on rotation; AppLog clear/startup.
+- **Still open:** cover folders match names ignoring case; a JS anime saved search doesn't keep its tab.
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.

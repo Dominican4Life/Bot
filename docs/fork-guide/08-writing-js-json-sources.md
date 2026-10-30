@@ -1474,6 +1474,18 @@ Real mistakes made while writing sources, what they looked like, and how to avoi
   3. Don't fetch each cover first to test it. On jav.guru that test cost about 6 seconds per list page.
   4. A VPN address is often what gets flagged. If covers worked before and stopped suddenly, try without it before changing code.
 
+**Writing chapter addresses differently from the APK the source replaces** *(Hiperdex, October 2026)*
+
+- **What you see:** after a refresh (library update, title page, or just previewing a cover), library titles jump around under "Last read" sort, unread badges change (33 → 37), "last read" times are gone, and page previews get cancelled. The log shows the app reading pages for `…/1.0` while the source lists `…/1`.
+- **Why:** the library titles were added with the APK, which saved chapter addresses as `/manga/<slug>/1.0` (Kotlin prints a `Float` as `1.0`). The JS port wrote `/manga/<slug>/1`. The app matches chapters by address, so every chapter looked removed + new: the old rows were deleted with their history and new ones inserted. Before r90 nothing protected against this; r90 keeps the chapter (and its history) when only the address changed but the number is the same, but the source should still match.
+- **Do this instead:** when porting an APK, copy its `url` format exactly, character for character, including how numbers are printed (`Number.isInteger(n) ? n + ".0" : String(n)` for a Kotlin `Float`), and keep the APK's `id`. Check against a title that's already in the library: the address in a `getPageList` log line must be the same as the one your `getChapterList` produces.
+
+**Two image fields where one is a server path** *(Hiperdex, October 2026)*
+
+- **What you see:** some older titles show no pages; the log has failed requests like `https://i1.r2d2storage.com//home/newdex/en/wp-content/uploads/…/01.jpg`.
+- **Why:** the API gives `avifUrl` and `webpUrl`; for titles moved from the old WordPress site one of them is a file path on the server, not a web address. The source (and the APK) took `avifUrl || webpUrl`.
+- **Do this instead:** pick the field that is a real web address (skip ones with `//` right after the host or a `/home/…/wp-content/` path), and fall back to the other.
+
 ### 8.3 Fields
 
 **Replacing the list cover in `getDetails`** *(CosplayTele, October 2026)*
