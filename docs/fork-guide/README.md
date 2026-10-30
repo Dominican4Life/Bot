@@ -300,6 +300,19 @@ Commit 754a2d27. Owner-approved design: the mockup video made with `scratchpad/s
 - **Last sync**: Clear (`clearResult`: card, offers and waiting APK files), × on the card (`SyncResult.cardDismissed`) and on the offers box (`dismissOffers`).
 - **Pairing page** back to r89 style: only KOMIKKU-tagged devices (auto-picked if one), every other device folded into "N other devices", six code boxes over one hidden `BasicTextField` (digits keyboard, Done pairs, Paste button, scrolls into view).
 
+## Changes in r92 (30 October 2026)
+
+Commit 10c9a288 (plus a949f519, the Sent/Got result card). Design: `scratchpad/syncvideo/mock3.py` (video "Sync-covers-downloads"). Two independent testers and two compile reviews before building.
+
+- **Covers and downloads travel with a sync** (new `pairsync/PairSyncExtras.kt`), only over Wi-Fi Direct or Wi-Fi; over Bluetooth only the library list goes (`SyncSummary.extrasSkipped`, `IncomingRequest.extrasNeedWifi`).
+  - Selection (sender's): `mangaCovers` / `animeCovers` (default on, library + history titles), `mangaDownloads` / `animeDownloads` (default off, need the library tile), `…DownloadKeys` (`"<sourceId>:<url>"`, null = all), `…DownloadMode` (`all` / `unread` / `last10` = 10 highest numbers).
+  - Covers are looked up in this order: custom cover → `CoverCache` file → Coil disk cache (keys as `MangaCoverKeyer`: `"url;lastModified"`, anime `"url;0"` with id −id). Receiver: library titles → its cover folder, history-only → its Coil disk cache under the same key; a custom cover there is never replaced.
+  - Downloads are written to the receiver's own paths from its own rows (`DownloadProvider.getMangaDir`, `AnimeDownloadManager.animeDirLocked`), into `_tmp` / `.cbz_tmp` / `.tmp` names renamed when complete; `DownloadCache.addChapter` / anime refresh afterwards. Already-downloaded items and sources not installed there are skipped, so a stopped sync carries on next time.
+  - Protocol (both sides r92, capability `extras`): after the library payloads, manifest ⇄, needs ⇄, files ⇄ (chunks ≤ 4 MiB, first byte 0 more / 1 end / 2 failed; per-file byte count checked), then `done`. Keep-alive `wait` frames only before manifests/needs. Manifest capped at ~60 MB unpacked.
+  - Free space never blocks Accept: "Up to X · Y free", amber warning if X > Y; `plan()` trims and the result says how many were skipped. Wake lock + Wi-Fi locks during the extras phase; the pop-up keeps the screen on while syncing; write watchdog closes a stalled link after `READ_TIMEOUT`.
+  - Scans are cached (downloads 10 min or until anime downloads change; totals only, no file handles). `EXTRAS_CHECKING` rows are retried by the UI and re-pushed to live peers when counted.
+- **UI:** Manga/Anime pages have "Also send" (Covers, Downloaded chapters/episodes with sizes and a picker page with All / Unread only / Last 10); progress shows one card per part (`Status.parts`); the result card shows "Sent:" and "Got:" lines with covers and download counts, and the size is labelled "moved" (both ways).
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
