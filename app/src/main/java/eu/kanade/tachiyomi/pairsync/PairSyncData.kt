@@ -32,6 +32,7 @@ import mihon.domain.extension.repository.ExtensionStoreRepository
 import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.history.interactor.GetHistory
 import tachiyomi.domain.manga.interactor.GetFavorites
+import tachiyomi.domain.manga.interactor.GetLibraryManga
 import tachiyomi.domain.manga.interactor.GetManga
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -44,15 +45,13 @@ import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 
 /**
- * KMK: What to sync. Since r90 each device's own selection says what it RECEIVES: the device pressing Sync sends its
- * selection in the sync request and the waiting device sends its own in its payload ([SyncPayload.wants]); each side
- * exports for the other's choice and also filters what it applies by its own.
+ * KMK: What to sync. Since r91 a device's selection says what it SENDS (r90: what it received): the receiving device
+ * accepts or declines each sync instead, and applies everything that came.
  *
- * A null list means all. Receiver's choice (names/keys match on both devices): [mangaCategories] / [animeCategories]
- * are category names ("" is Default), matched by name since ids differ. Sender's choice (the pickers list what is on
- * this device, so these filter what this device sends): [sourceKeys] (Code editor source keys), [repoUrls] (repo index
- * URLs), [installedKeys] and [apkKeys] (extension package names). The field names are saved as JSON
- * (`pair_sync_selection`), so keep them.
+ * A null list means all; an empty category set counts as all too ([normalized]: the pop-up turns the tile off
+ * instead). All lists are of this device's own things: [mangaCategories] / [animeCategories] are category names
+ * ("" is Default), [sourceKeys] Code editor source keys, [repoUrls] repo index URLs, [installedKeys] and [apkKeys]
+ * extension package names. The field names are saved as JSON (`pair_sync_selection`), so keep them.
  */
 @Serializable
 data class SyncSelection(
@@ -91,6 +90,10 @@ data class SyncSelection(
         get() = !mangaLibrary && !animeLibrary && !mangaHistory && !animeHistory &&
             !syncsSources && !syncsRepos && !syncsInstalled && !syncsApks
 
+    /** KMK (r91): every tile and switch on, nothing narrowed (the pop-up's lines then say "everything") */
+    val isEverything: Boolean
+        get() = normalized() == SyncSelection()
+
     fun describe(): String = buildList {
         if (animeLibrary) {
             add(if (animeCategories == null) "anime library" else "anime in ${animeCategories.size} categories")
@@ -108,7 +111,36 @@ data class SyncSelection(
         if (syncsApks) add("sideloaded APKs")
         if (syncsSources) add("code sources")
     }.joinToString(", ").ifEmpty { "nothing" }
+
+    /** KMK (r91): an empty category set never means "send none" silently: it counts as all */
+    fun normalized(): SyncSelection = copy(
+        mangaCategories = mangaCategories?.takeIf { it.isNotEmpty() },
+        animeCategories = animeCategories?.takeIf { it.isNotEmpty() },
+    )
+
+    /**
+     * KMK (r91): only what an r90 device [wants] to receive (its selection meant that): the tiles both have on; the
+     * categories stay this device's own
+     */
+    fun within(wants: SyncSelection): SyncSelection = copy(
+        mangaLibrary = mangaLibrary && wants.mangaLibrary,
+        animeLibrary = animeLibrary && wants.animeLibrary,
+        mangaHistory = mangaHistory && wants.mangaHistory,
+        animeHistory = animeHistory && wants.animeHistory,
+        extensions = extensions && wants.extensions,
+        sources = sources && wants.sources,
+        repos = repos && wants.repos,
+        installedExtensions = installedExtensions && wants.installedExtensions,
+        sideloadedApks = sideloadedApks && wants.sideloadedApks,
+    )
 }
+
+/** KMK (r91): one line of what a device sends, e.g. ("Anime", "2 of 4 categories · 8 titles") */
+@Serializable
+data class SummaryRow(val title: String, val detail: String)
+
+/** KMK (r91): one build of a package a repo on the other device offers */
+internal class RepoCopy(val signature: String, val version: Long)
 
 /** KMK (r90): an extension installed on this device, for the Extensions pickers */
 data class LocalExtension(val pkgName: String, val name: String, val isAnime: Boolean, val fromRepo: Boolean)
@@ -151,6 +183,8 @@ internal class SyncApkInfo(
     val isAnime: Boolean = false,
     val versionCode: Long = 0L,
     val size: Long = 0L,
+    /** KMK (r91): the installed APK's signer, so the receiver keeps it over a repo build of another signer */
+    val signatureHash: String = "",
 )
 
 /**
@@ -170,7 +204,10 @@ internal class SyncPayload(
     val installed: List<String>? = null,
     // KMK <--
     // KMK (r90) -->
-    /** What the sender wants to receive ([SyncSelection] as JSON); null from the device pressing Sync and from r89 */
+    /**
+     * What the sender wants to receive ([SyncSelection] as JSON); null from the device pressing Sync and from r89.
+     * KMK (r91): an r91 device sends "everything" here, for an r90 device pressing Sync (it builds its export for it)
+     */
     val wants: String? = null,
     /** True when the gzipped backup follows this payload as its own frame */
     val backupFrame: Boolean = false,
@@ -190,7 +227,15 @@ data class ExtensionOffer(
 )
 
 /** KMK (r89): an APK the other device sent (not from a repo), saved in the cache until installed */
-data class ReceivedApk(val pkgName: String, val name: String, val isAnime: Boolean, val file: File)
+data class ReceivedApk(
+    val pkgName: String,
+    val name: String,
+    val isAnime: Boolean,
+    val file: File,
+    // KMK (r91): "" / 0 from an older version
+    val signatureHash: String = "",
+    val versionCode: Long = 0L,
+)
 
 data class SyncSummary(
     val sourcesAdded: Int = 0,
@@ -253,6 +298,12 @@ class ReceivedPayload internal constructor(internal val payload: SyncPayload) {
 
     /** KMK (r90): the APKs that came as raw frames, saved in the cache */
     internal var receivedApks: List<ReceivedApk> = emptyList()
+
+    /** KMK (r91): the repos were merged already (the device pressing Sync does it before building its export) */
+    internal var repoImport: PairSyncData.RepoImport? = null
+
+    /** KMK (r91): what the other device sent, as summary rows (set by the import) */
+    internal var sentRows: List<SummaryRow>? = null
 }
 
 /** KMK (r90): what this device sends: the payload frame, then the backup frame (if any), then one frame per APK */
@@ -289,6 +340,9 @@ object PairSyncData {
 
     private const val APK_DIR = "pair_sync_apks"
 
+    /** KMK (r91): the most an encoded package list can be (the request's first frame is capped at 256 KiB) */
+    private const val MAX_PACKAGES_TEXT = 150_000
+
     /** Every extension package installed here (manga and anime, trusted or not) */
     fun installedPackages(): List<String> {
         val manga = Injekt.get<ExtensionManager>()
@@ -302,38 +356,59 @@ object PairSyncData {
     }
 
     /**
-     * KMK (r90): what this device sends, for what the other device [wants]. [own] picks which of this device's repos,
-     * sources, extensions and APKs go. [otherHas] is the other device's installed packages: sideloaded APKs are only
-     * sent for packages it lacks. [raw] (the other device is r90 or newer) sends the backup and the APKs as their own
-     * frames; an r89 device gets the backup in the JSON and no APKs.
+     * KMK (r91): what this device sends: [selection] is this device's own (its tiles and pickers). [otherHas] is the
+     * other device's installed packages and [otherRepos] the packages its repos offer: sideloaded APKs are only sent
+     * for packages it lacks and can't get from its repos (those are listed instead, so it offers them from its repo).
+     * [raw] (the other device is r90 or newer) sends the backup and the APKs as their own frames; an r89 device gets
+     * the backup in the JSON and no APKs.
      */
     internal suspend fun export(
-        wants: SyncSelection,
-        own: SyncSelection,
+        selection: SyncSelection,
         otherHas: Set<String>?,
+        otherRepos: Map<String, List<RepoCopy>>?,
         raw: Boolean,
+        // KMK (r91): the sideloaded extensions as they were before the other device's repos were merged (null = now)
+        sideloadedBefore: List<Triple<String, String, Boolean>>? = null,
     ): SyncExport {
-        val sources = if (wants.syncsSources) {
+        val own = selection.normalized()
+        val sources = if (own.syncsSources) {
             Injekt.get<JsSourceManager>().exportSources(own.sourceKeys).map { (info, code) -> SyncSource(info, code) }
         } else {
             emptyList()
         }
-        val backup = exportBackup(wants)
+        val backup = exportBackup(own)
         if (backup != null && backup.bytes.size > MAX_PAYLOAD) {
             throw IOException("The library is too big to send at once (${backup.bytes.size / 1024 / 1024} MB)")
         }
-        if (wants.syncsInstalled || wants.syncsApks) ensureAvailable()
-        val repos = if (wants.syncsRepos) exportRepos(own.repoUrls) else emptyList()
-        val extensions = if (wants.syncsInstalled) exportExtensions(own.installedKeys) else emptyList()
-        val apks = if (raw && wants.syncsApks && otherHas != null) exportApks(otherHas, own.apkKeys) else emptyList()
+        if (own.syncsInstalled || own.syncsApks) ensureAvailable()
+        val repos = if (own.syncsRepos) exportRepos(own.repoUrls) else emptyList()
+        val listed = if (own.syncsInstalled) exportExtensions(own.installedKeys) else emptyList()
+        val sideloadedHere = if (own.syncsApks) sideloadedBefore ?: sideloaded() else emptyList()
+        val sideloadedKeys = sideloadedHere.map { it.first }.toSet()
+        // KMK (r91): sideloaded here but in the other device's repos: listed, so it's offered from its repo (the
+        // sideloaded set from before the merge: merging made such an extension count as from a repo, and it was
+        // neither listed nor sent). The other device keeps a sent APK of another signer over that offer.
+        val viaRepo = if (own.syncsApks && otherRepos != null) {
+            exportExtensions(own.apkKeys).filter {
+                it.pkgName in sideloadedKeys && it.pkgName in otherRepos && it.pkgName !in otherHas.orEmpty()
+            }
+        } else {
+            emptyList()
+        }
+        val extensions = (listed + viaRepo).distinctBy { it.isAnime to it.pkgName }
+        val apks = if (raw && own.syncsApks && otherHas != null) {
+            exportApks(sideloadedHere, otherHas, otherRepos, own.apkKeys)
+        } else {
+            emptyList()
+        }
         val payload = SyncPayload(
             sources = sources,
             backup = if (raw) null else backup?.bytes?.let { Base64.getEncoder().encodeToString(it) },
             repos = repos,
             extensions = extensions,
             installed = installedPackages(),
-            // KMK (r90): what this device receives (read by the device pressing Sync; ignored the other way)
-            wants = Json.encodeToString(SyncSelection.serializer(), own),
+            // KMK (r91): "everything", for an r90 device pressing Sync (it builds its export for this); r91 ignores it
+            wants = Json.encodeToString(SyncSelection.serializer(), SyncSelection()),
             backupFrame = raw && backup != null,
             apkFiles = apks.map { it.first },
         )
@@ -373,7 +448,12 @@ object PairSyncData {
         val anime = Injekt.get<AnimeExtensionManager>()
         if (manga.availableNow().isEmpty()) runCatching { manga.findAvailableExtensions() }
         if (anime.availableNow().isEmpty()) runCatching { anime.findAvailableExtensions() }
+        // KMK (r91): tried (also when offline): the APK count no longer waits for them
+        repoListsTried = true
     }
+
+    /** KMK (r91): the repos' lists were read (or tried) this run */
+    @Volatile private var repoListsTried = false
 
     /**
      * KMK (r90): every package any repo here offers (manga or anime). An installed extension counts as from a repo
@@ -383,6 +463,62 @@ object PairSyncData {
         (Injekt.get<ExtensionManager>().availableNow() + Injekt.get<AnimeExtensionManager>().availableNow())
             .map { it.pkgName }
             .toSet()
+
+    /** KMK (r91): reads the repos' lists when they weren't read yet this run (network; the caller limits the wait) */
+    internal suspend fun loadRepoLists() = ensureAvailable()
+
+    /**
+     * KMK (r91): whether the repos' lists are read (or there's no repo of that kind), so "sideloaded" is right: before
+     * that, every extension counts as sideloaded
+     */
+    internal suspend fun repoListsLoaded(): Boolean {
+        if (repoListsTried) return true
+        val manga = Injekt.get<ExtensionManager>().availableNow().isNotEmpty() ||
+            runCatching { Injekt.get<ExtensionStoreRepository>().getAll().isEmpty() }.getOrDefault(true)
+        val anime = Injekt.get<AnimeExtensionManager>().availableNow().isNotEmpty() ||
+            runCatching { Injekt.get<AnimeExtensionStoreRepository>().getAll().isEmpty() }.getOrDefault(true)
+        return manga && anime
+    }
+
+    /** KMK (r91): every package the repos here offer, as "package:signature:version" lines (what's in memory now) */
+    internal fun repoCopies(): Set<String> =
+        (Injekt.get<ExtensionManager>().availableNow() + Injekt.get<AnimeExtensionManager>().availableNow())
+            .map { "${it.pkgName}:${it.signatureHash}:${it.versionCode}" }
+            .toSet()
+
+    /**
+     * KMK (r91): a set of [repoCopies] lines, small enough for a Bluetooth request (gzip + Base64, one per line); null
+     * when it's too big anyway (then nothing is left out because of it)
+     */
+    internal fun encodePackages(packages: Set<String>): String? = runCatching {
+        Base64.getEncoder().encodeToString(gzip(packages.sorted().joinToString("\n").toByteArray()))
+            .takeIf { it.length <= MAX_PACKAGES_TEXT }
+    }.getOrNull()
+
+    /**
+     * KMK (r91): what [encodePackages] made, by package (a line without a signature has an empty one, so it never
+     * matches), or null (none sent, an older version, or bad data)
+     */
+    internal fun decodePackages(text: String?): Map<String, List<RepoCopy>>? {
+        if (text.isNullOrEmpty() || text.length > MAX_PACKAGES_TEXT) return null
+        return runCatching {
+            String(gunzip(Base64.getDecoder().decode(text))).split('\n')
+                .filter { it.isNotBlank() }
+                .map { line ->
+                    val parts = line.split(':')
+                    parts[0] to RepoCopy(parts.getOrNull(1).orEmpty(), parts.getOrNull(2)?.toLongOrNull() ?: 0L)
+                }
+                .groupBy({ it.first }, { it.second })
+        }.getOrNull()
+    }
+
+    /**
+     * KMK (r91): the other device's repos offer this APK's own build ([signature], at least [version]), so it's
+     * offered from there instead of sent
+     */
+    private fun coveredBy(repos: Map<String, List<RepoCopy>>?, pkg: String, signature: String, version: Long) =
+        signature.isNotEmpty() &&
+            repos?.get(pkg).orEmpty().any { it.signature == signature && it.version >= version }
 
     /** KMK (r90): the extensions installed here (manga and anime), for the Extensions pickers */
     suspend fun localExtensions(): List<LocalExtension> {
@@ -442,15 +578,29 @@ object PairSyncData {
     }
 
     /** KMK (r90): the sideloaded APKs to send, as files (sent as raw frames, never read into the JSON) */
-    private fun exportApks(otherHas: Set<String>, picked: Set<String>?): List<Pair<SyncApkInfo, File>> {
+    private fun exportApks(
+        sideloaded: List<Triple<String, String, Boolean>>,
+        otherHas: Set<String>,
+        otherRepos: Map<String, List<RepoCopy>>?,
+        picked: Set<String>?,
+    ): List<Pair<SyncApkInfo, File>> {
         val context = Injekt.get<Application>()
         val versions = Injekt.get<ExtensionManager>().installedExtensionsFlow.value
             .associate { it.pkgName to it.versionCode } +
             Injekt.get<AnimeExtensionManager>().installedExtensionsFlow.value
                 .associate { it.pkgName to it.versionCode }
+        val signatures = Injekt.get<ExtensionManager>().installedExtensionsFlow.value
+            .associate { it.pkgName to it.signatureHash } +
+            Injekt.get<AnimeExtensionManager>().installedExtensionsFlow.value
+                .associate { it.pkgName to it.signatureHash }
         var total = 0L
-        return sideloaded()
-            .filter { (pkg) -> pkg !in otherHas && (picked == null || pkg in picked) }
+        return sideloaded
+            // KMK (r91): not when the other device's repos have this same build (signer, and as new): it's offered
+            // from there. A build of another signer (a patched one) is sent.
+            .filter { (pkg) ->
+                pkg !in otherHas && (picked == null || pkg in picked) &&
+                    !coveredBy(otherRepos, pkg, signatures[pkg].orEmpty(), versions[pkg] ?: 0L)
+            }
             .mapNotNull { (pkg, name, anime) ->
                 val file = apkFile(context, pkg, anime) ?: return@mapNotNull null
                 val size = file.length()
@@ -462,6 +612,7 @@ object PairSyncData {
                     isAnime = anime,
                     versionCode = versions[pkg] ?: 0L,
                     size = size,
+                    signatureHash = signatures[pkg].orEmpty(),
                 ) to file
             }
     }
@@ -532,10 +683,20 @@ object PairSyncData {
         )
         val backupManga = if (mangaList.isEmpty()) emptyList() else MangaBackupCreator()(mangaList, options)
         // History only: the other device's library stays as it is (not in its library, in none of its categories)
+        // KMK (r91): only the picked categories go, so a title carries only their orders (the receiver used to drop
+        // the others)
+        val backupCategories = if (mangaLibrary) {
+            CategoriesBackupCreator()().filter { pickedCategories == null || it.name in pickedCategories }
+        } else {
+            emptyList()
+        }
+        val pickedOrders = backupCategories.map { it.order }.toSet()
         backupManga.forEach {
             if (!mangaLibrary || (it.source to it.url) in historyOnlyKeys) {
                 it.favorite = false
                 it.categories = emptyList()
+            } else if (pickedCategories != null) {
+                it.categories = it.categories.filter { order -> order in pickedOrders }
             }
         }
 
@@ -583,11 +744,7 @@ object PairSyncData {
 
         val backup = Backup(
             backupManga = backupManga,
-            backupCategories = if (mangaLibrary) {
-                CategoriesBackupCreator()().filter { pickedCategories == null || it.name in pickedCategories }
-            } else {
-                emptyList()
-            },
+            backupCategories = backupCategories,
             backupSources = SourcesBackupCreator()(backupManga),
             backupAnime = backupAnime,
             // KMK (r89): the anime categories weren't sent, so they were made as anime arrived (in no order)
@@ -610,59 +767,37 @@ object PairSyncData {
         ReceivedPayload(json.decodeFromString(SyncPayload.serializer(), String(gunzip(data))))
 
     /**
-     * KMK (r90): keeps only the manga [own] (this device's selection) wants: library titles in the picked categories
-     * (with only those categories), history only when history is on. Anything else becomes history only (not in the
-     * library, no categories) or is dropped.
+     * KMK (r91): the receiver no longer filters (the sender's tiles decide and this device accepted). Only the
+     * invariant stays: a title not in the sender's library (history only) never gets a category here.
      */
-    private fun filterManga(backup: Backup, own: SyncSelection): List<BackupManga> {
-        val names = backup.backupCategories.associate { it.order to it.name }
-        val picked = own.mangaCategories
-        return backup.backupManga.mapNotNull { m ->
-            val inPicked = picked == null ||
-                (if (m.categories.isEmpty()) listOf("") else m.categories.mapNotNull { names[it] })
-                    .any { it in picked }
-            val library = m.favorite && own.mangaLibrary && inPicked
-            if (!own.mangaHistory) m.history = emptyList()
-            when {
-                !library && m.history.isEmpty() -> null
-                !library -> m.apply {
-                    favorite = false
-                    categories = emptyList()
-                }
-                picked != null -> m.apply {
-                    categories = categories.filter { order -> names[order]?.let { it in picked } == true }
-                }
-                else -> m
-            }
-        }
+    private fun cleanManga(backup: Backup): List<BackupManga> = backup.backupManga.onEach {
+        if (!it.favorite) it.categories = emptyList()
     }
 
-    /** KMK (r90): the same for anime (their categories are names) */
-    private fun filterAnime(backup: Backup, own: SyncSelection): List<BackupAnime> {
-        val picked = own.animeCategories
-        return backup.backupAnime.mapNotNull { a ->
-            val inPicked = picked == null || a.categories.ifEmpty { listOf("") }.any { it in picked }
-            val library = a.favorite && own.animeLibrary && inPicked
-            val anime = if (own.animeHistory) a else a.copy(history = emptyList())
-            when {
-                !library && anime.history.isEmpty() -> null
-                !library -> anime.copy(favorite = false, categories = emptyList())
-                picked != null -> anime.copy(categories = anime.categories.filter { it in picked })
-                else -> anime
-            }
-        }
+    /** KMK (r91): the same for anime */
+    private fun cleanAnime(backup: Backup): List<BackupAnime> = backup.backupAnime.map {
+        if (!it.favorite && it.categories.isNotEmpty()) it.copy(categories = emptyList()) else it
     }
 
     /**
-     * Merges what a paired device sent; [log] tells the screen how it's going. KMK (r90): only what [own] (this
-     * device's selection) wants is applied, whatever the other device sent.
+     * KMK (r91): adds the other device's repos missing here before this device builds what it sends (the device
+     * pressing Sync): an extension it has that those repos offer then counts as from a repo, not sideloaded
      */
-    suspend fun import(received: ReceivedPayload, own: SyncSelection, log: (String) -> Unit): SyncSummary {
+    internal suspend fun mergeRepos(received: ReceivedPayload, log: (String) -> Unit) {
+        if (received.repoImport != null) return
+        received.repoImport = runCatching { importRepos(received.payload.repos, log) }.getOrDefault(RepoImport())
+    }
+
+    /**
+     * Merges what a paired device sent; [log] tells the screen how it's going. KMK (r91): everything that came is
+     * applied (this device accepted it; the sender's own tiles chose it).
+     */
+    suspend fun import(received: ReceivedPayload, log: (String) -> Unit): SyncSummary {
         val payload = received.payload
         var errors = 0
 
         val manager = Injekt.get<JsSourceManager>()
-        val incomingSources = if (own.syncsSources) payload.sources else emptyList()
+        val incomingSources = payload.sources
         var added = 0
         incomingSources.forEach { source ->
             currentCoroutineContext().ensureActive()
@@ -677,22 +812,27 @@ object PairSyncData {
         var manga = 0
         var anime = 0
         var historyEntries = 0
+        // KMK (r91): what came, for the "Get:" line until the next live check
+        var mangaTitles = 0
+        var mangaCategoryCount = 0
+        var animeTitles = 0
+        var animeCategoryCount = 0
+        var mangaHistoryTitles = 0
+        var animeHistoryTitles = 0
         val backupBytes = received.backupBytes ?: payload.backup?.let { Base64.getDecoder().decode(it) }
         if (backupBytes != null) {
             val backup = parser.decodeFromByteArray(Backup.serializer(), gunzip(backupBytes))
-            val mangaList = filterManga(backup, own)
-            val mangaCategories = if (own.mangaLibrary) {
-                backup.backupCategories.filter { own.mangaCategories == null || it.name in own.mangaCategories }
-            } else {
-                emptyList()
-            }
-            val animeList = filterAnime(backup, own)
-            val animeCategories = if (own.animeLibrary) {
-                backup.backupAnimeCategories.filter { own.animeCategories == null || it.name in own.animeCategories }
-            } else {
-                emptyList()
-            }
+            val mangaList = cleanManga(backup)
+            val mangaCategories = backup.backupCategories
+            val animeList = cleanAnime(backup)
+            val animeCategories = backup.backupAnimeCategories
             historyEntries = mangaList.sumOf { it.history.size } + animeList.sumOf { it.history.size }
+            mangaTitles = mangaList.count { it.favorite }
+            mangaCategoryCount = mangaCategories.size
+            animeTitles = animeList.count { it.favorite }
+            animeCategoryCount = animeCategories.size
+            mangaHistoryTitles = mangaList.count { it.history.isNotEmpty() }
+            animeHistoryTitles = animeList.count { it.history.isNotEmpty() }
 
             if (mangaCategories.isNotEmpty()) {
                 runCatching { CategoriesRestorer()(mangaCategories) }.onFailure { errors++ }
@@ -721,18 +861,37 @@ object PairSyncData {
         }
 
         currentCoroutineContext().ensureActive()
-        val repos = if (own.syncsRepos) importRepos(payload.repos, log) else RepoImport()
-        val (missing, updates) = if (own.syncsInstalled) {
-            runCatching { offers(payload.extensions, repos.manga, repos.anime) }
-                .getOrDefault(emptyList<ExtensionOffer>() to emptyList<ExtensionOffer>())
-        } else {
-            emptyList<ExtensionOffer>() to emptyList<ExtensionOffer>()
+        val repos = received.repoImport ?: runCatching { importRepos(payload.repos, log) }.getOrDefault(RepoImport())
+        val (offered, updates) = runCatching { offers(payload.extensions, repos.manga, repos.anime) }
+            .getOrDefault(emptyList<ExtensionOffer>() to emptyList<ExtensionOffer>())
+        val allApks = received.receivedApks + saveOldApks(payload.apks)
+        // KMK (r91): an APK of a package this device's repos offer becomes an offer from the repo (the file goes)
+        val repoOffers = runCatching { apksFromRepos(allApks, offered) }.getOrDefault(emptyList())
+        val allMissing = offered + repoOffers
+        // KMK (r91): a repo offer replaces a sent APK only when it's the same signer's build, as new; an APK of
+        // another signer (a patched build) is kept and that offer goes. An older version's APK (no signer) loses to
+        // any offer, as before.
+        val (apks, dropped) = allApks.partition { apk ->
+            val offer = allMissing.firstOrNull { it.isAnime == apk.isAnime && it.pkgName == apk.pkgName }
+            offer == null || (
+                apk.signatureHash.isNotEmpty() &&
+                    (offer.signatureHash != apk.signatureHash || offer.toVersion < apk.versionCode)
+                )
         }
-        val apks = if (own.syncsApks) {
-            received.receivedApks + saveOldApks(payload.apks)
-        } else {
-            received.receivedApks.forEach { runCatching { it.file.delete() } }
-            emptyList()
+        dropped.forEach { runCatching { it.file.delete() } }
+        val apkKeys = apks.map { it.isAnime to it.pkgName }.toSet()
+        val missing = allMissing.filter { (it.isAnime to it.pkgName) !in apkKeys }
+
+        received.sentRows = buildList {
+            if (animeTitles > 0) add(SummaryRow("Anime", libraryDetail(animeCategoryCount, animeTitles)))
+            if (mangaTitles > 0) add(SummaryRow("Manga", libraryDetail(mangaCategoryCount, mangaTitles)))
+            historyRow(mangaHistoryTitles, animeHistoryTitles)?.let { add(it) }
+            extensionsRow(
+                repos = payload.repos.size,
+                extensions = payload.extensions.size,
+                apks = payload.apkFiles.size + payload.apks.size,
+                sources = payload.sources.size,
+            )?.let { add(it) }
         }
 
         return SyncSummary(
@@ -748,8 +907,193 @@ object PairSyncData {
         )
     }
 
+    /**
+     * KMK (r91): the APKs that came for packages this device's repos offer (and not offered already), as offers from
+     * the repo
+     */
+    private suspend fun apksFromRepos(apks: List<ReceivedApk>, offered: List<ExtensionOffer>): List<ExtensionOffer> {
+        if (apks.isEmpty()) return emptyList()
+        ensureAvailable()
+        val mangaAvailable = Injekt.get<ExtensionManager>().availableNow()
+        val animeAvailable = Injekt.get<AnimeExtensionManager>().availableNow()
+        val have = offered.map { it.isAnime to it.pkgName }.toSet()
+        return apks.mapNotNull { apk ->
+            if ((apk.isAnime to apk.pkgName) in have) return@mapNotNull null
+            // KMK (r91): only the same signer's build, as new (a patched APK isn't swapped for the repo's)
+            if (apk.signatureHash.isEmpty()) return@mapNotNull null
+            val best = (if (apk.isAnime) animeAvailable else mangaAvailable)
+                .filter {
+                    it.pkgName == apk.pkgName && it.signatureHash == apk.signatureHash &&
+                        it.versionCode >= apk.versionCode
+                }
+                .maxByOrNull { it.versionCode }
+                ?: return@mapNotNull null
+            ExtensionOffer(
+                pkgName = apk.pkgName,
+                name = apk.name.ifBlank { best.name },
+                isAnime = apk.isAnime,
+                signatureHash = best.signatureHash,
+                fromVersion = 0L,
+                toVersion = best.versionCode,
+            )
+        }.distinctBy { it.isAnime to it.pkgName }
+    }
+
+    /**
+     * KMK (r91): what this device sends with [selection], as summary rows (empty = nothing). Quick: database counts
+     * and what's in memory, no network (the repos' lists count only once read). History counts titles.
+     */
+    suspend fun summarizeSend(selection: SyncSelection): List<SummaryRow> {
+        val own = selection.normalized()
+        val rows = mutableListOf<SummaryRow>()
+        val animeRepository = Injekt.get<AnimeRepository>()
+        if (own.animeLibrary) {
+            runCatching {
+                val categories = animeRepository.getCategories()
+                val names = categories.associate { it.id to it.name }
+                val links = animeRepository.subscribeCategoryLinks().first()
+                val picked = own.animeCategories
+                val count = animeRepository.getFavorites().count { anime ->
+                    anime.source != DeviceFilesIds.ANIME &&
+                        anime.source != eu.kanade.tachiyomi.jssource.ReaderVideos.SOURCE_ID &&
+                        (
+                            picked == null ||
+                                links[anime.id].orEmpty().mapNotNull { names[it] }.ifEmpty { listOf("") }
+                                    .any { it in picked }
+                            )
+                }
+                if (count > 0) {
+                    val which = categoriesText(picked, categories.map { it.name })
+                    rows += SummaryRow("Anime", "$which · ${titles(count)}")
+                }
+            }
+        }
+        if (own.mangaLibrary) {
+            runCatching {
+                val categories = Injekt.get<GetCategories>().await()
+                val names = categories.associate { it.id to it.name }
+                val picked = own.mangaCategories
+                val count = Injekt.get<GetLibraryManga>().await()
+                    .distinctBy { it.manga.id }
+                    .count { item ->
+                        item.manga.source != DeviceFilesIds.MANGA &&
+                            (
+                                picked == null ||
+                                    item.categories.mapNotNull { names[it] }.ifEmpty { listOf("") }
+                                        .any { it in picked }
+                                )
+                    }
+                if (count > 0) {
+                    val which = categoriesText(picked, categories.map { it.name })
+                    rows += SummaryRow("Manga", "$which · ${titles(count)}")
+                }
+            }
+        }
+        val mangaHistory = if (own.mangaHistory) {
+            runCatching {
+                // KMK (r91): not Device files titles, which aren't sent
+                Injekt.get<GetHistory>().subscribe("", null, null, null).first()
+                    .filter { it.coverData.sourceId != DeviceFilesIds.MANGA }
+                    .map { it.mangaId }
+                    .distinct()
+                    .size
+            }.getOrDefault(0)
+        } else {
+            0
+        }
+        val animeHistory = if (own.animeHistory) {
+            runCatching {
+                animeRepository.subscribeHistory().first()
+                    .filter {
+                        it.source != DeviceFilesIds.ANIME &&
+                            it.source != eu.kanade.tachiyomi.jssource.ReaderVideos.SOURCE_ID
+                    }
+                    .map { it.animeId }
+                    .distinct()
+                    .size
+            }.getOrDefault(0)
+        } else {
+            0
+        }
+        historyRow(mangaHistory, animeHistory)?.let { rows += it }
+        val repos = if (own.syncsRepos) {
+            runCatching { repos().count { own.repoUrls == null || it.first in own.repoUrls } }.getOrDefault(0)
+        } else {
+            0
+        }
+        val extensions = if (own.syncsInstalled) {
+            runCatching {
+                (
+                    Injekt.get<ExtensionManager>().installedExtensionsFlow.value.map { it.pkgName } +
+                        Injekt.get<AnimeExtensionManager>().installedExtensionsFlow.value.map { it.pkgName }
+                    ).count { own.installedKeys == null || it in own.installedKeys }
+            }.getOrDefault(0)
+        } else {
+            0
+        }
+        // KMK (r91): null = not known yet: before the repos' lists are read every extension counts as sideloaded
+        val apks: Int? = if (own.syncsApks) {
+            if (runCatching { repoListsLoaded() }.getOrDefault(true)) {
+                runCatching { sideloaded().count { own.apkKeys == null || it.first in own.apkKeys } }.getOrDefault(0)
+            } else {
+                null
+            }
+        } else {
+            0
+        }
+        val sources = if (own.syncsSources) {
+            runCatching {
+                Injekt.get<JsSourceManager>().savedFlow.value
+                    .count { own.sourceKeys == null || it.key in own.sourceKeys }
+            }.getOrDefault(0)
+        } else {
+            0
+        }
+        extensionsRow(repos, extensions, apks, sources)?.let { rows += it }
+        return rows
+    }
+
+    /** KMK (r91): the Extensions row's APK part before the repos' lists are read */
+    internal const val APKS_CHECKING = "APKs: checking"
+
+    private fun titles(count: Int): String = if (count == 1) "1 title" else "$count titles"
+
+    /** KMK (r91): "All categories", or "2 of 4 categories" (Default counted once, like the pop-up's pages) */
+    private fun categoriesText(picked: Set<String>?, all: List<String>): String {
+        if (picked == null) return "All categories"
+        val options = (listOf("") + all).distinct()
+        return "${options.count { it in picked }} of ${options.size} categories"
+    }
+
+    /** KMK (r91): a received library line (the sender's category count isn't known, only what came) */
+    private fun libraryDetail(categories: Int, count: Int): String = when (categories) {
+        0 -> titles(count)
+        1 -> "1 category · ${titles(count)}"
+        else -> "$categories categories · ${titles(count)}"
+    }
+
+    private fun historyRow(manga: Int, anime: Int): SummaryRow? = when {
+        manga > 0 && anime > 0 -> SummaryRow("History", "Anime & manga · ${titles(manga + anime)}")
+        manga > 0 -> SummaryRow("History", "Manga · ${titles(manga)}")
+        anime > 0 -> SummaryRow("History", "Anime · ${titles(anime)}")
+        else -> null
+    }
+
+    private fun extensionsRow(repos: Int, extensions: Int, apks: Int?, sources: Int): SummaryRow? {
+        val parts = buildList {
+            if (repos > 0) add(if (repos == 1) "1 repo" else "$repos repos")
+            if (extensions > 0) add(if (extensions == 1) "1 extension" else "$extensions extensions")
+            when {
+                apks == null -> add(APKS_CHECKING)
+                apks > 0 -> add(if (apks == 1) "1 APK" else "$apks APKs")
+            }
+            if (sources > 0) add(if (sources == 1) "1 code source" else "$sources code sources")
+        }
+        return if (parts.isEmpty()) null else SummaryRow("Extensions", parts.joinToString(" · "))
+    }
+
     /** KMK (r90): repos added, and whether any manga / anime repo was added (each reads its lists again) */
-    private class RepoImport(val added: Int = 0, val manga: Boolean = false, val anime: Boolean = false)
+    internal class RepoImport(val added: Int = 0, val manga: Boolean = false, val anime: Boolean = false)
 
     /** KMK (r89): adds the other device's repos missing here (never removes one) */
     private suspend fun importRepos(repos: List<SyncRepo>, log: (String) -> Unit): RepoImport {
@@ -832,7 +1176,8 @@ object PairSyncData {
             if (available.isEmpty()) return@forEach
             val here = (if (ext.isAnime) animeHere else mangaHere)[ext.pkgName]
             if (here == null) {
-                if (!ext.fromRepo) return@forEach
+                // KMK (r91): offered whenever a repo here has it, also when the other device sideloaded it (a device
+                // without repos called every extension sideloaded)
                 val best = available.firstOrNull { it.signatureHash == ext.signatureHash } ?: available.first()
                 missing += ExtensionOffer(
                     pkgName = ext.pkgName,
@@ -865,11 +1210,14 @@ object PairSyncData {
 
     private fun apkDir(): File = File(Injekt.get<Application>().cacheDir, APK_DIR)
 
-    /** KMK (r90): where an APK the other device sends is saved (the package name kept to safe characters) */
+    /**
+     * KMK (r90): where an APK the other device sends is saved (the package name kept to safe characters). r91: a new
+     * name each time, so removing an older result's file never takes one a running sync just saved
+     */
     internal fun apkTarget(pkgName: String): File {
         val dir = apkDir().apply { mkdirs() }
         val safe = pkgName.filter { it.isLetterOrDigit() || it == '.' || it == '_' }.take(200).ifEmpty { "apk" }
-        return File(dir, "$safe.apk")
+        return File(dir, "${safe}_${System.currentTimeMillis()}_${System.nanoTime() % 1_000_000L}.apk")
     }
 
     /** KMK (r90): saves an APK frame; null when it's installed here by now or couldn't be written */
@@ -878,15 +1226,27 @@ object PairSyncData {
         return runCatching {
             val file = apkTarget(info.pkgName)
             file.writeBytes(bytes)
-            ReceivedApk(info.pkgName, info.name.ifBlank { info.pkgName }, info.isAnime, file)
+            ReceivedApk(
+                pkgName = info.pkgName,
+                name = info.name.ifBlank { info.pkgName },
+                isAnime = info.isAnime,
+                file = file,
+                signatureHash = info.signatureHash,
+                versionCode = info.versionCode,
+            )
         }.getOrNull()
     }
 
-    /** KMK (r90): empties the received APKs folder, except [keep] (offers not tapped yet) */
-    internal fun cleanApks(keep: Set<File> = emptySet()) {
+    /**
+     * KMK (r90): empties the received APKs folder, except [keep] (offers not tapped yet). r91: and except files saved
+     * at or after [keepFrom] (a running sync's)
+     */
+    internal fun cleanApks(keep: Set<File> = emptySet(), keepFrom: Long = Long.MAX_VALUE) {
         runCatching {
             val keepPaths = keep.map { it.absolutePath }.toSet()
-            apkDir().listFiles()?.forEach { if (it.absolutePath !in keepPaths) it.delete() }
+            apkDir().listFiles()?.forEach {
+                if (it.absolutePath !in keepPaths && it.lastModified() < keepFrom) it.delete()
+            }
         }
     }
 

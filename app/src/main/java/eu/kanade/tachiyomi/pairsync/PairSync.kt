@@ -11,12 +11,14 @@ import android.os.Build
 import android.provider.Settings
 import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
@@ -27,6 +29,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
@@ -59,6 +64,8 @@ import java.text.DateFormat
 import java.util.Base64
 import java.util.Date
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.crypto.Cipher
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
@@ -66,28 +73,38 @@ import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
 
 /*
- * KMK: the pair sync protocol (r90).
- * 1. Bluetooth RFCOMM (insecure, SERVICE_UUID) is the control channel: finding the device, pairing, the key check and
- *    choosing how the data moves. Every frame is an int length + AES-GCM (12-byte IV, ciphertext, 16-byte tag).
+ * KMK: the pair sync protocol (r91).
+ * 1. Bluetooth RFCOMM (insecure, SERVICE_UUID) is the control channel: finding the device, pairing, the key check, the
+ *    accept prompt and choosing how the data moves. Every frame is an int length + AES-GCM (12-byte IV, ciphertext,
+ *    16-byte tag).
  * 2. Pairing: {"t":"pair","name"} with the code's key -> {"t":"paired","name","secret"}; the secret is the key after.
- * 3. Sync: the initiator sends {"t":"sync","name","selection","have","transport","nonce","p2p"}; "selection" is what
- *    IT receives, "p2p": false = it can't use Wi-Fi Direct (not offered then; no key = it may). When both devices
- *    press Sync at once, the one whose request has the lower "nonce" keeps its sync and the other drops its own and
- *    answers.
- * 4. A busy waiting device answers {"t":"busy"}. Else it offers ways in the order "transport" implies (auto: p2p,
- *    lan, bt): {"t":"p2p","ssid","pass","port","ip"}, {"t":"lan","ips","port"}, {"t":"bt"}, or {"t":"none"} when
- *    none is left.
- * 5. The initiator joins / connects, sends {"t":"hello"} on the new socket, then answers over Bluetooth
+ * 3. Live (r91, while the pop-up is open): a short connection, {"t":"live","send":[{"title","detail"}],"nothing"}
+ *    both ways; each side shows what the other sends. Never busy, never a prompt.
+ * 4. Sync: the initiator sends {"t":"sync","name","selection","have","transport","nonce","p2p","ask","send",
+ *    "nothing","repos","vpn"}. A device's own selection is what it SENDS (r91). "selection" is only for an r90
+ *    answerer (to it: what the initiator receives, so "everything"). "send" = the initiator's summary rows; "repos" =
+ *    the packages its repos offer (gzip + Base64, one per line), so no APKs are sent for them; "p2p": false = it
+ *    can't use Wi-Fi Direct; "vpn" = a VPN is on there. When both devices press Sync at once, the one whose request
+ *    has the lower "nonce" keeps its sync and the other drops its own and answers it (accepted at once).
+ * 5. A busy waiting device answers {"t":"busy"}. An r91 one ("ask") answers {"t":"asking"} and asks its user (60 s):
+ *    {"t":"declined"} / {"t":"timeout"} end it with nothing changed; {"t":"accepted","send","nothing","repos","vpn"}
+ *    goes on, and the initiator answers {"t":"start"} (or {"t":"cancel"} when it stopped; a dropped link is a cancel
+ *    too). An r90 initiator (no "ask") is asked about silently; a decline answers it "busy".
+ * 6. The waiting device offers ways in the order "transport" implies (auto: p2p, lan, bt; with a VPN on: p2p once,
+ *    then bt): {"t":"p2p","ssid","pass","port","ip"}, {"t":"lan","ips","port"}, {"t":"bt"}, or {"t":"none"} when none
+ *    is left. A failed Wi-Fi Direct is offered once more (a new group), except in Auto with a VPN on.
+ * 7. The initiator joins / connects, sends {"t":"hello"} on the new socket, then answers over Bluetooth
  *    {"t":"ok","via"} or {"t":"fail"} (the next way is offered). After "ok" the waiting device takes the connection
  *    and checks "hello": it answers {"t":"go"}, or offers the next way (the initiator drops that connection). After
  *    "go" every data frame goes over the new socket, with the same key.
- * 6. Data: the waiting device sends its payload (with "wants", its own selection), then the backup frame and one raw
- *    frame per APK; the initiator sends its own (built for "wants"), both merge, then {"t":"done"} each way (only a
- *    courtesy: each side saves its result before it). Over Wi-Fi, a device building its export sends {"t":"wait"}
- *    every 30 s first; the reader skips those before the payload.
- * 7. An r89 waiting device ignores "transport" and sends its gzipped payload at once: the initiator sees a first frame
- *    that isn't one of the JSON offers and carries on over Bluetooth the r89 way. An r89 initiator (no "transport")
- *    gets pure Bluetooth, the backup inside the JSON, and no APKs.
+ * 8. Data: the waiting device sends its payload, then the backup frame and one raw frame per APK; the initiator merges
+ *    the repos that came, then sends its own the same way; both merge everything that came (the sender's tiles chose
+ *    it), then {"t":"done"} each way (only a courtesy: each side saves its result before it). Over Wi-Fi, a device
+ *    building its export sends {"t":"wait"} every 30 s first; the reader skips those before the payload.
+ * 9. Older versions: an r90 answerer sends an offer straight away (no "asking"): logged, and the sync goes on as r90
+ *    did; what is sent is cut to what its payload's "wants" takes. An r89 waiting device ignores "transport" and sends
+ *    its gzipped payload at once: the initiator sees a first frame that isn't JSON and carries on over Bluetooth the
+ *    r89 way. An r89 initiator (no "transport") gets pure Bluetooth, the backup inside the JSON, and no APKs.
  */
 
 /** KMK: A device this one has been paired with: its Bluetooth address, its name, and the key the two share */
@@ -123,6 +140,9 @@ class PairSyncPreferences(private val store: PreferenceStore) {
 
     /** KMK (r90): how the data moves, a [SyncTransport] key */
     val transport: Preference<String> = store.getString("pair_sync_transport", SyncTransport.Auto.key)
+
+    // KMK (r91): what each paired device sends, as last learned (live or a sync). App state: never in backups
+    private val viewsJson = store.getString(Preference.appStateKey("pair_sync_views"), "[]")
 
     init {
         runCatching { migrateOld() }
@@ -161,6 +181,15 @@ class PairSyncPreferences(private val store: PreferenceStore) {
         selectionJson.set(Json.encodeToString(SyncSelection.serializer(), selection))
     }
 
+    /** KMK (r91): the saved "what they send" of each paired device */
+    internal fun views(): List<StoredView> =
+        runCatching { lenient.decodeFromString(ListSerializer(StoredView.serializer()), viewsJson.get()) }
+            .getOrDefault(emptyList())
+
+    internal fun saveViews(views: List<StoredView>) {
+        viewsJson.set(Json.encodeToString(ListSerializer(StoredView.serializer()), views))
+    }
+
     companion object {
         val instance: PairSyncPreferences by lazy { PairSyncPreferences(Injekt.get()) }
 
@@ -181,6 +210,46 @@ class PairSyncPreferences(private val store: PreferenceStore) {
             Json.encodeToString(ListSerializer(Peer.serializer()), peers)
     }
 }
+
+/** KMK (r91): what a paired device sends, saved (see [PairSyncPreferences.views]) */
+@Serializable
+internal class StoredView(
+    val address: String,
+    val send: List<SummaryRow> = emptyList(),
+    val nothing: Boolean = false,
+    val asOf: Long = 0L,
+    val all: Boolean = false,
+)
+
+/**
+ * KMK (r91): what this device knows about a paired one. [live]: its pop-up is open and answered recently.
+ * [theirSend]: what it will send (= what this device gets), null = unknown; [asOf] when that was learned (live or
+ * the last sync).
+ */
+data class PeerView(
+    val address: String,
+    val live: Boolean,
+    val theirSend: List<SummaryRow>?,
+    val theirSendsNothing: Boolean?,
+    val asOf: Long,
+    /** KMK (r91): it sends everything (every tile and switch on, nothing narrowed) */
+    val theirSendsEverything: Boolean = false,
+)
+
+/**
+ * KMK (r91): a paired device wants to sync with this one, which must Accept (within 60 s, until [expiresAt]).
+ * [youGet] is what it sends to this device, [youSend] what this device sends back (its own tiles).
+ */
+data class IncomingRequest(
+    val id: Long,
+    val peerAddress: String,
+    val peerName: String,
+    val youGet: List<SummaryRow>,
+    val youSend: List<SummaryRow>,
+    val sizeText: String?,
+    val via: SyncTransport?,
+    val expiresAt: Long,
+)
 
 /**
  * KMK: Syncs two devices. One shows a 6-digit code and the other, nearby, enters it; after that the two share a
@@ -218,11 +287,51 @@ object PairSync {
     /** KMK (r90): the Bluetooth answers that are offers (or refusals), not an r89 payload */
     private val OFFERS = setOf("p2p", "lan", "bt", "none", "busy", "go")
 
+    /** KMK (r91): an r91 waiting device's answers to a sync request, before the offers */
+    private val ANSWERS = setOf("asking", "accepted", "declined", "timeout")
+
+    /** KMK (r91): how long the waiting device's prompt waits for Accept / Decline */
+    private const val ASK_TIMEOUT = 60_000L
+
+    /** KMK (r91): how long the device pressing Sync waits for that answer (the prompt, and a little more) */
+    private const val ANSWER_WAIT = 90_000L
+
+    /** KMK (r91): a live check-in's whole connection (Bluetooth connect + one message each way) */
+    private const val LIVE_TIMEOUT = 4_000L
+
+    /** KMK (r91): how often the paired devices are checked while the pop-up is open */
+    private const val LIVE_EVERY = 20_000L
+
+    /** KMK (r91): tile changes are sent to live devices once this long passed without another */
+    private const val PUSH_DELAY = 400L
+
+    /** KMK (r91): the most added to [LIVE_EVERY] at random, so two devices don't check in at the same moment */
+    private const val LIVE_JITTER = 4_000
+
+    /**
+     * KMK (r91): after this long this device's own summary is read again in the background (the cached one answers
+     * meanwhile); the tiles changing or a sync finishing clears it
+     */
+    private const val OWN_ROWS_FOR = 10_000L
+
+    /** KMK (r91): how long a sync waits for the repos' lists when they weren't read yet (the read goes on) */
+    private const val REPO_WAIT = 3_000L
+
+    /** KMK (r91): how long this device's lost tie-break counts (the other device's request comes right after) */
+    private const val TIE_FOR = 15_000L
+
+    // KMK (r91): the prompt's outcomes
+    private const val ACCEPT = 1
+    private const val DECLINE = 2
+    private const val TIMEOUT = 3
+    private const val CANCELLED = 4
+
     /**
      * What's going on. While [busy], [peerAddress] is the device being synced with, and [done] of [total] bytes are
      * sent ([sending]) or received; [step] says what's being done when no bytes are moving. KMK (r90): [via] is how
      * the data moves once known, [bytesPerSecond] the current speed; [lastError] why the last sync with
-     * [errorAddress] failed (cleared when the next one starts).
+     * [errorAddress] failed (cleared when the next one starts). r91: [waitingForAccept] while the other device's user
+     * is asked to accept this device's sync.
      */
     data class Status(
         val busy: Boolean = false,
@@ -236,6 +345,7 @@ object PairSync {
         val bytesPerSecond: Long = 0L,
         val lastError: String? = null,
         val errorAddress: String? = null,
+        val waitingForAccept: Boolean = false,
     )
 
     /**
@@ -252,6 +362,8 @@ object PairSync {
         val via: SyncTransport? = null,
         val bytes: Long = 0L,
         val millis: Long = 0L,
+        /** KMK (r91): × on the card was tapped (its offers may still show); kept here so it sticks */
+        val cardDismissed: Boolean = false,
     )
 
     // KMK (r89): nothing thrown in a connection may reach the app's crash handler
@@ -306,6 +418,73 @@ object PairSync {
 
     private val rate = Rate()
 
+    // KMK (r91): the accept prompt (this device is asked), and the request this device is waiting on (asked there)
+    private class Pending(val request: IncomingRequest, val decision: CompletableDeferred<Int>, val run: Int)
+
+    @Volatile private var pending: Pending? = null
+
+    private var incomingIds = 0L
+
+    private val _incoming = MutableStateFlow<IncomingRequest?>(null)
+    val incoming: StateFlow<IncomingRequest?> = _incoming.asStateFlow()
+
+    /** KMK (r91): the Bluetooth link of this device's sync while it waits for the other's Accept (Stop says cancel) */
+    @Volatile private var waitLink: Link? = null
+
+    // KMK (r91): the live preview while the pop-up is open
+    private val _peerViews = MutableStateFlow<Map<String, PeerView>>(emptyMap())
+    val peerViews: StateFlow<Map<String, PeerView>> = _peerViews.asStateFlow()
+
+    init {
+        runCatching { _peerViews.value = loadViews() }
+    }
+
+    @Volatile private var liveJob: Job? = null
+
+    @Volatile private var pushJob: Job? = null
+
+    // KMK (r91): this device's own send summary (see [ownRows]); [ownVersion] changes when it's cleared, so a read
+    // that started before doesn't put back an old one
+    private class OwnSend(val rows: List<SummaryRow>, val all: Boolean, val at: Long)
+
+    @Volatile private var ownSend: OwnSend? = null
+
+    @Volatile private var ownVersion = 0
+
+    private val ownRefreshing = AtomicBoolean(false)
+
+    /** KMK (r91): changes on every goLive / leaveLive, so a check-in that ends late doesn't mark a device live */
+    @Volatile private var liveGen = 0
+
+    @Volatile private var liveContext: Context? = null
+
+    /** KMK (r91): when each paired device was last heard from live (either way), by address */
+    private val lastHeard = ConcurrentHashMap<String, Long>()
+
+    /** KMK (r91): one outgoing Bluetooth connect at a time (two at once to the same device can fail on some phones) */
+    private val btConnect = Mutex()
+
+    /** KMK (r91): the check-ins' sockets, closed when a sync or pairing starts connecting */
+    private val pingSockets: MutableSet<BluetoothSocket> = ConcurrentHashMap.newKeySet()
+
+    /**
+     * KMK (r91): both devices pressed Sync and the other one's request won, but this one's ended first: the other's
+     * request (with this secret, until the time) is answered without a prompt
+     */
+    @Volatile private var tie: Pair<String, Long>? = null
+
+    /** KMK (r91): when the running sync started (its received APKs stay when Clear empties the folder) */
+    @Volatile private var runStartedAt = 0L
+
+    /** KMK (r91): the sync that logged the VPN message already (said once) */
+    @Volatile private var vpnSaidRun = -1
+
+    /** KMK (r91): the result's read-change-write steps (a new result, Clear, the ×) one at a time */
+    private val resultLock = Any()
+
+    /** KMK (r91): the sync ended because both pressed Sync and the other device's won (it's answered instead) */
+    private class Tied : IOException("Both devices pressed Sync")
+
     fun adapter(context: Context): BluetoothAdapter? =
         context.getSystemService(BluetoothManager::class.java)?.adapter
 
@@ -339,6 +518,7 @@ object PairSync {
             step = null,
             via = null,
             bytesPerSecond = 0L,
+            waitingForAccept = false,
         )
     }
 
@@ -357,8 +537,10 @@ object PairSync {
 
     /** KMK (r89): the result card's Install / Update were tapped */
     fun markAsked(missing: Boolean = false, updates: Boolean = false) {
-        _result.update {
-            it?.copy(missingAsked = it.missingAsked || missing, updatesAsked = it.updatesAsked || updates)
+        synchronized(resultLock) {
+            _result.update {
+                it?.copy(missingAsked = it.missingAsked || missing, updatesAsked = it.updatesAsked || updates)
+            }
         }
     }
 
@@ -368,6 +550,7 @@ object PairSync {
         val id = ++runId
         val newSession = Session()
         session = newSession
+        runStartedAt = System.currentTimeMillis()
         rate.reset()
         _status.update {
             it.copy(
@@ -381,6 +564,7 @@ object PairSync {
                 bytesPerSecond = 0L,
                 lastError = null,
                 errorAddress = null,
+                waitingForAccept = false,
             )
         }
         id to newSession
@@ -389,7 +573,8 @@ object PairSync {
     /** KMK (r90): sync [id] with [address] failed: logged, and shown under that device until the next sync */
     private fun failed(id: Int, address: String, text: String, error: String) {
         if (runId != id) return
-        log(text)
+        // KMK (r91): the VPN message was logged already in this sync: not twice
+        log(if (error == PairSyncWifi.VPN_TEXT && vpnSaidRun == id) text.removeSuffix(": $error") else text)
         _status.update { it.copy(lastError = error, errorAddress = address) }
     }
 
@@ -433,6 +618,26 @@ object PairSync {
                 idle()
             }
         }
+        // KMK (r91): the library may have changed: this device's own summary is read again
+        clearOwnRows()
+    }
+
+    /** KMK (r91): logs the VPN message once per sync, worded for [transport] (Auto goes on over Bluetooth itself) */
+    private fun sayVpn(id: Int, transport: SyncTransport) {
+        if (vpnSaidRun == id) return
+        vpnSaidRun = id
+        log(if (transport == SyncTransport.Auto) PairSyncWifi.VPN_AUTO_TEXT else PairSyncWifi.VPN_TEXT)
+    }
+
+    /** KMK (r91): this device lost a tie-break with [secret]'s device but its request comes after: no prompt for it */
+    private fun takeTie(secret: String): Boolean = synchronized(lock) {
+        val t = tie
+        if (t != null && t.first == secret && System.currentTimeMillis() < t.second) {
+            tie = null
+            true
+        } else {
+            false
+        }
     }
 
     /**
@@ -440,6 +645,11 @@ object PairSync {
      * incoming sync used to clear them)
      */
     private fun publish(new: SyncResult) {
+        // KMK (r91): under the lock, so a Clear or × meanwhile isn't undone with the old offers
+        synchronized(resultLock) { publishLocked(new) }
+    }
+
+    private fun publishLocked(new: SyncResult) {
         val old = _result.value
         var summary = new.summary
         if (old != null) {
@@ -452,7 +662,60 @@ object PairSync {
             }
             if (summary.updates.isEmpty() && !old.updatesAsked) summary = summary.copy(updates = old.summary.updates)
         }
-        _result.value = new.copy(summary = summary)
+        _result.value = new.copy(summary = summary, cardDismissed = false)
+    }
+
+    private fun hasOffers(result: SyncResult): Boolean =
+        result.summary.missing.isNotEmpty() || result.summary.updates.isNotEmpty() || result.summary.apks.isNotEmpty()
+
+    /**
+     * KMK (r91): deletes the APK files [result] still offers; not once Install was tapped (the installer may be
+     * reading them: they go when installed, at the next sync or after a day)
+     */
+    private fun deleteOffered(result: SyncResult?) {
+        if (result == null || result.missingAsked) return
+        result.summary.apks.forEach { runCatching { it.file.delete() } }
+    }
+
+    /** KMK (r91): "Clear": removes the result card and the extension offers, and deletes the waiting APK files */
+    fun clearResult() {
+        val last = synchronized(resultLock) {
+            val value = _result.value
+            _result.value = null
+            value
+        }
+        deleteOffered(last)
+        val installing = if (last != null && last.missingAsked) {
+            last.summary.apks.map { it.file }.toSet()
+        } else {
+            emptySet()
+        }
+        // KMK (r91): a running sync's own new files stay (saved after it started; a little early for coarse times)
+        PairSyncData.cleanApks(installing, if (_status.value.busy) runStartedAt - 2_000L else Long.MAX_VALUE)
+    }
+
+    /** KMK (r91): × on the result card; the offers stay until they're dismissed too */
+    fun dismissResultCard() {
+        synchronized(resultLock) {
+            val last = _result.value ?: return
+            _result.value = if (hasOffers(last)) last.copy(cardDismissed = true) else null
+        }
+    }
+
+    /** KMK (r91): × on the extensions box: removes the offers and deletes their waiting APK files */
+    fun dismissOffers() {
+        val last = synchronized(resultLock) {
+            val value = _result.value ?: return
+            _result.value = if (value.cardDismissed) {
+                null
+            } else {
+                value.copy(
+                    summary = value.summary.copy(missing = emptyList(), updates = emptyList(), apks = emptyList()),
+                )
+            }
+            value
+        }
+        deleteOffered(last)
     }
 
     /** KMK (r90): APK files the result card still offers (kept when the folder is emptied) */
@@ -526,7 +789,16 @@ object PairSync {
                     val message = runCatching { decrypt(key, first) }.getOrNull() ?: continue
                     link.key = key
                     link.maxFrame = MAX_FRAME
-                    answerSync(context, link, peer.copy(address = remote), parse(message))
+                    val parsed = parse(message)
+                    // KMK (r91): a live check-in is answered at once, even while busy; "leaving" = its pop-up closed
+                    when (parsed.string("t")) {
+                        "live" -> answerLive(link, peer, parsed)
+                        "leaving" -> {
+                            lastHeard.remove(peer.address)
+                            notLive(peer.address)
+                        }
+                        else -> answerSync(context, link, peer.copy(address = remote), parsed)
+                    }
                     return
                 }
                 // A device pairing with the code showing here
@@ -549,6 +821,25 @@ object PairSync {
         } catch (e: Throwable) {
             log("A connection stopped: ${e.message ?: e::class.simpleName}")
         }
+    }
+
+    /** KMK (r91): the other device's pop-up checked in: what it sends is noted, and this device's own goes back */
+    private suspend fun answerLive(link: Link, peer: Peer, message: JsonObject) {
+        val theirs = rowsIn(message).orEmpty()
+        // KMK (r91): this pop-up is in the background (still listening): "away", so the other device shows it not live
+        val here = liveJob != null
+        seen(
+            peer.address,
+            theirs,
+            message.string("nothing") == "true" || theirs.isEmpty(),
+            live = if (here) true else null,
+            all = message.string("all") == "true",
+        )
+        if (!here) {
+            link.sendJson(buildJsonObject { put("t", "away") })
+            return
+        }
+        link.sendJson(liveMessage(ownRows()))
     }
 
     private fun answerPair(context: Context, link: Link, remote: String, message: JsonObject) {
@@ -575,12 +866,34 @@ object PairSync {
         val name = message.string("name") ?: peer.name
         // KMK (r90): one sync at a time; the other device is told and shows it. Both pressing Sync at once: one wins.
         val theirNonce = message.string("nonce")?.toLongOrNull()
-        val started = begin(peer.address)
-            ?: if (yieldTo(peer.secret, theirNonce, name)) begin(peer.address) else null
+        var yielded = false
+        var started = begin(peer.address)
+        if (started != null) {
+            // KMK (r91): both pressed Sync, the other's request won and this device's own sync ended first ("tie"):
+            // it agreed already, no prompt
+            if (takeTie(peer.secret)) {
+                yielded = true
+                log("Both devices pressed Sync: answering $name's")
+            }
+        } else if (yieldTo(peer.secret, theirNonce, name)) {
+            // KMK (r91): this device pressed Sync too, so it agreed already: no prompt
+            yielded = true
+            started = begin(peer.address)
+        }
         if (started == null) {
-            runCatching { bt.sendJson(buildJsonObject { put("t", "busy") }) }
+            // KMK (r91): "tie" = this device keeps its own sync; the other one answers it without a prompt (an
+            // older version ignores the key)
+            val tied = keepsOwn(peer.secret, theirNonce)
+            runCatching {
+                bt.sendJson(
+                    buildJsonObject {
+                        put("t", "busy")
+                        if (tied) put("tie", true)
+                    },
+                )
+            }
             // KMK (r90): both pressed Sync and this device's request won: not a sync "while busy"
-            if (keepsOwn(peer.secret, theirNonce)) {
+            if (tied) {
                 log("Both devices pressed Sync: keeping this device's")
             } else {
                 log("$name tried to sync while this device is busy syncing")
@@ -591,18 +904,31 @@ object PairSync {
         val job = currentCoroutineContext()[Job]
         synchronized(lock) { if (runId == id) syncJob = job }
         val startTime = System.currentTimeMillis()
-        // What the other device wants to receive, and what this one does
-        val theirs = PairSyncPreferences.parseSelection(message.string("selection").orEmpty())
-        val own = prefs.selection()
+        // KMK (r91): "ask" = r91: the request has its summary and this device's user accepts it first
+        val asks = message.string("ask") == "true"
         // KMK (r89): the packages the other device has (null from an older version), so only APKs it lacks are sent
         val otherHas = (message["have"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.content }?.toSet()
+        // KMK (r91): and the ones its repos offer (it's offered those from its repo instead)
+        val otherRepos = PairSyncData.decodePackages(message.string("repos"))
         // KMK (r90): no "transport" = an r89 device: Bluetooth only, the r89 payload
         val transportKey = message.string("transport")
         val modern = transportKey != null
+        // KMK (r91): what this device sends: its own tiles; an older device's "selection" is what it receives
+        val own = prefs.selection().normalized()
+        val sends = if (asks) {
+            own
+        } else {
+            own.within(PairSyncPreferences.parseSelection(message.string("selection").orEmpty()))
+        }
+        val vpn = PairSyncWifi.vpnOn(context) || message.string("vpn") == "true"
         try {
             session.add(bt)
             bt.counter = rate::add
+            if (!asks) log("$name is on an older version")
+            if (!ask(context, bt, id, peer, name, message, sends, asks, modern, yielded)) return
             log("$name is syncing with this device")
+            // KMK (r91): an r90 device that was asked silently can't say it stopped waiting: its link just drops
+            val oldPrompt = !asks && !yielded
             PairSyncData.cleanApks(offeredApks())
             var link = bt
             var via = SyncTransport.Bluetooth
@@ -612,22 +938,36 @@ object PairSync {
                 val transport = SyncTransport.of(transportKey)
                 // KMK (r90): "p2p": false = the other device can't use Wi-Fi Direct (no key: it may)
                 val p2p = message.string("p2p") != "false"
-                val chosen = offerWays(context, bt, transport, session, p2p) ?: throw IOException(noWay(transport))
+                // KMK (r91): a forced Wi-Fi Direct that can't run on either device says why (not the VPN)
+                val p2pProblem = when {
+                    transport != SyncTransport.WifiDirect -> null
+                    !p2p -> "Wi-Fi Direct can't run on $name"
+                    else -> PairSyncWifi.p2pUnavailable(context)?.let { "Wi-Fi Direct can't run on this device: $it" }
+                }
+                val offered = try {
+                    offerWays(context, bt, id, transport, session, p2p, vpn, name)
+                } catch (e: IOException) {
+                    if (oldPrompt && !session.isClosed) throw IOException("$name stopped waiting", e)
+                    throw e
+                }
+                val chosen = offered ?: throw IOException(noWay(transport, vpn, p2pProblem))
                 link = chosen.first
                 via = chosen.second
             }
             _status.update { it.copy(via = via) }
             if (via != SyncTransport.Bluetooth) log("Connected over ${via.label}")
             step("Getting ready…")
-            if (!modern && theirs.syncsApks) log("Sideloaded APKs are only sent to a device on r90 or newer")
+            if (!modern && sends.syncsApks) log("Sideloaded APKs are only sent to a device on r90 or newer")
             val mine = keepAlive(link, via != SyncTransport.Bluetooth) {
-                PairSyncData.export(theirs, own, otherHas, raw = modern)
+                PairSyncData.export(sends, otherHas, otherRepos, raw = modern)
             }
             sendExport(link, mine)
-            val received = receivePayload(link, own)
+            val received = receivePayload(link)
             log("Got ${size(rate.total)} in all from $name")
             step("Merging…")
-            val summary = PairSyncData.import(received, own, ::log).withSent(mine.summary)
+            val summary = PairSyncData.import(received, ::log).withSent(mine.summary)
+            // KMK (r91): what it really sent is what it sends, until the next live check
+            received.sentRows?.let { seen(peer.address, it, it.isEmpty(), live = null) }
             // KMK (r90): merged, so saved and shown first; "done" only tells the other device, which may have stopped
             // already (a failed "done" turned a finished sync into a failed one)
             val synced = peer.copy(lastSync = System.currentTimeMillis(), name = name)
@@ -662,24 +1002,174 @@ object PairSync {
     }
 
     /**
+     * KMK (r91): asks this device's user to accept [name]'s sync (60 s; [incoming] shows it). True = go on. An r91
+     * device ([asks]) is told "asking" first and "accepted" / "declined" / "timeout" after, and answers "start" (or
+     * "cancel" when it stopped); an older one isn't told (a decline answers an r90 device "busy"). After [yielded]
+     * (this device pressed Sync too) it's accepted at once.
+     */
+    private suspend fun ask(
+        context: Context,
+        bt: Link,
+        run: Int,
+        peer: Peer,
+        name: String,
+        message: JsonObject,
+        sends: SyncSelection,
+        asks: Boolean,
+        modern: Boolean,
+        yielded: Boolean,
+    ): Boolean {
+        // KMK (r91): this device's repo packages, read while the prompt shows (they go with "accepted")
+        val repos = if (asks) scope.async { reposText() } else null
+        try {
+            val youSend = runCatching { PairSyncData.summarizeSend(sends) }.getOrDefault(emptyList())
+            val theirRows = rowsIn(message)
+            theirRows?.let {
+                seen(
+                    peer.address,
+                    it,
+                    message.string("nothing") == "true" || it.isEmpty(),
+                    live = null,
+                    all = message.string("all") == "true",
+                )
+            }
+            if (yielded) {
+                if (!asks) return true
+                sendAccepted(context, bt, youSend, sends.isEverything, repos?.await())
+                return isStart(bt.receiveJson(), name, run, peer.address)
+            }
+            if (asks) bt.sendJson(buildJsonObject { put("t", "asking") })
+            val decision = CompletableDeferred<Int>()
+            val request = IncomingRequest(
+                id = synchronized(lock) { ++incomingIds },
+                peerAddress = peer.address,
+                peerName = name,
+                youGet = theirRows ?: listOf(SummaryRow("Unknown", "$name is on an older version")),
+                youSend = youSend,
+                sizeText = null,
+                via = if (modern) SyncTransport.of(message.string("transport")) else SyncTransport.Bluetooth,
+                expiresAt = System.currentTimeMillis() + ASK_TIMEOUT,
+            )
+            val asked = Pending(request, decision, run)
+            synchronized(lock) { pending = asked }
+            _incoming.value = request
+            step("$name wants to sync")
+            log("$name wants to sync: Accept or Decline")
+            // KMK (r91): the other device's next frame is "start" (after Accept) or "cancel"; a dropped link cancels
+            // too. Read apart, so the prompt closes as soon as it comes.
+            val reader = if (asks) scope.async { runCatching { bt.receiveJson() } } else null
+            reader?.invokeOnCompletion { decision.complete(CANCELLED) }
+            val answer = try {
+                withTimeoutOrNull(ASK_TIMEOUT) { decision.await() } ?: TIMEOUT
+            } finally {
+                synchronized(lock) { if (pending === asked) pending = null }
+                _incoming.update { if (it?.id == request.id) null else it }
+            }
+            when (answer) {
+                ACCEPT -> {
+                    if (reader == null) return true
+                    sendAccepted(context, bt, youSend, sends.isEverything, repos?.await())
+                    return isStart(reader.await().getOrNull(), name, run, peer.address)
+                }
+                CANCELLED -> {
+                    // KMK (r91): shown under the device too (the prompt just closed)
+                    failed(run, peer.address, "$name cancelled", "$name cancelled")
+                    return false
+                }
+                else -> {
+                    runCatching {
+                        if (asks) {
+                            bt.sendJson(buildJsonObject { put("t", if (answer == TIMEOUT) "timeout" else "declined") })
+                        } else if (modern) {
+                            bt.sendJson(buildJsonObject { put("t", "busy") })
+                        }
+                    }
+                    log(if (answer == TIMEOUT) "$name's sync wasn't answered in time" else "Declined $name's sync")
+                    return false
+                }
+            }
+        } finally {
+            repos?.cancel()
+        }
+    }
+
+    private fun sendAccepted(context: Context, bt: Link, youSend: List<SummaryRow>, all: Boolean, repos: String?) {
+        bt.sendJson(
+            buildJsonObject {
+                put("t", "accepted")
+                put("send", rowsJson(youSend))
+                put("nothing", youSend.isEmpty())
+                put("all", all)
+                repos?.let { put("repos", it) }
+                put("vpn", PairSyncWifi.vpnOn(context))
+            },
+        )
+    }
+
+    /** KMK (r91): the other device's answer to "accepted": "start" goes on; anything else (or nothing) cancelled */
+    private fun isStart(reply: JsonObject?, name: String, run: Int, address: String): Boolean {
+        if (reply?.string("t") == "start") return true
+        failed(run, address, "$name cancelled", "$name cancelled")
+        return false
+    }
+
+    /** KMK (r91): Accept / Decline on the prompt [id] ([incoming]) */
+    fun answerIncoming(id: Long, accept: Boolean) {
+        val asked = pending ?: return
+        if (asked.request.id != id) return
+        asked.decision.complete(if (accept) ACCEPT else DECLINE)
+    }
+
+    /** KMK (r91): the pop-up closed or went to the background: a prompt showing is declined (nobody can answer it) */
+    fun declineIncoming() {
+        pending?.let { answerIncoming(it.request.id, accept = false) }
+    }
+
+    /**
+     * KMK (r91): this device's repo packages for the other device; the repos' lists are read first only when they
+     * weren't yet, and waited for [REPO_WAIT] ms at most (the read goes on; what's in memory is sent)
+     */
+    private suspend fun reposText(): String? {
+        if (!runCatching { PairSyncData.repoListsLoaded() }.getOrDefault(true)) {
+            val read = scope.async { runCatching { PairSyncData.loadRepoLists() } }
+            withTimeoutOrNull(REPO_WAIT) { read.await() }
+        }
+        return runCatching { PairSyncData.encodePackages(PairSyncData.repoCopies()) }.getOrNull()
+    }
+
+    /**
      * KMK (r90): the waiting device offers the ways [transport] allows, one by one, until the other device takes one;
-     * the data link and the way, or null after telling it none is left
+     * the data link and the way, or null after telling it none is left. r91: a failed Wi-Fi Direct is tried once
+     * more with a new group; with a [vpn] on (either device), Auto tries Wi-Fi Direct once, then Bluetooth.
      */
     private suspend fun offerWays(
         context: Context,
         bt: Link,
+        run: Int,
         transport: SyncTransport,
         session: Session,
         p2p: Boolean,
+        vpn: Boolean,
+        name: String,
     ): Pair<Link, SyncTransport>? {
         val order = when (transport) {
-            SyncTransport.Auto -> listOf(SyncTransport.WifiDirect, SyncTransport.Wifi, SyncTransport.Bluetooth)
+            SyncTransport.Auto -> if (vpn) {
+                log("A VPN is on: not trying your Wi-Fi")
+                listOf(SyncTransport.WifiDirect, SyncTransport.Bluetooth)
+            } else {
+                listOf(SyncTransport.WifiDirect, SyncTransport.Wifi, SyncTransport.Bluetooth)
+            }
             SyncTransport.Wifi -> listOf(SyncTransport.Wifi)
             SyncTransport.WifiDirect -> listOf(SyncTransport.WifiDirect)
             SyncTransport.Bluetooth -> listOf(SyncTransport.Bluetooth)
         }.filter { p2p || it != SyncTransport.WifiDirect }
         // KMK (r90): a faster way failed already (the step says so)
         var tried = false
+        fun failedFast() {
+            tried = true
+            // KMK (r91): said once per sync
+            if (vpn) sayVpn(run, transport)
+        }
         for (way in order) {
             currentCoroutineContext().ensureActive()
             when (way) {
@@ -701,33 +1191,47 @@ object PairSync {
                             }
                         }
                         if (link != null) return link to SyncTransport.Wifi
-                        tried = true
+                        failedFast()
                     }
                 }
                 SyncTransport.WifiDirect -> {
-                    step("Starting Wi-Fi Direct…")
-                    val owner = session.add(PairSyncWifi.Owner(context))
-                    val group = owner.start(::log)
-                    val link = if (group != null) {
-                        // KMK (r90): on all addresses: the group's own one may not be set up yet ("hello" checks who
-                        // connected)
-                        offerSocket(bt, session) { port ->
-                            buildJsonObject {
-                                put("t", "p2p")
-                                put("ssid", group.ssid)
-                                put("pass", group.pass)
-                                put("port", port)
-                                group.address.hostAddress?.let { put("ip", it) }
+                    // KMK (r91): the first try often failed and the second worked: once more, from scratch
+                    val attempts = if (transport == SyncTransport.Auto && vpn) 1 else 2
+                    for (attempt in 1..attempts) {
+                        currentCoroutineContext().ensureActive()
+                        step(if (attempt == 1) "Starting Wi-Fi Direct…" else "Trying Wi-Fi Direct again…")
+                        val owner = session.add(PairSyncWifi.Owner(context))
+                        val group = owner.start(::log)
+                        val link = if (group != null) {
+                            // KMK (r90): on all addresses: the group's own one may not be set up yet ("hello" checks
+                            // who connected)
+                            offerSocket(bt, session) { port ->
+                                buildJsonObject {
+                                    put("t", "p2p")
+                                    put("ssid", group.ssid)
+                                    put("pass", group.pass)
+                                    put("port", port)
+                                    group.address.hostAddress?.let { put("ip", it) }
+                                }
                             }
+                        } else {
+                            log("Wi-Fi Direct: the group didn't start")
+                            null
                         }
-                    } else {
-                        null
+                        // The group stays up for the whole sync (the session removes it at the end)
+                        if (link != null) return link to SyncTransport.WifiDirect
+                        if (group != null) log("Wi-Fi Direct: $name couldn't join or connect")
+                        session.remove(owner)
+                        owner.close()
+                        if (attempt < attempts) {
+                            // Not again when it can't work here (permission, Wi-Fi off, ...)
+                            if (PairSyncWifi.p2pUnavailable(context) != null) break
+                            log("Trying Wi-Fi Direct once more")
+                            // The framework removes the group in the background; the next one waits for it too
+                            delay(1_500L)
+                        }
                     }
-                    // The group stays up for the whole sync (the session removes it at the end)
-                    if (link != null) return link to SyncTransport.WifiDirect
-                    session.remove(owner)
-                    owner.close()
-                    tried = true
+                    failedFast()
                 }
                 SyncTransport.Auto -> Unit
             }
@@ -833,11 +1337,11 @@ object PairSync {
     }
 
     /** Pairs with [device], which is showing [code] on its Sync pop-up (blocking; run from [scope]) */
-    private fun pair(context: Context, device: BluetoothDevice, code: String): Result<Peer> {
+    private suspend fun pair(context: Context, device: BluetoothDevice, code: String): Result<Peer> {
         val name = runCatching { device.name }.getOrNull() ?: device.address
         return try {
             log("Pairing with $name…")
-            connect(context, device, null).use { link ->
+            connectLocked(context, device, null).use { link ->
                 link.key = codeKey(code)
                 link.sendJson(
                     buildJsonObject {
@@ -870,9 +1374,10 @@ object PairSync {
     }
 
     /**
-     * Syncs with [peer], which needs its Sync pop-up open. KMK (r90): [selection] is what this device receives; the
-     * other device says what it wants, and this device's export is built for that after the other's arrives (so it
-     * also knows which sideloaded APKs the other device lacks). An all-off selection only sends.
+     * Syncs with [peer], which needs its Sync pop-up open. KMK (r91): [selection] is what this device SENDS; the
+     * other device's user accepts first ([Status.waitingForAccept] meanwhile). This device's export is built after the
+     * other's arrives (so it knows which sideloaded APKs the other device lacks, and has merged its repos). An all-off
+     * selection only gets.
      */
     fun sync(context: Context, peer: Peer, selection: SyncSelection) {
         val (id, session) = begin(peer.address) ?: return
@@ -886,17 +1391,23 @@ object PairSync {
             try {
                 PairSyncData.cleanOldApks()
                 PairSyncData.cleanApks(offeredApks())
+                val own = selection.normalized()
                 log(
-                    if (selection.isEmpty) {
-                        "Getting ready to sync with ${peer.name} (receiving nothing, only sending)…"
+                    if (own.isEmpty) {
+                        "Getting ready to sync with ${peer.name} (sending nothing, only getting)…"
                     } else {
-                        "Getting ready to sync with ${peer.name}, receiving ${selection.describe()}…"
+                        "Getting ready to sync with ${peer.name}, sending ${own.describe()}…"
                     },
                 )
+                // KMK (r91): for the other device's prompt, and the packages its repos offer here (it sends no APKs
+                // for them)
+                val sendRows = runCatching { PairSyncData.summarizeSend(own) }.getOrDefault(emptyList())
+                val myRepos = reposText()
+                val vpnHere = PairSyncWifi.vpnOn(context)
                 val device = adapter(context)?.getRemoteDevice(peer.address) ?: throw IOException("Bluetooth is off")
                 log("Connecting to ${peer.name}…")
                 step("Connecting…")
-                connect(context, device, session).use { bt ->
+                connectLocked(context, device, session).use { bt ->
                     val key = Base64.getDecoder().decode(peer.secret)
                     bt.key = key
                     // KMK (r90): an r89 device answers with its whole payload (up to r89's limit); offers are small
@@ -914,18 +1425,29 @@ object PairSync {
                         buildJsonObject {
                             put("t", "sync")
                             put("name", deviceName(context))
-                            put("selection", Json.encodeToString(SyncSelection.serializer(), selection))
+                            // KMK (r91): only for an r90 device, to which it's what this one receives: everything
+                            // (pressing Sync is the consent); r91 reads "send"
+                            put("selection", Json.encodeToString(SyncSelection.serializer(), SyncSelection()))
                             put("have", JsonArray(PairSyncData.installedPackages().map { JsonPrimitive(it) }))
                             put("transport", transport.key)
                             put("nonce", nonce.toString())
                             put("p2p", p2pWhy == null)
+                            // KMK (r91) -->
+                            put("ask", true)
+                            put("send", rowsJson(sendRows))
+                            put("nothing", sendRows.isEmpty())
+                            put("all", own.isEverything)
+                            myRepos?.let { put("repos", it) }
+                            put("vpn", vpnHere)
+                            // KMK <--
                         },
                     )
-                    step("Waiting for ${peer.name}…")
-                    var frame = try {
-                        bt.receive(progress(sending = false, minTotal = CONTROL_FRAME))
-                    } catch (_: IOException) {
-                        throw IOException("${peer.name} didn't answer. Open Sync on it, then try again")
+                    val answer = awaitAnswer(bt, id, peer)
+                    var frame = answer.frame
+                    val vpn = vpnHere || answer.theirVpn
+                    // KMK (r91): an r90 device offers a way at once (it doesn't ask its user)
+                    if (!answer.asked && offerIn(frame)?.string("t") != "busy") {
+                        log("${peer.name} is on an older version")
                     }
                     // KMK (r90): the offers, until one works; an r89 device sends its payload instead
                     var link = bt
@@ -949,8 +1471,20 @@ object PairSync {
                             bt.maxFrame = MAX_FRAME
                         }
                         val fast = when (offer.string("t")) {
-                            "busy" -> throw IOException("${peer.name} is busy syncing")
-                            "none" -> throw IOException(noWay(transport))
+                            "busy" -> if (offer.string("tie") == "true") {
+                                // KMK (r91): both pressed Sync and the other device keeps its own: its request
+                                // comes next and is answered here without a prompt (this user pressed Sync too)
+                                // (not when this sync was dropped already: it answered that request then)
+                                synchronized(lock) {
+                                    if (runId == id) tie = peer.secret to System.currentTimeMillis() + TIE_FOR
+                                }
+                                throw Tied()
+                            } else {
+                                throw IOException("${peer.name} is busy syncing")
+                            }
+                            "none" -> throw IOException(
+                                noWay(transport, vpn, p2pWhy?.let { "Wi-Fi Direct can't run on this device: $it" }),
+                            )
                             "bt" -> break
                             "lan" -> joinLan(offer, key, session, peer.name, failedWay)
                             "p2p" -> joinP2p(context, offer, key, session, peer.name)
@@ -970,36 +1504,57 @@ object PairSync {
                         frame = bt.receive()
                         if (fast == null) {
                             failedWay = failedWay ?: offerWay(offer)
-                            continue
-                        }
-                        // KMK (r90): "go" = the other device took the connection; else it offers the next way
-                        if (offerIn(frame)?.string("t") == "go") {
+                        } else if (offerIn(frame)?.string("t") == "go") {
+                            // KMK (r90): "go" = the other device took the connection; else it offers the next way
                             link = fast.link
                             via = fast.via
                             break
+                        } else {
+                            log("${peer.name} couldn't use the ${fast.via.label} connection")
+                            fast.close(session)
+                            failedWay = failedWay ?: fast.via
                         }
-                        log("${peer.name} couldn't use the ${fast.via.label} connection")
-                        fast.close(session)
-                        failedWay = failedWay ?: fast.via
+                        // KMK (r91): said once per sync
+                        if (vpn) sayVpn(id, transport)
                     }
                     synchronized(lock) { if (outgoing?.id == id) outgoing = null }
                     _status.update { it.copy(via = via) }
                     if (via != SyncTransport.Bluetooth) log("Connected over ${via.label}")
                     val received = if (legacyPayload != null) {
-                        readPayload(link, legacyPayload, selection)
+                        readPayload(link, legacyPayload)
                     } else {
-                        receivePayload(link, selection)
+                        receivePayload(link)
                     }
-                    // What the other device wants; an r89 device doesn't say, so this device's choice goes both ways
-                    val wants = received.wants ?: selection
+                    // KMK (r91): an r90 device's "wants" is what it receives: only that is sent (r89 doesn't say)
+                    val sends = if (answer.asked) own else received.wants?.let { own.within(it) } ?: own
                     step("Getting ready to send…")
                     val mine = keepAlive(link, via != SyncTransport.Bluetooth) {
-                        PairSyncData.export(wants, selection, received.installed, raw = modern)
+                        // KMK (r91): which extensions are sideloaded here, from before the merge below (after it, one
+                        // the other device's repos offer counted as from a repo: neither listed nor sent)
+                        val sideloadedBefore = if (sends.syncsApks) {
+                            runCatching {
+                                PairSyncData.loadRepoLists()
+                                PairSyncData.sideloaded()
+                            }.getOrNull()
+                        } else {
+                            null
+                        }
+                        // KMK (r91): the other device's repos first: an extension here they offer isn't sideloaded
+                        PairSyncData.mergeRepos(received, ::log)
+                        PairSyncData.export(
+                            sends,
+                            received.installed,
+                            answer.theirRepos,
+                            raw = modern,
+                            sideloadedBefore = sideloadedBefore,
+                        )
                     }
                     log("Got ${size(rate.total)} from ${peer.name}, sending ${size(mine.payload.size.toLong())}…")
                     sendExport(link, mine)
                     step("Merging…")
-                    val summary = PairSyncData.import(received, selection, ::log).withSent(mine.summary)
+                    val summary = PairSyncData.import(received, ::log).withSent(mine.summary)
+                    // KMK (r91): what it really sent is what it sends, until the next live check
+                    received.sentRows?.let { seen(peer.address, it, it.isEmpty(), live = null) }
                     // KMK (r90): merged, so saved and shown first; "done" only tells the other device, which may have
                     // stopped already (a failed "done" turned a finished sync into a failed one)
                     val synced = peer.copy(lastSync = System.currentTimeMillis())
@@ -1025,6 +1580,8 @@ object PairSync {
                 }
             } catch (e: CancellationException) {
                 throw e
+            } catch (_: Tied) {
+                if (runId == id) log("Both devices pressed Sync: ${peer.name}'s goes on")
             } catch (e: Throwable) {
                 val why = e.message ?: e::class.simpleName.orEmpty()
                 failed(id, peer.address, "Sync stopped: $why", why)
@@ -1037,6 +1594,96 @@ object PairSync {
         job.start()
     }
 
+    /**
+     * KMK (r91): the waiting device's answer to the request: [frame] is its first frame after it (an offer, or an r89
+     * payload); [asked] = it's r91 and its user accepted; [theirRepos] the packages its repos offer
+     */
+    private class Answer(
+        val frame: ByteArray,
+        val asked: Boolean,
+        val theirRepos: Map<String, List<RepoCopy>>?,
+        val theirVpn: Boolean,
+    )
+
+    /**
+     * KMK (r91): waits for the other device's user to Accept (up to [ANSWER_WAIT]; Stop sends "cancel" meanwhile).
+     * Declined or not answered throws, with the message shown under the device.
+     */
+    private fun awaitAnswer(bt: Link, id: Int, peer: Peer): Answer {
+        synchronized(lock) { if (runId == id) waitLink = bt }
+        step("Waiting for ${peer.name}…")
+        val gaveUp = AtomicBoolean(false)
+        val watchdog = scope.launch {
+            delay(ANSWER_WAIT)
+            gaveUp.set(true)
+            runCatching { bt.close() }
+        }
+        var asked = false
+        fun next(): ByteArray = try {
+            bt.receive(progress(sending = false, minTotal = CONTROL_FRAME))
+        } catch (e: IOException) {
+            when {
+                gaveUp.get() -> throw IOException("${peer.name} didn't answer")
+                asked -> throw e
+                else -> throw IOException("${peer.name} didn't answer. Open Sync on it, then try again")
+            }
+        }
+        try {
+            var frame = next()
+            while (true) {
+                val reply = answerIn(frame) ?: return Answer(frame, asked = false, theirRepos = null, theirVpn = false)
+                when (reply.string("t")) {
+                    "asking" -> {
+                        asked = true
+                        synchronized(lock) { if (runId == id) _status.update { it.copy(waitingForAccept = true) } }
+                        step("Waiting for ${peer.name} to accept…")
+                    }
+                    "accepted" -> {
+                        watchdog.cancel()
+                        rowsIn(reply)?.let {
+                            seen(
+                                peer.address,
+                                it,
+                                reply.string("nothing") == "true",
+                                live = null,
+                                all = reply.string("all") == "true",
+                            )
+                        }
+                        synchronized(lock) {
+                            if (waitLink === bt) waitLink = null
+                            if (runId == id) _status.update { it.copy(waitingForAccept = false) }
+                        }
+                        log("${peer.name} accepted")
+                        bt.sendJson(buildJsonObject { put("t", "start") })
+                        step("Waiting for ${peer.name}…")
+                        return Answer(
+                            frame = next(),
+                            asked = true,
+                            theirRepos = PairSyncData.decodePackages(reply.string("repos")),
+                            theirVpn = reply.string("vpn") == "true",
+                        )
+                    }
+                    "declined" -> throw IOException("${peer.name} declined")
+                    else -> throw IOException("${peer.name} didn't answer")
+                }
+                frame = next()
+            }
+        } finally {
+            watchdog.cancel()
+            synchronized(lock) {
+                if (waitLink === bt) waitLink = null
+                if (runId == id) _status.update { it.copy(waitingForAccept = false) }
+            }
+        }
+    }
+
+    /** KMK (r91): an r91 waiting device's answer to the request ("asking", "accepted", ...), or null */
+    private fun answerIn(frame: ByteArray): JsonObject? {
+        if (frame.isEmpty() || frame[0] != '{'.code.toByte()) return null
+        val message = runCatching { parse(frame) }.getOrNull() ?: return null
+        return message.takeIf { m -> m.string("t")?.let { it in ANSWERS } == true }
+    }
+
     /** KMK (r90): an offer (or refusal) from an r90 device, or null when [frame] is an r89 payload (gzip) */
     private fun offerIn(frame: ByteArray): JsonObject? {
         if (frame.isEmpty() || frame[0] != '{'.code.toByte()) return null
@@ -1044,9 +1691,13 @@ object PairSync {
         return message.takeIf { m -> m.string("t")?.let { it in OFFERS } == true }
     }
 
-    private fun noWay(transport: SyncTransport): String = when (transport) {
-        SyncTransport.WifiDirect -> "Couldn't connect over Wi-Fi Direct"
-        SyncTransport.Wifi -> "The two devices aren't on the same Wi-Fi"
+    private fun noWay(transport: SyncTransport, vpn: Boolean, p2pProblem: String? = null): String = when {
+        // KMK (r91): the real reason when Wi-Fi Direct can't run on a device (not the VPN)
+        transport == SyncTransport.WifiDirect && p2pProblem != null -> p2pProblem
+        // KMK (r91): the likely reason, said plainly
+        vpn && (transport == SyncTransport.WifiDirect || transport == SyncTransport.Wifi) -> PairSyncWifi.VPN_TEXT
+        transport == SyncTransport.WifiDirect -> "Couldn't connect over Wi-Fi Direct"
+        transport == SyncTransport.Wifi -> "The two devices aren't on the same Wi-Fi"
         else -> "Couldn't connect to the other device"
     }
 
@@ -1119,7 +1770,14 @@ object PairSync {
         }
         val link = socket?.let { fastLink(it, key, session) }
         if (link == null) {
-            if (owner != null) log("Couldn't reach $name over Wi-Fi Direct")
+            // KMK (r91): which step failed
+            log(
+                if (owner == null) {
+                    "Wi-Fi Direct: couldn't join $name's group"
+                } else {
+                    "Wi-Fi Direct: couldn't connect to $name"
+                },
+            )
             session.remove(client)
             client.close()
             return null
@@ -1200,19 +1858,20 @@ object PairSync {
         frame.size < 64 && frame.firstOrNull() == '{'.code.toByte() &&
             runCatching { parse(frame).string("t") }.getOrNull() == "wait"
 
-    private fun receivePayload(link: Link, own: SyncSelection): ReceivedPayload {
+    private fun receivePayload(link: Link): ReceivedPayload {
         // KMK (r90): the bar ignores the tiny keep-alive frames (they'd show a full bar while nothing moves)
         val progress = progress(sending = false, minTotal = 1024L)
         var frame = link.receive(progress)
         while (isWait(frame)) frame = link.receive(progress)
-        return readPayload(link, frame, own)
+        return readPayload(link, frame)
     }
 
     /**
      * KMK (r90): decodes [payload] and reads the frames it announces: the backup, then each APK, saved to the cache
-     * when [own] takes APKs and it's within the limits (else read and dropped)
+     * when it's within the limits and not installed here (else read and dropped). r91: this device accepted the sync,
+     * so its own tiles don't filter what comes.
      */
-    private fun readPayload(link: Link, payload: ByteArray, own: SyncSelection): ReceivedPayload {
+    private fun readPayload(link: Link, payload: ByteArray): ReceivedPayload {
         val received = PairSyncData.decode(payload)
         val announced = received.payload
         if (announced.backupFrame) received.backupBytes = link.receive(progress(sending = false))
@@ -1223,7 +1882,7 @@ object PairSync {
             announced.apkFiles.forEach { info ->
                 val length = link.readLength()
                 val data = length - OVERHEAD
-                val take = own.syncsApks && info.pkgName !in have && data > 0 && data.toLong() == info.size &&
+                val take = info.pkgName !in have && data > 0 && data.toLong() == info.size &&
                     data <= PairSyncData.MAX_APK && total + data <= PairSyncData.MAX_APKS
                 if (!take) {
                     link.skip(length)
@@ -1253,21 +1912,369 @@ object PairSync {
      * sync this device is answering (its job is cancelled, so the merge stops between titles).
      */
     fun stopSync() {
-        val (stopped, job) = synchronized(lock) {
+        // KMK (r91): Stop while this device is asked to accept = Decline
+        val asked = pending
+        if (asked != null && asked.run == runId) {
+            answerIncoming(asked.request.id, accept = false)
+            return
+        }
+        val (stopped, job, waiting) = synchronized(lock) {
             // KMK (r90): pairing sets busy too, but there's no sync to stop then
             if (!_status.value.busy || _pairing.value) return
             runId++
-            val running = session to syncJob
+            val running = Triple(session, syncJob, waitLink)
             session = null
             syncJob = null
             outgoing = null
+            waitLink = null
             idle()
             running
         }
-        stopped?.close()
-        job?.cancel()
         log("Sync stopped")
+        if (waiting == null) {
+            stopped?.close()
+            job?.cancel()
+            return
+        }
+        // KMK (r91): waiting for the other device's Accept: its prompt closes ("<name> cancelled"), then all is closed
+        scope.launch {
+            runCatching { waiting.sendJson(buildJsonObject { put("t", "cancel") }) }
+            stopped?.close()
+            job?.cancel()
+        }
     }
+
+    // Live preview (KMK (r91)): while the pop-up is open, each paired device is checked in with over Bluetooth
+
+    /**
+     * KMK (r91): the pop-up opened (or came back from the background): checks in with every paired device now and
+     * every [LIVE_EVERY] ms (plus a little at random). Already live (a rotation, a second call): nothing changes.
+     */
+    fun goLive(context: Context) {
+        val app = context.applicationContext
+        liveContext = app
+        synchronized(lock) {
+            if (liveJob?.isActive == true) return
+            val gen = ++liveGen
+            liveJob = scope.launch {
+                // This device's summary first, so check-ins are answered from it
+                ownRows()
+                // The repos' lists, when they weren't read yet (the APK count needs them); live devices hear after
+                scope.launch { warmRepoLists(app) }
+                while (true) {
+                    pingAll(app, gen)
+                    delay(LIVE_EVERY + random.nextInt(LIVE_JITTER))
+                }
+            }
+        }
+    }
+
+    /**
+     * KMK (r91): the pop-up closed or went to the background: no more check-ins, no device counts as live, and the
+     * live ones are told (so their "Live" goes off at once)
+     */
+    fun leaveLive() {
+        synchronized(lock) {
+            liveGen++
+            liveJob?.cancel()
+            liveJob = null
+            pushJob?.cancel()
+            pushJob = null
+        }
+        val live = _peerViews.value.values.filter { it.live }.map { it.address }.toSet()
+        lastHeard.clear()
+        _peerViews.update { views -> views.mapValues { it.value.copy(live = false) } }
+        val app = liveContext ?: return
+        if (live.isEmpty()) return
+        val peers = prefs.peers().filter { it.address in live }
+        scope.launch { peers.forEach { peer -> launch { sayLeaving(app, peer) } } }
+    }
+
+    /** KMK (r91): this device's tiles changed: live devices hear it (once the taps stop for [PUSH_DELAY] ms) */
+    fun selectionChanged(context: Context) {
+        val app = context.applicationContext
+        clearOwnRows()
+        pushJob?.cancel()
+        pushJob = null
+        if (liveJob == null) return
+        pushJob = scope.launch {
+            delay(PUSH_DELAY)
+            clearOwnRows()
+            val gen = liveGen
+            val live = _peerViews.value.values.filter { it.live }.map { it.address }.toSet()
+            if (live.isEmpty()) return@launch
+            pingAll(app, gen, prefs.peers().filter { it.address in live }, skipRecent = false)
+        }
+    }
+
+    /** KMK (r91): reads the repos' lists once when they weren't yet, then this device's summary again */
+    private suspend fun warmRepoLists(context: Context) {
+        if (runCatching { PairSyncData.repoListsLoaded() }.getOrDefault(true)) return
+        runCatching { PairSyncData.loadRepoLists() }
+        if (liveJob != null) selectionChanged(context) else clearOwnRows()
+    }
+
+    /**
+     * KMK (r91): checks in with [peers]; with [skipRecent], not with one heard from in the last [LIVE_EVERY] ms
+     * (its own check-in here already swapped both summaries)
+     */
+    private suspend fun pingAll(
+        context: Context,
+        gen: Int,
+        peers: List<Peer> = prefs.peers(),
+        skipRecent: Boolean = true,
+    ) {
+        val now = System.currentTimeMillis()
+        coroutineScope {
+            peers.forEach { peer ->
+                if (skipRecent && now - (lastHeard[peer.address] ?: 0L) in 0L until LIVE_EVERY) return@forEach
+                launch {
+                    // KMK (r91): not when its own check-in here just worked (two connects at once can fail)
+                    if (ping(context, peer, gen) == false && gen == liveGen && !heardJustNow(peer.address)) {
+                        notLive(peer.address)
+                    }
+                }
+            }
+        }
+    }
+
+    /** KMK (r91): the device at [address] checked in live within the last [LIVE_TIMEOUT] ms */
+    private fun heardJustNow(address: String): Boolean =
+        System.currentTimeMillis() - (lastHeard[address] ?: 0L) in 0L until LIVE_TIMEOUT
+
+    /** KMK (r91): closes the check-ins' connections (a sync or pairing is about to connect) */
+    private fun closePings() {
+        pingSockets.toList().forEach { runCatching { it.close() } }
+    }
+
+    /** KMK (r91): [connect], one outgoing connect at a time, after the check-ins' connections are closed */
+    private suspend fun connectLocked(context: Context, device: BluetoothDevice, session: Session?): Link {
+        closePings()
+        return btConnect.withLock { connect(context, device, session) }
+    }
+
+    /**
+     * KMK (r91): one check-in with [peer]: this device's summary goes, its summary comes back (within
+     * [LIVE_TIMEOUT]). True when it answered, false when it didn't (or Bluetooth is off: nobody is live then), null
+     * when it wasn't tried (scanning, a sync or pairing running here, or the pop-up closed meanwhile).
+     */
+    private suspend fun ping(context: Context, peer: Peer, gen: Int): Boolean? {
+        if (_status.value.busy) return null
+        val adapter = adapter(context) ?: return false
+        if (!runCatching { adapter.isEnabled }.getOrDefault(false)) return false
+        // Connecting stops a scan (the Pair page's), so none then
+        if (runCatching { adapter.isDiscovering }.getOrDefault(true)) return null
+        val own = ownRows()
+        val socket = runCatching {
+            adapter.getRemoteDevice(peer.address).createInsecureRfcommSocketToServiceRecord(SERVICE_UUID)
+        }.getOrNull() ?: return false
+        pingSockets.add(socket)
+        // Bluetooth has no time-outs: closing the socket ends a connect or read that takes too long
+        val watchdog = scope.launch {
+            delay(LIVE_TIMEOUT)
+            runCatching { socket.close() }
+        }
+        return try {
+            val tried = btConnect.withLock {
+                if (_status.value.busy || gen != liveGen) {
+                    false
+                } else {
+                    socket.connect()
+                    true
+                }
+            }
+            if (!tried) return null
+            val link = Link.bluetooth(socket)
+            link.key = Base64.getDecoder().decode(peer.secret)
+            link.maxFrame = CONTROL_FRAME.toInt()
+            link.sendJson(liveMessage(own))
+            val reply = link.receiveJson()
+            if (reply.string("t") == "live") {
+                // The pop-up closed meanwhile: not marked live
+                if (gen != liveGen) return null
+                val theirs = rowsIn(reply).orEmpty()
+                seen(
+                    peer.address,
+                    theirs,
+                    reply.string("nothing") == "true" || theirs.isEmpty(),
+                    live = true,
+                    all = reply.string("all") == "true",
+                )
+                true
+            } else {
+                false
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            false
+        } finally {
+            watchdog.cancel()
+            pingSockets.remove(socket)
+            runCatching { socket.close() }
+        }
+    }
+
+    /** KMK (r91): tells [peer] this pop-up closed ({"t":"leaving"}), so its "Live" for this device goes off */
+    private suspend fun sayLeaving(context: Context, peer: Peer) {
+        if (_status.value.busy) return
+        val adapter = adapter(context)?.takeIf { runCatching { it.isEnabled }.getOrDefault(false) } ?: return
+        val socket = runCatching {
+            adapter.getRemoteDevice(peer.address).createInsecureRfcommSocketToServiceRecord(SERVICE_UUID)
+        }.getOrNull() ?: return
+        pingSockets.add(socket)
+        val watchdog = scope.launch {
+            delay(LIVE_TIMEOUT)
+            runCatching { socket.close() }
+        }
+        try {
+            val tried = btConnect.withLock {
+                if (_status.value.busy) {
+                    false
+                } else {
+                    socket.connect()
+                    true
+                }
+            }
+            if (!tried) return
+            val link = Link.bluetooth(socket)
+            link.key = Base64.getDecoder().decode(peer.secret)
+            link.maxFrame = CONTROL_FRAME.toInt()
+            link.sendJson(buildJsonObject { put("t", "leaving") })
+            // The other device closes the connection once it read it (the watchdog ends the wait otherwise)
+            runCatching { link.readLength() }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // Nothing to do: its check-in finds this device gone soon anyway
+        } finally {
+            watchdog.cancel()
+            pingSockets.remove(socket)
+            runCatching { socket.close() }
+        }
+    }
+
+    private fun liveMessage(own: OwnSend): JsonObject = buildJsonObject {
+        put("t", "live")
+        put("send", rowsJson(own.rows))
+        put("nothing", own.rows.isEmpty())
+        put("all", own.all)
+    }
+
+    /** KMK (r91): forgets this device's own summary (the tiles changed, a sync finished, the repos' lists came) */
+    private fun clearOwnRows() {
+        synchronized(lock) {
+            ownVersion++
+            ownSend = null
+        }
+    }
+
+    private suspend fun readOwnRows(): OwnSend {
+        val version = ownVersion
+        val selection = prefs.selection()
+        val rows = runCatching { PairSyncData.summarizeSend(selection) }.getOrDefault(emptyList())
+        val fresh = OwnSend(rows, selection.isEverything, System.currentTimeMillis())
+        synchronized(lock) { if (ownVersion == version) ownSend = fresh }
+        return fresh
+    }
+
+    /**
+     * KMK (r91): this device's own summary. Kept until the tiles change or a sync finishes; one older than
+     * [OWN_ROWS_FOR] ms still answers at once and is read again in the background (a big library took longer than a
+     * check-in may).
+     */
+    private suspend fun ownRows(): OwnSend {
+        val cached = ownSend ?: return readOwnRows()
+        val age = System.currentTimeMillis() - cached.at
+        if (age !in 0L until OWN_ROWS_FOR && ownRefreshing.compareAndSet(false, true)) {
+            scope.launch {
+                try {
+                    readOwnRows()
+                } finally {
+                    ownRefreshing.set(false)
+                }
+            }
+        }
+        return cached
+    }
+
+    /**
+     * KMK (r91): notes what the device at [address] sends ([rows], null = unchanged), whether it's [live] and whether
+     * it sends everything ([all]) (null = unchanged); a new summary is saved
+     */
+    private fun seen(
+        address: String,
+        rows: List<SummaryRow>?,
+        nothing: Boolean?,
+        live: Boolean?,
+        all: Boolean? = null,
+    ) {
+        val now = System.currentTimeMillis()
+        if (live == true) lastHeard[address] = now
+        _peerViews.update { views ->
+            val old = views[address]
+            val view = PeerView(
+                address = address,
+                live = live ?: old?.live ?: false,
+                theirSend = rows ?: old?.theirSend,
+                theirSendsNothing = if (rows != null) nothing ?: rows.isEmpty() else old?.theirSendsNothing,
+                asOf = if (rows != null) now else old?.asOf ?: 0L,
+                theirSendsEverything = all ?: old?.theirSendsEverything ?: false,
+            )
+            views + (address to view)
+        }
+        if (rows != null) saveViews()
+    }
+
+    private fun notLive(address: String) {
+        _peerViews.update { views -> views[address]?.let { views + (address to it.copy(live = false)) } ?: views }
+    }
+
+    private fun saveViews() {
+        runCatching {
+            prefs.saveViews(
+                _peerViews.value.values.mapNotNull { view ->
+                    view.theirSend?.let {
+                        StoredView(
+                            view.address,
+                            it,
+                            view.theirSendsNothing == true,
+                            view.asOf,
+                            view.theirSendsEverything,
+                        )
+                    }
+                },
+            )
+        }
+    }
+
+    private fun loadViews(): Map<String, PeerView> = prefs.views().associate {
+        it.address to PeerView(
+            address = it.address,
+            live = false,
+            theirSend = it.send,
+            theirSendsNothing = it.nothing,
+            asOf = it.asOf,
+            theirSendsEverything = it.all,
+        )
+    }
+
+    private fun rowsJson(rows: List<SummaryRow>): JsonArray = JsonArray(
+        rows.map {
+            buildJsonObject {
+                put("title", it.title)
+                put("detail", it.detail)
+            }
+        },
+    )
+
+    /** KMK (r91): the summary rows in [message] ("send"), or null when it has none (an older version) */
+    private fun rowsIn(message: JsonObject): List<SummaryRow>? =
+        (message["send"] as? JsonArray)?.mapNotNull { item ->
+            val row = item as? JsonObject ?: return@mapNotNull null
+            val title = row.string("title") ?: return@mapNotNull null
+            SummaryRow(title, row.string("detail").orEmpty())
+        }
 
     private fun connect(context: Context, device: BluetoothDevice, session: Session?): Link {
         runCatching { adapter(context)?.cancelDiscovery() }

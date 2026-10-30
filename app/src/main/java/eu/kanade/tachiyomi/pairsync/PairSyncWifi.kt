@@ -4,6 +4,8 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.wifi.WifiManager
 import android.net.wifi.p2p.WifiP2pConfig
 import android.net.wifi.p2p.WifiP2pGroup
@@ -79,6 +81,22 @@ internal object PairSyncWifi {
             else -> null
         }
     }.getOrElse { "it couldn't be checked" }
+
+    /**
+     * KMK (r91): the message when a Wi-Fi way failed with a VPN on (with "block connections without VPN", Android
+     * sends the connection into the VPN, so it never reaches the other device). Nothing tries to get around it.
+     */
+    const val VPN_TEXT = "A VPN is on and blocks Wi-Fi sync. Use Bluetooth or Auto, or turn the VPN off for the sync."
+
+    /** KMK (r91): the same in Auto, which goes on over Bluetooth by itself */
+    const val VPN_AUTO_TEXT = "A VPN is on and blocks Wi-Fi sync; using Bluetooth"
+
+    /** KMK (r91): whether a VPN carries this device's traffic now */
+    fun vpnOn(context: Context): Boolean = runCatching {
+        val manager = context.getSystemService(ConnectivityManager::class.java) ?: return@runCatching false
+        val network = manager.activeNetwork ?: return@runCatching false
+        manager.getNetworkCapabilities(network)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+    }.getOrDefault(false)
 
     private fun randomText(length: Int): String =
         buildString { repeat(length) { append(ALNUM[random.nextInt(ALNUM.length)]) } }

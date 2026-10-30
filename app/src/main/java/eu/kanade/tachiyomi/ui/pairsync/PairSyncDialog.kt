@@ -6,6 +6,7 @@ import android.app.Activity
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.content.BroadcastReceiver
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -38,9 +39,13 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -78,7 +83,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MultiChoiceSegmentedButtonRow
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.Surface
@@ -91,26 +95,32 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
@@ -137,6 +147,7 @@ import eu.kanade.tachiyomi.pairsync.SyncTransport
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.presentation.core.util.collectAsState as collectPreference
@@ -226,7 +237,16 @@ fun PairSyncDialog(onDismissRequest: () -> Unit) {
     val adapter = remember { PairSync.adapter(context) }
     val prefs = PairSyncPreferences.instance
     val selectionJson by prefs.selectionJson.collectPreference()
-    val selection = remember(selectionJson) { PairSyncPreferences.parseSelection(selectionJson) }
+    // KMK (r91): the tiles are what this device sends. An empty category set (an old saved one) means all, as in the
+    // core: the pickers turn the tile off instead of storing one
+    val selection = remember(selectionJson) {
+        PairSyncPreferences.parseSelection(selectionJson).let {
+            it.copy(
+                mangaCategories = it.mangaCategories?.takeIf { set -> set.isNotEmpty() },
+                animeCategories = it.animeCategories?.takeIf { set -> set.isNotEmpty() },
+            )
+        }
+    }
 
     val transportKey by prefs.transport.collectPreference()
     val transport = SyncTransport.of(transportKey)
@@ -321,11 +341,33 @@ fun PairSyncDialog(onDismissRequest: () -> Unit) {
         onDispose { runCatching { context.unregisterReceiver(receiver) } }
     }
     val ready = adapter != null && granted && enabled
+    // KMK (r91): in the background nobody sees the pop-up (it kept checking in, and a prompt went unseen for 60 s):
+    // not live, and a prompt showing is declined; back in front, live again. Not on a rotation.
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
+        if (activity?.isChangingConfigurations != true) {
+            PairSync.leaveLive()
+            PairSync.declineIncoming()
+        }
+    }
+    LifecycleEventEffect(Lifecycle.Event.ON_START) {
+        if (ready) PairSync.goLive(context.applicationContext)
+    }
+    // KMK (r91): the pop-up really closed: a prompt showing is declined (the other device waited the full minute)
+    DisposableEffect(Unit) {
+        onDispose { if (activity?.isChangingConfigurations != true) PairSync.declineIncoming() }
+    }
     DisposableEffect(ready) {
-        if (ready) PairSync.startListening(context.applicationContext)
+        if (ready) {
+            PairSync.startListening(context.applicationContext)
+            // KMK (r91): check in with the paired devices, so both pop-ups show each other's choices live
+            PairSync.goLive(context.applicationContext)
+        }
         onDispose {
             // KMK (r90): a rotation keeps listening (and a code showing); a real close or Bluetooth off stops it
-            if (activity?.isChangingConfigurations != true) PairSync.stopListening()
+            if (activity?.isChangingConfigurations != true) {
+                PairSync.stopListening()
+                PairSync.leaveLive()
+            }
         }
     }
     // KMK (r90): the waiting device makes the Wi-Fi Direct group, so it's asked here too (once per opening)
@@ -339,18 +381,29 @@ fun PairSyncDialog(onDismissRequest: () -> Unit) {
         }
     }
 
-    val mangaCategories by produceState(emptyList<String>()) {
+    // KMK (r91): null until read, so a pick isn't checked against a list that isn't there yet
+    val mangaCategoryNames by produceState<List<String>?>(null) {
         value = withContext(Dispatchers.IO) {
             runCatching { Injekt.get<GetCategories>().await().map { it.name } }.getOrDefault(emptyList())
         }
     }
-    val animeCategories by produceState(emptyList<String>()) {
+    val animeCategoryNames by produceState<List<String>?>(null) {
         value = withContext(Dispatchers.IO) {
             runCatching { Injekt.get<AnimeRepository>().getCategories().map { it.name } }.getOrDefault(emptyList())
         }
     }
+    val mangaCategories = mangaCategoryNames.orEmpty()
+    val animeCategories = animeCategoryNames.orEmpty()
     val sources by remember { Injekt.get<JsSourceManager>().savedFlow }.collectAsState()
-    val onChange: (SyncSelection) -> Unit = prefs::setSelection
+    // KMK (r91): live peers hear about the change (the core waits a moment, so a run of taps is sent once)
+    val onChange: (SyncSelection) -> Unit = {
+        prefs.setSelection(it)
+        PairSync.selectionChanged(context.applicationContext)
+    }
+    val incoming by PairSync.incoming.collectAsState()
+    // KMK (r91): the extension offers hidden with their ×, by the result's time (the card's × is kept in the core's
+    // result, so it sticks when the pop-up opens again)
+    var hiddenOffers by rememberSaveable { mutableStateOf(0L) }
 
     val maxHeight = (LocalConfiguration.current.screenHeightDp * 0.9f).dp
     Dialog(
@@ -385,8 +438,8 @@ fun PairSyncDialog(onDismissRequest: () -> Unit) {
                             granted = granted,
                             selection = selection,
                             transport = transport,
-                            mangaCategories = mangaCategories,
-                            animeCategories = animeCategories,
+                            mangaCategories = mangaCategoryNames,
+                            animeCategories = animeCategoryNames,
                             onTransport = { prefs.transport.set(it.key) },
                             onSync = startSync,
                             onAllow = {
@@ -404,33 +457,55 @@ fun PairSyncDialog(onDismissRequest: () -> Unit) {
                             onChange = onChange,
                             onOpen = goTo,
                             onClose = onDismissRequest,
+                            hiddenOffers = hiddenOffers,
+                            onHideOffers = { hiddenOffers = it },
                         )
                         Page.Anime -> {
                             PageTitle("Anime", back)
                             LibraryPage(
                                 icon = Icons.Outlined.Movie,
-                                title = "Sync anime library",
+                                title = "Send anime library",
                                 checked = selection.animeLibrary,
                                 onCheckedChange = { onChange(selection.copy(animeLibrary = it)) },
                                 categories = animeCategories,
+                                loaded = animeCategoryNames != null,
                                 picked = selection.animeCategories,
-                                onPick = { onChange(selection.copy(animeCategories = it)) },
-                                note = "Seen episodes and where you stopped come to this device. Anime this " +
-                                    "device doesn't have goes into the same category here.",
+                                // KMK (r91): no category picked turns the tile off (an empty set is never stored)
+                                onPick = {
+                                    onChange(
+                                        if (it != null && it.isEmpty()) {
+                                            selection.copy(animeLibrary = false)
+                                        } else {
+                                            selection.copy(animeCategories = it)
+                                        },
+                                    )
+                                },
+                                note = "This device's anime in the picked categories, with seen episodes and " +
+                                    "where you stopped. The other device is asked to accept first.",
                             )
                         }
                         Page.Manga -> {
                             PageTitle("Manga", back)
                             LibraryPage(
                                 icon = Icons.Outlined.CollectionsBookmark,
-                                title = "Sync manga library",
+                                title = "Send manga library",
                                 checked = selection.mangaLibrary,
                                 onCheckedChange = { onChange(selection.copy(mangaLibrary = it)) },
                                 categories = mangaCategories,
+                                loaded = mangaCategoryNames != null,
                                 picked = selection.mangaCategories,
-                                onPick = { onChange(selection.copy(mangaCategories = it)) },
-                                note = "Read chapters, bookmarks and page progress come to this device. Progress " +
-                                    "keeps whichever device is further.",
+                                // KMK (r91): no category picked turns the tile off (an empty set is never stored)
+                                onPick = {
+                                    onChange(
+                                        if (it != null && it.isEmpty()) {
+                                            selection.copy(mangaLibrary = false)
+                                        } else {
+                                            selection.copy(mangaCategories = it)
+                                        },
+                                    )
+                                },
+                                note = "This device's manga in the picked categories, with read chapters, " +
+                                    "bookmarks and page progress (progress keeps whichever device is further).",
                             )
                         }
                         Page.History -> {
@@ -476,7 +551,7 @@ fun PairSyncDialog(onDismissRequest: () -> Unit) {
                                 if (sources.isEmpty()) {
                                     "No sources made in the Code editor yet."
                                 } else {
-                                    "Only sources picked here are sent."
+                                    "Only sources picked here are sent, and only new or newer ones."
                                 },
                             )
                         }
@@ -500,6 +575,120 @@ fun PairSyncDialog(onDismissRequest: () -> Unit) {
                 }
             }
         }
+        // KMK (r91): the other device asks before it syncs: shown over any page; back or Decline declines
+        incoming?.let { request ->
+            key(request.id) {
+                IncomingPrompt(
+                    peerName = request.peerName,
+                    youGet = request.youGet.map { it.title to it.detail },
+                    youSend = request.youSend.map { it.title to it.detail },
+                    sizeText = request.sizeText,
+                    via = request.via,
+                    expiresAt = request.expiresAt,
+                    onAnswer = { accept -> PairSync.answerIncoming(request.id, accept) },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * KMK (r91): "Tablet wants to send you": what comes here ([youGet]) and, for a two-way sync, what goes back
+ * ([youSend]), each as title to detail. Decline, back or the 60 s running out all decline; a tap outside does nothing
+ * (a stray tap declined).
+ */
+@Composable
+private fun IncomingPrompt(
+    peerName: String,
+    youGet: List<Pair<String, String>>,
+    youSend: List<Pair<String, String>>,
+    sizeText: String?,
+    via: SyncTransport?,
+    expiresAt: Long,
+    onAnswer: (Boolean) -> Unit,
+) {
+    val left by produceState(((expiresAt - System.currentTimeMillis()) / 1000L).coerceIn(0L, 60L), expiresAt) {
+        while (true) {
+            value = ((expiresAt - System.currentTimeMillis() + 999L) / 1000L).coerceIn(0L, 60L)
+            delay(1000L)
+        }
+    }
+    AlertDialog(
+        onDismissRequest = { onAnswer(false) },
+        properties = DialogProperties(dismissOnClickOutside = false),
+        title = {
+            Text(
+                if (youSend.isEmpty()) "$peerName wants to send you" else "$peerName wants to sync",
+                style = MaterialTheme.typography.titleLarge,
+            )
+        },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+            ) {
+                if (youGet.isEmpty()) {
+                    Text(
+                        "Nothing comes to this device.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                youGet.forEach { (title, detail) -> BulletRow(title, detail) }
+                if (youSend.isNotEmpty()) {
+                    Text(
+                        "You'll send back:",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                    youSend.forEach { (title, detail) -> BulletRow(title, detail) }
+                }
+                val line = listOfNotNull(
+                    sizeText?.takeIf { it.isNotBlank() },
+                    via?.takeIf { it != SyncTransport.Auto }?.let { "over ${it.label}" },
+                ).joinToString(" · ")
+                if (line.isNotEmpty()) {
+                    Text(
+                        line,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+                Text(
+                    "Cancelled in $left s if you don't answer. Nothing changes until you accept.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = { Button(onClick = { onAnswer(true) }) { Text("Accept") } },
+        dismissButton = { OutlinedButton(onClick = { onAnswer(false) }) { Text("Decline") } },
+    )
+}
+
+/** KMK (r91): "• Anime  2 of 4 categories · 8 titles" */
+@Composable
+private fun BulletRow(title: String, detail: String) {
+    val variant = MaterialTheme.colorScheme.onSurfaceVariant
+    Row(verticalAlignment = Alignment.Top) {
+        Box(
+            Modifier
+                .padding(top = 7.dp, end = 10.dp)
+                .size(7.dp)
+                .background(MaterialTheme.colorScheme.primary, CircleShape),
+        )
+        Text(
+            buildAnnotatedString {
+                withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append(title) }
+                if (detail.isNotBlank()) {
+                    append("  ")
+                    withStyle(SpanStyle(color = variant)) { append(detail) }
+                }
+            },
+            style = MaterialTheme.typography.bodyMedium,
+        )
     }
 }
 
@@ -510,8 +699,8 @@ private fun MainPage(
     granted: Boolean,
     selection: SyncSelection,
     transport: SyncTransport,
-    mangaCategories: List<String>,
-    animeCategories: List<String>,
+    mangaCategories: List<String>?,
+    animeCategories: List<String>?,
     onTransport: (SyncTransport) -> Unit,
     onSync: (Peer) -> Unit,
     onAllow: () -> Unit,
@@ -523,11 +712,30 @@ private fun MainPage(
     onChange: (SyncSelection) -> Unit,
     onOpen: (Page) -> Unit,
     onClose: () -> Unit,
+    hiddenOffers: Long,
+    onHideOffers: (Long) -> Unit,
 ) {
     val context = LocalContext.current
     val prefs = PairSyncPreferences.instance
     val status by PairSync.status.collectAsState()
     val result by PairSync.result.collectAsState()
+    // KMK (r91): what each paired device sends (live while its pop-up is open, else from the last sync)
+    val peerViews by PairSync.peerViews.collectAsState()
+    // KMK (r91): this device's own Send: line, again whenever the tiles change (null until the first one is ready)
+    val sendRows by produceState<List<Pair<String, String>>?>(null, selection) {
+        var tries = 0
+        while (true) {
+            val rows = withContext(Dispatchers.IO) {
+                runCatching { PairSyncData.summarizeSend(selection).map { it.title to it.detail } }
+                    .getOrDefault(emptyList())
+            }
+            value = rows
+            // KMK (r91): the APK count waits for the repos' lists (read in the background): asked again until then
+            if (tries++ >= 10 || rows.none { (_, detail) -> PairSyncData.APKS_CHECKING in detail }) break
+            delay(3_000L)
+        }
+    }
+    val sendsSomething = sendRows?.isNotEmpty() ?: !selection.isEmpty
     val peersVersion by remember { prefs.peersChanges }.collectAsState(initial = "")
     val peers = remember(peersVersion) { prefs.peers() }
     var removing by remember { mutableStateOf<Peer?>(null) }
@@ -602,35 +810,91 @@ private fun MainPage(
         Note("None yet. Tap Pair device below, once; after that, Sync works straight away.")
     }
     peers.forEach { peer ->
+        val view = peerViews[peer.address]
+        val theirSend = view?.theirSend?.map { it.title to it.detail }
+        // KMK (r91): unknown counts as sending something (the button then says Sync)
+        val peerSends = view?.theirSendsNothing != true && theirSend?.isEmpty() != true
+        // KMK (r91): neither side sends anything: the button is off (it ran an empty sync)
+        val nothingEitherWay = !sendsSomething && !peerSends
         PeerRow(
             peer = peer,
             status = status,
             syncedAt = result?.takeIf { it.peerAddress == peer.address }?.time,
             syncedVia = result?.takeIf { it.peerAddress == peer.address }?.via,
             now = now,
-            // KMK (r90): receiving nothing still sends (the core supports it); the button then says Send
-            canSync = ready && !status.busy,
-            sendOnly = selection.isEmpty,
+            canSync = ready && !status.busy && !nothingEitherWay,
+            nothingEitherWay = nothingEitherWay,
+            // KMK (r91): Sync both ways, Send only from here, Get only from there; all start the same sync
+            buttonLabel = when {
+                sendsSomething && peerSends -> "Sync"
+                sendsSomething -> "Send"
+                peerSends -> "Get"
+                else -> "Sync"
+            },
+            live = view?.live == true,
+            getLine = when {
+                theirSend == null -> "unknown · sync once to see"
+                theirSend.isEmpty() || view?.theirSendsNothing == true -> "nothing"
+                // KMK (r91): every tile on there, as in the approved design
+                view?.theirSendsEverything == true -> "everything"
+                else -> joinRows(theirSend)
+            } + if (view != null && !view.live && theirSend != null && view.asOf > 0L) {
+                " · as of ${ago(view.asOf, now)}"
+            } else {
+                ""
+            },
+            sendLine = sendRows.let { rows ->
+                when {
+                    rows == null -> "…"
+                    rows.isEmpty() -> "nothing"
+                    selection.isEverything -> "everything"
+                    else -> joinRows(rows)
+                }
+            },
             onSync = { onSync(peer) },
             onUnpair = { removing = peer },
             onActivity = { onOpen(Page.Activity) },
         )
     }
-    result?.let { ResultCard(it) }
+    // KMK (r91): Clear removes the card and the offers (and waiting APKs); each × removes its own box
+    result?.let { last ->
+        val showCard = !last.cardDismissed
+        val showOffers = hiddenOffers != last.time && last.summary.let {
+            it.missing.isNotEmpty() || it.apks.isNotEmpty() || it.updates.isNotEmpty()
+        }
+        if (showCard || showOffers) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f)) { SectionLabel("Last sync") }
+                TextButton(
+                    onClick = {
+                        onHideOffers(last.time)
+                        PairSync.clearResult()
+                    },
+                    enabled = !status.busy,
+                ) { Text("Clear") }
+            }
+            ResultCard(
+                result = last,
+                showCard = showCard,
+                showOffers = showOffers,
+                onDismissCard = PairSync::dismissResultCard,
+                onDismissOffers = {
+                    onHideOffers(last.time)
+                    PairSync.dismissOffers()
+                },
+            )
+        }
+    }
 
-    // What to sync
-    SectionLabel("What to sync")
+    // What this device sends
+    SectionLabel("What this device sends")
     val tilesEnabled = !status.busy
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Tile(
             icon = Icons.Outlined.Movie,
             title = "Anime",
             // KMK (r90): counted like the Anime page does (Default once, even when a category is named "")
-            subtitle = categorySubtitle(
-                selection.animeLibrary,
-                selection.animeCategories,
-                (listOf("") + animeCategories).distinct().size,
-            ),
+            subtitle = categorySubtitle(selection.animeLibrary, selection.animeCategories, animeCategories),
             checked = selection.animeLibrary,
             enabled = tilesEnabled,
             onToggle = { onChange(selection.copy(animeLibrary = !selection.animeLibrary)) },
@@ -640,11 +904,7 @@ private fun MainPage(
         Tile(
             icon = Icons.Outlined.CollectionsBookmark,
             title = "Manga",
-            subtitle = categorySubtitle(
-                selection.mangaLibrary,
-                selection.mangaCategories,
-                (listOf("") + mangaCategories).distinct().size,
-            ),
+            subtitle = categorySubtitle(selection.mangaLibrary, selection.mangaCategories, mangaCategories),
             checked = selection.mangaLibrary,
             enabled = tilesEnabled,
             onToggle = { onChange(selection.copy(mangaLibrary = !selection.mangaLibrary)) },
@@ -705,7 +965,7 @@ private fun MainPage(
             Text("Activity", maxLines = 1)
         }
     }
-    Note("Each device picks what it gets, and which of its own extensions, repos and sources it sends.")
+    Note("Tiles are what this device sends. The other device is asked to accept.")
 
     removing?.let { peer ->
         AlertDialog(
@@ -723,10 +983,35 @@ private fun MainPage(
     }
 }
 
-private fun categorySubtitle(on: Boolean, picked: Set<String>?, total: Int): String = when {
-    !on -> "Off"
-    picked == null -> "All categories"
-    else -> "${picked.size.coerceAtMost(total)} of $total categories"
+/** KMK (r91): the green of the "Live" dot (Material has no green of its own) */
+private val LiveGreen = Color(0xFF34A853)
+
+private val PART_OF = Regex("""^(\d+ of \d+)""")
+
+/** KMK (r91): "Anime (2 of 4), Manga, History": each title, with "x of y" when only some of it goes */
+private fun joinRows(rows: List<Pair<String, String>>): String = rows.joinToString(", ") { (title, detail) ->
+    PART_OF.find(detail.trim())?.let { "$title (${it.groupValues[1]})" } ?: title
+}
+
+/** KMK (r91): "just now", else "5 minutes ago" */
+private fun ago(time: Long, now: Long): String = if (now - time < 60_000L) {
+    "just now"
+} else {
+    DateUtils.getRelativeTimeSpanString(time, now, DateUtils.MINUTE_IN_MILLIS).toString()
+}
+
+/**
+ * KMK (r91): only picks that still exist count (a renamed or deleted category said "1 of 4" while nothing went);
+ * [categories] null = not read yet
+ */
+private fun categorySubtitle(on: Boolean, picked: Set<String>?, categories: List<String>?): String {
+    val options = categories?.let { (listOf("") + it).distinct() }
+    return when {
+        !on -> "Off"
+        picked == null -> "All categories"
+        options == null -> "Some categories"
+        else -> "${options.count { it in picked }} of ${options.size} categories"
+    }
 }
 
 private fun mb(bytes: Long): String = "%.1f".format(bytes / 1024f / 1024f)
@@ -834,25 +1119,6 @@ private fun FitText(text: String, color: Color) {
     )
 }
 
-/** KMK (r90): the way a sync is going, e.g. "WI-FI DIRECT" */
-@Composable
-private fun ViaTag(via: SyncTransport, modifier: Modifier = Modifier) {
-    Surface(
-        shape = RoundedCornerShape(6.dp),
-        color = MaterialTheme.colorScheme.secondaryContainer,
-        modifier = modifier,
-    ) {
-        Text(
-            via.label.uppercase(),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSecondaryContainer,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-        )
-    }
-}
-
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun PeerRow(
@@ -862,12 +1128,18 @@ private fun PeerRow(
     syncedVia: SyncTransport?,
     now: Long,
     canSync: Boolean,
-    sendOnly: Boolean,
+    nothingEitherWay: Boolean,
+    buttonLabel: String,
+    live: Boolean,
+    getLine: String,
+    sendLine: String,
     onSync: () -> Unit,
     onUnpair: () -> Unit,
     onActivity: () -> Unit,
 ) {
-    val syncing = status.busy && status.peerAddress == peer.address
+    // KMK (r91): waiting for the other device to accept counts as this device's sync (Cancel stops it)
+    val waiting = status.waitingForAccept && status.peerAddress == peer.address
+    val syncing = (status.busy || waiting) && status.peerAddress == peer.address
     var menu by remember { mutableStateOf(false) }
     Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerHighest) {
         Column(
@@ -878,30 +1150,24 @@ private fun PeerRow(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Avatar(Icons.Outlined.Devices)
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
+                // KMK (r91): the name has the row's room (at 360dp "Live" and the way squeezed it to nothing); both
+                // are on the line below now
+                Text(
+                    peer.name,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f).padding(horizontal = 12.dp),
-                ) {
-                    Text(
-                        peer.name,
-                        style = MaterialTheme.typography.titleSmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                    // KMK (r90): which way this sync is going
-                    val via = status.via
-                    if (syncing && via != null) ViaTag(via, Modifier.padding(start = 6.dp))
-                }
+                )
                 if (syncing) {
-                    TextButton(onClick = PairSync::stopSync) { Text("Stop") }
+                    TextButton(onClick = PairSync::stopSync) { Text(if (waiting) "Cancel" else "Stop") }
                 } else {
                     // KMK (r90): narrower, so the name keeps its room at phone width
                     Button(
                         onClick = onSync,
                         enabled = canSync,
                         contentPadding = PaddingValues(horizontal = 16.dp),
-                    ) { Text(if (sendOnly) "Send" else "Sync", maxLines = 1) }
+                    ) { Text(buttonLabel, maxLines = 1) }
                     Box {
                         IconButton(onClick = { menu = true }) {
                             Icon(Icons.Outlined.MoreVert, contentDescription = "More")
@@ -918,35 +1184,65 @@ private fun PeerRow(
                     }
                 }
             }
-            // KMK (r90): the subtitle on its own full-width line (it wrapped to 3-4 lines next to the buttons)
+            // KMK (r90): the subtitle on its own full-width line (it wrapped to 3-4 lines next to the buttons).
+            // r91: with the way the data moves at its end while syncing, and "● Live" first while the other pop-up
+            // is open (hidden while syncing)
+            val showLive = live && !syncing
+            val viaText = status.via?.takeIf { syncing && !waiting }?.let { " · ${it.label}" }.orEmpty()
             val subtitle = when {
+                waiting -> "Waiting for ${peer.name} to accept…"
                 syncing && status.total > 0L ->
                     "${if (status.sending) "Sending" else "Receiving"} ${mb(status.done)} of " +
                         "${mb(status.total)} MB" +
-                        if (status.bytesPerSecond > 0L) " · ${speed(status.bytesPerSecond)}" else "…"
-                syncing -> status.step ?: "Syncing…"
-                syncedAt != null -> {
-                    val ago = if (now - syncedAt < 60_000L) {
-                        "just now"
-                    } else {
-                        DateUtils.getRelativeTimeSpanString(syncedAt, now, DateUtils.MINUTE_IN_MILLIS).toString()
-                    }
-                    "✓ Synced $ago" + (syncedVia?.let { " · via ${it.label}" } ?: "")
-                }
+                        (if (status.bytesPerSecond > 0L) " · ${speed(status.bytesPerSecond)}" else "…") + viaText
+                syncing -> (status.step ?: "Syncing…") + viaText
+                showLive -> syncedAt?.let { "synced ${ago(it, now)}" } ?: "their pop-up is open"
+                syncedAt != null ->
+                    "✓ Synced ${ago(syncedAt, now)}" + (syncedVia?.let { " · via ${it.label}" } ?: "")
                 peer.lastSync > 0L -> "Last synced " +
                     DateUtils.getRelativeTimeSpanString(peer.lastSync, now, DateUtils.MINUTE_IN_MILLIS)
                 else -> "Not synced yet"
             }
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = if (syncedAt != null && !syncing) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-            )
+            ) {
+                if (showLive) {
+                    Box(Modifier.size(8.dp).background(LiveGreen, CircleShape))
+                    Text(
+                        "Live",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = LiveGreen,
+                        maxLines = 1,
+                        modifier = Modifier.padding(start = 4.dp),
+                    )
+                    Text(
+                        " · ",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                }
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (syncedAt != null && !syncing) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            if (waiting) {
+                Text(
+                    "It has 60 seconds, then it's cancelled.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+                )
+            }
             // KMK (r90): why the last sync with this device failed (it used to look like nothing happened)
             val error = status.lastError
             if (!syncing && error != null && status.errorAddress == peer.address) {
@@ -966,7 +1262,18 @@ private fun PeerRow(
                         .padding(vertical = 6.dp, horizontal = 2.dp),
                 )
             }
-            if (syncing) {
+            // KMK (r91): what this device gets from it and sends to it
+            SendGetLine("Get:", getLine, Modifier.padding(top = 8.dp))
+            SendGetLine("Send:", sendLine, Modifier.padding(top = 2.dp))
+            if (nothingEitherWay && !syncing) {
+                Text(
+                    "Nothing to send either way",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                )
+            }
+            if (syncing && !waiting) {
                 if (status.total > 0L) {
                     LinearProgressIndicator(
                         progress = { (status.done.toFloat() / status.total.toFloat()).coerceIn(0f, 1f) },
@@ -980,49 +1287,92 @@ private fun PeerRow(
     }
 }
 
-/** What the last sync brought, and the extensions it can install here (only when tapped) */
+/** KMK (r91): "Get:  Anime (2 of 4), Manga" (dimmer when it's nothing) */
 @Composable
-private fun ResultCard(result: PairSync.SyncResult) {
+private fun SendGetLine(label: String, value: String, modifier: Modifier = Modifier) {
+    Row(modifier = modifier.fillMaxWidth()) {
+        Text(
+            label,
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            // KMK (r91): a gap of its own, so a large font's "Send:" doesn't touch the value
+            modifier = Modifier.widthIn(min = 44.dp).padding(end = 6.dp),
+        )
+        Text(
+            value,
+            style = MaterialTheme.typography.bodySmall,
+            color = if (value == "nothing" || value == "…" || value.startsWith("unknown")) {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            } else {
+                MaterialTheme.colorScheme.onSurface
+            },
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+/**
+ * What the last sync brought, and the extensions it can install here (only when tapped). KMK (r91): the card and
+ * the offers each have an ×.
+ */
+@Composable
+private fun ResultCard(
+    result: PairSync.SyncResult,
+    showCard: Boolean,
+    showOffers: Boolean,
+    onDismissCard: () -> Unit,
+    onDismissOffers: () -> Unit,
+) {
     val context = LocalContext.current
     val summary = result.summary
-    Surface(
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.secondaryContainer,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(Modifier.padding(14.dp)) {
-            Text(
-                // KMK (r90): the bytes count both ways
-                "Got from ${result.peerName}" + if (result.bytes > 0L && result.millis > 0L) {
-                    " · ${sizeLabel(result.bytes)} moved in ${duration(result.millis)}"
-                } else {
-                    ""
-                },
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text(
-                "${summary.anime} anime · ${summary.manga} manga · ${summary.historyEntries} history entries",
-                style = MaterialTheme.typography.bodySmall,
-            )
-            Text(
-                "${summary.reposAdded} repos · ${summary.sourcesAdded} code sources" +
-                    if (summary.apks.isNotEmpty()) {
-                        " · ${summary.apks.size} ${if (summary.apks.size == 1) "APK" else "APKs"}"
-                    } else {
-                        ""
-                    },
-                style = MaterialTheme.typography.bodySmall,
-            )
-            if (summary.errors > 0) {
-                Text(
-                    "${summary.errors} couldn't be added (see Activity)",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                )
+    if (showCard) {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.secondaryContainer,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Row(verticalAlignment = Alignment.Top) {
+                Column(Modifier.weight(1f).padding(start = 14.dp, top = 14.dp, bottom = 14.dp)) {
+                    Text(
+                        // KMK (r90): the bytes count both ways
+                        "Synced with ${result.peerName}" + if (result.bytes > 0L && result.millis > 0L) {
+                            " · ${sizeLabel(result.bytes)} in ${duration(result.millis)}"
+                        } else {
+                            ""
+                        },
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        "Got ${summary.anime} anime · ${summary.manga} manga · ${summary.historyEntries} history " +
+                            "entries",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Text(
+                        "${summary.reposAdded} repos · ${summary.sourcesAdded} code sources" +
+                            if (summary.apks.isNotEmpty()) {
+                                " · ${summary.apks.size} ${if (summary.apks.size == 1) "APK" else "APKs"}"
+                            } else {
+                                ""
+                            },
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    if (summary.errors > 0) {
+                        Text(
+                            "${summary.errors} couldn't be added (see Activity)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+                CloseX(onClick = onDismissCard, tint = MaterialTheme.colorScheme.onSecondaryContainer)
             }
         }
     }
+    if (!showOffers) return
     val toInstall = summary.missing.size + summary.apks.size
     if (toInstall > 0) {
         OfferRow(
@@ -1044,6 +1394,7 @@ private fun ResultCard(result: PairSync.SyncResult) {
                 PairSyncInstall.installMissing(summary.missing)
                 PairSyncInstall.installApks(context, summary.apks)
             },
+            onDismiss = onDismissOffers,
         )
     }
     if (summary.updates.isNotEmpty()) {
@@ -1061,14 +1412,43 @@ private fun ResultCard(result: PairSync.SyncResult) {
                 PairSync.markAsked(updates = true)
                 PairSyncInstall.installUpdates(summary.updates)
             },
+            onDismiss = onDismissOffers,
         )
     }
 }
 
+/** KMK (r91): the × in a box's top-right corner */
 @Composable
-private fun OfferRow(icon: ImageVector, title: String, subtitle: String, action: String?, onAction: () -> Unit) {
+private fun CloseX(onClick: () -> Unit, tint: Color) {
+    Icon(
+        Icons.Filled.Close,
+        contentDescription = "Dismiss",
+        tint = tint,
+        modifier = Modifier
+            .padding(6.dp)
+            .clip(CircleShape)
+            .clickable(onClick = onClick)
+            .padding(6.dp)
+            .size(20.dp),
+    )
+}
+
+@Composable
+private fun OfferRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    action: String?,
+    onAction: () -> Unit,
+    onDismiss: (() -> Unit)? = null,
+) {
     Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerHighest) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(12.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = if (onDismiss == null) 12.dp else 0.dp),
+        ) {
             Avatar(icon)
             Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                 Text(title, style = MaterialTheme.typography.titleSmall)
@@ -1080,12 +1460,22 @@ private fun OfferRow(icon: ImageVector, title: String, subtitle: String, action:
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            if (action != null) FilledTonalButton(onClick = onAction) { Text(action) }
+            if (action != null) {
+                FilledTonalButton(onClick = onAction, contentPadding = PaddingValues(horizontal = 14.dp)) {
+                    Text(action, maxLines = 1)
+                }
+            }
+            // KMK (r91): hides the offers and deletes the APKs waiting for them
+            if (onDismiss != null) {
+                Box(Modifier.align(Alignment.Top)) {
+                    CloseX(onClick = onDismiss, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
         }
     }
 }
 
-/** A "What to sync" tile: tap it to turn it on or off, tap its subtitle to open its page */
+/** A "What this device sends" tile: tap it to turn it on or off, tap its subtitle to open its page */
 @Composable
 private fun Tile(
     icon: ImageVector,
@@ -1176,19 +1566,21 @@ private fun LibraryPage(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     categories: List<String>,
+    loaded: Boolean,
     picked: Set<String>?,
     onPick: (Set<String>?) -> Unit,
     note: String,
 ) {
     // Default ("") first: entries in no category
     val options = (listOf("") + categories).distinct()
+    val optionSet = options.toSet()
     SwitchCard(
         icon = icon,
         title = title,
-        // KMK (r90): what this device gets
+        // KMK (r91): which of this device's own categories it sends
         subtitle = when (picked) {
-            null -> "Get all ${options.size} categories"
-            else -> "Get ${options.count { it in picked }} of ${options.size} categories"
+            null -> "All ${options.size} categories"
+            else -> "${options.count { it in picked }} of ${options.size} categories"
         },
         checked = checked,
         onCheckedChange = onCheckedChange,
@@ -1196,11 +1588,17 @@ private fun LibraryPage(
     )
     if (checked) {
         SectionLabel("Categories")
-        ChipChoices(
-            options = options.map { it to it.ifEmpty { "Default" } },
-            picked = picked,
-            onPick = onPick,
-        )
+        // KMK (r91): picked only once the categories are read; a pick that no longer exists (renamed, deleted) is
+        // dropped, so unpicking the real ones turns the tile off
+        if (loaded) {
+            ChipChoices(
+                options = options.map { it to it.ifEmpty { "Default" } },
+                picked = picked,
+                onPick = { onPick(it?.intersect(optionSet)) },
+            )
+        } else {
+            CircularProgressIndicator(Modifier.size(24.dp))
+        }
     }
     Note(note)
 }
@@ -1210,8 +1608,8 @@ private fun HistoryPage(selection: SyncSelection, onChange: (SyncSelection) -> U
     val on = selection.mangaHistory || selection.animeHistory
     SwitchCard(
         icon = Icons.Outlined.History,
-        title = "Sync history",
-        subtitle = "Recently watched and read",
+        title = "Send history",
+        subtitle = "This device's recently watched and read",
         checked = on,
         onCheckedChange = { onChange(selection.copy(mangaHistory = it, animeHistory = it)) },
         highlighted = true,
@@ -1240,12 +1638,12 @@ private fun HistoryPage(selection: SyncSelection, onChange: (SyncSelection) -> U
             ) { Text(label) }
         }
     }
-    Note("History only adds entries; it never adds titles to the library.")
+    Note("History only adds entries on the other device; it never adds titles to its library.")
 }
 
 /**
- * KMK (r90): each switch is what this device GETS; each "›" picks which of this device's own repos, extensions, APKs
- * and sources it SENDS (so the pickers stay usable with the switches off: the other device may still ask for them)
+ * KMK (r91): everything here is what this device SENDS: each switch turns a kind on or off, each "›" picks which of
+ * this device's own repos, extensions, APKs and sources go (r90's switches were what it got)
  */
 @Composable
 private fun ExtensionsPage(
@@ -1263,8 +1661,8 @@ private fun ExtensionsPage(
     val on = selection.extensions
     SwitchCard(
         icon = Icons.Outlined.Extension,
-        title = "Sync extensions",
-        subtitle = "Get repos, extensions, APKs and code sources",
+        title = "Send extensions",
+        subtitle = "Repos, extensions, APKs and code sources",
         checked = on,
         onCheckedChange = { onChange(selection.copy(extensions = it)) },
         highlighted = true,
@@ -1274,7 +1672,7 @@ private fun ExtensionsPage(
     SwitchCard(
         icon = Icons.Outlined.Storage,
         title = "Repos",
-        subtitle = "Get anime & manga repos missing here",
+        subtitle = "The anime & manga repos the other device lacks",
         checked = selection.repos,
         enabled = on,
         onCheckedChange = { onChange(selection.copy(repos = it)) },
@@ -1284,7 +1682,7 @@ private fun ExtensionsPage(
     SwitchCard(
         icon = Icons.Outlined.Extension,
         title = "Installed extensions",
-        subtitle = "Get missing ones and newer versions",
+        subtitle = "Offered there when missing or newer here",
         checked = selection.installedExtensions,
         enabled = on,
         onCheckedChange = { onChange(selection.copy(installedExtensions = it)) },
@@ -1295,7 +1693,7 @@ private fun ExtensionsPage(
     SwitchCard(
         icon = Icons.Outlined.Android,
         title = "Sideloaded APKs",
-        subtitle = "Get the ones missing here",
+        subtitle = "The APKs the other device lacks",
         checked = selection.sideloadedApks,
         enabled = on,
         onCheckedChange = { onChange(selection.copy(sideloadedApks = it)) },
@@ -1305,14 +1703,14 @@ private fun ExtensionsPage(
     SwitchCard(
         icon = Icons.Outlined.Code,
         title = "Code sources",
-        subtitle = "Get new and newer sources",
+        subtitle = "New and newer Code editor sources",
         checked = selection.sources,
         enabled = on,
         onCheckedChange = { onChange(selection.copy(sources = it)) },
         onOpen = { onOpen(Page.CodeSources) },
         sendLabel = sendLabel(sourceKeys, selection.sourceKeys),
     )
-    Note("Installs always ask you first. Nothing is removed on either device.")
+    Note("The other device is asked to accept, and each install there asks first. Nothing is removed.")
 }
 
 /** KMK (r90): "Send: all 14" or "Send: 2 of 14" (of this device's own) */
@@ -1683,11 +2081,9 @@ private fun EnterCodePage(onPaired: () -> Unit, onCancel: () -> Unit) {
 
     val named = found.map { it to runCatching { it.name }.getOrNull() }
     val tagged = named.filter { (_, name) -> name != null && PairSyncDiscovery.nameHash(name) in hashes }
-    val rest = named - tagged.toSet()
-    // KMK (r90): phones and computers always stay in view (under "Other nearby devices" next to a tagged one); only
-    // headphones, TVs, watches and the like are hidden
-    val likely = rest.filterNot { (d, _) -> PairSyncDiscovery.isUnlikely(d) }
-    val hidden = rest - likely.toSet()
+    // KMK (r91): back to r89: only Komikku devices in view; every other device (phones and computers first) folded
+    // into one row
+    val others = (named - tagged.toSet()).sortedBy { (d, _) -> PairSyncDiscovery.isUnlikely(d) }
     LaunchedEffect(tagged.size) {
         if (chosenAddress == null && tagged.size == 1) chosenAddress = tagged.first().first.address
     }
@@ -1702,10 +2098,10 @@ private fun EnterCodePage(onPaired: () -> Unit, onCancel: () -> Unit) {
     Text("Pick the other device", style = MaterialTheme.typography.titleLarge)
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
-            if (scanning) {
-                "Looking for devices with Komikku open…"
-            } else {
-                "On the other device tap Pair device → Show a code first."
+            when {
+                tagged.isNotEmpty() -> "Found it"
+                scanning -> "Looking for Komikku nearby…"
+                else -> "On the other device tap Pair device → Show a code first."
             },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1736,23 +2132,30 @@ private fun EnterCodePage(onPaired: () -> Unit, onCancel: () -> Unit) {
         Notice("Turn on Location to find nearby devices", action = "Settings" to openLocationSettings)
     }
 
-    if (tagged.isNotEmpty()) {
-        SectionLabel("Komikku nearby")
-        tagged.forEach { (d, name) ->
-            DeviceRow(d, name, "Showing a code", tagged = true, selected = chosenAddress == d.address) { pick(d) }
-        }
+    SectionLabel("Komikku nearby")
+    if (tagged.isEmpty()) {
+        Note("On the other device tap Pair device → Show a code. It shows here when found.")
     }
-    if (likely.isNotEmpty()) {
-        SectionLabel(if (tagged.isEmpty()) "Nearby devices" else "Other nearby devices")
-        likely.forEach { (d, name) ->
-            DeviceRow(d, name, d.address, tagged = false, selected = chosenAddress == d.address) { pick(d) }
-        }
+    tagged.forEach { (d, name) ->
+        DeviceRow(
+            d,
+            name,
+            // KMK (r91): only while it's still the one picked
+            if (tagged.size == 1 && chosenAddress == d.address) {
+                "Showing a code · picked for you"
+            } else {
+                "Showing a code"
+            },
+            tagged = true,
+            selected = chosenAddress == d.address,
+        ) { pick(d) }
     }
-    if (hidden.isNotEmpty()) {
+    if (others.isNotEmpty()) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
                 .clickable { showOthers = !showOthers }
                 .padding(vertical = 8.dp, horizontal = 4.dp),
         ) {
@@ -1762,15 +2165,15 @@ private fun EnterCodePage(onPaired: () -> Unit, onCancel: () -> Unit) {
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                "${hidden.size} other Bluetooth ${if (hidden.size == 1) "device" else "devices"} " +
-                    (if (showOthers) "" else "hidden ") + "(headphones, TVs, watches…)",
+                "${others.size} other ${if (others.size == 1) "device" else "devices"}" +
+                    if (showOthers) "" else " hidden",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 8.dp),
             )
         }
         if (showOthers) {
-            hidden.forEach { (d, name) ->
+            others.forEach { (d, name) ->
                 DeviceRow(d, name, d.address, tagged = false, selected = chosenAddress == d.address) { pick(d) }
             }
         }
@@ -1778,19 +2181,22 @@ private fun EnterCodePage(onPaired: () -> Unit, onCancel: () -> Unit) {
 
     val device = chosen
     SectionLabel("Enter its code")
-    OutlinedTextField(
-        value = code,
-        onValueChange = { code = it.filter(Char::isDigit).take(6) },
-        singleLine = true,
+    // KMK (r91): six boxes, one digit each (r89 style), driven by one hidden text field so the keyboard, backspace
+    // and pasting all work
+    CodeBoxes(
+        code = code,
         enabled = !pairing,
-        placeholder = { Text("6-digit code") },
-        supportingText = {
-            if (device != null) Text("Showing on ${runCatching { device.name }.getOrNull() ?: device.address}")
+        onCode = { code = it },
+        // KMK (r91): the keyboard's Done pairs, like the button
+        onDone = {
+            if (device != null && code.length == 6 && !pairing) {
+                PairSync.startPair(context.applicationContext, device, code)
+            }
         },
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-        textStyle = MaterialTheme.typography.headlineSmall.copy(fontFamily = FontFamily.Monospace),
-        modifier = Modifier.fillMaxWidth(),
     )
+    if (device != null) {
+        Note("Showing on ${runCatching { device.name }.getOrNull() ?: device.address}")
+    }
     if (pairing) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
@@ -1807,6 +2213,94 @@ private fun EnterCodePage(onPaired: () -> Unit, onCancel: () -> Unit) {
             enabled = device != null && code.length == 6 && !pairing,
             modifier = Modifier.weight(1f),
         ) { Text("Pair") }
+    }
+}
+
+/**
+ * KMK (r91): the 6-digit code as six boxes. One [BasicTextField] holds the digits (its own text is laid out but not
+ * shown): typing moves on a box, backspace goes back, a pasted code fills them all; the box being typed in is
+ * outlined while the field has focus. Focus brings the boxes into view (above the keyboard), the keyboard is digits
+ * only and its Done runs [onDone]; "Paste" takes the digits from the clipboard.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun CodeBoxes(code: String, enabled: Boolean, onCode: (String) -> Unit, onDone: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val bringIntoView = remember { BringIntoViewRequester() }
+    var focused by remember { mutableStateOf(false) }
+    BasicTextField(
+        // The cursor always at the end, so backspace takes the last digit
+        value = TextFieldValue(code, TextRange(code.length)),
+        onValueChange = { onCode(it.text.filter(Char::isDigit).take(6)) },
+        enabled = enabled,
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done),
+        keyboardActions = KeyboardActions(onDone = { onDone() }),
+        modifier = Modifier
+            .fillMaxWidth()
+            .bringIntoViewRequester(bringIntoView)
+            .onFocusChanged { state ->
+                focused = state.isFocused
+                if (state.isFocused) {
+                    scope.launch {
+                        // After the keyboard has opened
+                        delay(300L)
+                        bringIntoView.bringIntoView()
+                    }
+                }
+            },
+        decorationBox = { innerTextField ->
+            Box {
+                // Laid out (so the field works fully) but not seen
+                Box(Modifier.size(1.dp).alpha(0f)) { innerTextField() }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    repeat(6) { index ->
+                        val current = enabled && focused && index == code.length
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 52.dp)
+                                // Before the background and border, so a disabled box dims as a whole
+                                .alpha(if (enabled) 1f else 0.55f)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                                .border(
+                                    width = 2.dp,
+                                    color = if (current) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                    shape = RoundedCornerShape(12.dp),
+                                ),
+                        ) {
+                            Text(
+                                code.getOrNull(index)?.toString().orEmpty(),
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(vertical = 10.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        },
+    )
+    Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+        TextButton(
+            onClick = {
+                val text = runCatching {
+                    context.getSystemService(ClipboardManager::class.java)?.primaryClip
+                        ?.takeIf { it.itemCount > 0 }
+                        ?.getItemAt(0)
+                        ?.coerceToText(context)
+                        ?.toString()
+                }.getOrNull().orEmpty()
+                val digits = text.filter(Char::isDigit).take(6)
+                if (digits.isNotEmpty()) onCode(digits)
+            },
+            enabled = enabled,
+        ) { Text("Paste") }
     }
 }
 
@@ -1883,8 +2377,9 @@ private fun PageTitle(text: String, onBack: () -> Unit) {
 
 @Composable
 private fun SectionLabel(text: String) {
+    // KMK (r91): in capitals, as in the approved design
     Text(
-        text,
+        text.uppercase(),
         style = MaterialTheme.typography.labelLarge,
         color = MaterialTheme.colorScheme.primary,
         modifier = Modifier.padding(start = 4.dp, top = 6.dp),
@@ -2062,7 +2557,8 @@ private fun ChipChoices(
             FilterChip(
                 selected = picked == null || value in picked,
                 onClick = {
-                    val now = picked ?: all
+                    // KMK (r91): picks that are no longer offered don't count
+                    val now = (picked ?: all).intersect(all)
                     val next = if (value in now) now - value else now + value
                     // Every one picked means all (ones added later come along too)
                     onPick(if (next.containsAll(all)) null else next)
