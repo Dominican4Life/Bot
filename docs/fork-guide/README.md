@@ -313,6 +313,23 @@ Commit 10c9a288 (plus a949f519, the Sent/Got result card). Design: `scratchpad/s
   - Scans are cached (downloads 10 min or until anime downloads change; totals only, no file handles). `EXTRAS_CHECKING` rows are retried by the UI and re-pushed to live peers when counted.
 - **UI:** Manga/Anime pages have "Also send" (Covers, Downloaded chapters/episodes with sizes and a picker page with All / Unread only / Last 10); progress shows one card per part (`Status.parts`); the result card shows "Sent:" and "Got:" lines with covers and download counts, and the size is labelled "moved" (both ways).
 
+## Changes in r93 (30 October 2026)
+
+Commit 3ce17608. Brief and contract: `scratchpad/r93/`. Two writers in parallel (core vs notification/pop-up), a compile review, two independent testers, a fix pass and a final compile review before building.
+
+- **Transfer, disconnect, then apply** (new `pairsync/PairSyncStage.kt`, flag `"stage": 1` in the request and in "accepted"; r92 and older peers get the old flow). Everything is written to `filesDir/pair_sync_stage/<id>` (payload + backup, then extras as `items/n/i` with an `ok` marker per finished item), then `done` both ways, then the link closes and the apply runs offline: library merge → covers → downloads. A stage counts only once the other device's library arrived in full; if the transfer stops after that, whatever arrived complete is still applied.
+  - Resume: `resumePendingApply` runs from `App.onStart` (foreground only, never `onCreate`) and after a non-staged sync. `journal.attempts` counts real failures only (Stop/cancel is undone); after 3 the stage is dropped and shown as an error, never silently.
+  - Keep: received APKs referenced by a pending stage (`stagedApks()`) survive `cleanApks` / `cleanOldApks`.
+- **Compare-then-replace:** each side decides its needs from its own rows: covers, .cbz and episodes by size, chapter folders by page count + total size. Equal → skipped; different → re-sent; title not here → needed whole. Replace = temp name → old renamed to `_old` → new takes the name → old deleted (leftover `_old`/`.part` cleaned first). Custom covers never replaced. A replaced library cover bumps `coverLastModified`; anime covers and cache covers clear Coil's memory cache.
+- **Downloads only for titles sent to the library** (`libraryKeys()` in `outgoing` and `downloadsEstimate`). Before, unselected categories' downloads crossed the link and were dropped.
+- **`historyCovers`** (History page, "Covers of history titles"); Manga/Anime "Covers" = library titles only. Saved selections without the field default to `mangaCovers && animeCovers`.
+- **`PairSyncService`** (foreground service, type dataSync, plus `PairSyncNotifier` polling status every 500 ms): progress with Stop (also while Applying), Accept/Decline as a notification when the pop-up isn't visible, a result notification, tapping opens the pop-up (`PairSyncPopup.openRequest`, `MainActivity` `ACTION_OPEN`). `foregroundTried` is set only when the start succeeded (background starts are refused on Android 12+, a notification tap allows a retry). The notifier never stops the service before `startForeground` ran (`running` flag); `onTimeout` handles the Android 15 6-hour dataSync limit. `Status.phase` = Idle / Asking (I pressed Sync) / Waiting (I was asked) / Transferring / Applying.
+
+### Mistakes to avoid (learned in r92 → r93)
+
+- **Slow merge (7 min for 4,097 titles):** pair sync never set `LibraryRefresh.restoring` the way a backup restore does, so every merged title made the open library reload all titles merged so far, which got slower with every title. r90 looked fast only because the fresh phone got history-only titles, which the library query doesn't count. Any bulk insert into the library must set `restoring` (in a `finally`) and request one refresh at the end.
+- **"Broken pipe" / "other device stopped":** the tablet showed "Synced" before covers and downloads, the user left the app, and Android 15/16 cut the network for a background app without a foreground service. Long transfers need a foreground service from the moment the sync starts, and "done" may only be shown after the apply. The low-latency Wi-Fi lock was removed too (it was taken about 2 s before the drop).
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
