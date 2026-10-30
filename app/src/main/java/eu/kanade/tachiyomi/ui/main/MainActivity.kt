@@ -704,6 +704,12 @@ class MainActivity : BaseActivity() {
                 navigator.popUntilRoot()
                 HomeScreen.Tab.More(toDownloads = false, toLibraryUpdateErrors = true)
             }
+            // KMK (r93): a pair sync notification: the Sync pop-up opens (HomeScreen or MoreTab shows it)
+            eu.kanade.tachiyomi.pairsync.PairSyncService.ACTION_OPEN -> {
+                if (!eu.kanade.tachiyomi.ui.pairsync.PairSyncPopup.isOpen.value) navigator.popUntilRoot()
+                eu.kanade.tachiyomi.ui.pairsync.PairSyncPopup.requestOpen()
+                null
+            }
             // KMK <--
             Intent.ACTION_SEARCH, Intent.ACTION_SEND, "com.google.android.gms.actions.SEARCH_ACTION" -> {
                 // If the intent match the "standard" Android search intent

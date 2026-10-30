@@ -367,6 +367,15 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- KMK (r93): pair sync's progress / apply notification keeps the app running; its buttons' receiver -->
+        <service
+            android:name=".pairsync.PairSyncService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+        <receiver
+            android:name=".pairsync.PairSyncService$ActionReceiver"
+            android:exported="false" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.provider"

@@ -149,12 +149,17 @@ import eu.kanade.tachiyomi.pairsync.PairSync
 import eu.kanade.tachiyomi.pairsync.PairSyncData
 import eu.kanade.tachiyomi.pairsync.PairSyncDiscovery
 import eu.kanade.tachiyomi.pairsync.PairSyncInstall
+import eu.kanade.tachiyomi.pairsync.PairSyncNotifier
 import eu.kanade.tachiyomi.pairsync.PairSyncPreferences
 import eu.kanade.tachiyomi.pairsync.Peer
+import eu.kanade.tachiyomi.pairsync.SyncPhase
 import eu.kanade.tachiyomi.pairsync.SyncSelection
 import eu.kanade.tachiyomi.pairsync.SyncTransport
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -192,6 +197,16 @@ private fun isLocationOn(context: Context): Boolean = !needsLocation || runCatch
     manager == null || LocationManagerCompat.isLocationEnabled(manager)
 }.getOrDefault(true)
 
+/** KMK (r93): the notifications permission, when Android 13+ hasn't granted it */
+private fun missingNotify(context: Context): List<String> =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+        !isGranted(context, Manifest.permission.POST_NOTIFICATIONS)
+    ) {
+        listOf(Manifest.permission.POST_NOTIFICATIONS)
+    } else {
+        emptyList()
+    }
+
 /** KMK (r90): the Wi-Fi Direct permissions this device still lacks (none below Android 10) */
 private fun missingWifi(context: Context): List<String> =
     PairSync.wifiPermissions().filterNot { isGranted(context, it) }
@@ -213,6 +228,61 @@ private fun openAppSettings(context: Context) {
             Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
         )
+    }
+}
+
+/**
+ * KMK (r93): whether the Sync pop-up is open ([isOpen]) and showing in front ([visible]: the service posts the other
+ * device's request as a notification only when it isn't), and a request to open it (a tapped sync notification,
+ * through MainActivity). HomeScreen and MoreTab each watch [openRequest]; [takeOpenRequest] gives it to one of them,
+ * and to none when a pop-up is open already.
+ */
+object PairSyncPopup {
+    private val lock = Any()
+    private val opened = mutableSetOf<Any>()
+    private val shown = mutableSetOf<Any>()
+
+    private val _isOpen = MutableStateFlow(false)
+    val isOpen: StateFlow<Boolean> = _isOpen.asStateFlow()
+
+    private val _visible = MutableStateFlow(false)
+    val visible: StateFlow<Boolean> = _visible.asStateFlow()
+
+    private val _openRequest = MutableStateFlow(false)
+    val openRequest: StateFlow<Boolean> = _openRequest.asStateFlow()
+
+    fun requestOpen() {
+        _openRequest.value = true
+    }
+
+    /** True for the one caller that should open the pop-up now */
+    fun takeOpenRequest(): Boolean {
+        if (!_openRequest.compareAndSet(expect = true, update = false)) return false
+        return !_isOpen.value
+    }
+
+    internal fun opened(token: Any, open: Boolean) {
+        synchronized(lock) {
+            if (open) {
+                opened.add(token)
+            } else {
+                opened.remove(token)
+                shown.remove(token)
+            }
+            _isOpen.value = opened.isNotEmpty()
+            _visible.value = shown.isNotEmpty()
+        }
+    }
+
+    internal fun shown(token: Any, show: Boolean) {
+        synchronized(lock) {
+            if (show) {
+                shown.add(token)
+            } else {
+                shown.remove(token)
+            }
+            _visible.value = shown.isNotEmpty()
+        }
     }
 }
 
@@ -354,15 +424,25 @@ fun PairSyncDialog(onDismissRequest: () -> Unit) {
         onDispose { runCatching { context.unregisterReceiver(receiver) } }
     }
     val ready = adapter != null && granted && enabled
+    // KMK (r93): the service posts the other device's request as a notification only while the pop-up isn't showing
+    val popupToken = remember { Any() }
+    DisposableEffect(popupToken) {
+        PairSyncPopup.opened(popupToken, true)
+        onDispose { PairSyncPopup.opened(popupToken, false) }
+    }
     // KMK (r91): in the background nobody sees the pop-up (it kept checking in, and a prompt went unseen for 60 s):
     // not live, and a prompt showing is declined; back in front, live again. Not on a rotation.
+    // KMK (r93): the prompt now waits as a notification (Accept / Decline there); declined only when this app's
+    // notifications, or its "Sync requests" channel, are off
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
+        PairSyncPopup.shown(popupToken, false)
         if (activity?.isChangingConfigurations != true) {
             PairSync.leaveLive()
-            PairSync.declineIncoming()
+            if (!PairSyncNotifier.requestsCanShow(context)) PairSync.declineIncoming()
         }
     }
     LifecycleEventEffect(Lifecycle.Event.ON_START) {
+        PairSyncPopup.shown(popupToken, true)
         if (ready) PairSync.goLive(context.applicationContext)
     }
     // KMK (r91): the pop-up really closed: a prompt showing is declined (the other device waited the full minute)
@@ -383,14 +463,24 @@ fun PairSyncDialog(onDismissRequest: () -> Unit) {
             }
         }
     }
+    // KMK (r93): the sync's notifications (progress, requests, result) need this on Android 13+; asked once per
+    // opening, with the Wi-Fi Direct ones when those are asked (one request at a time). Denied: sync still works.
+    var askedNotify by rememberSaveable { mutableStateOf(false) }
     // KMK (r90): the waiting device makes the Wi-Fi Direct group, so it's asked here too (once per opening)
     LaunchedEffect(ready, wifiNeeded) {
         if (ready && wifiNeeded && !askedWifi) {
             val missing = missingWifi(context)
             if (missing.isNotEmpty()) {
                 askedWifi = true
-                listenWifiLauncher.launch(missing.toTypedArray())
+                val notify = if (askedNotify) emptyList() else missingNotify(context)
+                askedNotify = true
+                listenWifiLauncher.launch((missing + notify).toTypedArray())
             }
+        }
+        if (ready && !askedNotify) {
+            askedNotify = true
+            val notify = missingNotify(context)
+            if (notify.isNotEmpty()) listenWifiLauncher.launch(notify.toTypedArray())
         }
     }
 
@@ -808,6 +898,8 @@ private fun MainPage(
     val prefs = PairSyncPreferences.instance
     val status by PairSync.status.collectAsState()
     val result by PairSync.result.collectAsState()
+    // KMK (r93): received data waiting to be applied (or being applied)
+    val pendingApply by PairSync.pendingApply.collectAsState()
     // KMK (r91): what each paired device sends (live while its pop-up is open, else from the last sync)
     val peerViews by PairSync.peerViews.collectAsState()
     // KMK (r91): this device's own Send: line, again whenever the tiles change (null until the first one is ready)
@@ -873,7 +965,10 @@ private fun MainPage(
         }
         // KMK (r90): answering a device that isn't in the list (its address changed): no row to stop it from.
         // Pairing is busy too but has no peerAddress: there's no sync to stop then.
-        if (status.busy && status.peerAddress != null && peers.none { it.address == status.peerAddress }) {
+        // KMK (r93): not while applying (the apply card has its own Stop)
+        if (status.busy && status.peerAddress != null && status.phase != SyncPhase.Applying &&
+            peers.none { it.address == status.peerAddress }
+        ) {
             TextButton(onClick = PairSync::stopSync) { Text("Stop") }
         }
         IconButton(onClick = onClose) { Icon(Icons.Filled.Close, contentDescription = "Close") }
@@ -920,7 +1015,8 @@ private fun MainPage(
             syncedAt = result?.takeIf { it.peerAddress == peer.address }?.time,
             syncedVia = result?.takeIf { it.peerAddress == peer.address }?.via,
             now = now,
-            canSync = ready && !status.busy && !nothingEitherWay,
+            // KMK (r93): not while received data is applied
+            canSync = ready && !status.busy && status.phase != SyncPhase.Applying && !nothingEitherWay,
             nothingEitherWay = nothingEitherWay,
             // KMK (r91): Sync both ways, Send only from here, Get only from there; all start the same sync
             buttonLabel = when {
@@ -951,6 +1047,18 @@ private fun MainPage(
             onUnpair = { removing = peer },
             onActivity = { onOpen(Page.Activity) },
         )
+    }
+    // KMK (r93): the received data is applied after the devices disconnect; a stopped apply finishes later
+    val applyingFrom = pendingApply?.peerName
+        ?: peers.firstOrNull { it.address == status.peerAddress }?.name
+        ?: "the other device"
+    if (status.phase == SyncPhase.Applying) {
+        // KMK (r93): only when no device row shows it already
+        if (peers.none { it.address == status.peerAddress }) {
+            ApplyCard(title = "Applying sync from $applyingFrom…", status = status)
+        }
+    } else if (pendingApply != null) {
+        Note("Sync from $applyingFrom will finish applying")
     }
     // KMK (r91): Clear removes the card and the offers (and waiting APKs); each × removes its own box
     result?.let { last ->
@@ -1349,7 +1457,9 @@ private fun PeerRow(
 ) {
     // KMK (r91): waiting for the other device to accept counts as this device's sync (Cancel stops it)
     val waiting = status.waitingForAccept && status.peerAddress == peer.address
-    val syncing = (status.busy || waiting) && status.peerAddress == peer.address
+    // KMK (r93): after the transfer, the data from this device is applied offline (Stop: it carries on later)
+    val applying = status.phase == SyncPhase.Applying && status.peerAddress == peer.address
+    val syncing = (status.busy || waiting || applying) && status.peerAddress == peer.address
     var menu by remember { mutableStateOf(false) }
     Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerHighest) {
         Column(
@@ -1370,6 +1480,7 @@ private fun PeerRow(
                     modifier = Modifier.weight(1f).padding(horizontal = 12.dp),
                 )
                 if (syncing) {
+                    // KMK (r93): also while applying (the rest is applied the next time the app opens)
                     TextButton(onClick = PairSync::stopSync) { Text(if (waiting) "Cancel" else "Stop") }
                 } else {
                     // KMK (r90): narrower, so the name keeps its room at phone width
@@ -1401,6 +1512,7 @@ private fun PeerRow(
             val viaText = status.via?.takeIf { syncing && !waiting }?.let { " · ${it.label}" }.orEmpty()
             val subtitle = when {
                 waiting -> "Waiting for ${peer.name} to accept…"
+                applying -> "Applying sync from ${peer.name}…"
                 syncing && status.total > 0L ->
                     "${if (status.sending) "Sending" else "Receiving"} ${mb(status.done)} of " +
                         "${mb(status.total)} MB" +
@@ -1483,7 +1595,18 @@ private fun PeerRow(
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                 )
             }
-            if (syncing && !waiting) {
+            if (applying) {
+                // KMK (r93): "Applying manga 1,800 of 4,097"
+                status.applyText?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    )
+                }
+                ApplyBar(status)
+            } else if (syncing && !waiting) {
                 if (status.total > 0L) {
                     LinearProgressIndicator(
                         progress = { (status.done.toFloat() / status.total.toFloat()).coerceIn(0f, 1f) },
@@ -1505,6 +1628,50 @@ private fun PeerRow(
                     )
                 }
             }
+        }
+    }
+}
+
+/** KMK (r93): the apply's bar: done of total, or moving while the total isn't known */
+@Composable
+private fun ApplyBar(status: PairSync.Status) {
+    if (status.applyTotal > 0) {
+        LinearProgressIndicator(
+            progress = { (status.applyDone.toFloat() / status.applyTotal.toFloat()).coerceIn(0f, 1f) },
+            modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+        )
+    } else {
+        LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 10.dp))
+    }
+}
+
+/** KMK (r93): "Applying sync from Tablet…", "Applying manga 1,800 of 4,097" and its bar */
+@Composable
+private fun ApplyCard(title: String, status: PairSync.Status) {
+    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerHighest) {
+        Column(Modifier.fillMaxWidth().padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                // KMK (r93): the rest is applied the next time the app opens
+                TextButton(onClick = PairSync::stopSync) { Text("Stop") }
+            }
+            val detail = status.applyText
+                ?: if (status.applyTotal > 0) "%,d of %,d".format(status.applyDone, status.applyTotal) else null
+            detail?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            ApplyBar(status)
+            Text(
+                "Stopped or interrupted? It carries on the next time the app opens.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp),
+            )
         }
     }
 }
@@ -1905,9 +2072,9 @@ private fun modeSuffix(mode: String, anime: Boolean): String = when (mode) {
 private class CoversCount(val count: Int, val bytes: Long, val failed: Boolean = false)
 
 /**
- * KMK (r92): under a library page's categories: what each title already carries, then "Also send": covers (library
- * and history; "up to": only ones the other device lacks go) and downloaded chapters / episodes (› picks which; only
- * with the library tile on), with sizes that follow the Unread only / Last 10 choice
+ * KMK (r92): under a library page's categories: what each title already carries, then "Also send": covers (r93:
+ * library titles only; "up to": only ones the other device lacks go) and downloaded chapters / episodes (› picks
+ * which; only with the library tile on), with sizes that follow the Unread only / Last 10 choice
  */
 @Composable
 private fun AlsoSend(
@@ -1934,7 +2101,8 @@ private fun AlsoSend(
     val coverCount = covers
     ExtraRow(
         title = "Covers",
-        subtitle = "Library + history",
+        // KMK (r93): the library's titles only; history titles' covers are on the History page
+        subtitle = "Library titles",
         size = when {
             coverCount == null -> "…"
             coverCount.failed -> "Couldn't count"
@@ -2236,6 +2404,16 @@ private fun HistoryPage(selection: SyncSelection, onChange: (SyncSelection) -> U
             ) { Text(label) }
         }
     }
+    // KMK (r93): history titles' covers belong to this page (the Manga/Anime pages' Covers are library titles only)
+    SectionLabel("Also send")
+    ExtraRow(
+        title = "Covers of history titles",
+        subtitle = "So history shows them on the other device",
+        size = "",
+        checked = on && selection.historyCovers,
+        enabled = on,
+        onCheckedChange = { onChange(selection.copy(historyCovers = it)) },
+    )
     Note("History only adds entries on the other device; it never adds titles to its library.")
 }
 

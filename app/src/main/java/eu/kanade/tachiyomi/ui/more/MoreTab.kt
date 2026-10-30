@@ -34,6 +34,7 @@ import eu.kanade.tachiyomi.ui.history.HistoryTab
 import eu.kanade.tachiyomi.ui.libraryUpdateError.LibraryUpdateErrorScreen
 import eu.kanade.tachiyomi.ui.logs.LogsScreen
 import eu.kanade.tachiyomi.ui.pairsync.PairSyncDialog
+import eu.kanade.tachiyomi.ui.pairsync.PairSyncPopup
 import eu.kanade.tachiyomi.ui.setting.PlayerSettingsScreen
 import eu.kanade.tachiyomi.ui.setting.SettingsScreen
 import eu.kanade.tachiyomi.ui.stats.StatsScreen
@@ -79,6 +80,12 @@ data object MoreTab : Tab {
         // open across rotation
         var showPairSync by rememberSaveable { mutableStateOf(false) }
         if (showPairSync) PairSyncDialog(onDismissRequest = { showPairSync = false })
+        // KMK (r93): a tapped sync notification opens the pop-up (HomeScreen usually takes it first)
+        LaunchedEffect(Unit) {
+            PairSyncPopup.openRequest.collect { requested ->
+                if (requested && PairSyncPopup.takeOpenRequest()) showPairSync = true
+            }
+        }
         MoreScreen(
             downloadQueueStateProvider = { downloadQueueState },
             downloadedOnly = screenModel.downloadedOnly,

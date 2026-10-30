@@ -6,6 +6,7 @@ import android.os.Environment
 import android.provider.DocumentsContract
 import coil3.imageLoader
 import com.hippo.unifile.UniFile
+import eu.kanade.domain.manga.interactor.UpdateManga
 import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
 import eu.kanade.tachiyomi.data.anime.Anime
 import eu.kanade.tachiyomi.data.anime.AnimeRepository
@@ -18,15 +19,18 @@ import eu.kanade.tachiyomi.devicefiles.DeviceFilesIds
 import eu.kanade.tachiyomi.jssource.ReaderVideos
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.util.storage.DiskUtil
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import tachiyomi.domain.category.interactor.GetCategories
@@ -38,6 +42,7 @@ import tachiyomi.domain.manga.interactor.GetLibraryManga
 import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaCover
+import tachiyomi.domain.manga.model.MangaUpdate
 import tachiyomi.domain.manga.model.asMangaCover
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.storage.service.StorageManager
@@ -180,11 +185,15 @@ internal object PairSyncExtras {
     // Selection helpers
 
     /** The selection sends covers of this kind (only for the titles it sends) */
-    private fun SyncSelection.coversOf(anime: Boolean): Boolean = if (anime) {
-        animeCovers && (animeLibrary || animeHistory)
-    } else {
-        mangaCovers && (mangaLibrary || mangaHistory)
-    }
+    private fun SyncSelection.coversOf(anime: Boolean): Boolean = libraryCoversOf(anime) || historyCoversOf(anime)
+
+    /** KMK (r93): the library titles' covers (the Manga / Anime page's Covers switch) */
+    private fun SyncSelection.libraryCoversOf(anime: Boolean): Boolean =
+        if (anime) animeCovers && animeLibrary else mangaCovers && mangaLibrary
+
+    /** KMK (r93): the covers of titles sent only for their history (the History page's switch) */
+    private fun SyncSelection.historyCoversOf(anime: Boolean): Boolean =
+        historyCovers && (if (anime) animeHistory else mangaHistory)
 
     /** KMK (r92): only with the library tile on (the other device only takes downloads of titles it has) */
     private fun SyncSelection.downloadsOf(anime: Boolean): Boolean =
@@ -220,13 +229,41 @@ internal object PairSyncExtras {
         val ref: CoverRef?,
     )
 
-    /** The same titles the backup part sends: the library in the picked categories, and titles with history */
-    private fun CoverCandidate.sentWith(selection: SyncSelection): Boolean {
+    /**
+     * The same titles the backup part sends: the library in the picked categories, and titles with history. KMK
+     * (r93): how it sends the title: in the library ([SENT_LIBRARY]), only for its history
+     * ([SENT_HISTORY]; also a library title outside the picked categories), or not at all
+     */
+    private fun CoverCandidate.sentAs(selection: SyncSelection): Int {
         val picked = if (anime) selection.animeCategories else selection.mangaCategories
         val library = if (anime) selection.animeLibrary else selection.mangaLibrary
         val history = if (anime) selection.animeHistory else selection.mangaHistory
-        return (library && favorite && (picked == null || categories.any { it in picked })) || (history && inHistory)
+        return when {
+            library && favorite && (picked == null || categories.any { it in picked }) -> SENT_LIBRARY
+            history && inHistory -> SENT_HISTORY
+            else -> SENT_NOT
+        }
     }
+
+    /** KMK (r93): the title's cover goes: a library title's with the Covers switch, a history one's with its own */
+    private fun CoverCandidate.coverGoes(selection: SyncSelection): Boolean = when (sentAs(selection)) {
+        SENT_LIBRARY -> selection.libraryCoversOf(anime)
+        SENT_HISTORY -> selection.historyCoversOf(anime)
+        else -> false
+    }
+
+    /**
+     * KMK (r93): the titles (source:url) [own] sends as library titles of this kind (their downloads may go); null
+     * when the titles couldn't be read (nothing is left out then)
+     */
+    private suspend fun libraryKeys(anime: Boolean, own: SyncSelection): Set<String>? =
+        runCatching { covers.get(anime).await() }.getOrNull()
+            ?.filter { it.sentAs(own) == SENT_LIBRARY }
+            ?.mapTo(HashSet()) { keyOf(it.source, it.url) }
+
+    private const val SENT_NOT = 0
+    private const val SENT_LIBRARY = 1
+    private const val SENT_HISTORY = 2
 
     private fun readCache(key: String): ByteArray? {
         val diskCache = app.imageLoader.diskCache ?: return null
@@ -643,13 +680,37 @@ internal object PairSyncExtras {
         }
         .sortedByDescending { it.bytes }
 
-    /** The covers found here for the titles [selection] sends of this kind (whether its covers switch is on or not) */
+    /**
+     * The covers found here for the titles [selection] sends of this kind (whether its covers switch is on or not).
+     * KMK (r93): library titles only; [historyCoversEstimate] has the history-only ones
+     */
     suspend fun coversEstimate(anime: Boolean, selection: SyncSelection): CoversEstimate {
         val own = selection.normalized()
         val found = covers.get(anime).await().mapNotNull { candidate ->
-            candidate.ref?.takeIf { candidate.sentWith(own) && it.size <= MAX_COVER }
+            candidate.ref?.takeIf { candidate.sentAs(own) == SENT_LIBRARY && it.size <= MAX_COVER }
         }
         return CoversEstimate(found.size, found.sumOf { it.size })
+    }
+
+    /**
+     * KMK (r93): the covers found here for the titles [selection] sends only for their history (manga and anime,
+     * whether the History page's covers switch is on or not)
+     */
+    suspend fun historyCoversEstimate(selection: SyncSelection): CoversEstimate {
+        val own = selection.normalized()
+        var count = 0
+        var bytes = 0L
+        for (anime in listOf(false, true)) {
+            if (!(if (anime) own.animeHistory else own.mangaHistory)) continue
+            covers.get(anime).await().forEach { candidate ->
+                val ref = candidate.ref ?: return@forEach
+                if (candidate.sentAs(own) == SENT_HISTORY && ref.size <= MAX_COVER) {
+                    count++
+                    bytes += ref.size
+                }
+            }
+        }
+        return CoversEstimate(count, bytes)
     }
 
     /** The downloads [selection] sends of this kind: (titles, chapters or episodes, bytes) */
@@ -657,8 +718,10 @@ internal object PairSyncExtras {
         if (!selection.downloadsOf(anime)) return Triple(0, 0, 0L)
         val keys = selection.keysOf(anime)
         val mode = selection.modeOf(anime)
+        // KMK (r93): only titles sent as library titles, like [outgoing]
+        val sent = libraryKeys(anime, selection.normalized())
         val picked = downloadScans.get(anime).await()
-            .filter { keys == null || it.key in keys }
+            .filter { (keys == null || it.key in keys) && (sent == null || it.key in sent) }
             .map { pick(it.items, mode) }
             .filter { it.isNotEmpty() }
         return Triple(picked.size, picked.sumOf { it.size }, picked.sumOf { items -> items.sumOf { it.bytes } })
@@ -670,11 +733,13 @@ internal object PairSyncExtras {
         var total = 0L
         var downloadBytes = 0L
         for (anime in listOf(false, true)) {
-            if (own.coversOf(anime)) total += coversEstimate(anime, own).bytes
+            if (own.libraryCoversOf(anime)) total += coversEstimate(anime, own).bytes
             val bytes = downloadsEstimate(anime, own).third
             total += bytes
             downloadBytes += bytes
         }
+        // KMK (r93): and the history-only titles' covers
+        if (own.historyCovers && (own.mangaHistory || own.animeHistory)) total += historyCoversEstimate(own).bytes
         return total to downloadBytes
     }
 
@@ -684,7 +749,8 @@ internal object PairSyncExtras {
      * The free space here for what comes: the app's storage (covers) and its cache (the image cache), and with
      * [downloads] the downloads folder; the smallest known one, null when none is known
      */
-    fun freeBytes(downloads: Boolean): Long? {
+    fun freeBytes(downloads: Boolean, staged: Boolean = false): Long? {
+        if (staged) return stagedFree(downloads)
         val values = buildList {
             add(DiskUtil.getAvailableStorageSpace(app.getExternalFilesDir(null) ?: app.filesDir))
             add(DiskUtil.getAvailableStorageSpace(app.cacheDir))
@@ -692,6 +758,30 @@ internal object PairSyncExtras {
         }.filter { it >= 0L }
         return values.minOrNull()
     }
+
+    /**
+     * KMK (r93): the free space for a staged sync: everything is staged in the app's storage first (covers and
+     * downloads), then downloads are copied into the downloads folder one by one (each staged copy deleted after).
+     * On the same storage that's about the staged size; on another one (an SD card) the smaller of the two counts.
+     */
+    private fun stagedFree(downloads: Boolean): Long? {
+        val stage = DiskUtil.getAvailableStorageSpace(app.filesDir).takeIf { it >= 0L }
+        if (!downloads) return stage
+        val folder = downloadsFree().takeIf { it >= 0L }
+        return when {
+            stage == null -> folder
+            folder == null || sameVolume(stage, folder) -> stage
+            else -> minOf(stage, folder)
+        }
+    }
+
+    /**
+     * KMK (r93): two free-space readings taken together that are this close are the same storage (the app's storage
+     * and the phone's shared storage are one partition on today's phones)
+     */
+    private fun sameVolume(a: Long, b: Long): Boolean = kotlin.math.abs(a - b) <= SAME_VOLUME_SLACK
+
+    private const val SAME_VOLUME_SLACK = 64L * 1024 * 1024
 
     /** The downloads folder's free space; a picked folder (content://) on the phone's own storage is measured there */
     private fun downloadsFree(): Long {
@@ -763,7 +853,8 @@ internal object PairSyncExtras {
             val candidates = runCatching { covers.get(anime).await() }.getOrDefault(emptyList())
             for (candidate in candidates) {
                 val ref = candidate.ref ?: continue
-                if (ref.size > MAX_COVER || !candidate.sentWith(own)) continue
+                // KMK (r93): library and history-only titles each by their own switch
+                if (ref.size > MAX_COVER || !candidate.coverGoes(own)) continue
                 items += ExtraItem(
                     kind = KIND_COVER,
                     anime = anime,
@@ -778,8 +869,10 @@ internal object PairSyncExtras {
         for (anime in listOf(false, true)) {
             if (!own.downloadsOf(anime)) continue
             val keys = own.keysOf(anime)
+            // KMK (r93): only titles sent as library titles (the other device drops the rest anyway)
+            val sent = libraryKeys(anime, own)
             val titles = runCatching { downloadScans.get(anime).await() }.getOrDefault(emptyList())
-                .filter { keys == null || it.key in keys }
+                .filter { (keys == null || it.key in keys) && (sent == null || it.key in sent) }
             for (title in titles) {
                 currentCoroutineContext().ensureActive()
                 for (item in pick(title.items, own.modeOf(anime))) {
@@ -1010,7 +1103,466 @@ internal object PairSyncExtras {
             if (animeManager.isDownloaded(anime, episode)) return null
             return Target.EpisodeTarget(anime, episode)
         }
+
+        // KMK (r93): the staged flow's needs, decided without merging: a title (or chapter / episode) not here yet
+        // is needed whole; one here is compared by size (chapters: page count and total size)
+
+        /** The chapter [url] of [manga], from its chapters read once */
+        suspend fun chapterOf(manga: Manga, url: String): Chapter? =
+            chapters.getOrPut(manga.id) { getChapters.await(manga.id).associateBy { it.url } }[url]
+
+        suspend fun episodeOf(anime: Anime, url: String): Episode? =
+            episodes.getOrPut(anime.id) { repository.getEpisodes(anime.id).associateBy { it.url } }[url]
+
+        /** The entries of [manga]'s downloads folder here, listed once (empty when it has none) */
+        val folderEntries = HashMap<Long, Map<String, UniFile>>()
+
+        fun entriesOf(manga: Manga, source: Source): Map<String, UniFile> = folderEntries.getOrPut(manga.id) {
+            provider.findMangaDir(manga.ogTitle, source)?.listFiles().orEmpty()
+                .filter { it.name != null }
+                .associateBy { it.name.orEmpty() }
+        }
+
+        suspend fun needs(item: ExtraItem): Boolean = when (item.kind) {
+            KIND_COVER -> coverNeeded(item)
+            KIND_CHAPTER -> chapterNeeded(item)
+            KIND_EPISODE -> episodeNeeded(item)
+            else -> false
+        }
+
+        private suspend fun coverNeeded(item: ExtraItem): Boolean {
+            val size = item.bytes()
+            if (item.files.size != 1 || size <= 0L || size > MAX_COVER) return false
+            val id: Long
+            val favorite: Boolean
+            val thumbnailUrl: String?
+            val cacheKey: String?
+            if (item.anime) {
+                val anime = anime(item) ?: return true
+                id = -anime.id
+                favorite = anime.favorite
+                thumbnailUrl = anime.thumbnailUrl
+                cacheKey = anime.thumbnailUrl?.let { "$it;0" }
+            } else {
+                val manga = manga(item) ?: return true
+                if (manga.isLocal()) return false
+                id = manga.id
+                favorite = manga.favorite
+                thumbnailUrl = manga.thumbnailUrl
+                cacheKey = manga.asMangaCover().let { cover -> cover.url?.let { "$it;${cover.lastModified}" } }
+            }
+            // Never over a custom cover set here
+            val custom = coverCache.getCustomCoverFile(id)
+            if (custom.exists()) return false
+            if (favorite) {
+                val file = (if (item.custom) custom else coverCache.getCoverFile(thumbnailUrl)) ?: return true
+                return !(file.isFile && file.length() == size)
+            }
+            val key = cacheKey ?: return true
+            val diskCache = app.imageLoader.diskCache ?: return false
+            val snapshot = diskCache.openSnapshot(key) ?: return true
+            val here = try {
+                diskCache.fileSystem.metadataOrNull(snapshot.data)?.size ?: 0L
+            } finally {
+                snapshot.close()
+            }
+            return here != size
+        }
+
+        private suspend fun chapterNeeded(item: ExtraItem): Boolean {
+            val url = item.item ?: return false
+            if (item.files.isEmpty() || (item.archive && item.files.size != 1)) return false
+            // Only for an installed source (the folder name comes from it)
+            val source = sourceManager.get(item.source) ?: return false
+            val manga = manga(item) ?: return true
+            if (manga.isLocal()) return false
+            val chapter = chapterOf(manga, url) ?: return true
+            val entries = entriesOf(manga, source)
+            if (entries.isEmpty()) return true
+            return provider.getValidChapterDirNames(chapter.name, chapter.scanlator, chapter.url)
+                .mapNotNull { entries[it] }
+                .none { sameChapter(it, item) }
+        }
+
+        private suspend fun episodeNeeded(item: ExtraItem): Boolean {
+            val url = item.item ?: return false
+            if (item.files.size != 1) return false
+            if (animeSources.get(item.source) == null) return false
+            val anime = anime(item) ?: return true
+            val episode = episodeOf(anime, url) ?: return true
+            if (!animeManager.isDownloaded(anime, episode)) return true
+            val file = animeManager.findEpisodeFile(anime, episode) ?: return true
+            return file.length() != item.bytes()
+        }
     }
+
+    /**
+     * KMK (r93): [entry] (a chapter's folder or .cbz here) is the same as [item]: a .cbz of the same size, or a folder
+     * with as many files of the same total size
+     */
+    private fun sameChapter(entry: UniFile, item: ExtraItem): Boolean {
+        val name = entry.name ?: return false
+        if (item.archive) {
+            return entry.isFile && name.endsWith(".cbz", ignoreCase = true) && entry.length() == item.bytes()
+        }
+        if (!entry.isDirectory) return false
+        val files = entry.listFiles().orEmpty().filter { it.isFile }
+        return files.size == item.files.size && files.sumOf { it.length() } == item.bytes()
+    }
+
+    /** KMK (r93): the items of a manifest this device needs ([need], in order), and how many didn't fit */
+    class StagePlan(val need: List<Int>, val noRoom: Int)
+
+    /**
+     * KMK (r93): what this device needs of [manifest], decided without merging (see [Lookup.needs]), cut to the free
+     * space: everything is staged in the app's storage, and downloads also need room in the downloads folder when
+     * that's on other storage (see [stagedFree])
+     */
+    suspend fun stagePlan(manifest: ExtrasManifest): StagePlan {
+        val lookup = Lookup()
+        val stageFree = DiskUtil.getAvailableStorageSpace(app.filesDir)
+        val downloads = manifest.items.any { it.kind != KIND_COVER }
+        val folderFree = if (downloads) downloadsFree() else -1L
+        // KMK (r93): the apply copies one download at a time next to its staged copy: room for the biggest is kept
+        val reserve = MARGIN + (manifest.items.filter { it.kind != KIND_COVER }.maxOfOrNull { it.bytes() } ?: 0L)
+        var stageBudget: Long? = if (stageFree >= 0L) stageFree - reserve else null
+        var folderBudget: Long? = if (folderFree >= 0L && (stageFree < 0L || !sameVolume(stageFree, folderFree))) {
+            folderFree - reserve
+        } else {
+            null
+        }
+        val need = ArrayList<Int>()
+        var noRoom = 0
+        for ((index, item) in manifest.items.withIndex()) {
+            currentCoroutineContext().ensureActive()
+            val needed = try {
+                lookup.needs(item)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                false
+            }
+            if (!needed) continue
+            val size = item.bytes()
+            val isDownload = item.kind != KIND_COVER
+            val stageLeft = stageBudget
+            val folderLeft = folderBudget
+            if ((stageLeft != null && size > stageLeft) || (isDownload && folderLeft != null && size > folderLeft)) {
+                noRoom++
+                continue
+            }
+            if (stageLeft != null) stageBudget = stageLeft - size
+            if (isDownload && folderLeft != null) folderBudget = folderLeft - size
+            need += index
+        }
+        return StagePlan(need, noRoom)
+    }
+
+    // Applying a staged sync (KMK (r93)): after the library merge, each staged cover and download is moved to where
+    // this device keeps it, found from its own rows (by source + url), replacing what's there safely
+
+    /** KMK (r93): what [applyStaged] put in place */
+    class Applied {
+        var covers = 0
+        var items = 0
+        var bytes = 0L
+
+        /** KMK (r93): library manga whose cover file was replaced (their cover's lastModified moves on) */
+        internal val replacedManga = HashSet<Long>()
+
+        /** KMK (r93): a cover shown from the image memory cache was replaced (anime, or a title not in the library) */
+        internal var replacedCached = false
+    }
+
+    /**
+     * KMK (r93): moves the staged [items] (item n in "<[dir]>/items/n", complete when it has an "ok" file) into place;
+     * each one is deleted from the stage once handled, so an apply that's interrupted carries on with the rest.
+     * [progress] gets (done, total, text).
+     */
+    suspend fun applyStaged(dir: File, items: List<ExtraItem>, progress: (Int, Int, String) -> Unit): Applied {
+        val applied = Applied()
+        if (items.isEmpty()) return applied
+        // The merge just added titles: the anime folders' letter-case check reads the names again
+        if (items.any { it.kind == KIND_EPISODE }) {
+            runCatching { Injekt.get<AnimeDownloadManager>().forgetLibraryNames() }
+        }
+        val lookup = Lookup()
+        val touchedAnime = HashMap<Long, Anime>()
+        val mangaDirs = HashMap<Long, MangaDirHere?>()
+        val coverCount = items.count { it.kind == KIND_COVER }
+        val downloadCount = items.size - coverCount
+        var coversDone = 0
+        var downloadsDone = 0
+        try {
+            for ((index, item) in items.withIndex()) {
+                currentCoroutineContext().ensureActive()
+                val itemDir = File(dir, "items/$index")
+                if (File(itemDir, "ok").isFile) {
+                    val files = item.files.indices.map { File(itemDir, it.toString()) }
+                    val ok = try {
+                        when (item.kind) {
+                            KIND_COVER -> applyCover(lookup, item, files, applied)
+                            KIND_CHAPTER -> applyChapter(lookup, item, files, mangaDirs)
+                            KIND_EPISODE -> applyEpisode(lookup, item, files, touchedAnime)
+                            else -> false
+                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        false
+                    }
+                    if (ok) {
+                        applied.bytes += item.bytes()
+                        if (item.kind == KIND_COVER) applied.covers++ else applied.items++
+                    }
+                }
+                runCatching { itemDir.deleteRecursively() }
+                if (item.kind == KIND_COVER) {
+                    coversDone++
+                    progress(index + 1, items.size, "Moving covers %,d of %,d".format(coversDone, coverCount))
+                } else {
+                    downloadsDone++
+                    progress(index + 1, items.size, "Moving downloads %,d of %,d".format(downloadsDone, downloadCount))
+                }
+            }
+        } finally {
+            val manager = Injekt.get<AnimeDownloadManager>()
+            touchedAnime.values.forEach { runCatching { manager.refresh(it) } }
+            covers.clear()
+            if (downloadCount > 0) downloadScans.clear()
+            refreshCovers(applied)
+        }
+        return applied
+    }
+
+    /**
+     * KMK (r93): the replaced covers show at once: a library manga's cover lastModified moves on (its image key
+     * changes, like CoverFolders' import), and the image memory cache is emptied when a cover it may hold was
+     * replaced (anime covers are keyed by their URL only). Also after a Stop (the files are in place already).
+     */
+    private suspend fun refreshCovers(applied: Applied) {
+        if (applied.replacedManga.isNotEmpty()) {
+            val now = System.currentTimeMillis()
+            runCatching {
+                withContext(NonCancellable) {
+                    applied.replacedManga.chunked(COVER_UPDATE_CHUNK).forEach { ids ->
+                        Injekt.get<UpdateManga>().awaitAll(ids.map { MangaUpdate(id = it, coverLastModified = now) })
+                    }
+                }
+            }
+        }
+        if (applied.replacedCached) runCatching { app.imageLoader.memoryCache?.clear() }
+    }
+
+    private const val COVER_UPDATE_CHUNK = 500
+
+    /** KMK (r93): [src] in place of [target] (a temporary name first, then renamed over it) */
+    private fun replaceFile(src: File, target: File): Boolean {
+        target.parentFile?.mkdirs()
+        val part = File(target.parentFile, target.name + ".part")
+        part.delete()
+        // KMK (r93): an earlier apply's leftover aside copy goes too
+        File(target.parentFile, target.name + OLD_SUFFIX).delete()
+        val expected = src.length()
+        // Moved when it's on the same storage, else copied
+        if (!src.renameTo(part)) {
+            src.inputStream().use { input -> part.outputStream().use { input.copyTo(it, COPY_BUFFER) } }
+        }
+        if (part.length() != expected) {
+            part.delete()
+            return false
+        }
+        if (part.renameTo(target)) return true
+        // Some file systems don't rename over a file: the old one goes first
+        target.delete()
+        if (part.renameTo(target)) return true
+        part.delete()
+        return false
+    }
+
+    private suspend fun applyCover(lookup: Lookup, item: ExtraItem, files: List<File>, applied: Applied): Boolean {
+        val file = files.singleOrNull()?.takeIf { it.isFile } ?: return false
+        val size = item.bytes()
+        if (file.length() != size || size > MAX_COVER) return false
+        val id: Long
+        val favorite: Boolean
+        val thumbnailUrl: String?
+        val cacheKey: String?
+        if (item.anime) {
+            val anime = lookup.anime(item) ?: return false
+            id = -anime.id
+            favorite = anime.favorite
+            thumbnailUrl = anime.thumbnailUrl
+            cacheKey = anime.thumbnailUrl?.let { "$it;0" }
+        } else {
+            val manga = lookup.manga(item) ?: return false
+            if (manga.isLocal()) return false
+            id = manga.id
+            favorite = manga.favorite
+            thumbnailUrl = manga.thumbnailUrl
+            cacheKey = manga.asMangaCover().let { cover -> cover.url?.let { "$it;${cover.lastModified}" } }
+        }
+        // Never over (or under) a custom cover set here
+        val custom = lookup.coverCache.getCustomCoverFile(id)
+        if (custom.exists()) return false
+        if (favorite) {
+            val target = (if (item.custom) custom else lookup.coverCache.getCoverFile(thumbnailUrl)) ?: return false
+            // The same cover is here already
+            if (target.isFile && target.length() == size) return false
+            val replacing = target.isFile
+            val done = replaceFile(file, target)
+            // KMK (r93): an old cover replaced shows the new one (see refreshCovers)
+            if (done && replacing) {
+                if (item.anime) applied.replacedCached = true else applied.replacedManga += id
+            }
+            return done
+        }
+        val key = cacheKey ?: return false
+        val done = writeCache(key, file.readBytes())
+        if (done) applied.replacedCached = true
+        return done
+    }
+
+    /** KMK (r93): a manga's downloads folder here and its entries, listed once per apply (kept up to date) */
+    class MangaDirHere(val dir: UniFile) {
+        val entries: MutableMap<String, UniFile> = dir.listFiles().orEmpty()
+            .filter { it.name != null }
+            .associateByTo(HashMap<String, UniFile>()) { it.name.orEmpty() }
+    }
+
+    private suspend fun applyChapter(
+        lookup: Lookup,
+        item: ExtraItem,
+        files: List<File>,
+        mangaDirs: HashMap<Long, MangaDirHere?>,
+    ): Boolean {
+        val url = item.item ?: return false
+        if (files.isEmpty() || files.any { !it.isFile } || (item.archive && files.size != 1)) return false
+        val manga = lookup.manga(item) ?: return false
+        if (manga.isLocal()) return false
+        val source = lookup.sourceManager.get(manga.source) ?: return false
+        val chapter = lookup.chapterOf(manga, url) ?: return false
+        val provider = lookup.provider
+        val here = mangaDirs.getOrPut(manga.id) {
+            provider.getMangaDir(manga.ogTitle, source).getOrNull()?.let { MangaDirHere(it) }
+        } ?: return false
+        val dir = here.dir
+        val dirName = provider.getChapterDirName(chapter.name, chapter.scanlator, chapter.url)
+        val finalName = if (item.archive) "$dirName.cbz" else dirName
+        val valid = provider.getValidChapterDirNames(chapter.name, chapter.scanlator, chapter.url).distinct()
+        val existing = valid.mapNotNull { name -> here.entries[name] }
+        if (existing.any { sameChapter(it, item) }) return false
+        // Into "<name>_tmp" (the downloader's temporary name), like a download
+        val tmpName = finalName + CHAPTER_TMP
+        here.entries.remove(tmpName)?.delete()
+        val tmp = (if (item.archive) dir.createFile(tmpName) else dir.createDirectory(tmpName)) ?: return false
+        val copied = try {
+            if (item.archive) {
+                copyInto(files[0], tmp)
+            } else {
+                item.files.indices.all { index ->
+                    val name = safeName(item.files[index].name) ?: return@all false
+                    val out = tmp.createFile(name) ?: return@all false
+                    copyInto(files[index], out)
+                }
+            }
+        } catch (e: Exception) {
+            runCatching { tmp.delete() }
+            throw e
+        }
+        if (!copied) {
+            tmp.delete()
+            return false
+        }
+        if (!swapIn(dir, tmp, finalName, existing)) return false
+        // The old names went (the new one isn't looked up again in this apply)
+        valid.forEach { here.entries.remove(it) }
+        runCatching { Injekt.get<DownloadCache>().addChapter(dirName, dir, manga) }
+        return true
+    }
+
+    private suspend fun applyEpisode(
+        lookup: Lookup,
+        item: ExtraItem,
+        files: List<File>,
+        touchedAnime: HashMap<Long, Anime>,
+    ): Boolean {
+        val url = item.item ?: return false
+        val file = files.singleOrNull()?.takeIf { it.isFile } ?: return false
+        val anime = lookup.anime(item) ?: return false
+        if (lookup.animeSources.get(anime.source) == null) return false
+        val episode = lookup.episodeOf(anime, url) ?: return false
+        val manager = lookup.animeManager
+        // Under the downloader's folder lock (a download of the same anime could make a twin folder)
+        val dir = manager.animeDirLocked(anime, create = true) ?: return false
+        val here = manager.findEpisodeFile(anime, episode)
+        if (here != null && here.length() == item.bytes()) return false
+        val base = episodeBaseName(episode)
+        val ext = item.files.firstOrNull()?.name?.substringAfterLast('.', "")?.lowercase()
+            ?.takeIf { AnimeDownloadManager.isEpisodeVideo("x.$it") } ?: "mkv"
+        val finalName = "$base.$ext"
+        val tmpName = base + EPISODE_TMP
+        dir.findFile(tmpName)?.delete()
+        val tmp = dir.createFile(tmpName) ?: return false
+        val copied = try {
+            copyInto(file, tmp)
+        } catch (e: Exception) {
+            runCatching { tmp.delete() }
+            throw e
+        }
+        if (!copied) {
+            tmp.delete()
+            return false
+        }
+        val existing = listOfNotNull(here, dir.findFile(finalName)).distinctBy { it.name }
+        if (!swapIn(dir, tmp, finalName, existing)) return false
+        touchedAnime[anime.id] = anime
+        return true
+    }
+
+    /** KMK (r93): copies [src] into [out] (a new, empty file); true when every byte got there */
+    private fun copyInto(src: File, out: UniFile): Boolean {
+        val stream = out.openOutputStream() ?: return false
+        val copied = src.inputStream().use { input -> stream.use { input.copyTo(it, COPY_BUFFER) } }
+        return copied == src.length()
+    }
+
+    /**
+     * KMK (r93): [tmp] takes [finalName] in [dir]; the [existing] copies (the same chapter / episode under any of its
+     * names) are renamed aside first and deleted only once [tmp] has the name (put back if it couldn't)
+     */
+    private fun swapIn(dir: UniFile, tmp: UniFile, finalName: String, existing: List<UniFile>): Boolean {
+        // KMK (r93): leftovers of an apply that was killed here (an aside copy, a part file) go first
+        listOf(finalName + OLD_SUFFIX, "$finalName.part").forEach { name ->
+            if (existing.none { it.name == name }) runCatching { dir.findFile(name)?.delete() }
+        }
+        val aside = ArrayList<Pair<String, String>>()
+        for (old in existing) {
+            val name = old.name ?: continue
+            val asideName = name + OLD_SUFFIX
+            dir.findFile(asideName)?.delete()
+            if (old.renameTo(asideName)) {
+                aside += name to asideName
+            } else if (name == finalName) {
+                // The name can't be freed: the new copy is dropped, the old one stays
+                aside.forEach { (original, moved) -> dir.findFile(moved)?.renameTo(original) }
+                tmp.delete()
+                return false
+            }
+        }
+        if (!tmp.renameTo(finalName)) {
+            aside.forEach { (original, moved) -> dir.findFile(moved)?.renameTo(original) }
+            tmp.delete()
+            return false
+        }
+        aside.forEach { (_, moved) -> runCatching { dir.findFile(moved)?.delete() } }
+        return true
+    }
+
+    /** KMK (r93): an old copy while the new one takes its name (deleted right after) */
+    private const val OLD_SUFFIX = "_old"
+
+    private const val COPY_BUFFER = 256 * 1024
 
     // Writing (receiver)
 
@@ -1284,12 +1836,19 @@ internal object PairSyncExtras {
         var coverCount = 0
         var coverBytes = 0L
         for (anime in listOf(false, true)) {
-            if (!own.coversOf(anime)) continue
+            if (!own.libraryCoversOf(anime)) continue
             val estimate = coversEstimate(anime, own)
             coverCount += estimate.count
             coverBytes += estimate.bytes
         }
         if (coverCount > 0) rows += SummaryRow("Covers", "up to %,d · %s".format(coverCount, sizeText(coverBytes)))
+        // KMK (r93): the history-only titles' covers, a row of their own (the History page's switch)
+        if (own.historyCovers && (own.mangaHistory || own.animeHistory)) {
+            val history = historyCoversEstimate(own)
+            if (history.count > 0) {
+                rows += SummaryRow("History covers", "up to %,d · %s".format(history.count, sizeText(history.bytes)))
+            }
+        }
         val manga = downloadsEstimate(false, own)
         val anime = downloadsEstimate(true, own)
         val bytes = manga.third + anime.third

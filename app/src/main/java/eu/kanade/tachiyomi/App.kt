@@ -341,6 +341,10 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
         // AM (DISCORD) -->
         DiscordRPCService.start(applicationContext)
         // <-- AM (DISCORD)
+
+        // KMK (r93): a sync's staged data whose apply was interrupted (killed, or Stop) is applied once the app is in
+        // the foreground (its service may start then); nothing happens while a sync runs or when nothing waits
+        runCatching { eu.kanade.tachiyomi.pairsync.PairSync.resumePendingApply(this) }
     }
 
     override fun onStop(owner: LifecycleOwner) {

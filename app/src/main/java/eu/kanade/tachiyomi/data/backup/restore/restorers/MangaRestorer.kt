@@ -527,6 +527,8 @@ class MangaRestorer(
         mergeMangaId: Long,
         backupMergedMangaReferences: List<BackupMergedMangaReference>,
     ) {
+        // KMK (r93): nothing to add: the table isn't read (it was read for every restored or synced title)
+        if (backupMergedMangaReferences.isEmpty()) return
         // Get merged manga references from file and from db
         val dbMergedMangaReferences = handler.awaitList {
             mergedQueries.selectAll(MergedMangaMapper::map)

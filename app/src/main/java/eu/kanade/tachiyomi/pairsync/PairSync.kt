@@ -56,6 +56,8 @@ import java.io.Closeable
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.EOFException
+import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
@@ -118,6 +120,16 @@ import javax.crypto.spec.SecretKeySpec
  *    device sends the files it was asked for, then the initiator does. Each file goes in frames of at most 4 MiB, the
  *    first byte 0 (more follows), 1 (the end) or 2 (couldn't be read: dropped). Then "done" as before. The receiver
  *    finds each title by source + url and writes to its own places (temporary names, renamed when complete).
+ * 11. Transfer, then apply (r93): the request and "accepted" have "stage" (the version). When both have it, nothing
+ *    is merged while connected: each side writes what comes into a staging folder in its app storage
+ *    (filesDir/pair_sync_stage/<id>, with a journal). The library payloads go as in 8 (the device pressing Sync still
+ *    merges the other's repos before building its export, for the APK check); then, over Wi-Fi only, the extras as in
+ *    10, except that each side decides what it needs without merging: by its own title (source + url) when it has
+ *    it, comparing sizes (covers: the file; .cbz and episodes: the file; chapter folders: page count and total
+ *    size), and everything of a title it doesn't have yet. Then "done" both ways and every connection closes. Each
+ *    device then applies on its own: the library merge, then the staged covers and downloads moved into place (a
+ *    temporary name, the old copy renamed aside, the new one takes the name, the old one deleted). An apply that's
+ *    interrupted carries on the next time the app starts; nothing is sent again. An r92 device gets the r92 flow.
  */
 
 /** KMK: A device this one has been paired with: its Bluetooth address, its name, and the key the two share */
@@ -128,6 +140,13 @@ data class Peer(
     val secret: String,
     val lastSync: Long = 0L,
 )
+
+/**
+ * KMK (r93): what this device's sync is doing. [Asking]: this device pressed Sync and waits for the other one's
+ * Accept; [Waiting]: another device asked this one (its prompt shows, see [PairSync.incoming]) until the data moves;
+ * [Transferring]: the data moves; [Applying]: what came is merged and moved into place, disconnected.
+ */
+enum class SyncPhase { Idle, Asking, Waiting, Transferring, Applying }
 
 /** KMK (r90): how the data moves once Bluetooth has checked the other device */
 enum class SyncTransport(val key: String, val label: String) {
@@ -191,7 +210,9 @@ class PairSyncPreferences(private val store: PreferenceStore) {
     fun selection(): SyncSelection = parseSelection(selectionJson.get())
 
     fun setSelection(selection: SyncSelection) {
-        selectionJson.set(Json.encodeToString(SyncSelection.serializer(), selection))
+        // KMK (r93): historyCovers is always written (a missing one follows the old Covers switches)
+        val encoded = Json.encodeToJsonElement(SyncSelection.serializer(), selection).jsonObject
+        selectionJson.set(JsonObject(encoded + ("historyCovers" to JsonPrimitive(selection.historyCovers))).toString())
     }
 
     /** KMK (r91): the saved "what they send" of each paired device */
@@ -209,7 +230,16 @@ class PairSyncPreferences(private val store: PreferenceStore) {
         private val lenient = Json { ignoreUnknownKeys = true }
 
         fun parseSelection(json: String): SyncSelection =
-            runCatching { lenient.decodeFromString(SyncSelection.serializer(), json) }.getOrDefault(SyncSelection())
+            runCatching {
+                val decoded = lenient.decodeFromString(SyncSelection.serializer(), json)
+                // KMK (r93): saved before "Covers of history titles" existed: the old Covers switches decided those
+                // covers, so one turned off keeps them off
+                if ("historyCovers" in lenient.parseToJsonElement(json).jsonObject) {
+                    decoded
+                } else {
+                    decoded.copy(historyCovers = decoded.mangaCovers && decoded.animeCovers)
+                }
+            }.getOrDefault(SyncSelection())
 
         /** KMK (r90): run at app start, so old peers are merged even before pair sync is opened */
         fun migrate() {
@@ -354,6 +384,12 @@ object PairSync {
     private const val FILE_END: Byte = 1
     private const val FILE_FAILED: Byte = 2
 
+    /** KMK (r93): the result card's line when Stop ended the covers and downloads of a staged sync */
+    private const val STOPPED_EXTRAS = "Covers and downloads stopped: Stop was pressed"
+
+    /** KMK (r93): the staged flow's version, sent as "stage" in the request and in "accepted" (protocol, 11) */
+    private const val STAGE_VERSION = 1
+
     /** KMK (r92): the result card's line when covers and downloads couldn't go over Bluetooth */
     private const val EXTRAS_NEED_WIFI = "Covers and downloads need Wi-Fi or Wi-Fi Direct"
 
@@ -385,6 +421,18 @@ object PairSync {
         val waitingForAccept: Boolean = false,
         /** KMK (r92): one bar per part (library, covers, downloads) while covers and downloads move */
         val parts: List<TransferPart> = emptyList(),
+        // KMK (r93): the phase, and while [SyncPhase.Applying] how far the apply is, e.g. (1800, 4097,
+        // "Applying manga 1,800 of 4,097"); Transferring uses done / total / bytesPerSecond / parts as before
+        val phase: SyncPhase = SyncPhase.Idle,
+        val applyDone: Int = 0,
+        val applyTotal: Int = 0,
+        val applyText: String? = null,
+        /**
+         * KMK (r93): when [lastError] was set (the notification announces each error once), and whether it was the
+         * other device's user (Decline, Cancel): no "Sync stopped" notification then
+         */
+        val errorTime: Long = 0L,
+        val errorByUser: Boolean = false,
     )
 
     /**
@@ -524,6 +572,18 @@ object PairSync {
     /** KMK (r91): the sync ended because both pressed Sync and the other device's won (it's answered instead) */
     private class Tied : IOException("Both devices pressed Sync")
 
+    /** KMK (r93): the other device's user declined this device's sync (no "Sync stopped" notification for it) */
+    private class Declined(name: String) : IOException("$name declined")
+
+    // KMK (r93): staged data waiting to be applied (or being applied), and the staging folder a sync is writing now
+    private val _pendingApply = MutableStateFlow<PendingApply?>(null)
+    val pendingApply: StateFlow<PendingApply?> = _pendingApply.asStateFlow()
+
+    @Volatile private var stagingDir: File? = null
+
+    /** KMK (r93): the run applying staged data until its applyAll ended (also after Stop), 0 = none; under [lock] */
+    private var applyId = 0
+
     fun adapter(context: Context): BluetoothAdapter? =
         context.getSystemService(BluetoothManager::class.java)?.adapter
 
@@ -534,7 +594,7 @@ object PairSync {
     /** KMK (r90): the runtime permissions Wi-Fi Direct needs on this Android version (the pop-up asks for them) */
     fun wifiPermissions(): Array<String> = PairSyncWifi.permissions()
 
-    private fun log(text: String) {
+    internal fun log(text: String) {
         val time = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date())
         _status.update { it.copy(lines = (it.lines + "$time  $text").takeLast(40)) }
         AppLog.add('I', "sync", text)
@@ -559,7 +619,30 @@ object PairSync {
             bytesPerSecond = 0L,
             waitingForAccept = false,
             parts = emptyList(),
+            // KMK (r93)
+            phase = SyncPhase.Idle,
+            applyDone = 0,
+            applyTotal = 0,
+            applyText = null,
         )
+    }
+
+    /**
+     * KMK (r93): the progress notification's service runs while a sync isn't idle (it stops itself once idle with no
+     * request showing); started when a phase begins and when a request comes in
+     */
+    private fun startService() {
+        runCatching { PairSyncService.start(Injekt.get<Application>()) }
+    }
+
+    /** KMK (r93): sync [id] moved on to [phase] */
+    private fun enterPhase(id: Int, phase: SyncPhase) {
+        val changed = synchronized(lock) {
+            if (runId != id || _status.value.phase == phase) return@synchronized false
+            _status.update { it.copy(phase = phase) }
+            true
+        }
+        if (changed && phase != SyncPhase.Idle) startService()
     }
 
     /** Moves the progress bar, every [PROGRESS_STEP] bytes; KMK (r90): not for frames under [minTotal] */
@@ -584,8 +667,17 @@ object PairSync {
         }
     }
 
-    /** KMK (r90): marks this device busy for a new sync with [peerAddress]; its number and session, or null if busy */
-    private fun begin(peerAddress: String): Pair<Int, Session>? = synchronized(lock) {
+    /**
+     * KMK (r90): marks this device busy for a new sync with [peerAddress]; its number and session, or null if busy.
+     * KMK (r93): in [phase]
+     */
+    private fun begin(peerAddress: String, phase: SyncPhase): Pair<Int, Session>? {
+        val started = beginLocked(peerAddress, phase)
+        if (started != null) startService()
+        return started
+    }
+
+    private fun beginLocked(peerAddress: String, phase: SyncPhase): Pair<Int, Session>? = synchronized(lock) {
         if (_status.value.busy) return@synchronized null
         val id = ++runId
         val newSession = Session()
@@ -606,17 +698,28 @@ object PairSync {
                 errorAddress = null,
                 waitingForAccept = false,
                 parts = emptyList(),
+                phase = phase,
+                applyDone = 0,
+                applyTotal = 0,
+                applyText = null,
             )
         }
         id to newSession
     }
 
     /** KMK (r90): sync [id] with [address] failed: logged, and shown under that device until the next sync */
-    private fun failed(id: Int, address: String, text: String, error: String) {
+    private fun failed(id: Int, address: String, text: String, error: String, byUser: Boolean = false) {
         if (runId != id) return
         // KMK (r91): the VPN message was logged already in this sync: not twice
         log(if (error == PairSyncWifi.VPN_TEXT && vpnSaidRun == id) text.removeSuffix(": $error") else text)
-        _status.update { it.copy(lastError = error, errorAddress = address) }
+        _status.update {
+            it.copy(
+                lastError = error,
+                errorAddress = address,
+                errorTime = System.currentTimeMillis(),
+                errorByUser = byUser,
+            )
+        }
     }
 
     /**
@@ -649,20 +752,34 @@ object PairSync {
         theirNonce != null && out != null && out.id == runId && out.secret == secret && theirNonce >= out.nonce
     }
 
-    /** KMK (r90): frees the pop-up after sync [id], unless it was stopped (a newer one may be running) */
-    private fun finish(id: Int) {
-        synchronized(lock) {
-            if (runId == id) {
-                session = null
-                syncJob = null
-                outgoing = null
+    /**
+     * KMK (r90): frees the pop-up after sync [id], unless it was stopped (a newer one may be running). KMK (r93): with
+     * [context] (a staged sync), what was staged is applied right after (busy stays on), also when it was stopped
+     */
+    private fun finish(id: Int, context: Context? = null) {
+        val applying = synchronized(lock) {
+            if (runId != id) return@synchronized false
+            session = null
+            syncJob = null
+            outgoing = null
+            if (context != null && _pendingApply.value != null) {
+                startApplyLocked(context.applicationContext)
+                true
+            } else {
                 idle()
+                false
             }
         }
+        if (applying) startService()
         // KMK (r91): the library may have changed: this device's own summary is read again
         clearOwnRows()
         // KMK (r92): and its covers counted again (the downloads scan only after downloads came, see afterReceive)
         PairSyncExtras.forget()
+        // KMK (r93): stopped while the data moved: what came in full is applied (once nothing else runs); and after
+        // an r92 sync (not staged) while staged data waits
+        if (!applying && ((context != null && runId != id) || _pendingApply.value != null)) {
+            resumePendingApply(context ?: Injekt.get<Application>())
+        }
     }
 
     /** KMK (r91): logs the VPN message once per sync, worded for [transport] (Auto goes on over Bluetooth itself) */
@@ -734,7 +851,10 @@ object PairSync {
             emptySet()
         }
         // KMK (r91): a running sync's own new files stay (saved after it started; a little early for coarse times)
-        PairSyncData.cleanApks(installing, if (_status.value.busy) runStartedAt - 2_000L else Long.MAX_VALUE)
+        PairSyncData.cleanApks(
+            installing + stagedApks(),
+            if (_status.value.busy) runStartedAt - 2_000L else Long.MAX_VALUE,
+        )
     }
 
     /** KMK (r91): × on the result card; the offers stay until they're dismissed too */
@@ -763,7 +883,14 @@ object PairSync {
 
     /** KMK (r90): APK files the result card still offers (kept when the folder is emptied) */
     private fun offeredApks(): Set<java.io.File> =
-        _result.value?.takeIf { !it.missingAsked }?.summary?.apks?.map { it.file }?.toSet() ?: emptySet()
+        (_result.value?.takeIf { !it.missingAsked }?.summary?.apks?.map { it.file }?.toSet() ?: emptySet()) +
+            stagedApks()
+
+    /** KMK (r93): the APK files staged syncs still wait to apply (never cleaned before their apply) */
+    private fun stagedApks(): Set<File> = runCatching {
+        PairSyncStage.ready(Injekt.get<Application>()).flatMap { stage -> stage.journal.apks.map { File(it.path) } }
+            .toSet()
+    }.getOrDefault(emptySet())
 
     // Listening (the device that waits)
 
@@ -772,7 +899,7 @@ object PairSync {
         if (serverJob?.isActive == true) return
         val adapter = adapter(context)?.takeIf { it.isEnabled } ?: return
         serverJob = scope.launch {
-            PairSyncData.cleanOldApks()
+            PairSyncData.cleanOldApks(stagedApks())
             val server = try {
                 adapter.listenUsingInsecureRfcommWithServiceRecord("Komikku sync", SERVICE_UUID)
             } catch (e: Exception) {
@@ -910,7 +1037,8 @@ object PairSync {
         // KMK (r90): one sync at a time; the other device is told and shows it. Both pressing Sync at once: one wins.
         val theirNonce = message.string("nonce")?.toLongOrNull()
         var yielded = false
-        var started = begin(peer.address)
+        // KMK (r93): asked by the other device ("Waiting" until the data moves)
+        var started = begin(peer.address, SyncPhase.Waiting)
         if (started != null) {
             // KMK (r91): both pressed Sync, the other's request won and this device's own sync ended first ("tie"):
             // it agreed already, no prompt
@@ -921,7 +1049,7 @@ object PairSync {
         } else if (yieldTo(peer.secret, theirNonce, name)) {
             // KMK (r91): this device pressed Sync too, so it agreed already: no prompt
             yielded = true
-            started = begin(peer.address)
+            started = begin(peer.address, SyncPhase.Waiting)
         }
         if (started == null) {
             // KMK (r91): "tie" = this device keeps its own sync; the other one answers it without a prompt (an
@@ -967,11 +1095,16 @@ object PairSync {
         // KMK (r92): an r92 device sends and takes covers and downloads too (only over Wi-Fi or Wi-Fi Direct)
         val theirExtras = asks && (message.int("extras") ?: 0) >= PairSyncExtras.VERSION
         val theirExtrasOn = message.string("extrasOn") == "true"
+        // KMK (r93): an r93 device: everything is staged, then applied once disconnected (protocol, 11)
+        val staged = asks && (message.int("stage") ?: 0) >= STAGE_VERSION
+        // KMK (r93): set once the other device's library is staged in full (it's applied after, see finish)
+        var stagedRun = false
         try {
             session.add(bt)
             bt.counter = rate::add
             if (!asks) log("$name is on an older version")
             if (!ask(context, bt, id, peer, name, message, sends, asks, modern, yielded)) return
+            enterPhase(id, SyncPhase.Transferring)
             log("$name is syncing with this device")
             // KMK (r91): an r90 device that was asked silently can't say it stopped waiting: its link just drops
             val oldPrompt = !asks && !yielded
@@ -1004,6 +1137,29 @@ object PairSync {
             if (via != SyncTransport.Bluetooth) log("Connected over ${via.label}")
             step("Getting ready…")
             if (!modern && sends.syncsApks) log("Sideloaded APKs are only sent to a device on r90 or newer")
+            if (staged) {
+                stagedRun = true
+                transferStaged(
+                    context = context,
+                    id = id,
+                    link = link,
+                    via = via,
+                    waiting = true,
+                    own = sends,
+                    peer = peer,
+                    name = name,
+                    startTime = startTime,
+                    extras = theirExtras && via != SyncTransport.Bluetooth,
+                    extrasSkipped = extrasSkipped(
+                        name,
+                        theirExtras,
+                        via,
+                        sends.hasExtras || theirExtrasOn,
+                        sends.hasExtras,
+                    ),
+                ) { PairSyncData.export(sends, otherHas, otherRepos, raw = true) }
+                return
+            }
             val mine = keepAlive(link, via != SyncTransport.Bluetooth) {
                 PairSyncData.export(sends, otherHas, otherRepos, raw = modern)
             }
@@ -1060,7 +1216,8 @@ object PairSync {
             failed(id, peer.address, "Sync with $name stopped: $why", why)
         } finally {
             session.close()
-            finish(id)
+            // KMK (r93): a staged sync's data is applied now (disconnected)
+            finish(id, if (stagedRun) context else null)
         }
     }
 
@@ -1123,6 +1280,8 @@ object PairSync {
             val asked = Pending(request, decision, run)
             synchronized(lock) { pending = asked }
             _incoming.value = request
+            // KMK (r93): the Accept / Decline notification when the pop-up isn't showing
+            startService()
             step("$name wants to sync")
             log("$name wants to sync: Accept or Decline")
             // KMK (r92): covers and downloads still counted ("checking…"): the prompt's rows follow once they are
@@ -1156,7 +1315,7 @@ object PairSync {
                 }
                 CANCELLED -> {
                     // KMK (r91): shown under the device too (the prompt just closed)
-                    failed(run, peer.address, "$name cancelled", "$name cancelled")
+                    failed(run, peer.address, "$name cancelled", "$name cancelled", byUser = true)
                     return false
                 }
                 else -> {
@@ -1195,6 +1354,8 @@ object PairSync {
                 // KMK (r92): this device does covers and downloads too
                 put("extras", PairSyncExtras.VERSION)
                 put("extrasOn", extrasOn)
+                // KMK (r93): and stages everything, applied once disconnected
+                put("stage", STAGE_VERSION)
             },
         )
     }
@@ -1221,7 +1382,9 @@ object PairSync {
             return PromptSize(total = null, free = null, enough = true, eta = null, needWifi = true)
         }
         val downloads = (message.string("downloadBytes")?.toLongOrNull() ?: 0L) > 0L
-        val free = PairSyncExtras.freeBytes(downloads)
+        // KMK (r93): an r93 device's data is staged in the app's storage first, then moved (see stagedFree)
+        val staged = (message.int("stage") ?: 0) >= STAGE_VERSION
+        val free = PairSyncExtras.freeBytes(downloads, staged)
         val direct = message.string("p2p") != "false" && PairSyncWifi.p2pUnavailable(context) == null
         val speed = when (transport) {
             SyncTransport.WifiDirect -> PairSyncExtras.P2P_SPEED
@@ -1242,7 +1405,7 @@ object PairSync {
     /** KMK (r91): the other device's answer to "accepted": "start" goes on; anything else (or nothing) cancelled */
     private fun isStart(reply: JsonObject?, name: String, run: Int, address: String): Boolean {
         if (reply?.string("t") == "start") return true
-        failed(run, address, "$name cancelled", "$name cancelled")
+        failed(run, address, "$name cancelled", "$name cancelled", byUser = true)
         return false
     }
 
@@ -1513,7 +1676,7 @@ object PairSync {
      * selection only gets.
      */
     fun sync(context: Context, peer: Peer, selection: SyncSelection) {
-        val (id, session) = begin(peer.address) ?: return
+        val (id, session) = begin(peer.address, SyncPhase.Asking) ?: return
         val transport = SyncTransport.of(runCatching { prefs.transport.get() }.getOrNull())
         // KMK (r90): for when both devices press Sync at once (see yieldTo)
         val nonce = random.nextLong()
@@ -1521,8 +1684,10 @@ object PairSync {
         // KMK (r90): started once it's stored, so a Stop right away cancels it too
         val job = scope.launch(start = CoroutineStart.LAZY) {
             val startTime = System.currentTimeMillis()
+            // KMK (r93): a staged sync (its data is applied after, see finish)
+            var stagedRun = false
             try {
-                PairSyncData.cleanOldApks()
+                PairSyncData.cleanOldApks(stagedApks())
                 PairSyncData.cleanApks(offeredApks())
                 val own = selection.normalized()
                 log(
@@ -1587,11 +1752,15 @@ object PairSync {
                                 put("extrasBytes", bytes)
                                 put("downloadBytes", downloadBytes)
                             }
+                            // KMK (r93): this device stages everything and applies it once disconnected
+                            put("stage", STAGE_VERSION)
                         },
                     )
                     val answer = awaitAnswer(bt, id, peer)
                     var frame = answer.frame
                     val vpn = vpnHere || answer.theirVpn
+                    // KMK (r93): accepted (or an older device that doesn't ask): the data moves from here
+                    if (answer.asked || offerIn(frame)?.string("t") != "busy") enterPhase(id, SyncPhase.Transferring)
                     // KMK (r91): an r90 device offers a way at once (it doesn't ask its user)
                     if (!answer.asked && offerIn(frame)?.string("t") != "busy") {
                         log("${peer.name} is on an older version")
@@ -1667,6 +1836,51 @@ object PairSync {
                     synchronized(lock) { if (outgoing?.id == id) outgoing = null }
                     _status.update { it.copy(via = via) }
                     if (via != SyncTransport.Bluetooth) log("Connected over ${via.label}")
+                    // KMK (r93): both on r93: staged here, applied once disconnected (protocol, 11)
+                    if (answer.asked && answer.theirStage && legacyPayload == null) {
+                        stagedRun = true
+                        val theirExtras = answer.theirExtras
+                        transferStaged(
+                            context = context,
+                            id = id,
+                            link = link,
+                            via = via,
+                            waiting = false,
+                            own = own,
+                            peer = peer,
+                            name = peer.name,
+                            startTime = startTime,
+                            extras = theirExtras && via != SyncTransport.Bluetooth,
+                            extrasSkipped = extrasSkipped(
+                                peer.name,
+                                theirExtras,
+                                via,
+                                own.hasExtras || answer.theirExtrasOn,
+                                own.hasExtras,
+                            ),
+                        ) { received ->
+                            val got = received ?: throw IOException("Nothing came from ${peer.name}")
+                            // KMK (r91): which extensions are sideloaded here, from before the repos' merge
+                            val sideloadedBefore = if (own.syncsApks) {
+                                runCatching {
+                                    PairSyncData.loadRepoLists()
+                                    PairSyncData.sideloaded()
+                                }.getOrNull()
+                            } else {
+                                null
+                            }
+                            // KMK (r91): the other device's repos first (only the repos are merged while connected)
+                            PairSyncData.mergeRepos(got, ::log)
+                            PairSyncData.export(
+                                own,
+                                got.installed,
+                                answer.theirRepos,
+                                raw = true,
+                                sideloadedBefore = sideloadedBefore,
+                            )
+                        }
+                        return@use
+                    }
                     val received = if (legacyPayload != null) {
                         readPayload(link, legacyPayload)
                     } else {
@@ -1759,10 +1973,11 @@ object PairSync {
                 if (runId == id) log("Both devices pressed Sync: ${peer.name}'s goes on")
             } catch (e: Throwable) {
                 val why = e.message ?: e::class.simpleName.orEmpty()
-                failed(id, peer.address, "Sync stopped: $why", why)
+                failed(id, peer.address, "Sync stopped: $why", why, byUser = e is Declined)
             } finally {
                 session.close()
-                finish(id)
+                // KMK (r93): a staged sync's data is applied now (disconnected)
+                finish(id, if (stagedRun) context else null)
             }
         }
         synchronized(lock) { if (runId == id) syncJob = job }
@@ -1781,6 +1996,8 @@ object PairSync {
         /** KMK (r92): it does covers and downloads ([theirExtrasOn]: its tiles send some) */
         val theirExtras: Boolean = false,
         val theirExtrasOn: Boolean = false,
+        /** KMK (r93): it stages and applies once disconnected (protocol, 11) */
+        val theirStage: Boolean = false,
     )
 
     /**
@@ -1841,9 +2058,10 @@ object PairSync {
                             theirVpn = reply.string("vpn") == "true",
                             theirExtras = (reply.int("extras") ?: 0) >= PairSyncExtras.VERSION,
                             theirExtrasOn = reply.string("extrasOn") == "true",
+                            theirStage = (reply.int("stage") ?: 0) >= STAGE_VERSION,
                         )
                     }
-                    "declined" -> throw IOException("${peer.name} declined")
+                    "declined" -> throw Declined(peer.name)
                     else -> throw IOException("${peer.name} didn't answer")
                 }
                 frame = next()
@@ -2038,23 +2256,34 @@ object PairSync {
         frame.size < 64 && frame.firstOrNull() == '{'.code.toByte() &&
             runCatching { parse(frame).string("t") }.getOrNull() == "wait"
 
-    private fun receivePayload(link: Link): ReceivedPayload {
+    /** KMK (r93): with [stage], the payload and the backup are written there (see [readPayload]) */
+    private fun receivePayload(link: Link, stage: Stage? = null): ReceivedPayload {
         // KMK (r90): the bar ignores the tiny keep-alive frames (they'd show a full bar while nothing moves)
         val progress = progress(sending = false, minTotal = 1024L)
         var frame = link.receive(progress)
         while (isWait(frame)) frame = link.receive(progress)
-        return readPayload(link, frame)
+        return readPayload(link, frame, stage)
     }
 
     /**
      * KMK (r90): decodes [payload] and reads the frames it announces: the backup, then each APK, saved to the cache
      * when it's within the limits and not installed here (else read and dropped). r91: this device accepted the sync,
-     * so its own tiles don't filter what comes.
+     * so its own tiles don't filter what comes. KMK (r93): with [stage], the payload and the backup are staged there
+     * (the backup isn't kept in memory then).
      */
-    private fun readPayload(link: Link, payload: ByteArray): ReceivedPayload {
+    private fun readPayload(link: Link, payload: ByteArray, stage: Stage? = null): ReceivedPayload {
         val received = PairSyncData.decode(payload)
+        stage?.payloadFile?.writeBytes(payload)
         val announced = received.payload
-        if (announced.backupFrame) received.backupBytes = link.receive(progress(sending = false))
+        if (announced.backupFrame) {
+            val backup = link.receive(progress(sending = false))
+            if (stage != null) {
+                stage.backupFile.writeBytes(backup)
+                stage.journal.hasBackup = true
+            } else {
+                received.backupBytes = backup
+            }
+        }
         if (announced.apkFiles.isNotEmpty()) {
             val have = PairSyncData.installedPackages().toSet()
             var total = 0L
@@ -2086,6 +2315,512 @@ object PairSync {
         sentExtensions = sent.sentExtensions,
         sentApks = sent.sentApks,
     )
+
+    // Transfer, then apply (KMK (r93); see the protocol, 11)
+
+    /**
+     * KMK (r93): a staged sync's data part: the library payloads both ways ([waiting]: this device answered the sync
+     * and sends first; [build] makes this device's export, given the other's payload when this device goes second),
+     * staged in a new folder; then, with [extras], covers and downloads both ways into the same folder; then "done"
+     * both ways. Nothing is merged here (only the repos, by the device pressing Sync, in [build]). Once the other
+     * device's library is staged in full it's applied after this (see [finish]), also when the rest stops; a stop
+     * before that drops the folder. The device and its Wi-Fi stay awake for the whole transfer.
+     */
+    private suspend fun transferStaged(
+        context: Context,
+        id: Int,
+        link: Link,
+        via: SyncTransport,
+        waiting: Boolean,
+        own: SyncSelection,
+        peer: Peer,
+        name: String,
+        startTime: Long,
+        extras: Boolean,
+        extrasSkipped: String?,
+        build: suspend (ReceivedPayload?) -> SyncExport,
+    ) {
+        val app = context.applicationContext
+        val stage = PairSyncStage.create(app, peer.address, name, via, startTime)
+        stagingDir = stage.dir
+        val journal = stage.journal
+        val wifi = via != SyncTransport.Bluetooth
+        val awake = Awake(app)
+        awake.acquire()
+        try {
+            val mine: SyncExport
+            val received: ReceivedPayload
+            if (waiting) {
+                mine = keepAlive(link, wifi) { build(null) }
+                sendExport(link, mine)
+                received = receivePayload(link, stage)
+                log("Got ${size(rate.total)} in all from $name")
+            } else {
+                received = receivePayload(link, stage)
+                step("Getting ready to send…")
+                mine = keepAlive(link, wifi) { build(received) }
+                log("Got ${size(rate.total)} from $name, sending ${size(mine.payload.size.toLong())}…")
+                sendExport(link, mine)
+            }
+            // The other device's library is here in full: it's applied once disconnected, whatever happens next
+            val sent = mine.summary
+            journal.sentManga = sent.sentManga
+            journal.sentAnime = sent.sentAnime
+            journal.sentHistoryEntries = sent.sentHistoryEntries
+            journal.sentSources = sent.sentSources
+            journal.sentRepos = sent.sentRepos
+            journal.sentExtensions = sent.sentExtensions
+            journal.sentApks = sent.sentApks
+            received.repoImport?.let {
+                journal.reposMerged = true
+                journal.reposAdded = it.added
+                journal.reposManga = it.manga
+                journal.reposAnime = it.anime
+            }
+            journal.apks = received.receivedApks.map {
+                StagedApk(
+                    pkgName = it.pkgName,
+                    name = it.name,
+                    isAnime = it.isAnime,
+                    path = it.file.absolutePath,
+                    signatureHash = it.signatureHash,
+                    versionCode = it.versionCode,
+                )
+            }
+            journal.extrasSkipped = extrasSkipped
+            journal.receivedAt = System.currentTimeMillis()
+            journal.bytes = rate.total
+            journal.stagedBytes = stage.payloadFile.length() + stage.backupFile.length()
+            journal.ready = true
+            // KMK (r93): once more when it fails; still unsaved, it's kept in memory and applied after this sync
+            if (!stage.save() && !stage.save()) {
+                log("Couldn't save the staged data's journal: it's applied now, but not after a restart")
+            }
+            refreshPending(app)
+            prefs.savePeer(peer.copy(lastSync = journal.receivedAt, name = name))
+            if (extras) {
+                val count = ExtrasCount()
+                try {
+                    extrasStaged(link, waiting, own, name, count, stage)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    // A Stop here closes the link first: that shows as a dropped connection
+                    val why = if (runId != id) "Stop was pressed" else e.message ?: e::class.simpleName.orEmpty()
+                    if (runId == id) log("Covers and downloads stopped: $why")
+                    journal.extrasSkipped = listOfNotNull(journal.extrasSkipped, "Covers and downloads stopped: $why")
+                        .joinToString("\n")
+                    // The link may be broken: no "done"
+                    return
+                } finally {
+                    journal.sentCovers = count.sentCovers
+                    journal.sentItems = count.sentItems
+                    journal.sentExtraBytes = count.sentBytes
+                    journal.noRoom = count.noRoom
+                    journal.stagedBytes += count.gotBytes
+                    if (count.any) log("Covers and downloads with $name: ${count.text()}")
+                }
+            }
+            // KMK (r93): "done" both ways, then the connections close (nothing closes them before)
+            runCatching {
+                link.sendJson(buildJsonObject { put("t", "done") })
+                receiveData(link)
+            }
+        } catch (e: Throwable) {
+            if (!journal.ready) {
+                // The library didn't come in full: nothing to apply
+                stage.delete()
+            } else if (e is CancellationException && extras) {
+                journal.extrasSkipped = listOfNotNull(journal.extrasSkipped, STOPPED_EXTRAS).joinToString("\n")
+            }
+            throw e
+        } finally {
+            awake.release()
+            if (journal.ready) {
+                journal.bytes = rate.total
+                stage.save()
+                refreshPending(app)
+            }
+            if (stagingDir == stage.dir) stagingDir = null
+        }
+    }
+
+    /** KMK (r93): covers and downloads both ways, received into [stage] (see [extras] for the order and watchdog) */
+    private suspend fun extrasStaged(
+        link: Link,
+        waiting: Boolean,
+        own: SyncSelection,
+        name: String,
+        count: ExtrasCount,
+        stage: Stage,
+    ) {
+        writeWatched(link) {
+            val library = TransferPart("Library + history", size(rate.total), 1f, true)
+            step("Finding covers and downloads…")
+            val mine = keepAlive(link, true) { PairSyncExtras.outgoing(own) }
+            // KMK (r92): a list too big for the other device goes in part (the rest next sync)
+            val encoded = PairSyncExtras.encodeManifest(mine)
+            val mineCount = encoded.items
+            val left = mine.manifest.items.size - mineCount
+            if (left > 0) {
+                log("Covers and downloads: the list is too long, %,d items wait for the next sync".format(left))
+            }
+            val theirs = if (waiting) {
+                link.send(encoded.bytes)
+                PairSyncExtras.decodeManifest(receiveData(link))
+            } else {
+                val read = PairSyncExtras.decodeManifest(receiveData(link))
+                link.send(encoded.bytes)
+                read
+            }
+            step("Checking what's here already…")
+            // KMK (r93): without merging: by this device's own titles, chapters and episodes, compared by size
+            val plan = keepAlive(link, true) { PairSyncExtras.stagePlan(theirs) }
+            count.noRoom = plan.noRoom
+            stage.journal.items = plan.need.map { theirs.items[it] }
+            stage.journal.noRoom = plan.noRoom
+            stage.save()
+            val myNeed = PairSyncExtras.encodeNeed(plan.need)
+            val theirNeed = if (waiting) {
+                link.send(myNeed)
+                PairSyncExtras.decodeNeed(receiveData(link), mineCount)
+            } else {
+                val read = PairSyncExtras.decodeNeed(receiveData(link), mineCount)
+                link.send(myNeed)
+                read
+            }
+            log(
+                "Covers and downloads: sending ${theirNeed.size} of $mineCount, " +
+                    "getting ${plan.need.size} of ${theirs.items.size} from $name",
+            )
+            if (plan.noRoom > 0) log("Covers and downloads: ${plan.noRoom} don't fit in the free space here")
+            if (waiting) {
+                sendExtras(link, mine, theirNeed, library, count)
+                receiveStaged(link, theirs, plan.need, stage, library, count)
+            } else {
+                receiveStaged(link, theirs, plan.need, stage, library, count)
+                sendExtras(link, mine, theirNeed, library, count)
+            }
+        }
+    }
+
+    /**
+     * KMK (r93): receives the items this device asked for ([need] of [theirs]) into [stage]: item n (its place in
+     * [need]) in "items/n", file i as "i" (written as "i.part" until it all came), and an "ok" file once every file
+     * came; one that fails is dropped (asked for again next sync)
+     */
+    private suspend fun receiveStaged(
+        link: Link,
+        theirs: ExtrasManifest,
+        need: List<Int>,
+        stage: Stage,
+        library: TransferPart,
+        count: ExtrasCount,
+    ) {
+        if (need.isEmpty()) return
+        val items = theirs.items
+        val progress = PairSyncExtras.Progress(items, need)
+        val every = Every()
+        showExtras(sending = false, progress, library)
+        for ((slot, index) in need.withIndex()) {
+            currentCoroutineContext().ensureActive()
+            val item = items[index]
+            val dir = stage.itemDir(slot)
+            runCatching { dir.deleteRecursively() }
+            var ok = runCatching { dir.mkdirs() }.getOrDefault(false)
+            for (file in item.files.indices) {
+                val part = File(dir, "$file.part")
+                val out: OutputStream? = if (ok) runCatching { FileOutputStream(part) }.getOrNull() else null
+                if (out == null) ok = false
+                val fileOk = try {
+                    receiveFile(link, out, item.files[file].size) { bytes ->
+                        progress.bytes(item, bytes)
+                        if (every.due()) showExtras(sending = false, progress, library)
+                    }
+                } finally {
+                    runCatching { out?.close() }
+                }
+                if (!fileOk || !ok || !part.renameTo(File(dir, file.toString()))) ok = false
+            }
+            if (ok) ok = runCatching { File(dir, "ok").createNewFile() }.getOrDefault(false)
+            if (ok) {
+                count.gotBytes += item.bytes()
+                if (item.kind == PairSyncExtras.KIND_COVER) count.gotCovers++ else count.gotItems++
+            } else {
+                runCatching { dir.deleteRecursively() }
+            }
+            progress.itemDone(item)
+            if (every.due()) showExtras(sending = false, progress, library)
+        }
+        showExtras(sending = false, progress, library)
+    }
+
+    /** KMK (r93): reads what's staged into [pendingApply] */
+    private fun refreshPending(context: Context) {
+        _pendingApply.value = runCatching { PairSyncStage.pending(context) }.getOrNull()
+    }
+
+    /**
+     * KMK (r93): applies what's staged (an apply that was interrupted, or a sync stopped after its library came):
+     * called at app start, and after a sync stopped while its data moved. Nothing happens while a sync runs (it's
+     * applied after that one), or when nothing is staged.
+     */
+    fun resumePendingApply(context: Context) {
+        val app = context.applicationContext
+        scope.launch {
+            // A sync that stopped before its library came in full leaves a folder with nothing to apply
+            if (!_status.value.busy) PairSyncStage.cleanUnready(app, stagingDir)
+            refreshPending(app)
+            if (_pendingApply.value == null) return@launch
+            val started = synchronized(lock) {
+                if (_status.value.busy) {
+                    false
+                } else {
+                    startApplyLocked(app)
+                    true
+                }
+            }
+            if (started) startService()
+        }
+    }
+
+    /** KMK (r93): starts applying what's staged, as a run of its own (Stop cancels it); call under [lock] */
+    private fun startApplyLocked(app: Context) {
+        val id = ++runId
+        session = null
+        outgoing = null
+        waitLink = null
+        rate.pause()
+        _status.update {
+            it.copy(
+                busy = true,
+                sending = false,
+                done = 0L,
+                total = 0L,
+                step = "Applying…",
+                bytesPerSecond = 0L,
+                waitingForAccept = false,
+                parts = emptyList(),
+                phase = SyncPhase.Applying,
+                applyDone = 0,
+                applyTotal = 0,
+                applyText = "Getting ready to apply…",
+            )
+        }
+        applyId = id
+        val job = scope.launch(start = CoroutineStart.LAZY) { applyAll(app, id) }
+        syncJob = job
+        job.start()
+    }
+
+    /** KMK (r93): applies every staged sync, oldest first, as run [id] */
+    private suspend fun applyAll(app: Context, id: Int) {
+        // Moving gigabytes of downloads takes a while: the device stays awake meanwhile
+        val awake = Awake(app)
+        awake.acquire()
+        try {
+            val tried = HashSet<String>()
+            while (runId == id) {
+                val stage = PairSyncStage.ready(app).firstOrNull { it.journal.id !in tried } ?: break
+                tried += stage.journal.id
+                applyStage(stage, id)
+                refreshPending(app)
+            }
+        } catch (e: CancellationException) {
+            log("Applying stopped: the rest is applied the next time the app opens")
+            throw e
+        } catch (e: Throwable) {
+            val why = e.message ?: e::class.simpleName.orEmpty()
+            log("Applying stopped: $why")
+            // KMK (r93): shown like a sync's error (pop-up and notification)
+            synchronized(lock) {
+                if (runId == id) {
+                    _status.update {
+                        it.copy(
+                            lastError = "Applying stopped: $why",
+                            errorAddress = it.peerAddress,
+                            errorTime = System.currentTimeMillis(),
+                            errorByUser = false,
+                        )
+                    }
+                }
+            }
+        } finally {
+            awake.release()
+            refreshPending(app)
+            synchronized(lock) {
+                // KMK (r93): a Stop kept busy on until here (see stopSync), so no other sync or apply started meanwhile
+                if (runId == id || applyId == id) {
+                    syncJob = null
+                    idle()
+                }
+                if (applyId == id) applyId = 0
+            }
+            clearOwnRows()
+            PairSyncExtras.forget()
+        }
+    }
+
+    /**
+     * KMK (r93): applies one staged sync: the library merge (once; the journal says it's done), then the covers and
+     * downloads moved into place; then the result, and the folder goes. Tried [PairSyncStage.MAX_ATTEMPTS] times at
+     * most (an apply that fails or crashes every time is dropped).
+     */
+    private suspend fun applyStage(stage: Stage, id: Int) {
+        val journal = stage.journal
+        if (journal.attempts >= PairSyncStage.MAX_ATTEMPTS) {
+            val error = "Couldn't apply what came from ${journal.peerName}: dropped, sync again"
+            log("$error (tried ${journal.attempts} times)")
+            // KMK (r93): shown like a sync's error (pop-up and notification), not only in the log
+            synchronized(lock) {
+                if (runId == id) {
+                    _status.update {
+                        it.copy(
+                            lastError = error,
+                            errorAddress = journal.peerAddress,
+                            errorTime = System.currentTimeMillis(),
+                            errorByUser = false,
+                        )
+                    }
+                }
+            }
+            stage.delete()
+            return
+        }
+        journal.attempts++
+        stage.save()
+        try {
+            applyStageNow(stage, id)
+        } catch (e: CancellationException) {
+            // KMK (r93): a Stop isn't a failed attempt (the apply carries on next time without counting it)
+            journal.attempts--
+            if (stage.dir.isDirectory) stage.save()
+            throw e
+        }
+    }
+
+    /** KMK (r93): [applyStage]'s work; the status changes only while [id] is the current run */
+    private suspend fun applyStageNow(stage: Stage, id: Int) {
+        val journal = stage.journal
+        val name = journal.peerName
+        val setStatus: ((Status) -> Status) -> Unit = { change ->
+            synchronized(lock) { if (runId == id) _status.update(change) }
+        }
+        setStatus {
+            it.copy(
+                peerAddress = journal.peerAddress,
+                via = SyncTransport.of(journal.via),
+                applyDone = 0,
+                applyTotal = 0,
+                applyText = "Applying what came from $name…",
+                step = "Applying what came from $name…",
+            )
+        }
+        log("Applying what came from $name…")
+        val every = Every()
+        val show: (Int, Int, String) -> Unit = { done, total, text ->
+            if (done >= total || every.due()) {
+                setStatus { it.copy(applyDone = done, applyTotal = total, applyText = text, step = text) }
+            }
+        }
+        var summary = if (!journal.libraryDone) {
+            val payload = stage.payloadFile.takeIf { it.isFile }?.readBytes()
+            val merged = if (payload != null) {
+                val received = PairSyncData.decode(payload)
+                if (journal.hasBackup) received.backupBytes = stage.backupFile.takeIf { it.isFile }?.readBytes()
+                received.receivedApks = journal.apks
+                    .map {
+                        ReceivedApk(
+                            pkgName = it.pkgName,
+                            name = it.name.ifBlank { it.pkgName },
+                            isAnime = it.isAnime,
+                            file = File(it.path),
+                            signatureHash = it.signatureHash,
+                            versionCode = it.versionCode,
+                        )
+                    }
+                    .filter { it.file.isFile }
+                if (journal.reposMerged) {
+                    received.repoImport = PairSyncData.RepoImport(
+                        journal.reposAdded,
+                        journal.reposManga,
+                        journal.reposAnime,
+                    )
+                }
+                val result = PairSyncData.import(received, ::log, show)
+                // KMK (r91): what it really sent is what it sends, until the next live check
+                received.sentRows?.let { seen(journal.peerAddress, it, it.isEmpty(), live = null) }
+                result
+            } else {
+                SyncSummary()
+            }
+            journal.libraryDone = true
+            journal.manga = merged.manga
+            journal.anime = merged.anime
+            journal.historyEntries = merged.historyEntries
+            journal.sourcesAdded = merged.sourcesAdded
+            journal.errors = merged.errors
+            journal.appliedReposAdded = merged.reposAdded
+            stage.save()
+            runCatching {
+                stage.payloadFile.delete()
+                stage.backupFile.delete()
+            }
+            merged
+        } else {
+            // Merged before the app stopped: the counts from then (the extension offers aren't kept)
+            SyncSummary(
+                sourcesAdded = journal.sourcesAdded,
+                manga = journal.manga,
+                anime = journal.anime,
+                errors = journal.errors,
+                historyEntries = journal.historyEntries,
+                reposAdded = journal.appliedReposAdded,
+            )
+        }
+        val applied = PairSyncExtras.applyStaged(stage.dir, journal.items, show)
+        summary = summary.copy(
+            sentManga = journal.sentManga,
+            sentAnime = journal.sentAnime,
+            sentHistoryEntries = journal.sentHistoryEntries,
+            sentSources = journal.sentSources,
+            sentRepos = journal.sentRepos,
+            sentExtensions = journal.sentExtensions,
+            sentApks = journal.sentApks,
+            sentCovers = journal.sentCovers,
+            gotCovers = applied.covers,
+            sentDownloadItems = journal.sentItems,
+            gotDownloadItems = applied.items,
+            sentExtraBytes = journal.sentExtraBytes,
+            gotExtraBytes = applied.bytes,
+            extrasSkipped = listOfNotNull(journal.extrasSkipped, noRoomText(journal.noRoom))
+                .joinToString("\n")
+                .ifEmpty { null },
+        )
+        val now = System.currentTimeMillis()
+        val via = SyncTransport.of(journal.via)
+        if (runId == id) {
+            publish(
+                SyncResult(
+                    peerAddress = journal.peerAddress,
+                    peerName = name,
+                    time = now,
+                    summary = summary,
+                    via = via,
+                    bytes = journal.bytes,
+                    millis = now - journal.startTime,
+                ),
+            )
+            log("Synced with $name over ${via.label}: $summary")
+            summary.extrasSkipped?.let { log(it) }
+        }
+        stage.delete()
+    }
+
+    /** KMK (r92): "N items skipped: not enough space", or null */
+    private fun noRoomText(noRoom: Int): String? = noRoom.takeIf { it > 0 }?.let {
+        if (it == 1) "1 item skipped: not enough space" else "%,d items skipped: not enough space".format(it)
+    }
 
     // Covers and downloads (KMK (r92); see the protocol, 10)
 
@@ -2205,12 +2940,9 @@ object PairSync {
             if (manager == null) {
                 emptyList()
             } else {
-                buildList<WifiManager.WifiLock> {
-                    add(manager.createWifiLock(highPerfMode(), "komikku:pairsync"))
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        add(manager.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "komikku:pairsync-ll"))
-                    }
-                }
+                // KMK (r93): no low-latency lock any more: switching the Wi-Fi's mode in the middle of a connection
+                // is a suspect in r92's dropped link (the tablet lost it 2 s after taking the lock)
+                listOf(manager.createWifiLock(highPerfMode(), "komikku:pairsync"))
             }
         }.getOrDefault(emptyList())
 
@@ -2243,6 +2975,15 @@ object PairSync {
      * closes the link (a Wi-Fi link that died left the sender waiting about 15 minutes).
      */
     private suspend fun extras(link: Link, waiting: Boolean, own: SyncSelection, name: String, count: ExtrasCount) {
+        writeWatched(link) { extrasBoth(link, waiting, own, name, count) }
+    }
+
+    /**
+     * KMK (r92): runs [block] while a watchdog closes [link] when a write doesn't move for
+     * [PairSyncWifi.READ_TIMEOUT] ms. KMK (r93): only time spent inside a write counts (see [Link.stalledMillis]);
+     * waiting for the other device (a read) never does
+     */
+    private suspend fun writeWatched(link: Link, block: suspend () -> Unit) {
         coroutineScope {
             val watchdog = launch {
                 while (true) {
@@ -2255,7 +2996,7 @@ object PairSync {
                 }
             }
             try {
-                extrasBoth(link, waiting, own, name, count)
+                block()
             } finally {
                 watchdog.cancel()
             }
@@ -2530,19 +3271,29 @@ object PairSync {
             answerIncoming(asked.request.id, accept = false)
             return
         }
+        // KMK (r93): Stop while applying: the rest is applied the next time the app opens
+        var wasApplying = false
         val (stopped, job, waiting) = synchronized(lock) {
             // KMK (r90): pairing sets busy too, but there's no sync to stop then
             if (!_status.value.busy || _pairing.value) return
+            // KMK (r93): an apply stopped already and still finishing: nothing more to stop
+            if (applyId != 0 && applyId != runId) return
+            wasApplying = applyId != 0
             runId++
             val running = Triple(session, syncJob, waitLink)
             session = null
             syncJob = null
             outgoing = null
             waitLink = null
-            idle()
+            if (wasApplying) {
+                // KMK (r93): busy stays on until the apply really ended (applyAll's finally), so two never overlap
+                _status.update { it.copy(step = "Stopping…", applyText = "Stopping…") }
+            } else {
+                idle()
+            }
             running
         }
-        log("Sync stopped")
+        if (!wasApplying) log("Sync stopped")
         if (waiting == null) {
             stopped?.close()
             job?.cancel()
@@ -3116,7 +3867,13 @@ object PairSync {
         /** KMK (r92): how long the write going on hasn't moved (0 when none is going on) */
         fun stalledMillis(): Long = if (writing) System.currentTimeMillis() - lastWrite else 0L
 
-        private fun write(frame: ByteArray, progress: ((Long, Long) -> Unit)?) {
+        /**
+         * KMK (r93): one frame at a time (a keep-alive and a frame never mix), and [writing] covers only the time
+         * inside a write (a keep-alive that finished no longer cleared the flag of a write still going on)
+         */
+        private val writeLock = Any()
+
+        private fun write(frame: ByteArray, progress: ((Long, Long) -> Unit)?) = synchronized(writeLock) {
             lastWrite = System.currentTimeMillis()
             writing = true
             try {

@@ -110,6 +110,14 @@ object HomeScreen : Screen() {
         if (showPairSync.value) {
             eu.kanade.tachiyomi.ui.pairsync.PairSyncDialog(onDismissRequest = { showPairSync.value = false })
         }
+        // KMK (r93): a tapped sync notification opens the pop-up here (or in MoreTab, whichever takes it first)
+        LaunchedEffect(Unit) {
+            eu.kanade.tachiyomi.ui.pairsync.PairSyncPopup.openRequest.collect { requested ->
+                if (requested && eu.kanade.tachiyomi.ui.pairsync.PairSyncPopup.takeOpenRequest()) {
+                    showPairSync.value = true
+                }
+            }
+        }
 
         TabNavigator(
             tab = if (lastLibraryAnime.get()) AnimeLibraryTab else LibraryTab,

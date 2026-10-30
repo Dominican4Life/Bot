@@ -19,6 +19,7 @@ import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.extension.copyFor
 import eu.kanade.tachiyomi.extension.util.InstallOrigins
 import eu.kanade.tachiyomi.jssource.JsSourceManager
+import eu.kanade.tachiyomi.ui.library.LibraryRefresh
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
@@ -82,7 +83,7 @@ data class SyncSelection(
     val apkKeys: Set<String>? = null,
     // KMK <--
     // KMK (r92): covers and downloads, sent only over Wi-Fi or Wi-Fi Direct (see PairSyncExtras) -->
-    /** The covers of the manga / anime this device sends (library and history) */
+    /** The covers of the manga / anime this device sends. KMK (r93): library titles only (see [historyCovers]) */
     val mangaCovers: Boolean = true,
     val animeCovers: Boolean = true,
     /** Downloaded chapters / episodes of the picked titles ([DownloadedTitle.key]; null = all) */
@@ -94,6 +95,8 @@ data class SyncSelection(
     val mangaDownloadMode: String = "all",
     val animeDownloadMode: String = "all",
     // KMK <--
+    /** KMK (r93): the covers of titles sent only for their history (the History tile's "Covers of history titles") */
+    val historyCovers: Boolean = true,
 ) {
     val syncsSources: Boolean get() = extensions && sources
     val syncsRepos: Boolean get() = extensions && repos
@@ -109,8 +112,12 @@ data class SyncSelection(
      * (the other device takes downloads only for titles it has)
      */
     val hasExtras: Boolean
-        get() = (mangaCovers && (mangaLibrary || mangaHistory)) || (animeCovers && (animeLibrary || animeHistory)) ||
-            (mangaDownloads && mangaLibrary) || (animeDownloads && animeLibrary)
+        get() = hasCovers || (mangaDownloads && mangaLibrary) || (animeDownloads && animeLibrary)
+
+    /** KMK (r93): some covers would go: library ones with their tile, history-only ones with the History tile */
+    val hasCovers: Boolean
+        get() = (mangaCovers && mangaLibrary) || (animeCovers && animeLibrary) ||
+            (historyCovers && (mangaHistory || animeHistory))
 
     /** KMK (r91): every tile and switch on, nothing narrowed (the pop-up's lines then say "everything") */
     val isEverything: Boolean
@@ -133,9 +140,8 @@ data class SyncSelection(
         if (syncsApks) add("sideloaded APKs")
         if (syncsSources) add("code sources")
         // KMK (r92)
-        if ((mangaCovers && (mangaLibrary || mangaHistory)) || (animeCovers && (animeLibrary || animeHistory))) {
-            add("covers")
-        }
+        // KMK (r93): history-only titles' covers count too
+        if (hasCovers) add("covers")
         if ((mangaDownloads && mangaLibrary) || (animeDownloads && animeLibrary)) add("downloads")
     }.joinToString(", ").ifEmpty { "nothing" }
 
@@ -833,9 +839,14 @@ object PairSyncData {
 
     /**
      * Merges what a paired device sent; [log] tells the screen how it's going. KMK (r91): everything that came is
-     * applied (this device accepted it; the sender's own tiles chose it).
+     * applied (this device accepted it; the sender's own tiles chose it). KMK (r93): [progress] gets (done, total,
+     * text) after every merged title.
      */
-    suspend fun import(received: ReceivedPayload, log: (String) -> Unit): SyncSummary {
+    suspend fun import(
+        received: ReceivedPayload,
+        log: (String) -> Unit,
+        progress: ((Int, Int, String) -> Unit)? = null,
+    ): SyncSummary {
         val payload = received.payload
         var errors = 0
 
@@ -877,29 +888,46 @@ object PairSyncData {
             mangaHistoryTitles = mangaList.count { it.history.isNotEmpty() }
             animeHistoryTitles = animeList.count { it.history.isNotEmpty() }
 
-            if (mangaCategories.isNotEmpty()) {
-                runCatching { CategoriesRestorer()(mangaCategories) }.onFailure { errors++ }
-            }
-            if (mangaList.isNotEmpty()) log("Merging ${mangaList.size} manga…")
-            // KMK (r90): categories only added, never taken off a title here
-            val restorer = MangaRestorer(isSync = false, addCategoriesOnly = true)
-            mangaList.forEach {
-                currentCoroutineContext().ensureActive()
-                runCatching { restorer.restore(it, mangaCategories) }
-                    .onSuccess { manga++ }
-                    .onFailure { errors++ }
-            }
-            val helper = AnimeBackupHelper()
-            // KMK (r89): the anime categories first, in their order, before the anime that link to them
-            if (animeCategories.isNotEmpty()) {
-                runCatching { helper.restoreCategories(animeCategories) }.onFailure { errors++ }
-            }
-            if (animeList.isNotEmpty()) log("Merging ${animeList.size} anime…")
-            animeList.forEach {
-                currentCoroutineContext().ensureActive()
-                runCatching { helper.restoreAnime(it) }
-                    .onSuccess { anime++ }
-                    .onFailure { errors++ }
+            // KMK (r93): the libraries stop reading the whole library again after every merged title, as during a
+            // backup restore (LibraryRefresh.restoring). Without it each new library title reloaded every library
+            // title so far: r92 took 7 minutes for 4,097 new manga on a fresh phone (r90's 2,956 were history-only
+            // titles, which the library query doesn't count, so 9 s).
+            val pausedHere = LibraryRefresh.restoring.compareAndSet(false, true)
+            try {
+                if (mangaCategories.isNotEmpty()) {
+                    runCatching { CategoriesRestorer()(mangaCategories) }.onFailure { errors++ }
+                }
+                val total = mangaList.size + animeList.size
+                var done = 0
+                if (mangaList.isNotEmpty()) log("Merging ${mangaList.size} manga…")
+                // KMK (r90): categories only added, never taken off a title here
+                val restorer = MangaRestorer(isSync = false, addCategoriesOnly = true)
+                mangaList.forEach {
+                    currentCoroutineContext().ensureActive()
+                    runCatching { restorer.restore(it, mangaCategories) }
+                        .onSuccess { manga++ }
+                        .onFailure { errors++ }
+                    done++
+                    progress?.invoke(done, total, "Applying manga %,d of %,d".format(done, mangaList.size))
+                }
+                val helper = AnimeBackupHelper()
+                // KMK (r89): the anime categories first, in their order, before the anime that link to them
+                if (animeCategories.isNotEmpty()) {
+                    runCatching { helper.restoreCategories(animeCategories) }.onFailure { errors++ }
+                }
+                if (animeList.isNotEmpty()) log("Merging ${animeList.size} anime…")
+                animeList.forEachIndexed { index, item ->
+                    currentCoroutineContext().ensureActive()
+                    runCatching { helper.restoreAnime(item) }
+                        .onSuccess { anime++ }
+                        .onFailure { errors++ }
+                    done++
+                    progress?.invoke(done, total, "Applying anime %,d of %,d".format(index + 1, animeList.size))
+                }
+            } finally {
+                if (pausedHere) LibraryRefresh.restoring.value = false
+                // The libraries work out their lists and badges again with what came
+                LibraryRefresh.request()
             }
         }
 
@@ -1130,6 +1158,13 @@ object PairSyncData {
     suspend fun coversEstimate(anime: Boolean, selection: SyncSelection): CoversEstimate =
         PairSyncExtras.coversEstimate(anime, selection)
 
+    /**
+     * KMK (r93): the covers found on this device for the titles [selection] sends only for their history (manga and
+     * anime; [coversEstimate] counts library titles only now)
+     */
+    suspend fun historyCoversEstimate(selection: SyncSelection): CoversEstimate =
+        PairSyncExtras.historyCoversEstimate(selection)
+
     /** KMK (r91): the Extensions row's APK part before the repos' lists are read */
     internal const val APKS_CHECKING = "APKs: checking"
 
@@ -1327,11 +1362,14 @@ object PairSyncData {
         }
     }
 
-    /** KMK (r90): deletes received APKs older than a day */
-    fun cleanOldApks() {
+    /** KMK (r90): deletes received APKs older than a day. KMK (r93): except [keep] (staged, not applied yet) */
+    fun cleanOldApks(keep: Set<File> = emptySet()) {
         runCatching {
+            val keepPaths = keep.map { it.absolutePath }.toSet()
             val before = System.currentTimeMillis() - 24L * 60 * 60 * 1000
-            apkDir().listFiles()?.forEach { if (it.lastModified() < before) it.delete() }
+            apkDir().listFiles()?.forEach {
+                if (it.absolutePath !in keepPaths && it.lastModified() < before) it.delete()
+            }
         }
     }
 
