@@ -203,6 +203,71 @@ Collected from all sections. These are what to look at first when something odd 
   - Each episode row has a download button (`AnimeEpisodeDownloadIndicator`), and there's a download menu.
   - The preview player's Qualities menu is grouped by server (`AnimeVideoFetcher.fetchServerVideos`, sorted with `QualityOrder`).
 
+## Changes in r89 (30 October 2026)
+
+Commit 4cd8b984. Signing key checked (same SHA-256 as always).
+
+- **Pair sync, new pop-up** (`ui/pairsync/PairSyncDialog.kt`; `PairSyncScreen.kt` is deleted):
+  - Opens as a `Dialog` from the tablet rail (`HomeScreen`) and from More › Sync devices (`MoreScreen` `onClickPairSync`), so phones can sync now.
+  - Pages: main, Anime, Manga, History, Extensions, Repos, Code sources, Pair, Show a code, Enter a code, Activity. Listening runs in a `DisposableEffect` while the pop-up is open.
+  - The main page has 4 tiles in this order: Anime, Manga, History, Extensions. The owner asked for anime before manga.
+- **Spotting other Komikku devices** (`pairsync/PairSyncDiscovery.kt`):
+  - The device showing a code sends a BLE advert with its own service-data UUID and a 4-byte hash of its Bluetooth name.
+  - The device entering the code scans for that advert and tags classic devices whose name hash matches (KOMIKKU tag).
+  - Devices with audio, wearable, health, toy, peripheral or imaging classes are hidden.
+  - BLE may be filtered on some phones (`neverForLocation`). Then there's no tag, but phones and computers stay visible.
+- **Sync data** (`pairsync/PairSyncData.kt`):
+  - New `SyncSelection` fields: `animeCategories`, `extensions`, `repos`, `repoUrls`, `installedExtensions`, `sideloadedApks`. Old names are kept, so saved selections still parse.
+  - `backupAnimeCategories` is now sent and restored before the anime. Before r89 the category list wasn't sent, and anime categories were created in whatever order the anime arrived.
+  - `SyncPayload` adds `repos`, `extensions`, `apks` and `installed`, all with defaults.
+  - The sync request carries a `have` list of installed packages, so only APKs the other device lacks are sent. The initiator now builds its export after receiving the other device's payload.
+  - Missing repos are added, never removed.
+  - Missing extensions and newer versions are offered with Install / Update buttons (`pairsync/PairSyncInstall.kt`). Nothing installs without a tap.
+  - Received APKs go to `cacheDir/pair_sync_apks`. Limits: 64 MB per APK, 256 MB in total.
+- **Pair sync fixes** (`pairsync/PairSync.kt`):
+  - `answer()` catches everything, and the scope has a `CoroutineExceptionHandler`. A dropped connection used to crash the waiting device.
+  - The first frame (before the key is known) is capped at 256 KiB. After that, frames are capped at 512 MiB and read in 64 KiB pieces, so a lying length can't allocate memory up front.
+  - Send and receive report progress.
+  - Stop (`stopSync`) closes the socket. A run counter stops an old run from resetting a newer one.
+  - Peers are now stored under `Preference.privateKey("pair_sync_peers")` (`__PRIVATE_pair_sync_peers`), so pairing secrets are no longer in normal backups. The old key is moved over once, then deleted.
+  - Merging never removes anything: something deleted on one device comes back from the other on the next sync.
+- **The Updates tile was dropped on purpose.** The Updates tab is built from chapter and episode `dateFetch` plus read/seen marks. Library sync already copies both, so the two Updates lists already match.
+- **AppLog:**
+  - `init` no longer reads the whole file on the main thread. The writer loads the newest 2 MB / 4000 lines in the background.
+  - The file is trimmed to 1 MB when it passes 2 MB, checked every 200 writes.
+  - Messages are cut at 16,000 characters.
+- **Updater:** "What's new" reads Dominican4Life/Bot releases (`AppUpdateChecker.FORK_RELEASES_REPO`, including pre-releases). The Auto-update row is hidden unless `updaterEnabled`. Check for updates is still off.
+- **Device files:**
+  - Album art is decoded small (`decodeSmall`, about 384 px).
+  - A rename that only changes letter case goes through a temp name.
+  - Favourites follow folder renames.
+  - Search runs again after a rename or delete.
+  - The delete message says "Deleted N of M".
+  - `summary()` counts while walking the cursor instead of loading every row.
+  - Also in r89 (local commit 08f01392): a JS source stays off after a save, empty test results say "No results", search walks storage for files MediaStore misses, and folder listing is parallel.
+- **Browse:**
+  - The Filter panel works on a copy (`copyOf`), so the shown tab's `FilterList` is no longer shared. The old "live FilterList" invariant in section 02 no longer holds.
+  - Unknown JS filter types become text boxes, and `SelectItem` uses `getOrNull`.
+  - Migration candidates use `distinctBy`.
+  - Manga global search caches only successful results.
+  - A JS saved search keeps its tab (`HeaderSerializer` saves text state; anime still doesn't, because `AnimeFilterBridge` drops it).
+  - `JsSourceInfo.hasLatest` decides `supportsLatest`.
+  - Anime Feed and TagMix wait up to 20 s for sources (`SOURCE_WAIT_MS`).
+  - `JsBrowserFetch.openTab` destroys the WebView on cancel.
+  - "m3u8" anywhere in the URL counts as HLS.
+  - Each Browse tab gets its own child scope, and the kept pager holds only `getRemoteManga`.
+  - Swipe order matches the chips.
+  - `AnimeTracking.refresh` re-reads the track before writing.
+- **Manga side:**
+  - Preview chapter rows listen to `statusFlow()`.
+  - Merged titles open the title page instead of the preview.
+  - `videoChecked` is kept across rotation.
+  - Local-source titles get page grids (`localPages`, shared `archivePages`).
+  - The library preview model is cleared when it leaves the screen.
+  - `selectChapter` writes are guarded.
+  - Remove/add from the preview uses the library's normal dialogs (`openDeleteMangaDialogFor`, `addToLibraryFromPreview`).
+- **Still open:** the anime library preview probably has the same model-clearing and remove-flow issues (not in scope).
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.

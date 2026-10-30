@@ -498,7 +498,7 @@ Notes:
 - Backup creation (`presentation/more/settings/screen/data/CreateBackupScreen.kt`) got two fork options that are per run, not settings: a **JS sources**
   checkbox (`BackupOptions.jsSources`) and a **category choice** card (`BackupCategoryChoice.kt`: ticking all = no
   filter, as before). Restore (`RestoreBackupScreen.kt`) was also changed (Anikku/Aniyomi backups, r55).
-- Bluetooth pair sync (a4a9e23c) is not here; it has its own screen (`tachiyomi/ui/pairsync/PairSyncScreen.kt`) and
+- Bluetooth pair sync (a4a9e23c) is not here; it has its own pop-up (`tachiyomi/ui/pairsync/PairSyncDialog.kt`, r89) and
   keeps `pair_sync_peers` / `pair_sync_selection` (hidden list).
 
 
@@ -1121,7 +1121,7 @@ a restore onto a fresh install the ids can differ, so these values may point at 
 | `cover_badges_<corner>`, `source_badges_<corner>` | StringSets | `UiPreferences`, `BadgeCorners.kt` | Badges screens (shown, listed above) | 3006799e |
 | `known_extension_repos` | StringSet | `presentation/more/settings/screen/browse/RepoAdding.kt` (`RepoMemory`) | every repo ever added, offered again in the add dialog | c36ecadb |
 | `sideloaded_extensions` | StringSet | `tachiyomi/extension/util/SideloadFolder.kt` | sideloaded (folder-installed) extensions it tracks | fork (`c1c3e33e`) |
-| `pair_sync_peers`, `pair_sync_selection` | String (JSON) | `tachiyomi/pairsync/PairSync.kt` | paired Bluetooth devices and what to sync | a4a9e23c |
+| `__PRIVATE_pair_sync_peers` (was `pair_sync_peers` before r89), `pair_sync_selection` | String (JSON) | `tachiyomi/pairsync/PairSync.kt` | paired Bluetooth devices and what to sync | a4a9e23c |
 | `device_files_show_hidden`, `_sort`, `_sort_desc`, `_grid`, `_play_in_app`, `_read_in_app`, `_show_recent`, `_favourites`; `history_device_files_only` | various | `tachiyomi/devicefiles/DeviceFiles.kt` | the Device files browser's own options | 1836136a, 929c55ac |
 | `pref_library_show_anime`, `pref_browse_show_anime`, `pref_history_media_tab`, `pref_updates_media_tab` | Boolean / Int | `HomeScreen`, `BrowseTab`, `HistoryTab`, `UpdatesTab` | remembered Manga/Anime switches | e284e45c, a0d856f2, ecc71cb2 |
 | `anime_pinned_catalogues`, `anime_hidden_catalogues`, `anime_disabled_languages` | StringSets | `SourcePreferences`; Browse, global search, Feed, migration pickers, JS sources | anime twins of pinned / disabled sources / languages (set from Extensions and source lists) | bcc3e4ae, df4a9b1c |

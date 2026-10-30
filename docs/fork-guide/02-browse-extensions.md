@@ -74,7 +74,7 @@ The Sources tab has a manga/anime toggle in its toolbar (`withAnimeSwitch`, pref
 **Invariants.**
 - The cache key includes the screen-model class name. That is why migration and other screens that extend `BrowseSourceScreenModel` never share Browse's lists. Keep the class name in the key.
 - Only titles (name, url, cover url) are cached, not bitmaps.
-- `Listing.Search.filters` holds the live `FilterList` object. Saved Filter tabs hold that same object, so mutating filters elsewhere changes the kept tab. Not verified in every path; be careful.
+- Since r89 the Filter panel and each shown tab get their own copy of the filters (`BrowseSourceScreenModel.copyOf`, values copied through `FilterSerializer`). Before r89 they shared one live `FilterList`, so ticking a filter changed the tab already shown. Keep using `copyOf` wherever a tab is built; a source that returns the same list object every time falls back to sharing.
 
 **Failure modes.**
 - Raising `MAX_TABS` brings back the memory growth of r73 and earlier. The MemoryLog lines in Logs count kept tabs (`BrowseTabCache.size`).
