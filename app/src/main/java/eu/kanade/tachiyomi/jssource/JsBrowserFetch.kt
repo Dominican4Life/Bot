@@ -98,21 +98,29 @@ internal object JsBrowserFetch {
                 }
             }
         }
-        webView.loadUrl("$origin/")
-        withTimeoutOrNull(CHALLENGE_WAIT_MS) { loaded.await() }
-        // Wait out a bot check the browser can pass by itself
-        val started = System.currentTimeMillis()
-        while (System.currentTimeMillis() - started < CHALLENGE_WAIT_MS) {
-            val state = webView.evalString(
-                "(function(){var t=document.title||'';var h=document.documentElement?document.documentElement.innerHTML:'';" +
-                    "return (/Just a moment|Attention Required|Checking your browser/i.test(t)||h.indexOf('challenge-platform')>=0&&h.length<60000)?'challenge':document.readyState;})()",
-            )
-            if (state == "complete" || state == "interactive") break
-            delay(500)
+        // KMK: cancelled (e.g. Browse left) or failed while waiting for the page: the hidden page is destroyed, or it
+        // kept running the site's scripts with nothing holding it
+        val stillChallenged = try {
+            webView.loadUrl("$origin/")
+            withTimeoutOrNull(CHALLENGE_WAIT_MS) { loaded.await() }
+            // Wait out a bot check the browser can pass by itself
+            val started = System.currentTimeMillis()
+            while (System.currentTimeMillis() - started < CHALLENGE_WAIT_MS) {
+                val state = webView.evalString(
+                    "(function(){var t=document.title||'';var h=document.documentElement?document.documentElement.innerHTML:'';" +
+                        "return (/Just a moment|Attention Required|Checking your browser/i.test(t)||h.indexOf('challenge-platform')>=0&&h.length<60000)?'challenge':document.readyState;})()",
+                )
+                if (state == "complete" || state == "interactive") break
+                delay(500)
+            }
+            webView.evalString(
+                "(function(){return /Just a moment|Attention Required|Checking your browser/i.test(document.title||'')?'yes':'no';})()",
+            ) == "yes"
+        } catch (e: Throwable) {
+            webView.stopLoading()
+            webView.destroy()
+            throw e
         }
-        val stillChallenged = webView.evalString(
-            "(function(){return /Just a moment|Attention Required|Checking your browser/i.test(document.title||'')?'yes':'no';})()",
-        ) == "yes"
         if (stillChallenged) {
             webView.destroy()
             // KMK: a check that needs a person: opened in WebView when the app is on screen; once it's passed there

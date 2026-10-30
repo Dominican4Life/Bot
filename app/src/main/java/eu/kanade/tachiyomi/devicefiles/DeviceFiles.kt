@@ -212,9 +212,29 @@ object DeviceFilesRepository {
     }
 
     fun summary(context: Context, category: FileCategory, showHidden: Boolean): CategorySummary {
+        // KMK: counted while walking the cursor (no file objects, no sorting). A COUNT(*) projection isn't allowed on
+        // Android 10+, and hidden files are told apart by their path anyway
         val (selection, args) = selectionFor(category)
-        val files = query(context, selection, args, showHidden = showHidden)
-        return CategorySummary(files.size, files.sumOf { it.size })
+        val projection = arrayOf(MediaStore.Files.FileColumns.DATA, MediaStore.Files.FileColumns.SIZE)
+        var count = 0
+        var size = 0L
+        runCatching {
+            context.contentResolver.query(filesUri, projection, selection, args, null)?.use { cursor ->
+                val dataCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATA)
+                val sizeCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.SIZE)
+                while (cursor.moveToNext()) {
+                    if (!showHidden) {
+                        val path = cursor.getString(dataCol) ?: continue
+                        if ("/." in path) continue
+                    } else if (cursor.isNull(dataCol)) {
+                        continue
+                    }
+                    count++
+                    size += cursor.getLong(sizeCol)
+                }
+            }
+        }
+        return CategorySummary(count, size)
     }
 
     fun category(context: Context, category: FileCategory, showHidden: Boolean): List<DeviceFile> {

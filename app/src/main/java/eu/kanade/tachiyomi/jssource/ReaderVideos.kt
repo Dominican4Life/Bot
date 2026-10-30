@@ -173,8 +173,9 @@ object ReaderVideos {
         val headers = Headers.Builder().apply {
             data.obj("headers")?.forEach { (k, v) -> (v as? JsonPrimitive)?.content?.let { runCatching { set(k, it) } } }
         }.build()
+        // KMK: "m3u8" anywhere in the address, the query too (`…/get?file=a.m3u8`), as downloads check it (rule 6)
+        val isHls = url.contains("m3u8", ignoreCase = true)
         val path = url.substringBefore('?').lowercase()
-        val isHls = path.endsWith(".m3u8") || "m3u8" in path
         val quality = data.str("quality").orEmpty()
         return Video(
             videoUrl = if (isHls) HlsRelay.wrap(url, headers) else url,

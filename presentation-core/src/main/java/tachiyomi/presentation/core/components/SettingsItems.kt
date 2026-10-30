@@ -300,7 +300,8 @@ fun SelectItem(
                     vertical = SettingsItemsPaddings.Vertical,
                 ),
             label = { Text(text = label) },
-            value = options[selectedIndex].toString(),
+            // KMK: a list with no options, or a saved index past its end, crashed the filter sheet
+            value = options.getOrNull(selectedIndex)?.toString().orEmpty(),
             onValueChange = {},
             enabled = false,
             readOnly = true,

@@ -563,16 +563,17 @@ data class BrowseSourceScreen(
                                 )
                             }
                         }
-                        // The Filter tab, once there's a filter or typed search (until Clear)
+                        tabsSource?.catalogTabs.orEmpty().forEach { catalog ->
+                            add((currentCatalog == catalog.id) to { screenModel.showCatalog(catalog.id) })
+                        }
+                        // The Filter tab, once there's a filter or typed search (until Clear). KMK: after the
+                        // catalog tabs, in the same order as the buttons above
                         if (state.filterListing != null) {
                             add(
                                 ((state.listing as? Listing.Search)?.tabKey == Listing.FILTER_TAB) to {
                                     screenModel.showFilterTab()
                                 },
                             )
-                        }
-                        tabsSource?.catalogTabs.orEmpty().forEach { catalog ->
-                            add((currentCatalog == catalog.id) to { screenModel.showCatalog(catalog.id) })
                         }
                         state.savedSearches.forEach { savedSearch ->
                             add(
@@ -757,7 +758,13 @@ data class BrowseSourceScreen(
                                     screenModel.setFilters(it)
                                     filterVersion++
                                 },
-                                clearHighlighted = remember(filterVersion, state.filters, filterPanelOpen) {
+                                // KMK: FilterList.equals is always false, so the list itself as a key ran this
+                                // on every redraw; a new list (another tab's, Clear) has another identity
+                                clearHighlighted = remember(
+                                    filterVersion,
+                                    System.identityHashCode(state.filters),
+                                    filterPanelOpen,
+                                ) {
                                     screenModel.filtersChanged()
                                 },
                                 startExpanded = screenModel.startExpanded,

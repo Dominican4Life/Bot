@@ -207,7 +207,8 @@ fun CandidatesWindow(
                         CircularProgressIndicator()
                     }
                 }
-                val shown = results ?: candidates
+                // KMK: one row per manga, so the list keys stay unique
+                val shown = (results ?: candidates).distinctBy { it.manga.id }
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                     modifier = Modifier.fillMaxSize(),

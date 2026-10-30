@@ -7,6 +7,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import cafe.adriel.voyager.core.model.ScreenModel
@@ -31,6 +33,7 @@ import eu.kanade.tachiyomi.ui.download.DownloadQueueScreen
 import eu.kanade.tachiyomi.ui.history.HistoryTab
 import eu.kanade.tachiyomi.ui.libraryUpdateError.LibraryUpdateErrorScreen
 import eu.kanade.tachiyomi.ui.logs.LogsScreen
+import eu.kanade.tachiyomi.ui.pairsync.PairSyncDialog
 import eu.kanade.tachiyomi.ui.setting.PlayerSettingsScreen
 import eu.kanade.tachiyomi.ui.setting.SettingsScreen
 import eu.kanade.tachiyomi.ui.stats.StatsScreen
@@ -72,6 +75,9 @@ data object MoreTab : Tab {
         val navigator = LocalNavigator.currentOrThrow
         val screenModel = rememberScreenModel { MoreScreenModel() }
         val downloadQueueState by screenModel.downloadQueueState.collectAsState()
+        // KMK (r89): the Sync devices pop-up, for phones (the tablet rail has a Sync button too)
+        var showPairSync by remember { mutableStateOf(false) }
+        if (showPairSync) PairSyncDialog(onDismissRequest = { showPairSync = false })
         MoreScreen(
             downloadQueueStateProvider = { downloadQueueState },
             downloadedOnly = screenModel.downloadedOnly,
@@ -100,6 +106,7 @@ data object MoreTab : Tab {
             onClickLibraryUpdateErrors = { navigator.push(LibraryUpdateErrorScreen()) },
             // Logs was only on the tablet navigation rail; this opens the same screen on phones too
             onClickLogs = { navigator.push(LogsScreen()) },
+            onClickPairSync = { showPairSync = true },
             // KMK <--
         )
 

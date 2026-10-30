@@ -228,7 +228,10 @@ abstract class SearchScreenModel(
         }
         if (state.value.searchQuery != query) return
         updateItem(source, result)
-        if (keepsResults) resultCache.getOrPut(query) { java.util.concurrent.ConcurrentHashMap() }[source.id] = result
+        // KMK: a failed source isn't kept, so the next search with these words tries it again (as anime, r88)
+        if (keepsResults && result is SearchItemResult.Success) {
+            resultCache.getOrPut(query) { java.util.concurrent.ConcurrentHashMap() }[source.id] = result
+        }
     }
 
     private fun updateItems(items: Map<Source, SearchItemResult>) {

@@ -380,7 +380,19 @@ data object LibraryTab : Tab {
                         panelButtons = { preview.Buttons(this) },
                         panelStart = panelStart,
                         panelEnd = panelEnd,
-                        panels = { preview.Panels(this) },
+                        // KMK: the preview's add/remove button goes through the library's normal flow
+                        panels = {
+                            preview.Panels(
+                                this,
+                                onToggleFavorite = { manga ->
+                                    if (manga.favorite) {
+                                        screenModel.openDeleteMangaDialogFor(listOf(manga))
+                                    } else {
+                                        screenModel.addToLibraryFromPreview(manga)
+                                    }
+                                },
+                            )
+                        },
                     )
                 }
             }

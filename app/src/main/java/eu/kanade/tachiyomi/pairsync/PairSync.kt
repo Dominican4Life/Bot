@@ -10,6 +10,8 @@ import android.content.Context
 import android.os.Build
 import android.provider.Settings
 import eu.kanade.tachiyomi.util.system.AppLog
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -23,20 +25,24 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
+import java.io.ByteArrayOutputStream
 import java.io.Closeable
 import java.io.DataInputStream
 import java.io.DataOutputStream
+import java.io.EOFException
 import java.io.IOException
 import java.security.SecureRandom
 import java.text.DateFormat
@@ -59,10 +65,23 @@ data class Peer(
 )
 
 class PairSyncPreferences(private val store: PreferenceStore) {
-    private val peersJson = store.getString("pair_sync_peers", "[]")
+    // KMK (r89): a private key, so the shared secrets stay out of backups unless "Private settings" is ticked (a
+    // restored backup let another device sync as this one). The old plain key is moved once, then deleted.
+    private val peersJson = store.getString(Preference.privateKey("pair_sync_peers"), "[]")
+
     /** What to sync, as JSON (see [SyncSelection]) */
     val selectionJson = store.getString("pair_sync_selection", "")
     val peersChanges get() = peersJson.changes()
+
+    init {
+        runCatching {
+            val old = store.getString("pair_sync_peers", "[]")
+            if (old.isSet()) {
+                if (!peersJson.isSet()) peersJson.set(old.get())
+                old.delete()
+            }
+        }
+    }
 
     fun peers(): List<Peer> =
         runCatching { Json.decodeFromString(ListSerializer(Peer.serializer()), peersJson.get()) }.getOrDefault(emptyList())
@@ -96,23 +115,64 @@ class PairSyncPreferences(private val store: PreferenceStore) {
 /**
  * KMK: Syncs two devices over Bluetooth. One shows a 6-digit code and the other, nearby, enters it; after that the
  * two share a secret key and Sync talks to the paired device straight away, everything sent encrypted with that key.
- * The device that isn't pressing Sync needs its Sync page open (it listens while the page is showing).
+ * The device that isn't pressing Sync needs its Sync pop-up open (it listens while the pop-up is showing).
  */
 @SuppressLint("MissingPermission")
 object PairSync {
 
     /** The app's Bluetooth service: only Komikku answers on it */
     private val SERVICE_UUID: UUID = UUID.fromString("6f1c2a7e-4b8d-4e5a-9c3f-2d7b8e1a5c90")
-    private const val MAX_FRAME = 256 * 1024 * 1024
 
-    data class Status(val busy: Boolean = false, val lines: List<String> = emptyList())
+    /** KMK (r89): the most a frame can be once its sender is known (large libraries, APKs) */
+    private const val MAX_FRAME = 512 * 1024 * 1024
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /**
+     * KMK (r89): the most the first frame can be, before a key has shown who sent it. Up to r88 any nearby device
+     * could make the waiting device allocate 256 MiB with one length.
+     */
+    private const val FIRST_FRAME = 256 * 1024
+
+    /** How often (bytes) the progress bar moves */
+    private const val PROGRESS_STEP = 128L * 1024
+
+    /**
+     * What's going on. While [busy], [peerAddress] is the device being synced with, and [done] of [total] bytes are
+     * sent ([sending]) or received; [step] says what's being done when no bytes are moving.
+     */
+    data class Status(
+        val busy: Boolean = false,
+        val lines: List<String> = emptyList(),
+        val peerAddress: String? = null,
+        val sending: Boolean = false,
+        val done: Long = 0L,
+        val total: Long = 0L,
+        val step: String? = null,
+    )
+
+    /** KMK (r89): the last finished sync on this device: what came from [peerName] and what can be installed */
+    data class SyncResult(
+        val peerAddress: String,
+        val peerName: String,
+        val time: Long,
+        val summary: SyncSummary,
+        val missingAsked: Boolean = false,
+        val updatesAsked: Boolean = false,
+    )
+
+    // KMK (r89): nothing thrown in a connection may reach the app's crash handler
+    private val scope = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e ->
+            log("Sync error: ${e.message ?: e::class.simpleName}")
+        },
+    )
     private val prefs get() = PairSyncPreferences.instance
     private val random = SecureRandom()
 
     private val _status = MutableStateFlow(Status())
     val status: StateFlow<Status> = _status.asStateFlow()
+
+    private val _result = MutableStateFlow<SyncResult?>(null)
+    val result: StateFlow<SyncResult?> = _result.asStateFlow()
 
     /** The code this device is showing for pairing, or null */
     private val _pairingCode = MutableStateFlow<String?>(null)
@@ -124,6 +184,13 @@ object PairSync {
 
     private var serverSocket: BluetoothServerSocket? = null
     private var serverJob: Job? = null
+
+    // KMK (r89): Stop closes the running sync's socket (that ends its blocking reads and writes) and cancels it
+    @Volatile private var activeSocket: BluetoothSocket? = null
+    private var syncJob: Job? = null
+
+    /** Each sync's number: a stopped sync's late finish mustn't touch the next one's state */
+    @Volatile private var runId = 0
 
     fun adapter(context: Context): BluetoothAdapter? =
         context.getSystemService(BluetoothManager::class.java)?.adapter
@@ -139,6 +206,30 @@ object PairSync {
     }
 
     fun clearLog() = _status.update { it.copy(lines = emptyList()) }
+
+    private fun step(text: String) = _status.update { it.copy(step = text, done = 0L, total = 0L) }
+
+    private fun idle() = _status.update {
+        it.copy(busy = false, peerAddress = null, sending = false, done = 0L, total = 0L, step = null)
+    }
+
+    /** Moves the progress bar, every [PROGRESS_STEP] bytes */
+    private fun progress(sending: Boolean): (Long, Long) -> Unit {
+        var last = -1L
+        return { done, total ->
+            if (last < 0L || done == total || done - last >= PROGRESS_STEP) {
+                last = done
+                _status.update { it.copy(sending = sending, done = done, total = total, step = null) }
+            }
+        }
+    }
+
+    /** KMK (r89): the result card's Install / Update were tapped */
+    fun markAsked(missing: Boolean = false, updates: Boolean = false) {
+        _result.update {
+            it?.copy(missingAsked = it.missingAsked || missing, updatesAsked = it.updatesAsked || updates)
+        }
+    }
 
     // Listening (the device that waits)
 
@@ -157,7 +248,7 @@ object PairSync {
             while (true) {
                 val socket = try {
                     server.accept()
-                } catch (_: IOException) {
+                } catch (_: Exception) {
                     break
                 }
                 launch { answer(context, socket) }
@@ -171,47 +262,61 @@ object PairSync {
         serverJob?.cancel()
         serverJob = null
         _pairingCode.value = null
+        PairSyncDiscovery.stopAdvertising()
     }
 
-    /** Shows a new code for pairing (the screen shows it); [stopPairing] hides it */
-    fun startPairing(): String {
+    /**
+     * Shows a new code for pairing (the pop-up shows it); [stopPairing] hides it. With [context], this device also
+     * advertises over Bluetooth LE so the other one tags it as Komikku.
+     */
+    fun startPairing(context: Context? = null): String {
         val code = (random.nextInt(900_000) + 100_000).toString()
         _justPaired.value = null
         _pairingCode.value = code
+        if (context != null) PairSyncDiscovery.startAdvertising(context)
         return code
     }
 
     fun stopPairing() {
         _pairingCode.value = null
+        PairSyncDiscovery.stopAdvertising()
     }
 
     private suspend fun answer(context: Context, socket: BluetoothSocket) {
-        Link(socket).use { link ->
-            val first = link.readFrame()
-            val remote = socket.remoteDevice.address
-            // A paired device (its own address first)
-            val peers = prefs.peers().sortedByDescending { it.address == remote }
-            for (peer in peers) {
-                val key = Base64.getDecoder().decode(peer.secret)
-                val message = runCatching { decrypt(key, first) }.getOrNull() ?: continue
-                link.key = key
-                answerSync(context, link, peer.copy(address = remote), parse(message))
-                return
-            }
-            // A device pairing with the code showing here
-            val code = _pairingCode.value
-            if (code != null) {
-                val key = codeKey(code)
-                val message = runCatching { decrypt(key, first) }.getOrNull()
-                if (message != null) {
+        // KMK (r89): a dropped link or bad data used to escape here and crash the app later
+        try {
+            Link(socket).use { link ->
+                val first = link.readFrame()
+                val remote = socket.remoteDevice.address
+                // A paired device (its own address first)
+                val peers = prefs.peers().sortedByDescending { it.address == remote }
+                for (peer in peers) {
+                    val key = Base64.getDecoder().decode(peer.secret)
+                    val message = runCatching { decrypt(key, first) }.getOrNull() ?: continue
                     link.key = key
-                    answerPair(context, link, remote, parse(message))
+                    link.maxFrame = MAX_FRAME
+                    answerSync(context, link, socket, peer.copy(address = remote), parse(message))
                     return
                 }
-                log("A device tried the wrong code")
-            } else {
-                log("A device that isn't paired tried to connect")
+                // A device pairing with the code showing here
+                val code = _pairingCode.value
+                if (code != null) {
+                    val key = codeKey(code)
+                    val message = runCatching { decrypt(key, first) }.getOrNull()
+                    if (message != null) {
+                        link.key = key
+                        answerPair(context, link, remote, parse(message))
+                        return
+                    }
+                    log("A device tried the wrong code")
+                } else {
+                    log("A device that isn't paired tried to connect")
+                }
             }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            log("A connection stopped: ${e.message ?: e::class.simpleName}")
         }
     }
 
@@ -229,40 +334,63 @@ object PairSync {
         val peer = Peer(address = remote, name = name, secret = Base64.getEncoder().encodeToString(secret))
         prefs.savePeer(peer)
         _pairingCode.value = null
+        PairSyncDiscovery.stopAdvertising()
         _justPaired.value = peer
         log("Paired with $name")
     }
 
-    private suspend fun answerSync(context: Context, link: Link, peer: Peer, message: JsonObject) {
+    private suspend fun answerSync(
+        context: Context,
+        link: Link,
+        socket: BluetoothSocket,
+        peer: Peer,
+        message: JsonObject,
+    ) {
         if (message.string("t") != "sync") return
         val selection = PairSyncPreferences.parseSelection(message.string("selection").orEmpty())
-        _status.update { it.copy(busy = true) }
+        // KMK (r89): the packages the other device has (null from an older version), so only APKs it lacks are sent
+        val otherHas = (message["have"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.content }?.toSet()
+        val name = message.string("name") ?: peer.name
+        val id = ++runId
+        activeSocket = socket
+        _result.value = null
+        _status.update { it.copy(busy = true, peerAddress = peer.address) }
         try {
-            log("${peer.name} is syncing with this device: ${selection.describe()}")
-            link.send(PairSyncData.export(selection))
-            val theirs = link.receive()
-            log("Got ${size(theirs)} from ${peer.name}")
-            val summary = PairSyncData.import(theirs, ::log)
+            log("$name is syncing with this device: ${selection.describe()}")
+            step("Getting ready…")
+            val mine = PairSyncData.export(selection, otherHas)
+            link.send(mine, progress(sending = true))
+            val theirs = link.receive(progress(sending = false))
+            log("Got ${size(theirs)} from $name")
+            step("Merging…")
+            val summary = PairSyncData.import(PairSyncData.decode(theirs), ::log)
             link.sendJson(buildJsonObject { put("t", "done") })
             runCatching { link.receive() }
-            prefs.savePeer(peer.copy(lastSync = System.currentTimeMillis(), name = message.string("name") ?: peer.name))
-            log("Synced with ${peer.name}: $summary")
-        } catch (e: Exception) {
-            log("Sync with ${peer.name} stopped: ${e.message ?: e::class.simpleName}")
+            val synced = peer.copy(lastSync = System.currentTimeMillis(), name = name)
+            prefs.savePeer(synced)
+            _result.value = SyncResult(synced.address, synced.name, synced.lastSync, summary)
+            log("Synced with $name: $summary")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            if (runId == id) log("Sync with $name stopped: ${e.message ?: e::class.simpleName}")
         } finally {
-            _status.update { it.copy(busy = false) }
+            if (runId == id) {
+                activeSocket = null
+                idle()
+            }
         }
     }
 
     // Connecting (the device that presses Pair or Sync)
 
-    /** Pairs with [device], which is showing [code] on its Sync page */
+    /** Pairs with [device], which is showing [code] on its Sync pop-up */
     suspend fun pair(context: Context, device: BluetoothDevice, code: String): Result<Peer> = withContext(Dispatchers.IO) {
         _status.update { it.copy(busy = true) }
         val name = runCatching { device.name }.getOrNull() ?: device.address
         try {
             log("Pairing with $name…")
-            connect(context, device).use { link ->
+            connect(context, device, track = false).use { link ->
                 link.key = codeKey(code)
                 link.sendJson(
                     buildJsonObject {
@@ -286,6 +414,8 @@ object PairSync {
                 log("Paired with ${peer.name}")
                 Result.success(peer)
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             log("Couldn't pair: ${e.message ?: e::class.simpleName}")
             Result.failure(e)
@@ -294,56 +424,98 @@ object PairSync {
         }
     }
 
-    /** Syncs [selection] both ways with [peer], which needs its Sync page open */
+    /**
+     * Syncs [selection] both ways with [peer], which needs its Sync pop-up open. KMK (r89): this device's own export
+     * is built after the other device's arrives, so it knows which sideloaded APKs the other device lacks.
+     */
     fun sync(context: Context, peer: Peer, selection: SyncSelection) {
         if (_status.value.busy) return
-        _status.update { it.copy(busy = true) }
-        scope.launch {
+        val id = ++runId
+        _result.value = null
+        _status.update {
+            it.copy(
+                busy = true,
+                peerAddress = peer.address,
+                sending = false,
+                done = 0L,
+                total = 0L,
+                step = "Getting ready…",
+            )
+        }
+        syncJob = scope.launch {
             try {
                 if (selection.isEmpty) throw IOException("Pick something to sync first")
                 log("Getting ready to sync ${selection.describe()}…")
-                val mine = PairSyncData.export(selection)
                 val device = adapter(context)?.getRemoteDevice(peer.address) ?: throw IOException("Bluetooth is off")
                 log("Connecting to ${peer.name}…")
-                connect(context, device).use { link ->
+                step("Connecting…")
+                connect(context, device, track = true).use { link ->
                     link.key = Base64.getDecoder().decode(peer.secret)
+                    link.maxFrame = MAX_FRAME
                     link.sendJson(
                         buildJsonObject {
                             put("t", "sync")
                             put("name", deviceName(context))
                             put("selection", Json.encodeToString(SyncSelection.serializer(), selection))
+                            put("have", JsonArray(PairSyncData.installedPackages().map { JsonPrimitive(it) }))
                         },
                     )
+                    step("Waiting for ${peer.name}…")
                     val theirs = try {
-                        link.receive()
+                        link.receive(progress(sending = false))
                     } catch (_: IOException) {
                         throw IOException("${peer.name} didn't answer. Open Sync on it, then try again")
                     }
-                    log("Got ${size(theirs)} from ${peer.name}, sending ${size(mine)}…")
-                    link.send(mine)
-                    val summary = PairSyncData.import(theirs, ::log)
+                    val theirSize = size(theirs)
+                    val received = PairSyncData.decode(theirs)
+                    step("Getting ready to send…")
+                    val mine = PairSyncData.export(selection, received.installed)
+                    log("Got $theirSize from ${peer.name}, sending ${size(mine)}…")
+                    link.send(mine, progress(sending = true))
+                    step("Merging…")
+                    val summary = PairSyncData.import(received, ::log)
                     link.sendJson(buildJsonObject { put("t", "done") })
                     runCatching { link.receive() }
-                    prefs.savePeer(peer.copy(lastSync = System.currentTimeMillis()))
+                    val synced = peer.copy(lastSync = System.currentTimeMillis())
+                    prefs.savePeer(synced)
+                    _result.value = SyncResult(synced.address, synced.name, synced.lastSync, summary)
                     log("Synced with ${peer.name}: $summary")
                 }
-            } catch (e: Exception) {
-                log("Sync stopped: ${e.message ?: e::class.simpleName}")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                if (runId == id) log("Sync stopped: ${e.message ?: e::class.simpleName}")
             } finally {
-                _status.update { it.copy(busy = false) }
+                if (runId == id) {
+                    activeSocket = null
+                    idle()
+                }
             }
         }
     }
 
-    private fun connect(context: Context, device: BluetoothDevice): Link {
-        adapter(context)?.cancelDiscovery()
+    /** KMK (r89): stops the running sync (either side): closes its connection and frees the pop-up */
+    fun stopSync() {
+        if (!_status.value.busy) return
+        runId++
+        runCatching { activeSocket?.close() }
+        activeSocket = null
+        syncJob?.cancel()
+        syncJob = null
+        idle()
+        log("Sync stopped")
+    }
+
+    private fun connect(context: Context, device: BluetoothDevice, track: Boolean): Link {
+        runCatching { adapter(context)?.cancelDiscovery() }
         val socket = device.createInsecureRfcommSocketToServiceRecord(SERVICE_UUID)
+        if (track) activeSocket = socket
         try {
             socket.connect()
         } catch (e: IOException) {
             runCatching { socket.close() }
             val name = runCatching { device.name }.getOrNull() ?: device.address
-            throw IOException("Couldn't reach $name. It needs Bluetooth on and its Sync page open", e)
+            throw IOException("Couldn't reach $name. It needs Bluetooth on and its Sync pop-up open", e)
         }
         return Link(socket)
     }
@@ -383,20 +555,43 @@ object PairSync {
         private val output = DataOutputStream(BufferedOutputStream(socket.outputStream, 64 * 1024))
         var key: ByteArray = ByteArray(0)
 
-        fun readFrame(): ByteArray {
+        /** The largest frame accepted: small until a key has shown who's on the other end */
+        var maxFrame: Int = FIRST_FRAME
+
+        /**
+         * KMK (r89): read in pieces into a growing buffer, so a length that lies can't make a huge allocation before
+         * the bytes really arrive
+         */
+        fun readFrame(progress: ((Long, Long) -> Unit)? = null): ByteArray {
             val length = input.readInt()
-            if (length !in 13..MAX_FRAME) throw IOException("Bad data from the other device")
-            return ByteArray(length).also { input.readFully(it) }
+            if (length !in 13..maxFrame) throw IOException("Bad data from the other device")
+            val out = ByteArrayOutputStream(minOf(length, 1024 * 1024))
+            val buffer = ByteArray(64 * 1024)
+            var read = 0
+            while (read < length) {
+                val n = input.read(buffer, 0, minOf(buffer.size, length - read))
+                if (n < 0) throw EOFException("The other device stopped sending")
+                out.write(buffer, 0, n)
+                read += n
+                progress?.invoke(read.toLong(), length.toLong())
+            }
+            return out.toByteArray()
         }
 
-        fun send(data: ByteArray) {
+        fun send(data: ByteArray, progress: ((Long, Long) -> Unit)? = null) {
             val frame = encrypt(key, data)
             output.writeInt(frame.size)
-            output.write(frame)
+            var written = 0
+            while (written < frame.size) {
+                val n = minOf(64 * 1024, frame.size - written)
+                output.write(frame, written, n)
+                written += n
+                progress?.invoke(written.toLong(), frame.size.toLong())
+            }
             output.flush()
         }
 
-        fun receive(): ByteArray = decrypt(key, readFrame())
+        fun receive(progress: ((Long, Long) -> Unit)? = null): ByteArray = decrypt(key, readFrame(progress))
 
         fun sendJson(message: JsonObject) = send(message.toString().toByteArray())
 

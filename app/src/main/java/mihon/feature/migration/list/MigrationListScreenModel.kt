@@ -412,6 +412,8 @@ class MigrationListScreenModel(
                 }
             }
         }.awaitAll().flatten()
+            // KMK: a source may list the same title twice; the Candidates list needs one row (key) per manga
+            .distinctBy { it.manga.id }
     }
     // KMK <--
 

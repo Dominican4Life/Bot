@@ -156,6 +156,9 @@ class ReaderActivity : BaseActivity() {
     companion object {
         private const val EXTRA_PLAY_VIDEO = "play_video"
 
+        // KMK: saved across a rotation, so the lone-video hand-off runs only once per reader
+        private const val STATE_VIDEO_CHECKED = "kmk_video_checked"
+
         fun newIntent(
             context: Context,
             mangaId: Long?,
@@ -235,6 +238,8 @@ class ReaderActivity : BaseActivity() {
         windowInsetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
 
         super.onCreate(savedInstanceState)
+        // KMK: a rotation rebuilds the screen and sends the chapters again; don't hand a video off a second time
+        videoChecked = savedInstanceState?.getBoolean(STATE_VIDEO_CHECKED, false) == true
 
         binding = ReaderActivityBinding.inflate(layoutInflater)
         setContentView(binding.root)
@@ -1105,7 +1110,12 @@ class ReaderActivity : BaseActivity() {
         videoChecked = true
         val pages = viewerChapters.currChapter.pages
         // A video tapped in a page grid (Browse preview, library preview) plays straight away too
-        val tapped = if (intent.getBooleanExtra(EXTRA_PLAY_VIDEO, false)) {
+        // KMK: the tapped page only counts in the chapter it was tapped in
+        val launchChapterId = intent.extras?.getLong("chapter", -1L) ?: -1L
+        val tapped = if (
+            intent.getBooleanExtra(EXTRA_PLAY_VIDEO, false) &&
+            viewerChapters.currChapter.chapter.id == launchChapterId
+        ) {
             intent.extras?.getInt("page", -1)?.takeIf { it >= 0 }?.let { pages?.getOrNull(it) }
         } else {
             null
@@ -1138,6 +1148,11 @@ class ReaderActivity : BaseActivity() {
             }
         }
         return true
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(STATE_VIDEO_CHECKED, videoChecked)
     }
 
     private fun showDeferredModeToast() {

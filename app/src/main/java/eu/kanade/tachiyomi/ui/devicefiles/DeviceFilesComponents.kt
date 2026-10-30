@@ -132,7 +132,7 @@ private object ThumbnailCache {
                 FileKind.Audio -> MediaMetadataRetriever().run {
                     try {
                         setDataSource(file.path)
-                        embeddedPicture?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+                        embeddedPicture?.let { decodeSmall(it) }
                     } finally {
                         release()
                     }
@@ -143,6 +143,20 @@ private object ThumbnailCache {
         if (bitmap != null) cache.put(key, bitmap) else synchronized(missing) { missing += key }
         return bitmap
     }
+
+    /** KMK: album art can be 3000 px or more: decoded at about thumbnail size, not full size */
+    private fun decodeSmall(bytes: ByteArray): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        var sample = 1
+        while (bounds.outWidth / (sample * 2) >= THUMB_SIZE && bounds.outHeight / (sample * 2) >= THUMB_SIZE) {
+            sample *= 2
+        }
+        val options = BitmapFactory.Options().apply { inSampleSize = sample }
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+    }
+
+    private const val THUMB_SIZE = 384
 }
 
 private fun FileKind.icon(): ImageVector = when (this) {

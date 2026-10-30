@@ -10,6 +10,7 @@ import coil3.asDrawable
 import coil3.imageLoader
 import coil3.request.ImageRequest
 import coil3.request.allowHardware
+import com.hippo.unifile.UniFile
 import eu.kanade.domain.chapter.interactor.GetAvailableScanlators
 import eu.kanade.domain.chapter.interactor.SetReadStatus
 import eu.kanade.domain.chapter.model.toSChapter
@@ -35,8 +36,11 @@ import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
 import eu.kanade.tachiyomi.util.system.getBitmapOrNull
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.update
 import logcat.LogPriority
 import mihon.core.archive.archiveReader
@@ -57,6 +61,8 @@ import tachiyomi.domain.manga.interactor.SetMangaChapterFlags
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.applyFilter
 import tachiyomi.domain.manga.model.asMangaCover
+import tachiyomi.source.local.LocalSource
+import tachiyomi.source.local.io.Format
 import tachiyomi.source.local.isLocal
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -117,7 +123,10 @@ class BrowsePreviewScreenModel(
                 getMangaWithChapters.subscribe(manga.id, applyFilter = true),
                 downloadCache.changes,
                 downloadManager.queueState,
-            ) { (m, chapters), _, queue -> Triple(m, chapters, queue) }
+                // KMK: queueState only changes when downloads are added or removed; a download starting or failing
+                // only changes its status, so without this the row stayed on "queued" with no progress ring
+                downloadManager.statusFlow().map { }.onStart { emit(Unit) },
+            ) { (m, chapters), _, queue, _ -> Triple(m, chapters, queue) }
                 .collectLatest { (m, chapters, queue) ->
                     val isLocal = m.isLocal()
                     val all = chapters.map { chapter ->
@@ -260,6 +269,8 @@ class BrowsePreviewScreenModel(
             val local = runCatching { localPages(chapter) }
                 .onFailure { logcat(LogPriority.WARN, it) { "Couldn't read downloaded pages" } }
                 .getOrNull()
+            // KMK: reading the files doesn't stop when this job is cancelled (a newer chapter was tapped)
+            ensureActive()
             if (!local.isNullOrEmpty()) {
                 mutableState.update {
                     if (it.selectedChapterId != chapter.id) {
@@ -274,9 +285,12 @@ class BrowsePreviewScreenModel(
                 }
                 return@launchIO
             }
-            mutableState.update { it.copy(localPages = null, previewModels = null) }
+            // KMK: only for the chapter still selected: a slow, older selection mustn't clear a newer one's pages
+            mutableState.update {
+                if (it.selectedChapterId != chapter.id) it else it.copy(localPages = null, previewModels = null)
+            }
             if (httpSource == null) {
-                mutableState.update { it.copy(pagesLoading = false) }
+                mutableState.update { if (it.selectedChapterId != chapter.id) it else it.copy(pagesLoading = false) }
                 return@launchIO
             }
             // KMK: small previews when the source has them (E-Hentai, NHentai, Lanraragi, or a JS source's
@@ -481,6 +495,18 @@ class BrowsePreviewScreenModel(
     /** Pages of a downloaded chapter (a folder of images or a CBZ), or null when it isn't downloaded */
     private fun localPages(chapter: Chapter): List<LocalPageThumbnail>? {
         val manga = state.value.manga ?: return null
+        // KMK: a Local source title's chapters are its own files (never "downloaded"), so read them the way the
+        // reader does (ChapterLoader): a folder of images or an archive. EPUBs get no grid.
+        (source as? LocalSource)?.let { local ->
+            return when (val format = local.getFormat(chapter.toSChapter())) {
+                is Format.Archive -> archivePages(chapter, format.file)
+                is Format.Directory -> format.file.listFiles().orEmpty()
+                    .filter { !it.isDirectory && ImageUtil.isImage(it.name) { it.openInputStream() } }
+                    .sortedWith { a, b -> a.name.orEmpty().compareToCaseInsensitiveNaturalOrder(b.name.orEmpty()) }
+                    .mapIndexed { index, file -> LocalPageThumbnail(chapter.id, index, fileUri = file.uri) }
+                is Format.Epub -> null
+            }
+        }
         val downloaded = downloadManager.isChapterDownloaded(
             chapter.name,
             chapter.scanlator,
@@ -491,29 +517,8 @@ class BrowsePreviewScreenModel(
         if (!downloaded) return null
         val dir = downloadProvider.findChapterDir(chapter.name, chapter.scanlator, chapter.url, manga.ogTitle, source)
             ?: return null
-        val context = Injekt.get<Application>()
         return if (dir.isFile) {
-            val (names, videoPictures) = dir.archiveReader(context).use { reader ->
-                reader.useEntries { entries ->
-                    val all = entries.filter { it.isFile }.toList()
-                    val images = all
-                        .filter { !ChapterVideoDownloads.isVideoFile(it.name) }
-                        .filter { ImageUtil.isImage(it.name) { reader.getInputStream(it.name)!! } }
-                        .map { it.name }
-                    images to ChapterVideoDownloads.picturesWithVideo(all.map { it.name })
-                }
-            }
-            names
-                .sortedWith { a, b -> a.compareToCaseInsensitiveNaturalOrder(b) }
-                .mapIndexed { index, name ->
-                    LocalPageThumbnail(
-                        chapter.id,
-                        index,
-                        archiveUri = dir.uri,
-                        entryName = name,
-                        isVideo = name in videoPictures,
-                    )
-                }
+            archivePages(chapter, dir)
         } else {
             val files = dir.listFiles().orEmpty()
             val nameOf = files.associate { it.uri.toString() to it.name.orEmpty() }
@@ -527,6 +532,32 @@ class BrowsePreviewScreenModel(
                 )
             }
         }
+    }
+
+    /** KMK: the pages of an archive (a downloaded CBZ or a Local source archive), in the reader's order */
+    private fun archivePages(chapter: Chapter, file: UniFile): List<LocalPageThumbnail> {
+        val context = Injekt.get<Application>()
+        val (names, videoPictures) = file.archiveReader(context).use { reader ->
+            reader.useEntries { entries ->
+                val all = entries.filter { it.isFile }.toList()
+                val images = all
+                    .filter { !ChapterVideoDownloads.isVideoFile(it.name) }
+                    .filter { ImageUtil.isImage(it.name) { reader.getInputStream(it.name)!! } }
+                    .map { it.name }
+                images to ChapterVideoDownloads.picturesWithVideo(all.map { it.name })
+            }
+        }
+        return names
+            .sortedWith { a, b -> a.compareToCaseInsensitiveNaturalOrder(b) }
+            .mapIndexed { index, name ->
+                LocalPageThumbnail(
+                    chapter.id,
+                    index,
+                    archiveUri = file.uri,
+                    entryName = name,
+                    isVideo = name in videoPictures,
+                )
+            }
     }
 
     // Panels

@@ -35,6 +35,8 @@ data class JsSourceInfo(
     val hasTags: Boolean = false,
     /** KMK: the source has getRelated(url): its own suggestions under a title, used instead of the title searches */
     val hasRelated: Boolean = false,
+    /** KMK: the source has getLatest(page). A source whose tab catalogs replace Latest may leave it out */
+    val hasLatest: Boolean = true,
     /** KMK: the names the source gives its Popular and Latest buttons (`popularName`, `latestName`); null = the app's */
     val popularName: String? = null,
     val latestName: String? = null,

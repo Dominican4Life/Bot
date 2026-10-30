@@ -60,6 +60,13 @@ internal object JsFilters {
         JsMapping.list(element ?: return emptyList()).mapNotNull(::group)
 
     private fun group(obj: JsonObject): Group? {
+        val options = obj.arr("options")?.mapNotNull { option ->
+            when (option) {
+                is JsonObject -> Option(option.str("label") ?: option.str("name") ?: option["value"].toString(), option["value"] ?: JsonPrimitive(""))
+                is JsonPrimitive -> Option(option.content, option)
+                else -> null
+            }
+        }.orEmpty()
         val type = when (obj.str("type")?.lowercase()) {
             "header", "heading", "section" -> Type.Header
             "separator", "divider", "line" -> Type.Separator
@@ -70,7 +77,9 @@ internal object JsFilters {
             "tristate", "tri-state", "tri_state" -> Type.TriState
             "sort" -> Type.Sort
             "group" -> Type.Group
-            else -> Type.Select
+            // KMK: a list with no options (or an unknown type with none, like "number") crashed the Filter
+            // panel; it's a text box instead
+            else -> if (options.isEmpty()) Type.Text else Type.Select
         }
         val name = obj.str("name") ?: obj.str("title")
         // Titles, lines and groups send no value of their own, so they need no key
@@ -78,13 +87,6 @@ internal object JsFilters {
             Type.Header, Type.Separator, Type.Group -> name ?: type.name.lowercase()
             else -> return null
         }
-        val options = obj.arr("options")?.mapNotNull { option ->
-            when (option) {
-                is JsonObject -> Option(option.str("label") ?: option.str("name") ?: option["value"].toString(), option["value"] ?: JsonPrimitive(""))
-                is JsonPrimitive -> Option(option.content, option)
-                else -> null
-            }
-        }.orEmpty()
         val default = obj["defaultValue"] as? JsonPrimitive
         return Group(
             key = key,

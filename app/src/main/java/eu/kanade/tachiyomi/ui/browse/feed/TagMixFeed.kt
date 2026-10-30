@@ -15,7 +15,9 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -225,6 +227,8 @@ class TagMixFeedScreenModel(
     }
 
     private suspend fun loadManga(mix: TagMix): List<Manga> = coroutineScope {
+        // KMK: at a cold start the row is read before the sources are registered (as the manga Feed waits)
+        withTimeoutOrNull(SOURCE_WAIT_MS) { sourceManager.isInitialized.first { it } }
         mix.sourceIds.mapNotNull { sourceManager.get(it) as? CatalogueSource }
             .map { source ->
                 async {
@@ -245,6 +249,13 @@ class TagMixFeedScreenModel(
     }
 
     private suspend fun loadAnime(mix: TagMix): List<Anime> = coroutineScope {
+        // KMK: at a cold start the row is read before the sources are registered: wait a while for them
+        withTimeoutOrNull(SOURCE_WAIT_MS) {
+            animeSourceManager.catalogueSources.first { list ->
+                val ids = list.map { it.id }.toSet()
+                mix.sourceIds.all { it in ids }
+            }
+        }
         mix.sourceIds.mapNotNull { animeSourceManager.get(it) as? AnimeCatalogueSource }
             .map { source ->
                 async {

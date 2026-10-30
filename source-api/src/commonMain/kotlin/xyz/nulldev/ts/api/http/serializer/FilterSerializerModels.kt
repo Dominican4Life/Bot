@@ -4,6 +4,7 @@ import eu.kanade.tachiyomi.source.model.Filter
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonObjectBuilder
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonObject
@@ -34,12 +35,23 @@ class HeaderSerializer(override val serializer: FilterSerializer) : Serializer<F
     override val type = "HEADER"
     override val clazz = Filter.Header::class
 
+    // KMK: a header whose state is text (a JS source's hidden tab holder) keeps it. Other headers' state is 0 and
+    // isn't written, so their saved JSON is as before; older app versions ignore the extra key
+    override fun JsonObjectBuilder.serialize(filter: Filter.Header) {
+        (filter.state as? String)?.let { put(STATE, it) }
+    }
+
+    override fun deserialize(json: JsonObject, filter: Filter.Header) {
+        (json[STATE] as? JsonPrimitive)?.takeIf { it.isString }?.let { filter.state = it.content }
+    }
+
     override fun mappings() = listOf(
         Pair(NAME, Filter.Header::name),
     )
 
     companion object {
         const val NAME = "name"
+        const val STATE = "state"
     }
 }
 

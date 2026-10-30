@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
@@ -36,9 +37,8 @@ import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchScreen
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
+import exh.source.MERGED_SOURCE_ID
 import kotlinx.coroutines.launch
-import tachiyomi.core.common.util.lang.launchIO
-import eu.kanade.domain.manga.interactor.UpdateManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.presentation.core.util.collectAsState as collectPrefAsState
@@ -63,6 +63,11 @@ class LibraryMangaPreview {
 @Composable
 fun Screen.rememberLibraryMangaPreview(): LibraryMangaPreview {
     val preview = remember { LibraryMangaPreview() }
+    // KMK: the models outlive this composition (rememberScreenModel), so leaving the Library tab would leave the
+    // previewed model with its panels open and its database/download listeners running in the background
+    DisposableEffect(preview) {
+        onDispose { preview.model?.clear() }
+    }
     val prefs = remember { Injekt.get<SourcePreferences>().libraryPreviewPanels() }
     val panels by prefs.collectPrefAsState()
     val src = preview.source
@@ -107,6 +112,9 @@ fun LibraryMangaPreview.onCoverClick(manga: Manga): Boolean {
     val panels = Injekt.get<SourcePreferences>().libraryPreviewPanels().get()
     if (panels == SourcePreferences.PREVIEW_PANELS_NONE) return false
     if (model?.state?.value?.manga?.id == manga.id) return false
+    // KMK: a merged title's chapters belong to the titles it merges (and MergedSource has no page list), so the
+    // panels can't show it: open its title page as before
+    if (manga.source == MERGED_SOURCE_ID) return false
     val src = Injekt.get<SourceManager>().getOrStub(manga.source)
     // KMK: the current panels stay until the new source's model has the title (see rememberLibraryMangaPreview)
     pending = manga
@@ -150,9 +158,13 @@ fun LibraryMangaPreview.panelPadding(maxWidth: Dp): Pair<Dp, Dp> {
 @Composable
 fun LibraryMangaPreview.highlighted(): Long? = model?.state?.collectAsState()?.value?.manga?.id
 
-/** The two panels, drawn over the covers */
+/**
+ * The two panels, drawn over the covers.
+ * [onToggleFavorite] is the library's own add/remove flow (KMK: the remove dialog with its delete-downloads choice,
+ * and the category prompt when adding back)
+ */
 @Composable
-fun LibraryMangaPreview.Panels(scope: BoxScope) {
+fun LibraryMangaPreview.Panels(scope: BoxScope, onToggleFavorite: (Manga) -> Unit) {
     val model = model ?: return
     val src = source ?: return
     val state by model.state.collectAsState()
@@ -177,11 +189,7 @@ fun LibraryMangaPreview.Panels(scope: BoxScope) {
                 BrowsePreviewInfoHeader(
                     manga = manga,
                     source = src,
-                    onAddToLibrary = {
-                        coroutines.launchIO {
-                            Injekt.get<UpdateManga>().awaitUpdateFavorite(manga.id, !manga.favorite)
-                        }
-                    },
+                    onAddToLibrary = { onToggleFavorite(manga) },
                     onWebView = {
                         val url = (src as? HttpSource)
                             ?.let { runCatching { it.getMangaUrl(manga.toSManga()) }.getOrNull() }

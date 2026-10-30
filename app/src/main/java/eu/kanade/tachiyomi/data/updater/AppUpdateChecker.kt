@@ -79,19 +79,24 @@ class AppUpdateChecker(
     // KMK -->
     suspend fun getReleaseNotes(): GetApplicationRelease.Result {
         return withIOContext {
+            // KMK: What's new shows this fork's releases (Dominican4Life/Bot, tags rN), not upstream's preview
             getApplicationRelease.awaitReleaseNotes(
                 GetApplicationRelease.Arguments(
                     isFoss = isFossBuildType,
                     isPreview = isPreviewBuildType || peekIntoPreview,
                     commitCount = BuildConfig.COMMIT_COUNT.toInt(),
                     versionName = BuildConfig.VERSION_NAME,
-                    repository = getGithubRepo(peekIntoPreview),
+                    repository = FORK_RELEASES_REPO,
                 ),
+                includePreReleases = true,
             )
         }
     }
     // KMK <--
 }
+
+/** KMK: where CI publishes this fork's builds (tags rN, pre-releases with the APKs) */
+const val FORK_RELEASES_REPO = "Dominican4Life/Bot"
 
 val GITHUB_REPO: String by lazy { getGithubRepo() }
 

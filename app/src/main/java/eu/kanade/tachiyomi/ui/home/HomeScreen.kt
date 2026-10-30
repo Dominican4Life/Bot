@@ -103,6 +103,11 @@ object HomeScreen : Screen() {
         // KMK: read before any tab is composed: a restored Browse tab makes the Extensions screen model (which takes
         // the kept search) during composition, before a LaunchedEffect would run
         val returnToExtensions = remember { eu.kanade.tachiyomi.ui.browse.extension.unified.ExtensionsReturn.take() }
+        // KMK (r89): the Sync pop-up opened from the rail's Sync button
+        val showPairSync = remember { androidx.compose.runtime.mutableStateOf(false) }
+        if (showPairSync.value) {
+            eu.kanade.tachiyomi.ui.pairsync.PairSyncDialog(onDismissRequest = { showPairSync.value = false })
+        }
 
         TabNavigator(
             tab = if (lastLibraryAnime.get()) AnimeLibraryTab else LibraryTab,
@@ -127,7 +132,8 @@ object HomeScreen : Screen() {
                                 // KMK: sync with a paired device, above Logs
                                 androidx.compose.material3.NavigationRailItem(
                                     selected = false,
-                                    onClick = { navigator.push(eu.kanade.tachiyomi.ui.pairsync.PairSyncScreen()) },
+                                    // KMK (r89): a pop-up over the current screen instead of its own screen
+                                    onClick = { showPairSync.value = true },
                                     icon = {
                                         androidx.compose.material3.Icon(
                                             imageVector = androidx.compose.material.icons.Icons.Outlined.Sync,

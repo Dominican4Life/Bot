@@ -11,7 +11,9 @@ import eu.kanade.tachiyomi.data.anime.AnimeRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.withTimeoutOrNull
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.util.lang.launchIO
 import uy.kohesive.injekt.Injekt
@@ -77,7 +79,9 @@ class AnimeFeedScreenModel(
 
     private fun load(entry: Entry) {
         screenModelScope.launchIO {
-            val source = sourceManager.get(entry.sourceId) as? AnimeCatalogueSource
+            // KMK: at a cold start the rows are read before the sources are registered: wait a while for this one
+            // instead of saying "Source not installed" until a pull to refresh
+            val source = (sourceManager.get(entry.sourceId) ?: waitForSource(entry.sourceId)) as? AnimeCatalogueSource
             val result = if (source == null) {
                 emptyList<Anime>() to "Source not installed"
             } else {
@@ -96,11 +100,21 @@ class AnimeFeedScreenModel(
             mutableState.update { state ->
                 state.copy(
                     rows = state.rows.map {
-                        if (it.entry == entry) it.copy(items = result.first, error = result.second) else it
+                        if (it.entry == entry) {
+                            // KMK: the row was named before its source was registered (its id)
+                            it.copy(items = result.first, error = result.second, title = source?.name ?: it.title)
+                        } else {
+                            it
+                        }
                     },
                 )
             }
         }
+    }
+
+    private suspend fun waitForSource(id: Long) = withTimeoutOrNull(SOURCE_WAIT_MS) {
+        sourceManager.catalogueSources.first { list -> list.any { it.id == id } }
+        sourceManager.get(id)
     }
 
     /** Reloads every row (pull to refresh) */
@@ -144,3 +158,6 @@ class AnimeFeedScreenModel(
         }
     }
 }
+
+/** KMK: how long a Feed row waits for its source to be registered at start before it says it's not installed */
+internal const val SOURCE_WAIT_MS = 20_000L

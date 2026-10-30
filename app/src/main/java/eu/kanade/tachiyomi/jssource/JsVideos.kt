@@ -33,7 +33,8 @@ internal object JsVideos {
             )
             val quality = video.str("quality").orEmpty()
             val server = (video.str("server") ?: video.str("hoster"))?.trim()?.takeIf { it.isNotEmpty() }
-            val isHls = url.substringBefore('?').lowercase().let { it.endsWith(".m3u8") || "m3u8" in it }
+            // KMK: "m3u8" anywhere in the address, the query too (`…/get?file=a.m3u8`), as downloads check it
+            val isHls = url.contains("m3u8", ignoreCase = true)
             Video(
                 // HLS goes through the relay, which removes fake picture headers some hosts put on each piece
                 videoUrl = if (isHls) HlsRelay.wrap(url, headers) else url,
@@ -47,7 +48,7 @@ internal object JsVideos {
             ).apply {
                 val path = url.substringBefore('?').lowercase()
                 type = when {
-                    path.endsWith(".m3u8") || "m3u8" in path -> VideoType.HLS
+                    isHls -> VideoType.HLS
                     path.endsWith(".mpd") -> VideoType.DASH
                     else -> VideoType.VIDEO
                 }

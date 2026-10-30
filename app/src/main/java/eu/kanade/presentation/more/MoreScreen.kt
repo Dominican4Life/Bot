@@ -16,6 +16,7 @@ import androidx.compose.material.icons.outlined.NewReleases
 import androidx.compose.material.icons.outlined.QueryStats
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Storage
+import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.VideoSettings
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
@@ -67,6 +68,8 @@ fun MoreScreen(
     onClickLibraryUpdateErrors: () -> Unit,
     /** The in-app Logs (the tablet rail has its own button; phones had no way in) */
     onClickLogs: () -> Unit = {},
+    /** KMK (r89): the Sync devices pop-up (the tablet rail has its own button; phones had no way in) */
+    onClickPairSync: () -> Unit = {},
     // KMK <--
 ) {
     // SY -->
@@ -222,6 +225,13 @@ fun MoreScreen(
                     title = stringResource(AMR.strings.label_player_settings),
                     icon = Icons.Outlined.VideoSettings,
                     onPreferenceClick = onClickPlayerSettings,
+                )
+            }
+            item {
+                TextPreferenceWidget(
+                    title = "Sync devices",
+                    icon = Icons.Outlined.Sync,
+                    onPreferenceClick = onClickPairSync,
                 )
             }
             item {

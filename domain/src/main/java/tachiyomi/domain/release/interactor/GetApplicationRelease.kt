@@ -56,9 +56,10 @@ class GetApplicationRelease(
     }
 
     // KMK -->
-    suspend fun awaitReleaseNotes(arguments: Arguments): Result {
+    // KMK: [includePreReleases] for the fork's own releases, which CI publishes as pre-releases
+    suspend fun awaitReleaseNotes(arguments: Arguments, includePreReleases: Boolean = false): Result {
         val releases = service.releaseNotes(arguments)
-            .filter { !it.preRelease }
+            .filter { (includePreReleases || !it.preRelease) && !it.draft }
 
         val latest = releases.getLatest() ?: return Result.NoNewUpdate
         return Result.NewUpdate(latest)

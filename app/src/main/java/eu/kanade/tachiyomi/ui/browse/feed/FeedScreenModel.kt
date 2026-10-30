@@ -10,6 +10,7 @@ import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.presentation.browse.FeedItemUI
+import eu.kanade.tachiyomi.jssource.JsTabs
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.util.system.LocaleHelper
@@ -282,7 +283,19 @@ open class FeedScreenModel(
                             withContext(coroutineDispatcher) {
                                 if (itemUI.savedSearch == null) {
                                     // KMK -->
-                                    if (itemUI.source.supportsLatest) {
+                                    // A JS source with no Latest whose tab catalogs replace Popular and Latest:
+                                    // its home tab, the one Browse opens on
+                                    val tabs = (itemUI.source as? JsTabs)
+                                        ?.takeIf { !itemUI.source.supportsLatest && it.hasCatalogTabs }
+                                    val homeTab = tabs?.let { runCatching { it.homeTab() }.getOrNull() }
+                                    val tabFilters = homeTab?.let { id ->
+                                        itemUI.source.getFilterList().takeIf { filters ->
+                                            runCatching { tabs?.selectCatalog(filters, id) }.getOrNull() == true
+                                        }
+                                    }
+                                    if (tabFilters != null) {
+                                        itemUI.source.getSearchManga(1, "", tabFilters)
+                                    } else if (itemUI.source.supportsLatest) {
                                         // KMK <--
                                         itemUI.source.getLatestUpdates(1)
                                         // KMK -->

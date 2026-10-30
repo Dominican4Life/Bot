@@ -35,7 +35,8 @@ class JsMangaSource(
     override val lang: String = info.displayLang
     override val id: Long = info.id
     override val versionId: Int = 1
-    override val supportsLatest: Boolean = true
+    // KMK: only when the source has getLatest (older saved sources, not described again yet, say true)
+    override val supportsLatest: Boolean = info.hasLatest
 
     // Suggestions work as for APK sources: the title and each of its words are searched (Source's default).
     // KMK: a source with getRelated(url) gives its own instead, the way an APK with its own related list does,
@@ -319,9 +320,17 @@ class JsMangaSource(
         }
     }
 
-    /** KMK: the selected tab button, kept in the filters without showing (a blank header the sheet skips) */
+    /**
+     * KMK: the selected tab button, kept in the filters without showing (a blank header the sheet skips). The id is
+     * the header's state, which FilterSerializer keeps, so a saved search (and its Feed row) or a copy of the filters
+     * remembers the tab
+     */
     private class TabHolder : Filter.Header("") {
-        var id: String? = null
+        var id: String?
+            get() = state as? String
+            set(value) {
+                state = value ?: 0
+            }
     }
 
     private class CatalogFilter(val catalogs: List<JsFilters.Catalog>) :

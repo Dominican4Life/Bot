@@ -203,6 +203,7 @@ class JsSourceManager(private val context: Application) {
             preferences = optional("getSourcePreferences", "hasPreferences"),
             hasTags = meta.bool("hasTags") == true,
             hasRelated = meta.bool("hasRelated") == true,
+            hasLatest = meta.bool("hasLatest") != false,
             popularName = meta.str("popularName")?.trim()?.takeIf { it.isNotEmpty() },
             latestName = meta.str("latestName")?.trim()?.takeIf { it.isNotEmpty() },
             customId = customId(meta.str("id"), key, meta.str("name")),
@@ -439,7 +440,7 @@ class JsSourceManager(private val context: Application) {
                 val fresh = describe(runtime(info), info.key, info.json, info.anime, info).copy(updatedAt = info.updatedAt)
                 val changed = fresh.filters != info.filters || fresh.catalogs != info.catalogs ||
                     fresh.preferences != info.preferences || fresh.hasTags != info.hasTags ||
-                    fresh.hasRelated != info.hasRelated
+                    fresh.hasRelated != info.hasRelated || fresh.hasLatest != info.hasLatest
                 if (changed) {
                     File(dir(info.key), META).writeText(jsJson.encodeToString(JsSourceInfo.serializer(), fresh))
                     _saved.value = _saved.value.map { if (it.key == info.key) fresh else it }

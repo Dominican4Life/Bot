@@ -35,7 +35,8 @@ class JsAnimeSource(
     override val name: String = info.name
     override val lang: String = info.displayLang
     override val id: Long = info.id
-    override val supportsLatest: Boolean = true
+    // KMK: only when the source has getLatest (older saved sources, not described again yet, say true)
+    override val supportsLatest: Boolean = info.hasLatest
 
     // Related titles by searching each word of the title would fire a search per word at the site at once,
     // which sites answer with 429 (too many requests) and which blocks this source's other calls meanwhile

@@ -40,6 +40,10 @@ import exh.source.isEhBasedSource
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -158,7 +162,8 @@ open class BrowseSourceScreenModel(
             val keptFilterTab = BrowseTabCache.filterTabs["${this::class.qualifiedName}:${source.id}"] as? Listing.Search
             it.copy(
                 listing = listing,
-                filters = keptFilterTab?.filters ?: source.getFilterList(),
+                // KMK: the panel works on its own copy, so editing it doesn't change the kept tab's list
+                filters = keptFilterTab?.filters?.let { kept -> copyOf(kept) } ?: source.getFilterList(),
                 toolbarQuery = query,
                 filterListing = keptFilterTab,
             )
@@ -229,14 +234,25 @@ open class BrowseSourceScreenModel(
      * Flow of Pager flow tied to [State.listing]
      */
     private val hideInLibraryItems = sourcePreferences.hideInLibraryItems().get()
+
+    // KMK: the shown tab's per-title database subscriptions live here and stop when another tab is shown. In the
+    // screen's own scope they piled up on every tab switch (a kept tab hands all its loaded titles over again)
+    private var listingScope: CoroutineScope? = null
+
     val mangaPagerFlowFlow = state.map { it.listing to it.reloadToken }
         .distinctUntilChanged()
         .map { (listing, _) ->
-            // KMK: a tab's list is kept until the app closes (see BrowseTabCache); a typed search loads fresh
+            listingScope?.cancel()
+            val parent = ioCoroutineScope.coroutineContext
+            val scope = CoroutineScope(parent + SupervisorJob(parent[Job]))
+            listingScope = scope
+            // KMK: a tab's list is kept until the app closes (see BrowseTabCache); a typed search loads fresh.
+            // The kept pager mustn't hold this screen model (it outlives the screen), so it gets a factory only
+            val pagingSourceFor = pagingSourceFactory()
             val newPager = {
                 Pager(PagingConfig(pageSize = 25)) {
                     // SY -->
-                    createSourcePagingSource(listing.query ?: "", listing.filters)
+                    pagingSourceFor(listing.query ?: "", listing.filters)
                     // SY <--
                 }.flow
             }
@@ -253,15 +269,45 @@ open class BrowseSourceScreenModel(
                         // SY -->
                         .combineMetadata(metadata)
                         // SY <--
-                        .stateIn(ioCoroutineScope)
+                        .stateIn(scope)
                 }
                     .filter { !hideInLibraryItems || !it.value.first.favorite }
             }
-                .cachedIn(ioCoroutineScope)
+                .cachedIn(scope)
         }
         .stateIn(ioCoroutineScope, SharingStarted.Lazily, emptyFlow())
 
     // KMK -->
+    /**
+     * What makes a tab's paging source. For Browse itself it holds only the interactor and the source id, not this
+     * screen model, because a kept tab's pager stays in [BrowseTabCache] after the screen closes. Screens that load
+     * their lists differently (overriding [createSourcePagingSource]) keep using their override.
+     */
+    private fun pagingSourceFactory(): (String, FilterList) -> SourcePagingSource {
+        if (this::class != BrowseSourceScreenModel::class) {
+            return { query, filters -> createSourcePagingSource(query, filters) }
+        }
+        val remote = getRemoteManga
+        val id = sourceId
+        return { query, filters -> remote(id, query, filters) }
+    }
+
+    /**
+     * KMK: A copy of [filters] in a fresh list from the source, values and all (a JS source's picked tab too). The
+     * Filter panel and the tab being shown each get their own, so ticking something in the panel doesn't change the
+     * list on screen (later pages would come from a search) until Filter is pressed. Falls back to [filters] itself
+     * when the source hands out the same list every time or its shape changed.
+     */
+    private fun copyOf(filters: FilterList): FilterList = runCatching {
+        val copy = source.getFilterList()
+        if (copy === filters || copy.size != filters.size) {
+            filters
+        } else {
+            filterSerializer.deserialize(copy, filterSerializer.serialize(filters))
+            copy
+        }
+    }.getOrDefault(filters)
+
     /**
      * The key a tab's list is kept under until the app closes: Popular, Latest, a JS source's tab or a saved search.
      * Null for a typed search or changed filters, which always load fresh. Includes the screen, so a screen that
@@ -344,7 +390,8 @@ open class BrowseSourceScreenModel(
         val filters = source.getFilterList()
         if (runCatching { tabs.selectCatalog(filters, id) }.getOrNull() != true) return
         runCatching { tabs.rememberTab(id) }
-        setFilters(filters)
+        // KMK: the panel gets a copy; the tab keeps its own filters
+        setFilters(copyOf(filters))
         setListing(Listing.Search(query = null, filters = filters, tabKey = "catalog:$id"))
     }
 
@@ -391,7 +438,9 @@ open class BrowseSourceScreenModel(
         val tabKey = if (savedSearchId != null) "saved:$savedSearchId" else Listing.FILTER_TAB
         val listing = input.copy(
             query = query ?: input.query,
-            filters = filters ?: input.filters,
+            // KMK: the results get their own copy of what the panel has (set just above when [filters] was given),
+            // so changing the panel afterwards doesn't change them until Filter is pressed again
+            filters = copyOf(state.value.filters),
             savedSearchId = savedSearchId,
             tabKey = tabKey,
         )
@@ -416,13 +465,26 @@ open class BrowseSourceScreenModel(
     /** The Filter button or a swipe: back to the last filter / typed search's results, if there is one */
     fun showFilterTab(): Boolean {
         val listing = state.value.filterListing ?: return false
-        if (state.value.listing != listing) mutableState.update { it.copy(listing = listing, toolbarQuery = listing.query) }
+        // KMK: the panel shows the Filter tab's filters again (a catalog or saved search had replaced them)
+        if (state.value.listing != listing) {
+            val panel = copyOf(listing.filters)
+            mutableState.update { it.copy(listing = listing, toolbarQuery = listing.query, filters = panel) }
+        }
         return true
     }
 
     /** True when the Filter panel has something selected (anything not at its default) */
     fun filtersChanged(): Boolean = runCatching {
-        filterSerializer.serialize(state.value.filters) != filterSerializer.serialize(source.getFilterList())
+        val filters = state.value.filters
+        val defaults = source.getFilterList()
+        // KMK: the picked tab button is kept in the filters (so copies and saved searches remember it); it isn't
+        // something selected in the panel
+        (source as? JsTabs)?.let { tabs ->
+            tabs.selectedCatalog(filters)
+                ?.takeIf { id -> tabs.catalogTabs.any { it.id == id } }
+                ?.let { id -> tabs.selectCatalog(defaults, id) }
+        }
+        filterSerializer.serialize(filters) != filterSerializer.serialize(defaults)
     }.getOrDefault(false)
 
     /**
@@ -469,11 +531,13 @@ open class BrowseSourceScreenModel(
             }
         }
 
+        // KMK: the list gets its own copy of the filters, the panel keeps [defaultFilters]
+        val listFilters = copyOf(defaultFilters)
         mutableState.update {
             val listing = if (genreExists) {
-                Listing.Search(query = null, filters = defaultFilters)
+                Listing.Search(query = null, filters = listFilters)
             } else {
-                Listing.Search(query = genreName, filters = defaultFilters)
+                Listing.Search(query = genreName, filters = listFilters)
             }
             it.copy(
                 filters = defaultFilters,
@@ -719,6 +783,8 @@ open class BrowseSourceScreenModel(
             val filters = search.filterList
                 ?.takeUnless { allDefault }
                 ?: source.getFilterList()
+            // KMK: the panel gets a copy; the saved search's tab keeps its own filters
+            val panel = copyOf(filters)
 
             mutableState.update {
                 it.copy(
@@ -730,7 +796,7 @@ open class BrowseSourceScreenModel(
                         tabKey = "saved:${search.id}",
                         // KMK <--
                     ),
-                    filters = filters,
+                    filters = panel,
                     toolbarQuery = search.query,
                 )
             }

@@ -273,7 +273,13 @@ object AnimeTracking {
             // Local changes the tracker hasn't got yet win
             if (isPending(anime.id, track.trackerId)) return@forEach
             try {
-                service.find(anime.id, track.remoteId)?.let { repository.upsert(mergeRemote(service, track, it)) }
+                service.find(anime.id, track.remoteId)?.let { remote ->
+                    // KMK: progress saved here while the tracker was asked (an episode watched, a sheet edit) is
+                    // newer than what it answered: writing the answer would undo it locally
+                    val now = repository.getTracks(anime.id).firstOrNull { it.trackerId == track.trackerId }
+                    if (now != track || isPending(anime.id, track.trackerId)) return@let
+                    repository.upsert(mergeRemote(service, track, remote))
+                }
             } catch (e: Throwable) {
                 logcat(LogPriority.WARN, e) { "Anime tracking: refresh ${service.name}" }
             }

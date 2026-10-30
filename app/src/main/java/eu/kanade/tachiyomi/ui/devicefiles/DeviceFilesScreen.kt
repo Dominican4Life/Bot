@@ -802,7 +802,8 @@ private class FileActionsState(
                 deleting = null
                 scope.launch {
                     val done = model.delete(files)
-                    if (done < files.size) context.toast("Couldn't delete ${files.size - done} of ${files.size}")
+                    // KMK: says what did go, since part of a selection (or of a folder) may be gone already
+                    if (done < files.size) context.toast("Deleted $done of ${files.size}")
                     afterDelete?.invoke()
                     afterDelete = null
                 }

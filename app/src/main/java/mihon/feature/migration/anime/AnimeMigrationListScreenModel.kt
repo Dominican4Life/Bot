@@ -342,6 +342,8 @@ class AnimeMigrationListScreenModel(
                 }
             }
         }.awaitAll().flatten()
+            // KMK: a source may list the same anime twice; the Candidates list needs one row (key) per anime
+            .distinctBy { it.anime.id }
     }
 
     /** Sets an anime picked by hand as the one to migrate to */

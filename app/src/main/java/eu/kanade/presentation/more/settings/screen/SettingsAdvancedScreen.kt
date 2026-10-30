@@ -71,6 +71,7 @@ import eu.kanade.tachiyomi.util.system.isShizukuInstalled
 import eu.kanade.tachiyomi.util.system.powerManager
 import eu.kanade.tachiyomi.util.system.setDefaultSettings
 import eu.kanade.tachiyomi.util.system.toast
+import eu.kanade.tachiyomi.util.system.updaterEnabled
 import exh.debug.SettingsDebugScreen
 import exh.log.EHLogLevel
 import exh.pref.DelegateSourcePreferences
@@ -128,7 +129,7 @@ object SettingsAdvancedScreen : SearchableSettings {
         val exhPreferences = remember { Injekt.get<ExhPreferences>() }
         // SY <--
 
-        return listOf(
+        return listOfNotNull(
             Preference.PreferenceItem.TextPreference(
                 title = stringResource(MR.strings.pref_dump_crash_logs),
                 subtitle = stringResource(MR.strings.pref_dump_crash_logs_summary),
@@ -164,23 +165,28 @@ object SettingsAdvancedScreen : SearchableSettings {
                     context.startActivity(intent)
                 },
             ),
-            // KMK -->
-            Preference.PreferenceItem.MultiSelectListPreference(
-                preference = exhPreferences.appShouldAutoUpdate(),
-                entries = persistentMapOf(
-                    AppUpdatePolicy.DEVICE_ONLY_ON_WIFI to stringResource(MR.strings.connected_to_wifi),
-                    AppUpdatePolicy.DEVICE_NETWORK_NOT_METERED to stringResource(MR.strings.network_not_metered),
-                    AppUpdatePolicy.DEVICE_CHARGING to stringResource(MR.strings.charging),
-                    AppUpdatePolicy.DISABLE_AUTO_DOWNLOAD to stringResource(KMR.strings.auto_update_app_disable_auto_download),
-                ),
-                title = stringResource(KMR.strings.auto_update_app),
-                subtitle = stringResource(MR.strings.restrictions),
-                onValueChanged = {
-                    // Post to event looper to allow the preference to be updated.
-                    ContextCompat.getMainExecutor(context).execute { AppUpdateJob.setupTask(context) }
-                    true
-                },
-            ),
+            // KMK: the updater is off in CI builds (no -Penable-updater), so this switch did nothing: hidden then
+            if (updaterEnabled) {
+                Preference.PreferenceItem.MultiSelectListPreference(
+                    preference = exhPreferences.appShouldAutoUpdate(),
+                    entries = persistentMapOf(
+                        AppUpdatePolicy.DEVICE_ONLY_ON_WIFI to stringResource(MR.strings.connected_to_wifi),
+                        AppUpdatePolicy.DEVICE_NETWORK_NOT_METERED to stringResource(MR.strings.network_not_metered),
+                        AppUpdatePolicy.DEVICE_CHARGING to stringResource(MR.strings.charging),
+                        AppUpdatePolicy.DISABLE_AUTO_DOWNLOAD to
+                            stringResource(KMR.strings.auto_update_app_disable_auto_download),
+                    ),
+                    title = stringResource(KMR.strings.auto_update_app),
+                    subtitle = stringResource(MR.strings.restrictions),
+                    onValueChanged = {
+                        // Post to event looper to allow the preference to be updated.
+                        ContextCompat.getMainExecutor(context).execute { AppUpdateJob.setupTask(context) }
+                        true
+                    },
+                )
+            } else {
+                null
+            },
             // KMK <--
             getBackgroundActivityGroup(),
             getDataGroup(),

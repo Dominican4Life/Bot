@@ -88,6 +88,7 @@ import mihon.core.common.utils.mutate
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.preference.CheckboxState
 import tachiyomi.core.common.preference.TriState
+import tachiyomi.core.common.preference.mapAsCheckboxState
 import tachiyomi.core.common.util.lang.compareToWithCollator
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.launchNonCancellable
@@ -1532,6 +1533,38 @@ class LibraryScreenModel(
     fun openDeleteMangaDialog() {
         mutableState.update { it.copy(dialog = Dialog.DeleteManga(state.value.selectedManga)) }
     }
+
+    // KMK -->
+    /** The preview panel's remove button: the same dialog as removing selected titles (delete downloads or not) */
+    fun openDeleteMangaDialogFor(mangas: List<Manga>) {
+        mutableState.update { it.copy(dialog = Dialog.DeleteManga(mangas)) }
+    }
+
+    /**
+     * The preview panel's add button, for a title just removed from there: back into the library the way the title
+     * page adds it, into the default category, or with the category picker when that is set to "always ask"
+     */
+    fun addToLibraryFromPreview(manga: Manga) {
+        screenModelScope.launchIO {
+            val categories = getCategories.await().filterNot { it.isSystemCategory }
+            val defaultCategoryId = libraryPreferences.defaultCategory().get()
+            val defaultCategory = categories.find { it.id == defaultCategoryId.toLong() }
+            val ask = defaultCategory == null && defaultCategoryId != 0 && categories.isNotEmpty()
+            // The picker's preselection: the categories it had before it was removed
+            val previous = getCategories.await(manga.id).map { it.id }
+            when {
+                defaultCategory != null -> setMangaCategories.await(manga.id, listOf(defaultCategory.id))
+                !ask -> setMangaCategories.await(manga.id, emptyList())
+            }
+            updateManga.awaitUpdateFavorite(manga.id, true)
+            if (ask) {
+                val selection: ImmutableList<CheckboxState<Category>> =
+                    categories.mapAsCheckboxState { it.id in previous }.toImmutableList()
+                mutableState.update { it.copy(dialog = Dialog.ChangeCategory(listOf(manga), selection)) }
+            }
+        }
+    }
+    // KMK <--
 
     fun closeDialog() {
         mutableState.update { it.copy(dialog = null) }

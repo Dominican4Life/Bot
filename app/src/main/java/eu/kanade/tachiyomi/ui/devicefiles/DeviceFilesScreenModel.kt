@@ -79,6 +79,9 @@ class DeviceFilesScreenModel(
     private var loadJob: Job? = null
     private var searchJob: Job? = null
 
+    /** KMK: the text of the running or shown search, so it can run again after a rename or delete */
+    private var searchText: String? = null
+
     init {
         refresh()
     }
@@ -152,32 +155,68 @@ class DeviceFilesScreenModel(
             .sortedByDescending { it.folder.modified }
 
     /** Searches the whole device by file name (the main page's search) */
-    fun search(text: String?) {
+    fun search(text: String?, wait: Boolean = true) {
         searchJob?.cancel()
+        searchText = text
         if (text == null) {
             _searchResults.value = null
             return
         }
         searchJob = screenModelScope.launchIO {
-            delay(250)
-            val results = DeviceFilesRepository.search(context, text, prefs.showHidden.get()) { !isActive }
+            if (wait) delay(250)
+            val found = DeviceFilesRepository.search(context, text, prefs.showHidden.get()) { !isActive }
+            // KMK: a rerun after a rename/delete comes before the media index catches up: old paths are dropped
+            val results = if (wait) found else found.filter { it.file.exists() }
             if (isActive) _searchResults.value = results
         }
+    }
+
+    /** KMK: runs the shown search again, so renamed or deleted files don't stay listed under old paths */
+    private fun rerunSearch() {
+        val text = searchText ?: return
+        if (_searchResults.value != null) search(text, wait = false)
     }
 
     suspend fun rename(file: DeviceFile, newName: String): Boolean = withIOContext {
         val name = newName.trim()
         if (name.isEmpty() || '/' in name) return@withIOContext false
+        if (name == file.name) return@withIOContext true
         val target = File(file.file.parentFile, name)
-        if (target.exists()) return@withIOContext false
-        val ok = file.file.renameTo(target)
+        // KMK: shared storage ignores letter case, so "ep1" -> "EP1" finds the file itself: go through a temp name
+        val caseOnly = target.path.equals(file.path, ignoreCase = true)
+        if (target.exists() && !caseOnly) return@withIOContext false
+        val ok = if (caseOnly) {
+            val temp = File(file.file.parentFile, ".${file.name}.renaming-${System.currentTimeMillis()}")
+            if (file.file.renameTo(temp)) {
+                temp.renameTo(target) || run {
+                    temp.renameTo(file.file)
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            file.file.renameTo(target)
+        }
         if (ok) {
-            if (prefs.isFavourite(file.path)) {
-                prefs.toggleFavourite(file.path)
-                prefs.toggleFavourite(target.path)
+            // KMK: favourites inside a renamed folder move with it
+            val oldPrefix = file.path.trimEnd('/') + "/"
+            val newPrefix = target.path.trimEnd('/') + "/"
+            val favourites = prefs.favourites.get()
+            if (favourites.any { it == file.path || it.startsWith(oldPrefix) }) {
+                prefs.favourites.set(
+                    favourites.map {
+                        when {
+                            it == file.path -> target.path
+                            it.startsWith(oldPrefix) -> newPrefix + it.removePrefix(oldPrefix)
+                            else -> it
+                        }
+                    }.toSet(),
+                )
             }
             DeviceFilesRepository.rescan(context, file.path, target.path)
             refresh()
+            rerunSearch()
         }
         ok
     }
@@ -185,13 +224,15 @@ class DeviceFilesScreenModel(
     suspend fun delete(files: List<DeviceFile>): Int = withIOContext {
         var deleted = 0
         files.forEach { f ->
-            if (f.file.deleteRecursively()) {
+            // KMK: counted as deleted when it's gone, even if deleteRecursively reported a problem on the way
+            if (f.file.deleteRecursively() || !f.file.exists()) {
                 deleted++
                 if (prefs.isFavourite(f.path)) prefs.toggleFavourite(f.path)
             }
         }
         DeviceFilesRepository.rescan(context, *files.map { it.path }.toTypedArray())
         refresh()
+        rerunSearch()
         deleted
     }
 
