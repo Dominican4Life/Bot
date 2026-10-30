@@ -1028,6 +1028,12 @@ private fun sizeLabel(bytes: Long): String = when {
 /** KMK (r90): "26 MB/s"; KB/s under 1 MB/s */
 private fun speed(bytesPerSecond: Long): String = "${sizeLabel(bytesPerSecond)}/s"
 
+/** KMK (r92): "4,097 manga · 102 anime" from the non-zero counts, or "nothing" */
+private fun countsText(vararg counts: Pair<Int, String>): String =
+    counts.filter { it.first > 0 }
+        .joinToString(" · ") { (count, what) -> "%,d %s".format(count, what) }
+        .ifEmpty { "nothing" }
+
 /** KMK (r90): "3 s" or "2 min 5 s" */
 private fun duration(millis: Long): String {
     val seconds = ((millis + 500L) / 1000L).coerceAtLeast(1L)
@@ -1337,9 +1343,10 @@ private fun ResultCard(
             Row(verticalAlignment = Alignment.Top) {
                 Column(Modifier.weight(1f).padding(start = 14.dp, top = 14.dp, bottom = 14.dp)) {
                     Text(
-                        // KMK (r90): the bytes count both ways
+                        // KMK (r92): the bytes count both ways, so they're labelled as moved, and the two directions
+                        // get their own lines (r91 showed only "Got 0 …" under "3.3 MB", which read as received)
                         "Synced with ${result.peerName}" + if (result.bytes > 0L && result.millis > 0L) {
-                            " · ${sizeLabel(result.bytes)} in ${duration(result.millis)}"
+                            " · ${sizeLabel(result.bytes)} moved in ${duration(result.millis)}"
                         } else {
                             ""
                         },
@@ -1347,17 +1354,25 @@ private fun ResultCard(
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        "Got ${summary.anime} anime · ${summary.manga} manga · ${summary.historyEntries} history " +
-                            "entries",
+                        "Sent: " + countsText(
+                            summary.sentAnime to "anime",
+                            summary.sentManga to "manga",
+                            summary.sentHistoryEntries to "history",
+                            summary.sentSources to "code sources",
+                            summary.sentRepos to "repos",
+                            summary.sentApks to "APKs",
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                     )
                     Text(
-                        "${summary.reposAdded} repos · ${summary.sourcesAdded} code sources" +
-                            if (summary.apks.isNotEmpty()) {
-                                " · ${summary.apks.size} ${if (summary.apks.size == 1) "APK" else "APKs"}"
-                            } else {
-                                ""
-                            },
+                        "Got: " + countsText(
+                            summary.anime to "anime",
+                            summary.manga to "manga",
+                            summary.historyEntries to "history",
+                            summary.sourcesAdded to "code sources",
+                            summary.reposAdded to "repos",
+                            summary.apks.size to "APKs",
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                     )
                     if (summary.errors > 0) {
