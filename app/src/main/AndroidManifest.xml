@@ -31,9 +31,10 @@
     <uses-permission
         android:name="android.permission.BLUETOOTH_ADMIN"
         android:maxSdkVersion="30" />
+    <!-- KMK (r90): up to 32, since Wi-Fi Direct needs location on Android 12 (31-32) as well -->
     <uses-permission
         android:name="android.permission.ACCESS_FINE_LOCATION"
-        android:maxSdkVersion="30" />
+        android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
     <uses-permission
@@ -42,6 +43,15 @@
         tools:targetApi="s" />
     <uses-feature
         android:name="android.hardware.bluetooth"
+        android:required="false" />
+    <!-- KMK (r90): pair sync moves the data over Wi-Fi Direct or the same Wi-Fi when it can -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission
+        android:name="android.permission.NEARBY_WIFI_DEVICES"
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="tiramisu" />
+    <uses-feature
+        android:name="android.hardware.wifi.direct"
         android:required="false" />
 
     <!-- For background jobs -->

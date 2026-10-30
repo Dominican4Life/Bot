@@ -57,12 +57,30 @@ class GetApplicationRelease(
 
     // KMK -->
     // KMK: [includePreReleases] for the fork's own releases, which CI publishes as pre-releases
-    suspend fun awaitReleaseNotes(arguments: Arguments, includePreReleases: Boolean = false): Result {
+    // KMK (r90): [sinceReleaseNumber] is this build's number (tags "rN"): older releases are left out (What's new
+    // used to list every release GitHub returned, about 30); null keeps them all. At most [limit] releases. The
+    // result is the newest release, its info being the combined notes of all kept releases.
+    suspend fun awaitReleaseNotes(
+        arguments: Arguments,
+        includePreReleases: Boolean = false,
+        sinceReleaseNumber: Int? = null,
+        limit: Int = Int.MAX_VALUE,
+    ): Result {
         val releases = service.releaseNotes(arguments)
             .filter { (includePreReleases || !it.preRelease) && !it.draft }
+            .filter { release ->
+                if (sinceReleaseNumber == null) return@filter true
+                val number = RELEASE_TAG_REGEX.matchEntire(release.version)?.groupValues?.get(1)?.toIntOrNull()
+                number != null && number >= sinceReleaseNumber
+            }
+            .take(limit)
 
-        val latest = releases.getLatest() ?: return Result.NoNewUpdate
-        return Result.NewUpdate(latest)
+        // KMK (r90): one release whose body lists every kept release, newest first (GitHub's order), each under
+        // its own "## rN" heading. Joined with "\n" (not getLatest()'s "\r", which the Markdown view may not take as
+        // a line break, so the later headings ran into the first release's text).
+        val newest = releases.firstOrNull() ?: return Result.NoNewUpdate
+        val body = releases.joinToString("\n\n---\n\n") { "## ${it.version}\n\n${it.info.trim()}" }
+        return Result.NewUpdate(newest.copy(info = body))
     }
     // KMK <--
 
@@ -126,6 +144,9 @@ class GetApplicationRelease(
         data object OsTooOld : Result
     }
 }
+
+// KMK: the fork's release tags, "r90"
+private val RELEASE_TAG_REGEX = Regex("^r(\\d+)$")
 
 // KMK --.
 internal fun List<Release>.getLatest(): Release? {

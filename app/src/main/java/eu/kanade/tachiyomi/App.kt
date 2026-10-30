@@ -234,6 +234,8 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
 
         // KMK -->
         MangaCoverMetadata.load()
+        // KMK (r90): paired devices from an older version or a restored backup moved to the private list
+        runCatching { eu.kanade.tachiyomi.pairsync.PairSyncPreferences.migrate() }
         // KMK <--
 
         // Updates widget update

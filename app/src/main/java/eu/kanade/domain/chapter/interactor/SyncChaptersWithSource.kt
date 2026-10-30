@@ -11,6 +11,9 @@ import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.online.HttpSource
 import exh.source.isEhBasedManga
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import tachiyomi.data.DatabaseHandler
 import tachiyomi.data.chapter.ChapterSanitizer
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.chapter.interactor.ShouldUpdateDbChapter
@@ -23,9 +26,11 @@ import tachiyomi.domain.chapter.service.ChapterRecognition
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.source.local.isLocal
+import uy.kohesive.injekt.injectLazy
 import java.lang.Long.max
 import java.time.ZonedDateTime
 import java.util.TreeSet
+import kotlin.math.roundToLong
 
 class SyncChaptersWithSource(
     private val downloadManager: DownloadManager,
@@ -38,6 +43,8 @@ class SyncChaptersWithSource(
     private val getExcludedScanlators: GetExcludedScanlators,
     private val libraryPreferences: LibraryPreferences,
 ) {
+    // KMK: the chapter writes below run in one transaction (not a constructor parameter, so DomainModule stays)
+    private val handler: DatabaseHandler by injectLazy()
 
     /**
      * Method to synchronize db chapters with source ones
@@ -74,11 +81,17 @@ class SyncChaptersWithSource(
 
         val newChapters = mutableListOf<Chapter>()
         val updatedChapters = mutableListOf<Chapter>()
+        // KMK: mutable so chapters whose url changed can be taken out (see matchChangedUrls)
         val removedChapters = dbChapters.filterNot { dbChapter ->
             sourceChapters.any { sourceChapter ->
                 dbChapter.url == sourceChapter.url
             }
-        }
+        }.toMutableList()
+        // KMK: urls of added chapters that came without an upload date (they get a made-up one below)
+        val undatedNewUrls = mutableSetOf<String>()
+        // KMK: download folders to rename (old, new); done together with the database writes, so a cancelled
+        // sync can't leave a renamed folder behind a chapter row that still has the old name
+        val renames = mutableListOf<Pair<Chapter, Chapter>>()
 
         // Used to not set upload date of older chapters
         // to a higher value than newer chapters
@@ -106,6 +119,7 @@ class SyncChaptersWithSource(
             val dbChapter = dbChapters.find { it.url == chapter.url }
 
             if (dbChapter == null) {
+                if (chapter.dateUpload == 0L) undatedNewUrls.add(chapter.url)
                 val toAddChapter = if (chapter.dateUpload == 0L) {
                     val altDateUpload = if (maxSeenUploadDate == 0L) nowMillis else maxSeenUploadDate
                     chapter.copy(dateUpload = altDateUpload)
@@ -129,7 +143,7 @@ class SyncChaptersWithSource(
                         )
 
                     if (shouldRenameChapter) {
-                        downloadManager.renameChapter(source, manga, dbChapter, chapter)
+                        renames.add(dbChapter to chapter)
                     }
 
                     var toChangeChapter = dbChapter.copy(
@@ -145,6 +159,44 @@ class SyncChaptersWithSource(
                     }
                     updatedChapters.add(toChangeChapter)
                 }
+            }
+        }
+
+        // KMK: a chapter whose url changed (e.g. "/manga/x/1.0" saved by an extension, "/manga/x/1" from the JS
+        // source that replaced it) used to be deleted and added again: its history went with it (so the title
+        // dropped under the "Last read" sort), and its last page read and id too. A removed and an added chapter
+        // with the same chapter number are the same chapter: the saved row gets the new url instead.
+        if (!manga.isEhBasedManga() && newChapters.isNotEmpty() && removedChapters.isNotEmpty()) {
+            val pairs = matchChangedUrls(removedChapters, newChapters)
+            // KMK: one pass each over the lists instead of one per pair
+            val movedUrls = pairs.mapTo(HashSet()) { it.second.url }
+            val movedIds = pairs.mapTo(HashSet()) { it.first.id }
+            newChapters.removeAll { it.url in movedUrls }
+            removedChapters.removeAll { it.id in movedIds }
+            for ((old, added) in pairs) {
+                val shouldRenameChapter = downloadProvider.isChapterDirNameChanged(old, added) &&
+                    downloadManager.isChapterDownloaded(
+                        old.name,
+                        old.scanlator,
+                        old.url,
+                        manga.ogTitle,
+                        manga.source,
+                    )
+                if (shouldRenameChapter) {
+                    renames.add(old to added)
+                }
+                var moved = old.copy(
+                    url = added.url,
+                    name = added.name,
+                    chapterNumber = added.chapterNumber,
+                    scanlator = added.scanlator,
+                    sourceOrder = added.sourceOrder,
+                    memo = added.memo,
+                )
+                if (added.url !in undatedNewUrls) {
+                    moved = moved.copy(dateUpload = added.dateUpload)
+                }
+                updatedChapters.add(moved)
             }
         }
 
@@ -230,18 +282,28 @@ class SyncChaptersWithSource(
         }
         // <-- EXH
 
-        if (removedChapters.isNotEmpty()) {
-            val toDeleteIds = removedChapters.map { it.id }
-            chapterRepository.removeChaptersWithIds(toDeleteIds)
-        }
+        // KMK: the folder renames and the removals, additions and updates aren't cut by a cancellation half way,
+        // and the three writes are one transaction (a chapter whose url changed is never deleted without its
+        // update); the repository calls join that transaction
+        val toAdd = updatedToAdd
+        updatedToAdd = withContext(NonCancellable) {
+            for ((old, new) in renames) {
+                downloadManager.renameChapter(source, manga, old, new)
+            }
+            handler.await(inTransaction = true) {
+                if (removedChapters.isNotEmpty()) {
+                    val toDeleteIds = removedChapters.map { it.id }
+                    chapterRepository.removeChaptersWithIds(toDeleteIds)
+                }
 
-        if (updatedToAdd.isNotEmpty()) {
-            updatedToAdd = chapterRepository.addAll(updatedToAdd)
-        }
+                val added = if (toAdd.isNotEmpty()) chapterRepository.addAll(toAdd) else toAdd
 
-        if (updatedChapters.isNotEmpty()) {
-            val chapterUpdates = updatedChapters.map { it.toChapterUpdate() }
-            updateChapter.awaitAll(chapterUpdates)
+                if (updatedChapters.isNotEmpty()) {
+                    val chapterUpdates = updatedChapters.map { it.toChapterUpdate() }
+                    updateChapter.awaitAll(chapterUpdates)
+                }
+                added
+            }
         }
         updateManga.awaitUpdateFetchInterval(manga, now, fetchWindow)
 
@@ -253,4 +315,36 @@ class SyncChaptersWithSource(
 
         return updatedToAdd.filterNot { it.url in changedOrDuplicateReadUrls || it.scanlator in excludedScanlators }
     }
+
+    /**
+     * KMK: pairs of (removed saved chapter, added source chapter) that are the same chapter under a new url: the
+     * same recognized chapter number, when that number is on one removed and one added chapter (and their
+     * scanlators agree, or one of them has none); when several share the number (several scanlators), only
+     * one-to-one matches with the same scanlator. Anything unclear stays a removal plus an addition, as before.
+     * KMK: numbers are compared to 1/1000, so float noise (1.1 parsed two ways) still matches.
+     */
+    private fun matchChangedUrls(removed: List<Chapter>, added: List<Chapter>): List<Pair<Chapter, Chapter>> {
+        val removedByNumber = removed.filter { it.isRecognizedNumber }.groupBy { numberKey(it) }
+        val addedByNumber = added.filter { it.isRecognizedNumber }.groupBy { numberKey(it) }
+        val pairs = mutableListOf<Pair<Chapter, Chapter>>()
+        for ((number, adds) in addedByNumber) {
+            val olds = removedByNumber[number] ?: continue
+            if (olds.size == 1 && adds.size == 1) {
+                val oldScanlator = olds[0].scanlator.orEmpty()
+                val newScanlator = adds[0].scanlator.orEmpty()
+                if (oldScanlator.isBlank() || newScanlator.isBlank() || oldScanlator == newScanlator) {
+                    pairs.add(olds[0] to adds[0])
+                }
+                continue
+            }
+            val oldsByScanlator = olds.groupBy { it.scanlator.orEmpty() }
+            for ((scanlator, sameAdds) in adds.groupBy { it.scanlator.orEmpty() }) {
+                val sameOlds = oldsByScanlator[scanlator] ?: continue
+                if (sameOlds.size == 1 && sameAdds.size == 1) pairs.add(sameOlds[0] to sameAdds[0])
+            }
+        }
+        return pairs
+    }
+
+    private fun numberKey(chapter: Chapter): Long = (chapter.chapterNumber * 1000).roundToLong()
 }

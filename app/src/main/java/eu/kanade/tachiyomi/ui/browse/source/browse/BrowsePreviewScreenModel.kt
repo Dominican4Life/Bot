@@ -39,9 +39,12 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
 import mihon.core.archive.archiveReader
 import mihon.domain.source.interactor.UpdateMangaFromRemote
@@ -66,6 +69,7 @@ import tachiyomi.source.local.io.Format
 import tachiyomi.source.local.isLocal
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * KMK: Backs the two preview panels on the browse source screen.
@@ -94,6 +98,16 @@ class BrowsePreviewScreenModel(
 
     private val jobs = mutableListOf<Job>()
     private var pagesJob: Job? = null
+
+    // KMK: one chapter sync at a time per preview: the refresh from the source and fetchPageList's retry share it
+    private val chapterSyncMutex = Mutex()
+
+    // KMK: successful syncs per title, so the retry can skip its own sync when one finished while it waited
+    private val chapterSyncs = ConcurrentHashMap<Long, Int>()
+
+    // KMK: the chapter last shown, so a replacement can keep its chapter number (see selectDefaultChapter)
+    @Volatile
+    private var lastSelectedChapter: Chapter? = null
 
     val httpSource: HttpSource? = source as? HttpSource
 
@@ -125,12 +139,18 @@ class BrowsePreviewScreenModel(
                 downloadManager.queueState,
                 // KMK: queueState only changes when downloads are added or removed; a download starting or failing
                 // only changes its status, so without this the row stayed on "queued" with no progress ring
-                downloadManager.statusFlow().map { }.onStart { emit(Unit) },
+                // KMK: only this title's downloads (a merged title's chapters belong to its parts, so all of them)
+                downloadManager.statusFlow()
+                    .filter { it.manga.id == manga.id || manga.source == exh.source.MERGED_SOURCE_ID }
+                    .map { }
+                    .onStart { emit(Unit) },
             ) { (m, chapters), _, queue, _ -> Triple(m, chapters, queue) }
                 .collectLatest { (m, chapters, queue) ->
                     val isLocal = m.isLocal()
+                    // KMK: one lookup per chapter instead of a scan of the whole queue
+                    val queueById = queue.associateBy { it.chapter.id }
                     val all = chapters.map { chapter ->
-                        val active = queue.find { it.chapter.id == chapter.id }
+                        val active = queueById[chapter.id]
                         val downloaded = isLocal || downloadManager.isChapterDownloaded(
                             chapter.name,
                             chapter.scanlator,
@@ -156,9 +176,11 @@ class BrowsePreviewScreenModel(
                     mutableState.update {
                         if (it.manga?.id != m.id) it else it.copy(manga = m, allChapters = all, chapters = shown)
                     }
-                    // Preview the first chapter by default
-                    if (state.value.selectedChapterId == null && all.isNotEmpty()) {
-                        selectChapter(all.maxBy { it.chapter.sourceOrder }.chapter)
+                    // KMK: the first chapter is previewed when the refresh from the source ends (refreshFromSource);
+                    // here only a selected chapter that left the list is replaced, from the chapters as saved now
+                    val selected = state.value.selectedChapterId
+                    if (selected != null && all.none { it.chapter.id == selected }) {
+                        selectDefaultChapter(m.id, getMangaWithChapters.awaitChapters(m.id, applyFilter = true))
                     }
                 }
         }
@@ -192,12 +214,16 @@ class BrowsePreviewScreenModel(
                 getMangaWithChapters.awaitChapters(manga.id).isNotEmpty()
             ) {
                 mutableState.update { if (it.manga?.id != manga.id) it else it.copy(chaptersLoading = false) }
+                selectDefaultChapter(manga.id, getMangaWithChapters.awaitChapters(manga.id, applyFilter = true))
                 return@launchIO
             }
             if (force) {
                 mutableState.update { if (it.manga?.id != manga.id) it else it.copy(chaptersLoading = true) }
             }
-            val result = updateMangaFromRemote(source = source, manga = manga, fetchDetails = true, fetchChapters = true)
+            val result = chapterSyncMutex.withLock {
+                updateMangaFromRemote(source = source, manga = manga, fetchDetails = true, fetchChapters = true)
+                    .also { if (it.isSuccess) chapterSyncs.merge(manga.id, 1) { a, b -> a + b } }
+            }
             if (result.isSuccess) PreviewFetchTimes.mark(manga.id)
             mutableState.update {
                 if (it.manga?.id != manga.id) {
@@ -209,7 +235,40 @@ class BrowsePreviewScreenModel(
                     )
                 }
             }
+            // KMK: the first chapter's pages are read now, from the chapter list as the source just gave it
+            selectDefaultChapter(manga.id, getMangaWithChapters.awaitChapters(manga.id, applyFilter = true))
         }
+    }
+
+    private val defaultChapterLock = Any()
+
+    /**
+     * KMK: Previews the first chapter of [chapters] (the title's saved chapters) when no chapter is selected, or when
+     * the selected one is gone from the list (the source removed it; before, the page grid stayed empty with its
+     * image requests cancelled). Waits while the chapters are being refreshed from the source: reading pages of a
+     * saved chapter before that used its old url (a JS source answers "Refresh the chapter list"), and the refresh
+     * then replaced the chapter under the grid. Called by the chapter listener and when the refresh ends; the lock
+     * makes sure only one of them starts the pages.
+     */
+    private fun selectDefaultChapter(mangaId: Long, chapters: List<Chapter>) {
+        if (chapters.isEmpty()) return
+        val pick = synchronized(defaultChapterLock) {
+            val s = state.value
+            if (s.manga?.id != mangaId || s.chaptersLoading) return
+            val selected = s.selectedChapterId
+            if (selected != null && chapters.any { it.id == selected }) return
+            // KMK: a selected chapter whose id changed (re-added by the sync) is replaced by the one with its
+            // chapter number (same scanlator first), not by the first chapter
+            val previous = lastSelectedChapter
+                ?.takeIf { selected != null && it.id == selected && it.isRecognizedNumber }
+            val sameNumber = previous?.let { p -> chapters.filter { it.chapterNumber == p.chapterNumber } }.orEmpty()
+            val first = sameNumber.firstOrNull { it.scanlator == previous?.scanlator }
+                ?: sameNumber.firstOrNull()
+                ?: chapters.maxBy { it.sourceOrder }
+            mutableState.update { if (it.manga?.id != mangaId) it else it.copy(selectedChapterId = first.id) }
+            first
+        }
+        selectChapter(pick)
     }
 
     /** Pull down in the chapter panel: get the details and chapters from the source again */
@@ -249,16 +308,27 @@ class BrowsePreviewScreenModel(
 
     /** Shows the pages of [chapter] in the right panel */
     fun selectChapter(chapter: Chapter) {
-        pagesJob?.cancel()
+        // KMK: a late call for a title that's no longer previewed is dropped (a merged title's chapters belong to
+        // its parts, so their manga id differs from the title's)
+        var applied = false
         mutableState.update {
-            it.copy(
-                selectedChapterId = chapter.id,
-                pages = null,
-                pagesLoading = true,
-                pagesError = null,
-                previewModels = null,
-            )
+            val m = it.manga
+            applied = m != null && (m.id == chapter.mangaId || m.source == exh.source.MERGED_SOURCE_ID)
+            if (!applied) {
+                it
+            } else {
+                it.copy(
+                    selectedChapterId = chapter.id,
+                    pages = null,
+                    pagesLoading = true,
+                    pagesError = null,
+                    previewModels = null,
+                )
+            }
         }
+        if (!applied) return
+        pagesJob?.cancel()
+        lastSelectedChapter = chapter
         val httpSource = httpSource
         if (!state.value.pagePanelOpen) {
             mutableState.update { it.copy(pagesLoading = false, localPages = null) }
@@ -320,9 +390,7 @@ class BrowsePreviewScreenModel(
                     chapterCache.getPageListFromCache(chapter)
                 } catch (e: Throwable) {
                     if (e is CancellationException) throw e
-                    httpSource.getPageList(chapter.toSChapter()).also {
-                        runCatching { chapterCache.putPageListToCache(chapter, it) }
-                    }
+                    fetchPageList(chapter, httpSource)
                 }
                 // Use our own indexing, like the reader does
                 val indexed = pages.mapIndexed { index, page -> Page(index, page.url, page.imageUrl) }
@@ -341,6 +409,38 @@ class BrowsePreviewScreenModel(
                 }
             }
         }
+    }
+
+    /**
+     * KMK: [chapter]'s pages from the source (then cached). A source that says its chapter list must be refreshed
+     * first (a JS source throwing "Refresh the chapter list.", when the saved chapter url is out of date) gets one
+     * refresh of the chapters, and one more try with the chapter as saved after it.
+     */
+    private suspend fun fetchPageList(chapter: Chapter, httpSource: HttpSource): List<Page> {
+        val (used, pages) = try {
+            chapter to httpSource.getPageList(chapter.toSChapter())
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            if (e.message?.contains(REFRESH_CHAPTERS_ERROR, ignoreCase = true) != true) throw e
+            // KMK: the chapter's own title (the preview may have moved on), and only one of this source's titles
+            val manga = runCatching { getMangaWithChapters.awaitManga(chapter.mangaId) }.getOrNull()
+            if (manga == null || manga.source != source.id) throw e
+            // KMK: never a second sync next to the preview's refresh; one that ended while waiting is enough
+            val syncsBefore = chapterSyncs[manga.id] ?: 0
+            chapterSyncMutex.withLock {
+                if ((chapterSyncs[manga.id] ?: 0) == syncsBefore) {
+                    updateMangaFromRemote(source = source, manga = manga, fetchChapters = true).getOrThrow()
+                    chapterSyncs.merge(manga.id, 1) { a, b -> a + b }
+                }
+            }
+            val saved = getMangaWithChapters.awaitChapters(manga.id)
+            val current = saved.firstOrNull { it.id == chapter.id }
+                ?: saved.firstOrNull { chapter.isRecognizedNumber && it.chapterNumber == chapter.chapterNumber }
+                ?: throw e
+            current to httpSource.getPageList(current.toSChapter())
+        }
+        runCatching { chapterCache.putPageListToCache(used, pages) }
+        return pages
     }
 
     /**
@@ -652,3 +752,6 @@ class BrowsePreviewScreenModel(
 
 // KMK: at most this many pages of previews are read (E-Hentai gives 20 or 40 per page)
 private const val MAX_PREVIEW_PAGES = 30
+
+// KMK: what a source's getPageList says when the saved chapter url is out of date (see fetchPageList)
+private const val REFRESH_CHAPTERS_ERROR = "Refresh the chapter list"

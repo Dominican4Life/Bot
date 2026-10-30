@@ -20,6 +20,7 @@ import eu.kanade.domain.manga.interactor.SmartSearchMerge
 import eu.kanade.domain.manga.interactor.UpdateManga
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.domain.sync.SyncPreferences
+import eu.kanade.domain.track.interactor.AddTracks
 import eu.kanade.presentation.components.SEARCH_DEBOUNCE_MILLIS
 import eu.kanade.presentation.library.components.LibraryToolbarTitle
 import eu.kanade.presentation.manga.DownloadAction
@@ -166,6 +167,7 @@ class LibraryScreenModel(
     // SY <--
     // KMK -->
     private val smartSearchMerge: SmartSearchMerge = Injekt.get(),
+    private val addTracks: AddTracks = Injekt.get(),
     // KMK <--
 ) : StateScreenModel<LibraryScreenModel.State>(State()) {
 
@@ -1436,7 +1438,8 @@ class LibraryScreenModel(
      * Selects all mangas between and including the given manga and the last pressed manga from the
      * same category as the given manga
      */
-    fun toggleRangeSelection(category: Category, manga: LibraryManga) {
+    // KMK: displayedIds is the order on screen (LibraryOrderFreeze can keep it still while a preview is open)
+    fun toggleRangeSelection(category: Category, manga: LibraryManga, displayedIds: List<Long>? = null) {
         mutableState.update { state ->
             val newSelection = state.selection.mutate { list ->
                 val lastSelected = list.lastOrNull()
@@ -1445,9 +1448,14 @@ class LibraryScreenModel(
                     return@mutate
                 }
 
-                val items = state.getItemsForCategoryId(category.id).fastMap { it.id }
+                val items = displayedIds ?: state.getItemsForCategoryId(category.id).fastMap { it.id }
                 val lastMangaIndex = items.indexOf(lastSelected)
                 val curMangaIndex = items.indexOf(manga.id)
+                // KMK: a title missing from the list (it just left it) can't make a range
+                if (lastMangaIndex < 0 || curMangaIndex < 0) {
+                    list.add(manga.id)
+                    return@mutate
+                }
 
                 val selectionRange = when {
                     lastMangaIndex < curMangaIndex -> lastMangaIndex..curMangaIndex
@@ -1552,17 +1560,38 @@ class LibraryScreenModel(
             val ask = defaultCategory == null && defaultCategoryId != 0 && categories.isNotEmpty()
             // The picker's preselection: the categories it had before it was removed
             val previous = getCategories.await(manga.id).map { it.id }
-            when {
-                defaultCategory != null -> setMangaCategories.await(manga.id, listOf(defaultCategory.id))
-                !ask -> setMangaCategories.await(manga.id, emptyList())
-            }
-            updateManga.awaitUpdateFavorite(manga.id, true)
             if (ask) {
+                // KMK: "always ask": added only when the picker is confirmed (addToLibraryWithCategories), so
+                // dismissing the picker leaves the title out of the library
                 val selection: ImmutableList<CheckboxState<Category>> =
                     categories.mapAsCheckboxState { it.id in previous }.toImmutableList()
-                mutableState.update { it.copy(dialog = Dialog.ChangeCategory(listOf(manga), selection)) }
+                mutableState.update {
+                    it.copy(dialog = Dialog.ChangeCategory(listOf(manga), selection, addToLibrary = true))
+                }
+                return@launchIO
             }
+            if (defaultCategory != null) {
+                setMangaCategories.await(manga.id, listOf(defaultCategory.id))
+            } else {
+                setMangaCategories.await(manga.id, emptyList())
+            }
+            updateManga.awaitUpdateFavorite(manga.id, true)
+            bindEnhancedTrackers(manga)
         }
+    }
+
+    /** The category picker's confirm for [addToLibraryFromPreview]: adds the title back, then into [categoryIds] */
+    fun addToLibraryWithCategories(manga: Manga, categoryIds: List<Long>) {
+        screenModelScope.launchNonCancellable {
+            updateManga.awaitUpdateFavorite(manga.id, true)
+            setMangaCategories.await(manga.id, categoryIds)
+            bindEnhancedTrackers(manga)
+        }
+    }
+
+    /** Match with enhanced trackers (Komga, Kavita…) when available, as the title page does when adding */
+    private suspend fun bindEnhancedTrackers(manga: Manga) {
+        runCatching { addTracks.bindEnhancedTrackers(manga, sourceManager.getOrStub(manga.source)) }
     }
     // KMK <--
 
@@ -1575,6 +1604,8 @@ class LibraryScreenModel(
         data class ChangeCategory(
             val manga: List<Manga>,
             val initialSelection: ImmutableList<CheckboxState<Category>>,
+            // KMK: from the preview's add button: confirming also adds the title to the library
+            val addToLibrary: Boolean = false,
         ) : Dialog
         data class DeleteManga(val manga: List<Manga>) : Dialog
 

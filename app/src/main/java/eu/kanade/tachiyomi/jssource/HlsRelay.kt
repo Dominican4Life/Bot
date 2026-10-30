@@ -16,6 +16,7 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -101,10 +102,12 @@ object HlsRelay {
             socket.soTimeout = 30_000
             val input = BufferedInputStream(socket.getInputStream())
             val requestLine = readLine(input) ?: return
-            // Skip the request headers
+            // Skip the request headers (KMK: but keep Range, for an address that turns out to be a plain file)
+            var range: String? = null
             while (true) {
                 val line = readLine(input) ?: break
                 if (line.isEmpty()) break
+                if (line.startsWith("Range:", ignoreCase = true)) range = line.substringAfter(':').trim()
             }
             val path = requestLine.split(' ').getOrNull(1) ?: return
             val parsed = Uri.parse("http://relay$path")
@@ -120,9 +123,11 @@ object HlsRelay {
             }
             // KMK: this stream is in use (see lastUsed)
             if (id != null) lastUsed[id] = System.currentTimeMillis()
-            val request = Request.Builder().url(target).headers(headers).build()
+            val request = Request.Builder().url(target).headers(headers)
+                .apply { range?.takeIf { kind == "p" && it.isNotEmpty() }?.let { header("Range", it) } }
+                .build()
             var call = try {
-                execute(request)
+                execute(request, stream = kind == "p")
             } catch (e: java.io.IOException) {
                 AppLog.add('W', "hls", "Couldn't reach ${target.toHttpUrlOrNull()?.host ?: target}: ${e.message}")
                 respond(out, 502, "text/plain", ByteArray(0))
@@ -156,6 +161,12 @@ object HlsRelay {
                 if (!response.isSuccessful) {
                     if (kind == "p") AppLog.add('W', "hls", "Playlist answered ${response.code}: ${target.toHttpUrlOrNull()?.host ?: target}")
                     respond(out, response.code, "text/plain", ByteArray(0))
+                    return
+                }
+                // KMK: "m3u8" only in the query (`video.mp4?fallback=m3u8`) also comes here as a playlist: unless the
+                // answer is one (its type, or #EXTM3U at the start), it's passed through as it is, never read whole
+                if (kind == "p" && !isPlaylist(response)) {
+                    passThrough(out, response)
                     return
                 }
                 val bytes = response.body.bytes()
@@ -205,14 +216,26 @@ object HlsRelay {
         ).build()
     }
 
+    // KMK: `p` requests can turn out to be a whole plain video passed through (passThrough): the app client's 120 s
+    // call timeout would cut it off after ~2 minutes, and its 5 MiB HTTP cache ignores Range. These have no overall
+    // deadline (connect/read timeouts still apply) and no cache.
+    private val streamClient by lazy {
+        network.client.newBuilder().callTimeout(0, TimeUnit.SECONDS).cache(null).build()
+    }
+    private val bypassStreamClient by lazy {
+        bypassClient.newBuilder().callTimeout(0, TimeUnit.SECONDS).cache(null).build()
+    }
+
     private val bypassedHosts = ConcurrentHashMap.newKeySet<String>()
 
-    /** The request through the app's client, or around a DNS that blocked its host */
-    private fun execute(request: Request): okhttp3.Response {
+    /** The request through the app's client, or around a DNS that blocked its host ([stream]: no call deadline) */
+    private fun execute(request: Request, stream: Boolean = false): okhttp3.Response {
         val host = request.url.host
-        if (host in bypassedHosts) return bypassClient.newCall(request).execute()
+        val direct = if (stream) streamClient else network.client
+        val bypass = if (stream) bypassStreamClient else bypassClient
+        if (host in bypassedHosts) return bypass.newCall(request).execute()
         return try {
-            network.client.newCall(request).execute()
+            direct.newCall(request).execute()
         } catch (e: java.io.IOException) {
             val blocked = e.message?.contains("/0.0.0.0") == true || e.message?.contains("/127.0.0.1:") == true ||
                 runCatching { InetAddress.getAllByName(host).all { it.isAnyLocalAddress || it.isLoopbackAddress } }
@@ -223,7 +246,7 @@ object HlsRelay {
                 "hls",
                 "$host is blocked by this device's DNS or ad blocker (it answers 0.0.0.0); asking Cloudflare / Google DNS instead",
             )
-            val response = bypassClient.newCall(request).execute()
+            val response = bypass.newCall(request).execute()
             bypassedHosts += host
             AppLog.add('I', "hls", "$host reached through Cloudflare / Google DNS (${response.code})")
             response
@@ -290,6 +313,32 @@ object HlsRelay {
             }
         }
         return data
+    }
+
+    /** True when [response] is an HLS playlist: by its type, or by #EXTM3U at the start (only a peek is read) */
+    private fun isPlaylist(response: okhttp3.Response): Boolean {
+        val type = response.header("Content-Type").orEmpty().lowercase()
+        if ("mpegurl" in type) return true
+        val head = runCatching { response.peekBody(64).bytes() }.getOrDefault(ByteArray(0))
+        val text = String(head, Charsets.UTF_8).trimStart('\uFEFF', ' ', '\t', '\r', '\n')
+        return text.startsWith("#EXTM3U")
+    }
+
+    /** Sends [response] on as it came (status, type, length, range), streamed, without reading it into memory */
+    private fun passThrough(out: OutputStream, response: okhttp3.Response) {
+        val body = response.body
+        val type = response.header("Content-Type") ?: "application/octet-stream"
+        val length = body.contentLength()
+        val head = StringBuilder()
+            .append("HTTP/1.1 ${response.code} ${if (response.code == 206) "Partial Content" else "OK"}\r\n")
+            .append("Content-Type: $type\r\n")
+        if (length >= 0) head.append("Content-Length: $length\r\n")
+        response.header("Content-Range")?.let { head.append("Content-Range: $it\r\n") }
+        response.header("Accept-Ranges")?.let { head.append("Accept-Ranges: $it\r\n") }
+        head.append("Connection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n")
+        out.write(head.toString().toByteArray())
+        body.byteStream().use { it.copyTo(out, 64 * 1024) }
+        out.flush()
     }
 
     private fun respond(out: OutputStream, code: Int, type: String, body: ByteArray) {

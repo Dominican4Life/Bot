@@ -1152,7 +1152,8 @@ class ReaderActivity : BaseActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        outState.putBoolean(STATE_VIDEO_CHECKED, videoChecked)
+        // KMK: a hand-off still resolving (rotated meanwhile) dies with this activity: the new one checks again
+        outState.putBoolean(STATE_VIDEO_CHECKED, videoChecked && !handingOffVideo)
     }
 
     private fun showDeferredModeToast() {

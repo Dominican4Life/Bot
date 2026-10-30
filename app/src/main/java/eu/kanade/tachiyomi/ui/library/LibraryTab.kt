@@ -124,6 +124,16 @@ data object LibraryTab : Tab {
         // KMK: the Browse preview panels, in the library too
         val preview = rememberLibraryMangaPreview()
         androidx.activity.compose.BackHandler(enabled = preview.highlighted() != null) { preview.model?.clear() }
+        // KMK: the library's order stays still while a preview is open (see LibraryOrderFreeze)
+        val orderFreeze = remember { LibraryOrderFreeze() }
+        val freezeKey = preview.orderFreezeKey(orderFreeze, state.groupType, state.searchQuery)
+        // KMK: filters aren't in the freeze key: opening the library settings sheet (filters, sort, display) while
+        // a preview is open shows the live order again, until the preview closes
+        val previewOpen = preview.highlighted() != null
+        val settingsSheetOpen = state.dialog is LibraryScreenModel.Dialog.SettingsSheet
+        LaunchedEffect(settingsSheetOpen) {
+            if (settingsSheetOpen && previewOpen) orderFreeze.released = true
+        }
 
         val onClickRefresh: (Category?) -> Boolean = { category ->
             // SY -->
@@ -365,16 +375,24 @@ data object LibraryTab : Tab {
                         onToggleSelection = screenModel::toggleSelection,
                         onToggleRangeSelection = { category, manga ->
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            screenModel.toggleRangeSelection(category, manga)
+                            // KMK: the range follows the order on screen (it can be frozen while a preview is open)
+                            val displayedIds = orderFreeze
+                                .apply(freezeKey, category, state.getItemsForCategory(category))
+                                .map { it.id }
+                            screenModel.toggleRangeSelection(category, manga, displayedIds)
                         },
-                        onRefresh = { onClickRefresh(state.activeCategory) },
+                        onRefresh = {
+                            // KMK: pull to refresh shows the live order again (until the preview closes)
+                            orderFreeze.released = true
+                            onClickRefresh(state.activeCategory)
+                        },
                         onGlobalSearchClicked = {
                             navigator.push(GlobalSearchScreen(screenModel.state.value.searchQuery ?: ""))
                         },
                         getItemCountForCategory = { state.getItemCountForCategory(it) },
                         getDisplayMode = { screenModel.getDisplayMode() },
                         getColumnsForOrientation = { screenModel.getColumnsForOrientation(it) },
-                        getItemsForCategory = { state.getItemsForCategory(it) },
+                        getItemsForCategory = { orderFreeze.apply(freezeKey, it, state.getItemsForCategory(it)) },
                         // KMK
                         highlighted = preview.highlighted(),
                         panelButtons = { preview.Buttons(this) },
@@ -425,7 +443,13 @@ data object LibraryTab : Tab {
                     },
                     onConfirm = { include, exclude ->
                         screenModel.clearSelection()
-                        screenModel.setMangaCategories(dialog.manga, include, exclude)
+                        // KMK: the preview's add button asked for categories: add the title only now
+                        val adding = dialog.manga.singleOrNull()?.takeIf { dialog.addToLibrary }
+                        if (adding != null) {
+                            screenModel.addToLibraryWithCategories(adding, include)
+                        } else {
+                            screenModel.setMangaCategories(dialog.manga, include, exclude)
+                        }
                     },
                 )
             }

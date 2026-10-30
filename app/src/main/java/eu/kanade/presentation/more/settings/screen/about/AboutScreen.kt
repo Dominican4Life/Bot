@@ -167,7 +167,8 @@ class AboutScreen : Screen() {
                                         context = context,
                                         onAvailableUpdate = { result ->
                                             val whatsNewScreen = WhatsNewScreen(
-                                                currentVersion = BuildConfig.VERSION_NAME,
+                                                // KMK: "r90", like the release tags listed
+                                                currentVersion = eu.kanade.tachiyomi.data.updater.currentReleaseLabel(),
                                                 versionName = result.release.version,
                                                 changelogInfo = result.release.info,
                                                 releaseLink = result.release.releaseLink,

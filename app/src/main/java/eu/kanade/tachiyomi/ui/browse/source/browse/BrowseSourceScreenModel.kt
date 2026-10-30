@@ -44,6 +44,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -239,13 +240,35 @@ open class BrowseSourceScreenModel(
     // screen's own scope they piled up on every tab switch (a kept tab hands all its loaded titles over again)
     private var listingScope: CoroutineScope? = null
 
+    // KMK: the scopes of tabs shown before. They stop once the new tab's first title arrives, not at the switch:
+    // the old titles stay on screen until then, and their favorite badges froze when stopped at once
+    private val oldListingScopes = mutableListOf<CoroutineScope>()
+
+    private fun retireOldListingScopes(current: CoroutineScope) {
+        val old = synchronized(oldListingScopes) {
+            // Only the tab shown now stops the others: a late title of an older tab mustn't
+            if (listingScope !== current) return
+            oldListingScopes.toList().also { oldListingScopes.clear() }
+        }
+        old.forEach { it.cancel() }
+    }
+
     val mangaPagerFlowFlow = state.map { it.listing to it.reloadToken }
         .distinctUntilChanged()
         .map { (listing, _) ->
-            listingScope?.cancel()
             val parent = ioCoroutineScope.coroutineContext
             val scope = CoroutineScope(parent + SupervisorJob(parent[Job]))
-            listingScope = scope
+            synchronized(oldListingScopes) {
+                listingScope?.let { oldListingScopes.add(it) }
+                listingScope = scope
+            }
+            val retired = java.util.concurrent.atomic.AtomicBoolean(false)
+            // KMK: an empty or failing tab never maps a title, so the older scopes would pile up: they also stop
+            // after 5 s (same guard; cancelled with this scope if another tab is shown first)
+            scope.launch {
+                delay(5000)
+                if (retired.compareAndSet(false, true)) retireOldListingScopes(scope)
+            }
             // KMK: a tab's list is kept until the app closes (see BrowseTabCache); a typed search loads fresh.
             // The kept pager mustn't hold this screen model (it outlives the screen), so it gets a factory only
             val pagingSourceFor = pagingSourceFactory()
@@ -264,6 +287,7 @@ open class BrowseSourceScreenModel(
             }
             rawFlow.map { pagingData ->
                 pagingData.map { (manga, metadata) ->
+                    if (retired.compareAndSet(false, true)) retireOldListingScopes(scope)
                     getManga.subscribe(manga.url, manga.source)
                         .map { it ?: manga }
                         // SY -->
@@ -296,15 +320,16 @@ open class BrowseSourceScreenModel(
      * KMK: A copy of [filters] in a fresh list from the source, values and all (a JS source's picked tab too). The
      * Filter panel and the tab being shown each get their own, so ticking something in the panel doesn't change the
      * list on screen (later pages would come from a search) until Filter is pressed. Falls back to [filters] itself
-     * when the source hands out the same list every time or its shape changed.
+     * when the source hands out the same list every time, its shape changed or a value couldn't be copied.
      */
     private fun copyOf(filters: FilterList): FilterList = runCatching {
         val copy = source.getFilterList()
         if (copy === filters || copy.size != filters.size) {
             filters
         } else {
-            filterSerializer.deserialize(copy, filterSerializer.serialize(filters))
-            copy
+            // KMK: a value that didn't copy would be lost (left at its default): then share the list, as before r89
+            val failed = filterSerializer.deserialize(copy, filterSerializer.serialize(filters))
+            if (failed > 0) filters else copy
         }
     }.getOrDefault(filters)
 

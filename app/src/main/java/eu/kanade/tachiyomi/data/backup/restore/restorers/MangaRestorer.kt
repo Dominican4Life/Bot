@@ -51,6 +51,8 @@ class MangaRestorer(
     private val insertFlatMetadata: InsertFlatMetadata = Injekt.get(),
     private val getFlatMetadataById: GetFlatMetadataById = Injekt.get(),
     // SY <--
+    // KMK (r90): pair sync only adds the sender's categories to a title; a backup restore replaces them as before
+    private val addCategoriesOnly: Boolean = false,
 ) {
     private var now = ZonedDateTime.now()
     private var currentFetchWindow = fetchInterval.getWindow(now)
@@ -404,10 +406,16 @@ class MangaRestorer(
         }
 
         if (mangaCategoriesToUpdate.isNotEmpty()) {
+            // KMK (r90): for pair sync, the categories the title is in here stay; only missing links are added
+            val linkedHere = if (addCategoriesOnly) {
+                getCategories.await(manga.id).map { it.id }.toSet()
+            } else {
+                emptySet()
+            }
             handler.await(true) {
-                mangas_categoriesQueries.deleteMangaCategoryByMangaId(manga.id)
+                if (!addCategoriesOnly) mangas_categoriesQueries.deleteMangaCategoryByMangaId(manga.id)
                 mangaCategoriesToUpdate.forEach { (mangaId, categoryId) ->
-                    mangas_categoriesQueries.insert(mangaId, categoryId)
+                    if (categoryId !in linkedHere) mangas_categoriesQueries.insert(mangaId, categoryId)
                 }
             }
         }

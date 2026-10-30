@@ -45,13 +45,9 @@ object AnimeStats {
 
         // Downloads: count the episode files in each anime's folder
         val downloaded = library.sumOf { anime ->
-            runCatching {
-                downloadManager.animeDir(anime, create = false)
-                    ?.listFiles()
-                    // KMK (r88): episode videos only (not the saved cover, subtitles or unfinished files)
-                    ?.count { file -> file.isFile && AnimeDownloadManager.isEpisodeVideo(file.name.orEmpty()) }
-                    ?: 0
-            }.getOrDefault(0)
+            // KMK (r88): episode videos only (not the saved cover, subtitles or unfinished files). KMK (r90): and in
+            // a folder two titles share (names differing only in letter case), only this anime's own
+            runCatching { downloadManager.episodeFileCount(anime) }.getOrDefault(0)
         }
 
         val tracks = runCatching { trackRepository.getAll() }.getOrDefault(emptyList())

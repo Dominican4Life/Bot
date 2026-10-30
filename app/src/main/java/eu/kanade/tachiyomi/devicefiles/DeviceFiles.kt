@@ -309,9 +309,11 @@ object DeviceFilesRepository {
         val pending = ArrayDeque(storageRoots(context).map { File(it.path) })
         while (pending.isNotEmpty() && found.size < limit && System.currentTimeMillis() < deadline && !isCancelled()) {
             val dir = pending.removeFirst()
-            dir.listFiles().orEmpty().forEach { child ->
+            // KMK: the limit, time and cancel are checked per entry too: one huge folder ran far past them
+            for (child in dir.listFiles().orEmpty()) {
+                if (found.size >= limit || System.currentTimeMillis() >= deadline || isCancelled()) break
                 val name = child.name
-                if (!showHidden && name.startsWith(".")) return@forEach
+                if (!showHidden && name.startsWith(".")) continue
                 if (child.isDirectory) {
                     // app-private data: not readable, and huge
                     if (!(name == "data" || name == "obb") || dir.name != "Android") pending.addLast(child)

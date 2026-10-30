@@ -119,6 +119,21 @@ fun RelatedMangasContent(
                 selection = selection,
             )
         }
+        // KMK: a value outside the known modes falls back to the default compact grid instead of crashing
+        // (NoWhenBranchMatchedException, as seen in the library after a pair sync in r89)
+        else -> {
+            RelatedMangasCompactGrid(
+                relatedMangas = relatedMangas,
+                getManga = getMangaState,
+                columns = columns,
+                contentPadding = contentPadding,
+                onMangaClick = onMangaClick,
+                onMangaLongClick = onMangaLongClick,
+                onKeywordClick = onKeywordClick,
+                onKeywordLongClick = onKeywordLongClick,
+                selection = selection,
+            )
+        }
     }
 }
 

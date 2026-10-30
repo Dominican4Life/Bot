@@ -39,6 +39,8 @@ import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
 import exh.source.MERGED_SOURCE_ID
 import kotlinx.coroutines.launch
+import tachiyomi.domain.category.model.Category
+import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.presentation.core.util.collectAsState as collectPrefAsState
@@ -214,4 +216,66 @@ fun LibraryMangaPreview.Panels(scope: BoxScope, onToggleFavorite: (Manga) -> Uni
             },
         )
     }
+}
+
+/**
+ * KMK: Keeps the library's order still while a preview is open. Previewing a library title refreshes it from the
+ * source, which changes its row (unread count, last update, sometimes its chapters and history), so under sorts like
+ * "Last read" the tapped title and its neighbours moved, and the grid's scroll followed the first visible title.
+ * While the panels are open, each category keeps the order its items had when it was first shown; new data (badges)
+ * still shows in place, titles that left the list drop out and new ones go at the end.
+ */
+@Stable
+class LibraryOrderFreeze {
+    /** Pull to refresh turns the freeze off until the panels close */
+    var released by mutableStateOf(false)
+
+    private var key: Any? = null
+
+    // KMK: one snapshot per category and its own sort (flags), so swiping between tabs keeps each tab's order
+    private val orders = HashMap<Pair<Long, Long>, List<Long>>()
+
+    /** [key] is null when nothing is frozen; a new key (sort, grouping or search changed) takes a new snapshot */
+    fun apply(key: Any?, category: Category, items: List<LibraryItem>): List<LibraryItem> {
+        if (key == null) {
+            if (this.key != null) {
+                this.key = null
+                orders.clear()
+            }
+            return items
+        }
+        if (key != this.key) {
+            this.key = key
+            orders.clear()
+        }
+        val slot = category.id to category.flags
+        val order = orders[slot]
+        if (order == null) {
+            orders[slot] = items.map { it.id }
+            return items
+        }
+        val byId = items.associateBy { it.id }
+        val kept = order.mapNotNull { byId[it] }
+        val known = order.toHashSet()
+        val added = items.filter { it.id !in known }
+        if (added.isEmpty()) return kept
+        orders[slot] = order + added.map { it.id }
+        return kept + added
+    }
+}
+
+/**
+ * KMK: The key for [LibraryOrderFreeze.apply]: null when no preview is open (or after pull to refresh), otherwise it
+ * changes with the sort and with [inputs] (the grouping, the search), which take a new snapshot of the order. A
+ * tab's own sort is part of its snapshot slot in [LibraryOrderFreeze.apply], so swiping tabs keeps the freeze.
+ */
+@Composable
+fun LibraryMangaPreview.orderFreezeKey(freeze: LibraryOrderFreeze, vararg inputs: Any?): Any? {
+    val open = highlighted() != null
+    LaunchedEffect(open) {
+        if (!open) freeze.released = false
+    }
+    val sortPref = remember { Injekt.get<LibraryPreferences>().sortingMode() }
+    val sort by sortPref.collectPrefAsState()
+    return if (open && !freeze.released) listOf(sort, *inputs) else null
 }

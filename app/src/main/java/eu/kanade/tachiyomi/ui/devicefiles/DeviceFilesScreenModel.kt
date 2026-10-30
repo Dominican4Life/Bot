@@ -115,6 +115,8 @@ class DeviceFilesScreenModel(
                 }
                 is FilesLocation.Category -> {
                     val files = DeviceFilesRepository.category(context, where.category, hidden)
+                    // KMK: same for the slow category listings
+                    if (!isActive) return@launchIO
                     _state.update {
                         it.copy(loading = false, hasAccess = true, files = files, albums = albumsOf(files))
                     }
@@ -122,6 +124,9 @@ class DeviceFilesScreenModel(
                 is FilesLocation.Folder -> {
                     val files = DeviceFilesRepository.list(File(where.path), hidden)
                     val roots = DeviceFilesRepository.storageRoots(context)
+                    // KMK: the listing can't be stopped part way; a newer load (after a rename or delete) replaced
+                    // this one meanwhile, so its older listing isn't shown over the newer one
+                    if (!isActive) return@launchIO
                     _state.update { it.copy(loading = false, hasAccess = true, files = files, roots = roots) }
                 }
                 FilesLocation.Favourites -> {
@@ -185,8 +190,11 @@ class DeviceFilesScreenModel(
         // KMK: shared storage ignores letter case, so "ep1" -> "EP1" finds the file itself: go through a temp name
         val caseOnly = target.path.equals(file.path, ignoreCase = true)
         if (target.exists() && !caseOnly) return@withIOContext false
+        // KMK: on a volume that keeps letter case apart, "EP1" can be another file next to "ep1": never replace it
+        if (caseOnly && file.file.parentFile?.list()?.contains(name) == true) return@withIOContext false
         val ok = if (caseOnly) {
-            val temp = File(file.file.parentFile, ".${file.name}.renaming-${System.currentTimeMillis()}")
+            // KMK: no leading dot, so the file isn't hidden (and skipped by the media index) if the second step fails
+            val temp = File(file.file.parentFile, "${file.name}.renaming-${System.currentTimeMillis()}")
             if (file.file.renameTo(temp)) {
                 temp.renameTo(target) || run {
                     temp.renameTo(file.file)

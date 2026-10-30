@@ -16,6 +16,7 @@ import logcat.LogPriority
 import logcat.LogcatLogger
 import java.io.File
 import java.io.RandomAccessFile
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * KMK: The app's own log, shown in the Logs screen (debug button on the navigation rail).
@@ -65,28 +66,40 @@ object AppLog {
         sessionStart = System.currentTimeMillis()
         val dir = File(context.filesDir, "app_log").apply { mkdirs() }
         val logFile = File(dir, "log.txt")
-        file = logFile
-        // KMK: only a stat on the main thread; reading and trimming happen in the writer below
+        // KMK: only a stat on the main thread; reading and trimming happen in the writer below. The stat comes before
+        // `file` is set, so an E line written straight to the file can't fall before startLength (it was read back
+        // as an earlier run's line and shown twice)
         val startLength = runCatching { logFile.length() }.getOrDefault(0L)
+        file = logFile
         scope.launch {
             // Earlier runs: only the file's tail is read, then the file is rewritten with it
             runCatching {
-                synchronized(fileLock) {
-                    if (startLength > 0L) {
-                        val old = readTail(logFile, startLength, MAX_BYTES).takeLast(MAX_LINES).mapNotNull(::decode)
+                if (startLength > 0L) {
+                    // KMK: read without the lock (nothing changes the file before startLength until the rewrite
+                    // below), so E lines aren't held up for the whole read
+                    val old = readTail(logFile, startLength, MAX_BYTES).takeLast(MAX_LINES).mapNotNull(::decode)
+                    synchronized(fileLock) {
                         // E lines written straight to the file since init
                         val sinceStart = readRange(logFile, startLength, logFile.length())
                         logFile.writeText(old.joinToString("") { encode(it) } + sinceStart)
-                        synchronized(lines) {
-                            lines.addAll(0, old)
-                            while (lines.size > MAX_LINES) lines.removeFirst()
-                        }
-                        _version.value++
                     }
+                    synchronized(lines) {
+                        // KMK: not when the log was cleared meanwhile
+                        if (pendingClears.get() == 0) lines.addAll(0, old)
+                        while (lines.size > MAX_LINES) lines.removeFirst()
+                    }
+                    _version.value++
                 }
             }
             var writes = 0
             for (text in pending) {
+                // KMK: Clear goes through this queue, so lines queued before it aren't appended after it
+                if (text == CLEAR_MARK) {
+                    runCatching { synchronized(fileLock) { logFile.writeText("") } }
+                    writes = 0
+                    pendingClears.decrementAndGet()
+                    continue
+                }
                 runCatching {
                     synchronized(fileLock) {
                         logFile.appendText(text)
@@ -109,6 +122,12 @@ object AppLog {
 
     /** Lock for the log file: the writer, trimming, clear and the direct E lines */
     private val fileLock = Any()
+
+    /** KMK: queued in [pending] by [clear]; never equal to an encoded line (those always hold tabs) */
+    private const val CLEAR_MARK = "\u0000clear"
+
+    /** KMK: clears queued but not done yet: E lines go through the queue meanwhile, so the clear can't wipe them */
+    private val pendingClears = AtomicInteger(0)
 
     /** Keeps the newest [TRIM_TO_BYTES] of the file, starting at a whole line. Call with [fileLock] held */
     private fun trim(logFile: File) {
@@ -151,7 +170,7 @@ object AppLog {
             lines.addLast(line)
             while (lines.size > MAX_LINES) lines.removeFirst()
         }
-        if (level == 'E') {
+        if (level == 'E' && pendingClears.get() == 0) {
             // A crash may end the process before the writer runs: write problems right away
             runCatching { file?.let { f -> synchronized(fileLock) { f.appendText(encode(line)) } } }
         } else {
@@ -163,8 +182,14 @@ object AppLog {
     fun snapshot(): List<Line> = synchronized(lines) { lines.toList() }
 
     fun clear() {
-        synchronized(lines) { lines.clear() }
-        scope.launch { runCatching { file?.let { f -> synchronized(fileLock) { f.writeText("") } } } }
+        // KMK: counted inside the lock before clearing, so the writer's restore of older lines (which checks the
+        // count under the same lock) can't slip in between and put them back
+        synchronized(lines) {
+            pendingClears.incrementAndGet()
+            lines.clear()
+        }
+        // KMK: in order with the queued lines (the writer empties the file when it gets here)
+        pending.trySend(CLEAR_MARK)
         _version.value++
     }
 

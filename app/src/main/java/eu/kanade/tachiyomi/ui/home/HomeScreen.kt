@@ -103,8 +103,10 @@ object HomeScreen : Screen() {
         // KMK: read before any tab is composed: a restored Browse tab makes the Extensions screen model (which takes
         // the kept search) during composition, before a LaunchedEffect would run
         val returnToExtensions = remember { eu.kanade.tachiyomi.ui.browse.extension.unified.ExtensionsReturn.take() }
-        // KMK (r89): the Sync pop-up opened from the rail's Sync button
-        val showPairSync = remember { androidx.compose.runtime.mutableStateOf(false) }
+        // KMK (r89): the Sync pop-up opened from the rail's Sync button; KMK (r90): kept open across rotation
+        val showPairSync = androidx.compose.runtime.saveable.rememberSaveable {
+            androidx.compose.runtime.mutableStateOf(false)
+        }
         if (showPairSync.value) {
             eu.kanade.tachiyomi.ui.pairsync.PairSyncDialog(onDismissRequest = { showPairSync.value = false })
         }

@@ -103,6 +103,12 @@ class AnimeDownloadManager(
     /** KMK (r88): how many of an anime's episodes share each file name, for the older and looser name lookups */
     private class NameCounts(val legacy: Map<String, Int>, val stems: Map<String, Int>)
 
+    /**
+     * KMK (r90): an anime's download folder. [shared]: another library title of the same source has the same name
+     * apart from letter case, so the folder may hold that title's files too and only this anime's own count.
+     */
+    private class AnimeFolder(val dir: UniFile, val shared: Boolean)
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val queuePref = preferenceStore.getStringSet("anime_download_queue", emptySet())
 
@@ -121,6 +127,10 @@ class AnimeDownloadManager(
 
     /** KMK (r88): per episode id */
     private val running = ConcurrentHashMap<Long, Running>()
+
+    /** KMK (r90): folder names of the library's titles per source, (anime id, name), and when they were read */
+    @Volatile
+    private var libraryNames: Pair<Long, Map<Long, List<Pair<Long, String>>>>? = null
 
     /** Taking the next queued item and creating folders happen one download at a time */
     private val claimLock = Mutex()
@@ -406,11 +416,28 @@ class AnimeDownloadManager(
      */
     fun downloadedCount(anime: Anime): Int = fileCache[anime.id]?.count { isEpisodeVideo(it) } ?: 0
 
+    /** KMK (r90): episode videos in the anime's folder, read now (Stats); only its own in a shared folder */
+    fun episodeFileCount(anime: Anime): Int = listFiles(anime).count { isEpisodeVideo(it) }
+
     /** KMK (r88): reads the folder and the episode names again */
     private suspend fun reload(anime: Anime) {
-        fileCache[anime.id] = listFiles(anime)
+        // KMK (r90): the episode names first, a shared folder's files are picked by them
         val counts = loadNameCounts(anime.id)
         if (counts != null) nameCounts[anime.id] = counts else nameCounts.remove(anime.id)
+        fileCache[anime.id] = listFiles(anime)
+    }
+
+    /**
+     * KMK (r90): [name] is an episode video named after one of the anime's episodes ([episodeBaseName] or the older
+     * [legacyBaseName]). Used where two titles share a folder, so one's files don't count for the other.
+     */
+    private fun ownsFile(name: String, counts: NameCounts): Boolean {
+        if (!isEpisodeVideo(name)) return false
+        val base = name.substringBeforeLast('.')
+        if (base in counts.legacy) return true
+        val cut = base.lastIndexOf('_')
+        if (cut < 0) return false
+        return NUMBER_TAG.matches(base.substring(cut + 1)) && base.substring(0, cut + 1) in counts.stems
     }
 
     private fun nameCountsOf(anime: Anime): NameCounts? {
@@ -465,12 +492,27 @@ class AnimeDownloadManager(
         val stopping = running.values.filter { it.item.anime.id == anime.id }
         scope.launch {
             stopping.forEach { it.finished.await() }
-            animeDir(anime, create = false)?.delete()
+            val episodes = runCatching { repository.getEpisodes(anime.id) }.getOrNull()
+            val folder = findAnimeFolder(anime, create = false)
+            if (folder != null && folder.shared) {
+                // KMK (r90): a folder another title (same name apart from letter case) may use too: only this
+                // anime's own episode files and unfinished files go, the folder itself only once it's empty
+                val counts = loadNameCounts(anime.id)
+                val unfinished = episodes.orEmpty().mapTo(HashSet()) { "${episodeBaseName(it)}$TMP" }
+                folder.dir.listFiles().orEmpty()
+                    .filter { file ->
+                        val name = file.name ?: return@filter false
+                        name in unfinished || (counts != null && ownsFile(name, counts))
+                    }
+                    .forEach { it.delete() }
+                if (folder.dir.listFiles().isNullOrEmpty()) folder.dir.delete()
+            } else {
+                folder?.dir?.delete()
+            }
             fileCache[anime.id] = emptySet()
             nameCounts.remove(anime.id)
             // KMK (r88): and the pieces kept for any of its episodes
-            runCatching { repository.getEpisodes(anime.id) }.getOrNull()
-                ?.forEach { ParallelVideoDownload.discard(pieceKey(it)) }
+            episodes?.forEach { ParallelVideoDownload.discard(pieceKey(it)) }
             _changes.update { it + 1 }
         }
     }
@@ -495,23 +537,102 @@ class AnimeDownloadManager(
     }
 
     // KMK: also where the anime's cover is kept (CoverFolders)
-    internal fun animeDir(anime: Anime, create: Boolean): UniFile? {
+    internal fun animeDir(anime: Anime, create: Boolean): UniFile? = findAnimeFolder(anime, create)?.dir
+
+    private fun findAnimeFolder(anime: Anime, create: Boolean): AnimeFolder? {
         // downloads/Anime (the older "anime" folder counts too)
         val animeRoot = storageManager.getAnimeDownloadsDirectory(create) ?: return null
         val title = DiskUtil.buildValidFilename(anime.title)
         val match = sourceMatch(anime)
         val sourceDirs = eu.kanade.tachiyomi.data.download.SourceFolders.find(animeRoot, match)
-        // KMK: the anime's folder wherever it already is
-        sourceDirs.firstNotNullOfOrNull { dir -> dir.findFile(title)?.takeIf { it.isDirectory } }?.let { return it }
+        val twins = caseTwinNames(anime, title)
+        if (twins.isEmpty()) {
+            // KMK: the anime's folder wherever it already is
+            sourceDirs.firstNotNullOfOrNull { dir -> dir.findFile(title)?.takeIf { it.isDirectory } }
+                ?.let { return AnimeFolder(it, shared = false) }
+            if (!create) return null
+            val sourceDir = sourceDirs.firstOrNull()
+                ?: eu.kanade.tachiyomi.data.download.SourceFolders.findOrCreate(animeRoot, sourceDirName(anime), match)
+                ?: return null
+            return eu.kanade.tachiyomi.data.download.SourceFolders.findOrCreate(sourceDir, title)
+                ?.let { AnimeFolder(it, shared = false) }
+        }
+        // KMK (r90): another library title of this source has the same name apart from letter case ("Bleach…" and
+        // "BLEACH…"). Android's storage finds folders in any case, so both used one folder and each showed the
+        // other's downloads. Folders are now told apart by their exact name; a title whose exact name is taken
+        // gets "<title> [<link hash>]". Up to r89 both titles' files may sit in one folder, so only the files named
+        // after this anime's episodes count ([listFiles]).
+        val tagged = taggedDirName(anime)
+        val folders = sourceDirs.flatMap { dir ->
+            dir.listFiles().orEmpty().filter { it.isDirectory && it.name != null }
+        }
+        folders.firstOrNull { it.name == title }?.let { return AnimeFolder(it, shared = true) }
+        folders.firstOrNull { it.name == tagged }?.let { return AnimeFolder(it, shared = true) }
+        val sameButCase = folders.filter { it.name.equals(title, ignoreCase = true) }
+        // Named after neither title exactly (a title whose letter case changed since)
+        sameButCase.firstOrNull { it.name.orEmpty() !in twins }?.let { return AnimeFolder(it, shared = true) }
+        // The other title's folder, where this one's episodes went before r90
+        val counts = nameCountsOf(anime)
+        if (counts != null) {
+            sameButCase
+                .firstOrNull { dir ->
+                    dir.listFiles().orEmpty().any { file -> file.name?.let { ownsFile(it, counts) } == true }
+                }
+                ?.let { return AnimeFolder(it, shared = true) }
+        }
         if (!create) return null
         val sourceDir = sourceDirs.firstOrNull()
             ?: eu.kanade.tachiyomi.data.download.SourceFolders.findOrCreate(animeRoot, sourceDirName(anime), match)
             ?: return null
-        return eu.kanade.tachiyomi.data.download.SourceFolders.findOrCreate(sourceDir, title)
+        val name = if (sameButCase.isEmpty()) title else tagged
+        return eu.kanade.tachiyomi.data.download.SourceFolders.findOrCreate(sourceDir, name)
+            ?.let { AnimeFolder(it, shared = true) }
     }
 
-    private fun listFiles(anime: Anime): Set<String> =
-        animeDir(anime, create = false)?.listFiles()?.mapNotNull { it.name }?.toSet() ?: emptySet()
+    /** KMK (r90): the folder name of a title whose name (apart from letter case) another title already uses */
+    private fun taggedDirName(anime: Anime): String {
+        val hash = anime.url.hashCode().toUInt().toString(16)
+        return DiskUtil.buildValidFilename(anime.title, maxBytes = 200) + " [$hash]"
+    }
+
+    /**
+     * KMK (r90): folder names of other library titles (seasons too) of the same source that equal [title] apart from
+     * letter case. Read from the database at most every [LIBRARY_NAMES_TTL_MS]; empty when it can't be read.
+     */
+    private fun caseTwinNames(anime: Anime, title: String): Set<String> {
+        val now = System.currentTimeMillis()
+        val names = libraryNames?.takeIf { now - it.first < LIBRARY_NAMES_TTL_MS }?.second
+            ?: try {
+                runBlocking(Dispatchers.IO) { loadLibraryNames() }.also { libraryNames = now to it }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                logcat(LogPriority.WARN, e) { "Couldn't read the anime library's titles" }
+                return emptySet()
+            }
+        return names[anime.source].orEmpty()
+            .filter { (id, name) -> id != anime.id && name != title && name.equals(title, ignoreCase = true) }
+            .mapTo(HashSet()) { it.second }
+    }
+
+    /** KMK (r90): per source, (anime id, folder name) for each library title, by its own and its Edit info title */
+    private suspend fun loadLibraryNames(): Map<Long, List<Pair<Long, String>>> {
+        val animes = (repository.getFavoritesRaw() + repository.getSeasonsOfFavoritesRaw()).distinctBy { it.id }
+        return animes
+            .flatMap { a ->
+                val custom = repository.getCustomInfo(a.id)?.title?.takeIf { it.isNotBlank() }
+                listOfNotNull(a.title, custom).distinct().map { a.source to (a.id to DiskUtil.buildValidFilename(it)) }
+            }
+            .groupBy({ it.first }, { it.second })
+    }
+
+    /** KMK (r90): in a shared folder, only the files named after this anime's episodes (none if unknown) */
+    private fun listFiles(anime: Anime): Set<String> {
+        val folder = findAnimeFolder(anime, create = false) ?: return emptySet()
+        val names = folder.dir.listFiles()?.mapNotNull { it.name }?.toSet() ?: return emptySet()
+        if (!folder.shared) return names
+        val counts = nameCountsOf(anime) ?: return emptySet()
+        return names.filterTo(HashSet()) { ownsFile(it, counts) }
+    }
 
     /** Up to r86: `scanlator_name`, shared by two episodes with the same name (they overwrote each other) */
     private fun legacyBaseName(episode: Episode): String {
@@ -807,6 +928,9 @@ class AnimeDownloadManager(
         const val ANIME_DIR = "anime"
         private const val TMP = ".tmp"
         private const val KEY_PREFIX = "anime_"
+
+        /** KMK (r90): how long the library's titles are kept for [caseTwinNames] */
+        private const val LIBRARY_NAMES_TTL_MS = 10_000L
 
         /** KMK (r88): the tag [episodeBaseName] ends with ("E12", "E12.5", "U1a2b3c") */
         private val NUMBER_TAG = Regex("E[0-9][0-9.]*|U[0-9a-f]+")

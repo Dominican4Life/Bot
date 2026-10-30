@@ -11,6 +11,7 @@ import eu.kanade.tachiyomi.data.anime.AnimeRepository
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.model.Filter
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -214,8 +215,22 @@ class TagMixFeedScreenModel(
         }
     }
 
-    private fun load(mix: TagMix) {
-        screenModelScope.launchIO {
+    // KMK: the load running for each mix, so a row isn't loaded twice when the rows are rebuilt while it loads
+    private val jobs = HashMap<TagMix, Job>()
+
+    private fun load(mix: TagMix, force: Boolean = false) {
+        synchronized(jobs) {
+            val running = jobs[mix]
+            if (running?.isActive == true) {
+                if (!force) return
+                running.cancel()
+            }
+            jobs[mix] = launchLoad(mix)
+        }
+    }
+
+    private fun launchLoad(mix: TagMix): Job {
+        return screenModelScope.launchIO {
             val result = try {
                 if (mix.anime) Row(mix, anime = loadAnime(mix)) else Row(mix, manga = loadManga(mix))
             } catch (e: Throwable) {
@@ -249,12 +264,10 @@ class TagMixFeedScreenModel(
     }
 
     private suspend fun loadAnime(mix: TagMix): List<Anime> = coroutineScope {
-        // KMK: at a cold start the row is read before the sources are registered: wait a while for them
-        withTimeoutOrNull(SOURCE_WAIT_MS) {
-            animeSourceManager.catalogueSources.first { list ->
-                val ids = list.map { it.id }.toSet()
-                mix.sourceIds.all { it in ids }
-            }
+        // KMK: at a cold start the row is read before the sources are registered: wait once for them to be registered,
+        // then mix the sources that exist (one that isn't installed no longer holds up the whole mix)
+        if (mix.sourceIds.any { animeSourceManager.get(it) == null }) {
+            AnimeSourcesReady.await(animeSourceManager, mix.sourceIds)
         }
         mix.sourceIds.mapNotNull { animeSourceManager.get(it) as? AnimeCatalogueSource }
             .map { source ->
@@ -278,7 +291,7 @@ class TagMixFeedScreenModel(
     /** Reloads every row (pull to refresh) */
     fun refresh() {
         mutableState.update { state -> state.copy(rows = state.rows.map { Row(it.mix) }) }
-        state.value.rows.forEach { load(it.mix) }
+        state.value.rows.forEach { load(it.mix, force = true) }
     }
 
     fun delete(mix: TagMix) = store.delete(mix.id)

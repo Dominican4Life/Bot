@@ -218,6 +218,21 @@ fun BrowseSourceContent(
                 // KMK <--
             )
         }
+        // KMK: a value outside the known modes falls back to the default compact grid instead of crashing
+        // (NoWhenBranchMatchedException, as seen in the library after a pair sync in r89)
+        else -> {
+            BrowseSourceCompactGrid(
+                mangaList = mangaList,
+                columns = columns,
+                contentPadding = contentPadding,
+                onMangaClick = onMangaClick,
+                onMangaLongClick = onMangaLongClick,
+                selection = selection,
+                gridState = gridState,
+                showTitle = true,
+            )
+        }
+        // KMK <--
     }
 }
 

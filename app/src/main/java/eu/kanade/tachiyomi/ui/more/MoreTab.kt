@@ -8,7 +8,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import cafe.adriel.voyager.core.model.ScreenModel
@@ -75,8 +75,9 @@ data object MoreTab : Tab {
         val navigator = LocalNavigator.currentOrThrow
         val screenModel = rememberScreenModel { MoreScreenModel() }
         val downloadQueueState by screenModel.downloadQueueState.collectAsState()
-        // KMK (r89): the Sync devices pop-up, for phones (the tablet rail has a Sync button too)
-        var showPairSync by remember { mutableStateOf(false) }
+        // KMK (r89): the Sync devices pop-up, for phones (the tablet rail has a Sync button too); KMK (r90): kept
+        // open across rotation
+        var showPairSync by rememberSaveable { mutableStateOf(false) }
         if (showPairSync) PairSyncDialog(onDismissRequest = { showPairSync = false })
         MoreScreen(
             downloadQueueStateProvider = { downloadQueueState },

@@ -134,10 +134,17 @@ jobs:
             abi=$(basename "$f" .apk | sed 's/^app-//; s/-preview.*//')
             case "$abi" in arm64-v8a|universal) cp "$f" "Komikku-beta-${abi}-${tag}.apk" ;; esac
           done
+          # KMK (r90): the notes are the head commit's message (the app's What's new shows them), not the same
+          # "Built from branch" line on every release; the commit trailers are left out
+          git log -1 --format=%B "${{ github.sha }}" \
+            | grep -v -i -E '^(co-authored-by|claude-session|signed-off-by):' > release-notes.txt || true
+          if [ -z "$(tr -d '[:space:]' < release-notes.txt)" ]; then
+            echo "Built from branch ${{ github.ref_name }} at ${{ github.sha }}." > release-notes.txt
+          fi
           gh release create "$tag" \
             --repo "${{ github.repository }}" \
             --target "${{ github.sha }}" \
             --title "Komikku beta ${tag}" \
-            --notes "Built from branch ${{ github.ref_name }} at ${{ github.sha }}. Installs as Komikku beta next to the regular app." \
+            --notes-file release-notes.txt \
             --prerelease \
             Komikku-beta-*.apk

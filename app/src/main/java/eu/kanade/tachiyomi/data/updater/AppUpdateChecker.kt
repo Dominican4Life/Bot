@@ -89,11 +89,18 @@ class AppUpdateChecker(
                     repository = FORK_RELEASES_REPO,
                 ),
                 includePreReleases = true,
+                // KMK (r90): this build and the ones after it, newest first, at most 10
+                sinceReleaseNumber = BuildConfig.RELEASE_NUMBER.toIntOrNull(),
+                limit = 10,
             )
         }
     }
     // KMK <--
 }
+
+/** KMK: this build as What's new names it: its release number ("r90") when CI gave one, else the version name */
+fun currentReleaseLabel(): String =
+    BuildConfig.RELEASE_NUMBER.takeIf { it.isNotEmpty() }?.let { "r$it" } ?: BuildConfig.VERSION_NAME
 
 /** KMK: where CI publishes this fork's builds (tags rN, pre-releases with the APKs) */
 const val FORK_RELEASES_REPO = "Dominican4Life/Bot"

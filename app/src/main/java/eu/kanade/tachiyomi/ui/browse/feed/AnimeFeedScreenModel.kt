@@ -4,11 +4,13 @@ import androidx.compose.runtime.Immutable
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
 import eu.kanade.domain.source.service.SourcePreferences
+import eu.kanade.tachiyomi.animeextension.AnimeExtensionManager
 import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
 import eu.kanade.tachiyomi.animesource.AnimeCatalogueSource
 import eu.kanade.tachiyomi.data.anime.Anime
 import eu.kanade.tachiyomi.data.anime.AnimeRepository
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
@@ -77,11 +79,28 @@ class AnimeFeedScreenModel(
         Entry(id.toLongOrNull() ?: return@mapNotNull null, kind == "latest")
     }.distinct()
 
-    private fun load(entry: Entry) {
-        screenModelScope.launchIO {
-            // KMK: at a cold start the rows are read before the sources are registered: wait a while for this one
-            // instead of saying "Source not installed" until a pull to refresh
-            val source = (sourceManager.get(entry.sourceId) ?: waitForSource(entry.sourceId)) as? AnimeCatalogueSource
+    // KMK: the load running for each row, so a row isn't loaded twice when the rows are rebuilt while it loads
+    private val jobs = HashMap<Entry, Job>()
+
+    private fun load(entry: Entry, force: Boolean = false) {
+        synchronized(jobs) {
+            val running = jobs[entry]
+            if (running?.isActive == true) {
+                if (!force) return
+                running.cancel()
+            }
+            jobs[entry] = launchLoad(entry)
+        }
+    }
+
+    private fun launchLoad(entry: Entry): Job {
+        return screenModelScope.launchIO {
+            // KMK: at a cold start the rows are read before the sources are registered: wait once for the anime
+            // sources to be registered (not per source, so a source that isn't installed doesn't wait 20 s)
+            if (sourceManager.get(entry.sourceId) == null) {
+                AnimeSourcesReady.await(sourceManager, listOf(entry.sourceId))
+            }
+            val source = sourceManager.get(entry.sourceId) as? AnimeCatalogueSource
             val result = if (source == null) {
                 emptyList<Anime>() to "Source not installed"
             } else {
@@ -112,15 +131,10 @@ class AnimeFeedScreenModel(
         }
     }
 
-    private suspend fun waitForSource(id: Long) = withTimeoutOrNull(SOURCE_WAIT_MS) {
-        sourceManager.catalogueSources.first { list -> list.any { it.id == id } }
-        sourceManager.get(id)
-    }
-
     /** Reloads every row (pull to refresh) */
     fun refresh() {
         mutableState.update { state -> state.copy(rows = state.rows.map { it.copy(items = null, error = null) }) }
-        state.value.rows.forEach { load(it.entry) }
+        state.value.rows.forEach { load(it.entry, force = true) }
     }
 
     fun add(sourceId: Long, latest: Boolean) {
@@ -161,3 +175,29 @@ class AnimeFeedScreenModel(
 
 /** KMK: how long a Feed row waits for its source to be registered at start before it says it's not installed */
 internal const val SOURCE_WAIT_MS = 20_000L
+
+/** KMK: after the anime extensions are loaded, how long to wait for the source list to include them */
+private const val SOURCE_SETTLE_MS = 1_500L
+
+/**
+ * KMK: waits once per app run for the anime sources to be registered (anime Feed rows and anime tag mixes). The
+ * extension manager says when its extensions are loaded; the source list follows a moment later, so [ids] get a short
+ * extra wait. A source that isn't installed costs at most that short wait, and only until the first wait finished.
+ */
+internal object AnimeSourcesReady {
+    @Volatile
+    private var done = false
+
+    suspend fun await(sourceManager: AnimeSourceManager, ids: Collection<Long>) {
+        if (done) return
+        val extensionManager = Injekt.get<AnimeExtensionManager>()
+        withTimeoutOrNull(SOURCE_WAIT_MS) { extensionManager.isInitialized.first { it } }
+        withTimeoutOrNull(SOURCE_SETTLE_MS) {
+            sourceManager.catalogueSources.first { list ->
+                val have = list.mapTo(HashSet()) { it.id }
+                ids.all { it in have }
+            }
+        }
+        done = true
+    }
+}

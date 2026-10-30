@@ -24,7 +24,10 @@ sealed interface LibraryDisplayMode {
 
     companion object {
         val values by lazy { setOf(CompactGrid, ComfortableGrid, ComfortableGridPanorama, List, CoverOnlyGrid) }
-        val default = CompactGrid
+        // KMK: a getter, not a stored field: if CompactGrid is the first of these classes the app touches, the
+        // interface (it has a default method) is set up while CompactGrid is still being made, and a stored field
+        // would keep null forever (a null display mode crashes the library's `when`)
+        val default get() = CompactGrid
 
         fun deserialize(serialized: String): LibraryDisplayMode {
             return when (serialized) {

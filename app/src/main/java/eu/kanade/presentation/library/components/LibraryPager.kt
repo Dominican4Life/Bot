@@ -133,6 +133,22 @@ fun LibraryPager(
                     usePanoramaCover = true,
                 )
             }
+            // KMK: a value outside the known modes (seen as a NoWhenBranchMatchedException crash right after a
+            // pair sync in r89) falls back to the default compact grid instead of crashing the library
+            else -> {
+                LibraryCompactGrid(
+                    items = items,
+                    showTitle = true,
+                    columns = columns,
+                    contentPadding = contentPadding,
+                    selection = selection,
+                    onClick = onClickManga,
+                    onLongClick = onLongClickManga,
+                    onClickContinueReading = onClickContinueReading,
+                    searchQuery = searchQuery,
+                    onGlobalSearchClicked = onGlobalSearchClicked,
+                )
+            }
             // KMK <--
         }
     }

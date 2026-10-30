@@ -347,8 +347,12 @@ data class BrowseSourceScreen(
 
                         // KMK: a JS / JSON source's tab catalogs, as buttons
                         val sourceTabs = screenModel.source as? JsTabs
+                        // KMK: not on the Filter tab: unchanged filters still name a catalog, which then lit up
+                        // instead of Filter
                         val selectedCatalog = (state.listing as? Listing.Search)
-                            ?.takeIf { it.savedSearchId == null && it.query.isNullOrBlank() }
+                            ?.takeIf {
+                                it.savedSearchId == null && it.query.isNullOrBlank() && it.tabKey != Listing.FILTER_TAB
+                            }
                             ?.let { listing ->
                                 sourceTabs?.let { runCatching { it.selectedCatalog(listing.filters) }.getOrNull() }
                             }
@@ -546,7 +550,9 @@ data class BrowseSourceScreen(
                     // Latest, a JS source's tabs, saved searches)
                     val tabsSource = screenModel.source as? JsTabs
                     val currentCatalog = (state.listing as? Listing.Search)
-                        ?.takeIf { it.savedSearchId == null && it.query.isNullOrBlank() }
+                        ?.takeIf {
+                            it.savedSearchId == null && it.query.isNullOrBlank() && it.tabKey != Listing.FILTER_TAB
+                        }
                         ?.let { l -> tabsSource?.let { runCatching { it.selectedCatalog(l.filters) }.getOrNull() } }
                     val swipeTabs = buildList<Pair<Boolean, () -> Unit>> {
                         if (tabsSource?.hasCatalogTabs != true) {
