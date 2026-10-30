@@ -139,7 +139,10 @@ fun UpdateScreen(
     val animeRepository = remember { Injekt.get<AnimeRepository>() }
     val animeSourceManager = remember { Injekt.get<AnimeSourceManager>() }
     val after = remember { System.currentTimeMillis() - TimeUnit.DAYS.toMillis(90) }
-    val animeUpdates by remember { animeRepository.subscribeUpdates(after) }.collectAsState(initial = emptyList())
+    // KMK (r94): paused while a restore or pair sync merge runs (see LibraryRefresh)
+    val animeUpdates by remember {
+        eu.kanade.tachiyomi.ui.library.LibraryRefresh.pausedWhileRestoring(animeRepository.subscribeUpdates(after))
+    }.collectAsState(initial = emptyList())
     val playEpisode = rememberPlayAnimeEpisode()
     val showsManga = MediaTab.showsManga(mediaTab)
     val showsAnime = MediaTab.showsAnime(mediaTab)

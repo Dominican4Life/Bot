@@ -1,13 +1,12 @@
 package eu.kanade.presentation.anime
 
-import androidx.compose.foundation.layout.Row
-import androidx.compose.material.icons.outlined.Folder
 import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
@@ -21,6 +20,8 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
@@ -38,7 +39,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.material3.Text
 import eu.kanade.domain.ui.BadgeCorner
 import eu.kanade.domain.ui.CoverBadge
 import eu.kanade.domain.ui.UiPreferences
@@ -191,7 +191,8 @@ fun rememberAnimeLibraryState(searchQuery: String?): AnimeLibraryState {
     // KMK: not while restoring: it looked at every anime's folder again for each anime added
     val restoring by eu.kanade.tachiyomi.ui.library.LibraryRefresh.restoring.collectAsState()
     LaunchedEffect(favorites?.size, needDownloads, refreshTick, restoring) {
-        if (needDownloads && !restoring) favorites?.forEach { downloadManager.refresh(it) }
+        // KMK (r94): one bounded scan, not one coroutine per title (that parked the IO pool with 64+ titles)
+        if (needDownloads && !restoring) downloadManager.refreshAll(favorites.orEmpty())
     }
     val downloaded = remember(favorites, downloadChanges, needDownloads, refreshTick) {
         if (!needDownloads) {

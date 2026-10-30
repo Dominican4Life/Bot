@@ -34,10 +34,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import logcat.LogPriority
 import okhttp3.Headers
 import okhttp3.Request
@@ -50,6 +51,7 @@ import uy.kohesive.injekt.api.get
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -109,7 +111,12 @@ class AnimeDownloadManager(
      */
     private class AnimeFolder(val dir: UniFile, val shared: Boolean)
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /**
+     * KMK (r94): a view of the IO pool with at most 8 threads. The manager's own jobs (queue restore, folder reads,
+     * deletes) never need more, and a fan-out from here can no longer take every IO worker from the rest of the app.
+     * The downloads themselves run in [AnimeDownloadJob]'s scope, not this one.
+     */
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(SCOPE_PARALLELISM))
     private val queuePref = preferenceStore.getStringSet("anime_download_queue", emptySet())
 
     private val _queue = MutableStateFlow<List<Item>>(emptyList())
@@ -135,6 +142,9 @@ class AnimeDownloadManager(
     /** Taking the next queued item and creating folders happen one download at a time */
     private val claimLock = Mutex()
     private val dirLock = Mutex()
+
+    /** KMK (r94): one database read of the library's names at a time ([ensureLibraryNames]) */
+    private val libraryNamesLock = Mutex()
 
     init {
         // Bring back what was still queued when the app closed
@@ -366,11 +376,47 @@ class AnimeDownloadManager(
         return matchName(anime, episode, names) != null
     }
 
-    /** Reads the anime's folder again (call when its page opens) */
+    /** Reads the anime's folder again (call when its page opens). For many titles at once use [refreshAll]. */
     fun refresh(anime: Anime) {
         scope.launch {
             reload(anime)
             _changes.update { it + 1 }
+        }
+    }
+
+    /**
+     * KMK (r94): [refresh] for a whole list (library download badges, "Invalidate download cache", pair sync). The
+     * library's names are read once, then at most [REFRESH_PARALLELISM] folders are read at a time. Up to r93 this
+     * was one coroutine per title on the shared IO pool, each of which could block in `runBlocking` waiting for a
+     * database read queued on that same pool: with 64 or more titles every IO thread was parked and nothing in the
+     * app that touched the database or the network ever came back (the app-wide spinner after a sync).
+     */
+    fun refreshAll(animes: List<Anime>) {
+        if (animes.isEmpty()) return
+        scope.launch {
+            val started = System.currentTimeMillis()
+            ensureLibraryNames()
+            val gate = Semaphore(REFRESH_PARALLELISM)
+            val done = AtomicInteger()
+            coroutineScope {
+                animes.forEach { anime ->
+                    launch {
+                        gate.withPermit {
+                            try {
+                                reload(anime)
+                            } catch (e: Exception) {
+                                if (e is CancellationException) throw e
+                                logcat(LogPriority.WARN, e) { "Couldn't read the download folder of ${anime.title}" }
+                            }
+                        }
+                        // Badges fill in as the scan goes, without one update per title
+                        if (done.incrementAndGet() % REFRESH_BATCH == 0) _changes.update { it + 1 }
+                    }
+                }
+            }
+            _changes.update { it + 1 }
+            val ms = System.currentTimeMillis() - started
+            AppLog.add('I', LOG_TAG, "Anime download folders: ${animes.size} read in $ms ms")
         }
     }
 
@@ -424,7 +470,33 @@ class AnimeDownloadManager(
         // KMK (r90): the episode names first, a shared folder's files are picked by them
         val counts = loadNameCounts(anime.id)
         if (counts != null) nameCounts[anime.id] = counts else nameCounts.remove(anime.id)
+        // KMK (r94): and the library's names, so the letter-case check below finds them in the cache
+        ensureLibraryNames()
         fileCache[anime.id] = listFiles(anime)
+    }
+
+    /**
+     * KMK (r94): makes sure [libraryNames] is loaded and younger than [LIBRARY_NAMES_TTL_MS], reading the database
+     * at most once at a time (a suspend read, no `runBlocking`). On failure the old names are kept, or there are
+     * none and [caseTwinNames] falls back to a read on its own thread.
+     */
+    private suspend fun ensureLibraryNames() {
+        if (libraryNamesFresh()) return
+        libraryNamesLock.withLock {
+            if (libraryNamesFresh()) return
+            try {
+                val names = loadLibraryNames()
+                libraryNames = System.currentTimeMillis() to names
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                logcat(LogPriority.WARN, e) { "Couldn't read the anime library's titles" }
+            }
+        }
+    }
+
+    private fun libraryNamesFresh(): Boolean {
+        val cached = libraryNames ?: return false
+        return System.currentTimeMillis() - cached.first < LIBRARY_NAMES_TTL_MS
     }
 
     /**
@@ -442,11 +514,14 @@ class AnimeDownloadManager(
 
     private fun nameCountsOf(anime: Anime): NameCounts? {
         nameCounts[anime.id]?.let { return it }
-        // Called from screens too: one short database read per anime, the first time it's looked at
+        // Called from screens too: one short database read per anime, the first time it's looked at.
+        // KMK (r94): read on this thread, no dispatch. `runBlocking(Dispatchers.IO)` here deadlocked the IO pool
+        // when the library refreshed 64+ titles at once (see [refreshAll]).
         val counts = try {
-            runBlocking(Dispatchers.IO) { loadNameCounts(anime.id) }
+            nameCountsFrom(repository.getEpisodesNow(anime.id))
         } catch (e: Exception) {
             if (e is CancellationException) throw e
+            logcat(LogPriority.WARN, e) { "Couldn't read the episode names of anime ${anime.id}" }
             null
         }
         if (counts != null) nameCounts[anime.id] = counts
@@ -455,17 +530,18 @@ class AnimeDownloadManager(
 
     private suspend fun loadNameCounts(animeId: Long): NameCounts? {
         return try {
-            val episodes = repository.getEpisodes(animeId)
-            NameCounts(
-                legacy = episodes.groupingBy { legacyBaseName(it) }.eachCount(),
-                stems = episodes.groupingBy { nameStem(it) }.eachCount(),
-            )
+            nameCountsFrom(repository.getEpisodes(animeId))
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             logcat(LogPriority.WARN, e) { "Couldn't read the episode names of anime $animeId" }
             null
         }
     }
+
+    private fun nameCountsFrom(episodes: List<Episode>) = NameCounts(
+        legacy = episodes.groupingBy { legacyBaseName(it) }.eachCount(),
+        stems = episodes.groupingBy { nameStem(it) }.eachCount(),
+    )
 
     // Deleting
 
@@ -612,7 +688,10 @@ class AnimeDownloadManager(
         val now = System.currentTimeMillis()
         val names = libraryNames?.takeIf { now - it.first < LIBRARY_NAMES_TTL_MS }?.second
             ?: try {
-                runBlocking(Dispatchers.IO) { loadLibraryNames() }.also { libraryNames = now to it }
+                // KMK (r94): a read on this thread, no dispatch (coroutine paths load it in [reload] via
+                // [ensureLibraryNames]; this is for plain calls from screens). The old `runBlocking(Dispatchers.IO)`
+                // parked the IO pool when 64+ titles refreshed at once.
+                namesBySource(repository.getLibraryWithSeasonsRawNow()).also { libraryNames = now to it }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 logcat(LogPriority.WARN, e) { "Couldn't read the anime library's titles" }
@@ -624,9 +703,12 @@ class AnimeDownloadManager(
     }
 
     /** KMK (r90): per source, (anime id, folder name) for each library title, by its own and its Edit info title */
-    private suspend fun loadLibraryNames(): Map<Long, List<Pair<Long, String>>> {
-        val animes = (repository.getFavoritesRaw() + repository.getSeasonsOfFavoritesRaw()).distinctBy { it.id }
-        return animes
+    private suspend fun loadLibraryNames(): Map<Long, List<Pair<Long, String>>> =
+        namesBySource(repository.getFavoritesRaw() + repository.getSeasonsOfFavoritesRaw())
+
+    /** KMK (r94): the grouping [loadLibraryNames] does, shared with the non-suspend read (Edit info is in memory) */
+    private fun namesBySource(library: List<Anime>): Map<Long, List<Pair<Long, String>>> {
+        return library.distinctBy { it.id }
             .flatMap { a ->
                 val custom = repository.getCustomInfo(a.id)?.title?.takeIf { it.isNotBlank() }
                 listOfNotNull(a.title, custom).distinct().map { a.source to (a.id to DiskUtil.buildValidFilename(it)) }
@@ -940,6 +1022,13 @@ class AnimeDownloadManager(
 
         /** KMK (r90): how long the library's titles are kept for [caseTwinNames] */
         private const val LIBRARY_NAMES_TTL_MS = 10_000L
+
+        /** KMK (r94): IO threads the manager's own [scope] may use at most */
+        private const val SCOPE_PARALLELISM = 8
+
+        /** KMK (r94): folders read at once by [refreshAll], and how many titles between badge updates */
+        private const val REFRESH_PARALLELISM = 4
+        private const val REFRESH_BATCH = 100
 
         /** KMK (r88): the tag [episodeBaseName] ends with ("E12", "E12.5", "U1a2b3c") */
         private val NUMBER_TAG = Regex("E[0-9][0-9.]*|U[0-9a-f]+")

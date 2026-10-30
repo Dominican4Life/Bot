@@ -120,6 +120,7 @@ import tachiyomi.domain.manga.model.CustomMangaInfo
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaUpdate
 import tachiyomi.domain.manga.model.applyFilter
+import tachiyomi.domain.source.model.Source as DomainSource
 import tachiyomi.domain.source.model.StubSource
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.track.interactor.GetTracks
@@ -133,7 +134,6 @@ import tachiyomi.source.local.isLocal
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import kotlin.random.Random
-import tachiyomi.domain.source.model.Source as DomainSource
 
 class LibraryScreenModel(
     private val getLibraryManga: GetLibraryManga = Injekt.get(),
@@ -190,7 +190,12 @@ class LibraryScreenModel(
                     getFavoritesFlow(),
                     ::Triple,
                 ),
-                combine(getTracksPerManga.subscribe(), getTrackingFiltersFlow(), ::Pair),
+                // KMK (r94): paused while a restore or pair sync merge runs, like the library list itself
+                combine(
+                    LibraryRefresh.pausedWhileRestoring(getTracksPerManga.subscribe()),
+                    getTrackingFiltersFlow(),
+                    ::Pair,
+                ),
                 // KMK -->
                 combine(
                     state.map { it.includedCategories }.distinctUntilChanged(),

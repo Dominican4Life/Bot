@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.data.AndroidDatabaseHandler
 import tachiyomi.data.DatabaseHandler
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -679,6 +680,22 @@ class AnimeRepository(
     /** KMK: the seasons of every anime in the library, favorite or not, without Edit info (for backups) */
     suspend fun getSeasonsOfFavoritesRaw(): List<Anime> =
         handler.awaitList { animesQueries.getSeasonsOfFavorites(::mapAnimeRaw) }
+
+    /**
+     * KMK (r94): [getFavoritesRaw] plus [getSeasonsOfFavoritesRaw], run on the calling thread with no dispatch.
+     * For non-suspend callers that may already sit on a `Dispatchers.IO` worker: a `runBlocking(Dispatchers.IO)`
+     * there parked the whole pool when the library refreshed 64+ titles at once (the r93 freeze). Read-only; the
+     * Android driver serves reads from any thread.
+     */
+    fun getLibraryWithSeasonsRawNow(): List<Anime> {
+        val db = (handler as AndroidDatabaseHandler).db
+        return db.animesQueries.getAllFavorites(::mapAnimeRaw).executeAsList() +
+            db.animesQueries.getSeasonsOfFavorites(::mapAnimeRaw).executeAsList()
+    }
+
+    /** KMK (r94): [getEpisodes] on the calling thread, no dispatch (see [getLibraryWithSeasonsRawNow]) */
+    fun getEpisodesNow(animeId: Long): List<Episode> =
+        (handler as AndroidDatabaseHandler).db.episodesQueries.getByAnimeId(animeId, ::mapEpisode).executeAsList()
 
     suspend fun getAnimeByUrl(url: String, sourceId: Long): Anime? =
         handler.awaitOneOrNull { animesQueries.getByUrlAndSource(url, sourceId, ::mapAnime) }

@@ -392,6 +392,10 @@ object PairSyncData {
     /** KMK (r91): the most an encoded package list can be (the request's first frame is capped at 256 KiB) */
     private const val MAX_PACKAGES_TEXT = 150_000
 
+    /** KMK (r94): merge timing lines every this many titles (about 12 lines for 4,097 manga) */
+    private const val MANGA_LOG_EVERY = 500
+    private const val ANIME_LOG_EVERY = 50
+
     /** Every extension package installed here (manga and anime, trusted or not) */
     fun installedPackages(): List<String> {
         val manga = Injekt.get<ExtensionManager>()
@@ -838,6 +842,43 @@ object PairSyncData {
     }
 
     /**
+     * KMK (r94): one timing line per [every] titles and one at the end: how long the bucket took, the chapters or
+     * episodes it carried, how many titles had tracks and Edit info. Tells where a slow merge (r92: 7 minutes for
+     * 4,097 titles) spends its time, in about a dozen lines.
+     */
+    private class MergeTiming(private val kind: String, private val every: Int, private val log: (String) -> Unit) {
+        private var start = System.currentTimeMillis()
+        private var first = 1
+        private var items = 0
+        private var tracked = 0
+        private var custom = 0
+
+        fun add(index: Int, total: Int, items: Int, tracked: Boolean, custom: Boolean) {
+            this.items += items
+            if (tracked) this.tracked++
+            if (custom) this.custom++
+            if (index % every != 0 && index != total) return
+            val now = System.currentTimeMillis()
+            val unit = if (kind == "manga") "chapters" else "episodes"
+            log(
+                "%s %,d–%,d: %,d ms, %,d %s, %d with tracks, %d with edit info".format(
+                    kind, first, index, now - start, this.items, unit, this.tracked, this.custom,
+                ),
+            )
+            start = now
+            first = index + 1
+            this.items = 0
+            this.tracked = 0
+            this.custom = 0
+        }
+    }
+
+    /** KMK (r94): the same check [MangaRestorer] makes before writing Edit info */
+    private fun BackupManga.hasCustomInfo(): Boolean =
+        customTitle != null || customArtist != null || customAuthor != null || customThumbnailUrl != null ||
+            customDescription != null || customGenre != null || customStatus != 0
+
+    /**
      * Merges what a paired device sent; [log] tells the screen how it's going. KMK (r91): everything that came is
      * applied (this device accepted it; the sender's own tiles chose it). KMK (r93): [progress] gets (done, total,
      * text) after every merged title.
@@ -902,12 +943,21 @@ object PairSyncData {
                 if (mangaList.isNotEmpty()) log("Merging ${mangaList.size} manga…")
                 // KMK (r90): categories only added, never taken off a title here
                 val restorer = MangaRestorer(isSync = false, addCategoriesOnly = true)
-                mangaList.forEach {
+                // KMK (r94): timing per bucket of titles, so a slow merge says where the time goes
+                val bucket = MergeTiming("manga", MANGA_LOG_EVERY, log)
+                mangaList.forEachIndexed { index, item ->
                     currentCoroutineContext().ensureActive()
-                    runCatching { restorer.restore(it, mangaCategories) }
+                    runCatching { restorer.restore(item, mangaCategories) }
                         .onSuccess { manga++ }
                         .onFailure { errors++ }
                     done++
+                    bucket.add(
+                        index + 1,
+                        mangaList.size,
+                        items = item.chapters.size,
+                        tracked = item.tracking.isNotEmpty(),
+                        custom = item.hasCustomInfo(),
+                    )
                     progress?.invoke(done, total, "Applying manga %,d of %,d".format(done, mangaList.size))
                 }
                 val helper = AnimeBackupHelper()
@@ -916,12 +966,20 @@ object PairSyncData {
                     runCatching { helper.restoreCategories(animeCategories) }.onFailure { errors++ }
                 }
                 if (animeList.isNotEmpty()) log("Merging ${animeList.size} anime…")
+                val animeBucket = MergeTiming("anime", ANIME_LOG_EVERY, log)
                 animeList.forEachIndexed { index, item ->
                     currentCoroutineContext().ensureActive()
                     runCatching { helper.restoreAnime(item) }
                         .onSuccess { anime++ }
                         .onFailure { errors++ }
                     done++
+                    animeBucket.add(
+                        index + 1,
+                        animeList.size,
+                        items = item.episodes.size,
+                        tracked = item.tracking.isNotEmpty(),
+                        custom = item.customInfo != null,
+                    )
                     progress?.invoke(done, total, "Applying anime %,d of %,d".format(index + 1, animeList.size))
                 }
             } finally {

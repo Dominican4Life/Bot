@@ -8,6 +8,7 @@ import eu.kanade.domain.source.interactor.SetMigrateSorting
 import eu.kanade.domain.source.model.installedExtension
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.presentation.components.SEARCH_DEBOUNCE_MILLIS
+import eu.kanade.tachiyomi.ui.library.LibraryRefresh
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
@@ -44,7 +45,8 @@ class MigrateSourceScreenModel(
             combine(
                 state.map { it.searchQuery }.distinctUntilChanged().debounce(SEARCH_DEBOUNCE_MILLIS),
                 // KMK <--
-                getSourcesWithFavoriteCount.subscribe(),
+                // KMK (r94): not re-read for every title a restore or pair sync merge adds
+                LibraryRefresh.pausedWhileRestoring(getSourcesWithFavoriteCount.subscribe()),
                 // KMK -->
             ) { searchQuery, sourceCounts ->
                 val queryFilter: (String?) -> ((Pair<Source, Long>) -> Boolean) = { query ->

@@ -16,6 +16,7 @@ import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
+import eu.kanade.tachiyomi.ui.library.LibraryRefresh
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.lang.toLocalDate
 import exh.source.EH_SOURCE_ID
@@ -98,12 +99,15 @@ class UpdatesScreenModel(
                 getUpdatesItemPreferenceFlow()
                     .distinctUntilChanged()
                     .flatMapLatest {
-                        getUpdates.subscribe(
-                            limit,
-                            unread = it.filterUnread.toBooleanOrNull(),
-                            started = it.filterStarted.toBooleanOrNull(),
-                            bookmarked = it.filterBookmarked.toBooleanOrNull(),
-                            hideExcludedScanlators = it.filterExcludedScanlators,
+                        // KMK (r94): not re-read for every title a restore or pair sync merge adds
+                        LibraryRefresh.pausedWhileRestoring(
+                            getUpdates.subscribe(
+                                limit,
+                                unread = it.filterUnread.toBooleanOrNull(),
+                                started = it.filterStarted.toBooleanOrNull(),
+                                bookmarked = it.filterBookmarked.toBooleanOrNull(),
+                                hideExcludedScanlators = it.filterExcludedScanlators,
+                            ),
                         ).distinctUntilChanged()
                     },
                 downloadCache.changes,

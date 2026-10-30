@@ -1272,6 +1272,26 @@ internal object PairSyncExtras {
 
         /** KMK (r93): a cover shown from the image memory cache was replaced (anime, or a title not in the library) */
         internal var replacedCached = false
+
+        /** KMK (r94): covers not put in place, by reason (one log line at the end of the apply) */
+        internal var coverSame = 0
+        internal var coverCustom = 0
+        internal var coverNoTitle = 0
+        internal var coverBadFile = 0
+        internal var coverWriteFailed = 0
+
+        internal fun coverSkipLine(): String? {
+            val skipped = coverSame + coverCustom + coverNoTitle + coverBadFile + coverWriteFailed
+            if (skipped == 0) return null
+            val parts = listOf(
+                "same file already here" to coverSame,
+                "custom cover here" to coverCustom,
+                "title not found" to coverNoTitle,
+                "missing, size mismatch or too big" to coverBadFile,
+                "write failed" to coverWriteFailed,
+            ).filter { it.second > 0 }.joinToString(", ") { "%,d %s".format(it.second, it.first) }
+            return "Covers: %,d put in place, %,d skipped (%s)".format(covers, skipped, parts)
+        }
     }
 
     /**
@@ -1309,6 +1329,7 @@ internal object PairSyncExtras {
                     } catch (e: CancellationException) {
                         throw e
                     } catch (_: Exception) {
+                        if (item.kind == KIND_COVER) applied.coverWriteFailed++
                         false
                     }
                     if (ok) {
@@ -1327,10 +1348,12 @@ internal object PairSyncExtras {
             }
         } finally {
             val manager = Injekt.get<AnimeDownloadManager>()
-            touchedAnime.values.forEach { runCatching { manager.refresh(it) } }
+            runCatching { manager.refreshAll(touchedAnime.values.toList()) }
             covers.clear()
             if (downloadCount > 0) downloadScans.clear()
             refreshCovers(applied)
+            // KMK (r94): why covers that came weren't used (the "Got:" count looked low without it)
+            if (coverCount > 0) applied.coverSkipLine()?.let { PairSync.log(it) }
         }
         return applied
     }
@@ -1381,22 +1404,32 @@ internal object PairSyncExtras {
     }
 
     private suspend fun applyCover(lookup: Lookup, item: ExtraItem, files: List<File>, applied: Applied): Boolean {
-        val file = files.singleOrNull()?.takeIf { it.isFile } ?: return false
+        val file = files.singleOrNull()?.takeIf { it.isFile }
         val size = item.bytes()
-        if (file.length() != size || size > MAX_COVER) return false
+        if (file == null || file.length() != size || size > MAX_COVER) {
+            applied.coverBadFile++
+            return false
+        }
         val id: Long
         val favorite: Boolean
         val thumbnailUrl: String?
         val cacheKey: String?
         if (item.anime) {
-            val anime = lookup.anime(item) ?: return false
+            val anime = lookup.anime(item)
+            if (anime == null) {
+                applied.coverNoTitle++
+                return false
+            }
             id = -anime.id
             favorite = anime.favorite
             thumbnailUrl = anime.thumbnailUrl
             cacheKey = anime.thumbnailUrl?.let { "$it;0" }
         } else {
-            val manga = lookup.manga(item) ?: return false
-            if (manga.isLocal()) return false
+            val manga = lookup.manga(item)
+            if (manga == null || manga.isLocal()) {
+                applied.coverNoTitle++
+                return false
+            }
             id = manga.id
             favorite = manga.favorite
             thumbnailUrl = manga.thumbnailUrl
@@ -1404,22 +1437,37 @@ internal object PairSyncExtras {
         }
         // Never over (or under) a custom cover set here
         val custom = lookup.coverCache.getCustomCoverFile(id)
-        if (custom.exists()) return false
+        if (custom.exists()) {
+            applied.coverCustom++
+            return false
+        }
         if (favorite) {
-            val target = (if (item.custom) custom else lookup.coverCache.getCoverFile(thumbnailUrl)) ?: return false
+            val target = if (item.custom) custom else lookup.coverCache.getCoverFile(thumbnailUrl)
+            if (target == null) {
+                applied.coverNoTitle++
+                return false
+            }
             // The same cover is here already
-            if (target.isFile && target.length() == size) return false
+            if (target.isFile && target.length() == size) {
+                applied.coverSame++
+                return false
+            }
             val replacing = target.isFile
             val done = replaceFile(file, target)
             // KMK (r93): an old cover replaced shows the new one (see refreshCovers)
             if (done && replacing) {
                 if (item.anime) applied.replacedCached = true else applied.replacedManga += id
             }
+            if (!done) applied.coverWriteFailed++
             return done
         }
-        val key = cacheKey ?: return false
+        val key = cacheKey
+        if (key == null) {
+            applied.coverNoTitle++
+            return false
+        }
         val done = writeCache(key, file.readBytes())
-        if (done) applied.replacedCached = true
+        if (done) applied.replacedCached = true else applied.coverWriteFailed++
         return done
     }
 
@@ -1592,7 +1640,7 @@ internal object PairSyncExtras {
      */
     fun afterReceive(plan: Plan) {
         val manager = Injekt.get<AnimeDownloadManager>()
-        plan.touchedAnime.values.forEach { runCatching { manager.refresh(it) } }
+        runCatching { manager.refreshAll(plan.touchedAnime.values.toList()) }
         covers.clear()
         if (plan.targets.values.any { it is Target.ChapterTarget || it is Target.EpisodeTarget }) downloadScans.clear()
     }

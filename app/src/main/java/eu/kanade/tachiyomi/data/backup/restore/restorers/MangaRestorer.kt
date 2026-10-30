@@ -101,6 +101,8 @@ class MangaRestorer(
 
             restoreMangaDetails(
                 manga = restoredManga,
+                // KMK (r94): a title new to this device has no rows yet, so the reads that find them are skipped
+                isNew = dbManga == null,
                 chapters = backupManga.chapters,
                 categories = backupManga.categories,
                 backupCategories = backupCategories,
@@ -198,9 +200,9 @@ class MangaRestorer(
         )
     }
 
-    private suspend fun restoreChapters(manga: Manga, backupChapters: List<BackupChapter>) {
-        val dbChaptersByUrl = getChaptersByMangaId.await(manga.id)
-            .associateBy { it.url }
+    private suspend fun restoreChapters(manga: Manga, backupChapters: List<BackupChapter>, isNew: Boolean = false) {
+        // KMK (r94): a just-inserted manga has no chapters to compare with
+        val dbChaptersByUrl = if (isNew) emptyMap() else getChaptersByMangaId.await(manga.id).associateBy { it.url }
 
         val (existingChapters, newChapters) = backupChapters
             .mapNotNull { backupChapter ->
@@ -353,6 +355,7 @@ class MangaRestorer(
 
     private suspend fun restoreMangaDetails(
         manga: Manga,
+        isNew: Boolean,
         chapters: List<BackupChapter>,
         categories: List<Long>,
         backupCategories: List<BackupCategory>,
@@ -365,11 +368,11 @@ class MangaRestorer(
         customManga: CustomMangaInfo?,
         // SY <--
     ): Manga {
-        restoreCategories(manga, categories, backupCategories)
-        restoreChapters(manga, chapters)
-        restoreTracking(manga, tracks)
-        restoreHistory(manga, history)
-        restoreExcludedScanlators(manga, excludedScanlators)
+        restoreCategories(manga, categories, backupCategories, isNew)
+        restoreChapters(manga, chapters, isNew)
+        restoreTracking(manga, tracks, isNew)
+        restoreHistory(manga, history, isNew)
+        restoreExcludedScanlators(manga, excludedScanlators, isNew)
         updateManga.awaitUpdateFetchInterval(manga, now, currentFetchWindow)
         // SY -->
         restoreMergedMangaReferencesForManga(manga.id, mergedMangaReferences)
@@ -391,6 +394,7 @@ class MangaRestorer(
         manga: Manga,
         categories: List<Long>,
         backupCategories: List<BackupCategory>,
+        isNew: Boolean = false,
     ) {
         val dbCategories = dbCategoriesCache ?: getCategories.await().also { dbCategoriesCache = it }
         val dbCategoriesByName = dbCategories.associateBy { it.name }
@@ -407,13 +411,13 @@ class MangaRestorer(
 
         if (mangaCategoriesToUpdate.isNotEmpty()) {
             // KMK (r90): for pair sync, the categories the title is in here stay; only missing links are added
-            val linkedHere = if (addCategoriesOnly) {
+            val linkedHere = if (addCategoriesOnly && !isNew) {
                 getCategories.await(manga.id).map { it.id }.toSet()
             } else {
                 emptySet()
             }
             handler.await(true) {
-                if (!addCategoriesOnly) mangas_categoriesQueries.deleteMangaCategoryByMangaId(manga.id)
+                if (!addCategoriesOnly && !isNew) mangas_categoriesQueries.deleteMangaCategoryByMangaId(manga.id)
                 mangaCategoriesToUpdate.forEach { (mangaId, categoryId) ->
                     if (categoryId !in linkedHere) mangas_categoriesQueries.insert(mangaId, categoryId)
                 }
@@ -421,12 +425,16 @@ class MangaRestorer(
         }
     }
 
-    private suspend fun restoreHistory(manga: Manga, backupHistory: List<BackupHistory>) {
+    private suspend fun restoreHistory(manga: Manga, backupHistory: List<BackupHistory>, isNew: Boolean = false) {
         if (backupHistory.isEmpty()) return
         // KMK: the title's chapters and history read once, instead of one or two lookups per history entry
         val chapterIdByUrl = getChaptersByMangaId.await(manga.id).associate { it.url to it.id }
-        val dbHistoryByChapterId = handler.awaitList { historyQueries.getHistoryByMangaId(manga.id) }
-            .associateBy { it.chapter_id }
+        // KMK (r94): a just-inserted manga has no history rows yet
+        val dbHistoryByChapterId = if (isNew) {
+            emptyMap()
+        } else {
+            handler.awaitList { historyQueries.getHistoryByMangaId(manga.id) }.associateBy { it.chapter_id }
+        }
         val toUpdate = backupHistory.mapNotNull { history ->
             // Chapter doesn't exist; skip
             val chapterId = chapterIdByUrl[history.url] ?: return@mapNotNull null
@@ -462,8 +470,10 @@ class MangaRestorer(
         }
     }
 
-    private suspend fun restoreTracking(manga: Manga, backupTracks: List<BackupTracking>) {
-        val dbTrackByTrackerId = getTracks.await(manga.id).associateBy { it.trackerId }
+    private suspend fun restoreTracking(manga: Manga, backupTracks: List<BackupTracking>, isNew: Boolean = false) {
+        // KMK (r94): nothing to read for a title with no tracks to send, or one just inserted (no rows yet)
+        if (backupTracks.isEmpty()) return
+        val dbTrackByTrackerId = if (isNew) emptyMap() else getTracks.await(manga.id).associateBy { it.trackerId }
 
         val (existingTracks, newTracks) = backupTracks
             .mapNotNull {
@@ -624,12 +634,21 @@ class MangaRestorer(
      * @param manga the manga whose excluded scanlators have to be restored.
      * @param excludedScanlators the excluded scanlators to restore.
      */
-    private suspend fun restoreExcludedScanlators(manga: Manga, excludedScanlators: List<String>) {
+    private suspend fun restoreExcludedScanlators(
+        manga: Manga,
+        excludedScanlators: List<String>,
+        isNew: Boolean = false,
+    ) {
         if (excludedScanlators.isEmpty()) return
-        val existingExcludedScanlators = handler.awaitList {
-            excluded_scanlatorsQueries.getExcludedScanlatorsByMangaId(manga.id)
-            // KMK -->
-        }.toSet()
+        // KMK (r94): a just-inserted manga has none yet
+        val existingExcludedScanlators = if (isNew) {
+            emptySet()
+        } else {
+            handler.awaitList {
+                excluded_scanlatorsQueries.getExcludedScanlatorsByMangaId(manga.id)
+            }.toSet()
+        }
+        // KMK -->
         val toInsert = excludedScanlators.toSet().subtract(existingExcludedScanlators)
         if (toInsert.isNotEmpty()) {
             handler.await(inTransaction = true) {

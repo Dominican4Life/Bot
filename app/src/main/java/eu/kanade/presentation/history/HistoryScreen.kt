@@ -75,12 +75,12 @@ import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.EmptyScreen
 import tachiyomi.presentation.core.screens.LoadingScreen
 import tachiyomi.presentation.core.theme.active
+import tachiyomi.presentation.core.util.collectAsState as collectPrefAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
-import tachiyomi.presentation.core.util.collectAsState as collectPrefAsState
 
 @Composable
 fun HistoryScreen(
@@ -118,7 +118,10 @@ fun HistoryScreen(
 
     // Anime history, next to the manga one
     val animeRepository = remember { Injekt.get<AnimeRepository>() }
-    val animeHistoryAll by remember { animeRepository.subscribeHistory() }.collectAsState(initial = null)
+    // KMK (r94): paused while a restore or pair sync merge runs (see LibraryRefresh)
+    val animeHistoryAll by remember {
+        eu.kanade.tachiyomi.ui.library.LibraryRefresh.pausedWhileRestoring(animeRepository.subscribeHistory())
+    }.collectAsState(initial = null)
     val animeHistory = remember(animeHistoryAll, state.searchQuery) {
         animeHistoryAll.orEmpty()
             // Device files keep their own history, behind the folder button

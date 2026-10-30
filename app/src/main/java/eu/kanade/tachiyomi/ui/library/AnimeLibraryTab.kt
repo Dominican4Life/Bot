@@ -158,7 +158,7 @@ data object AnimeLibraryTab : Tab {
                     // Reads every anime's download folder again
                     onInvalidateDownloadCache = { ctx ->
                         val downloadManager = Injekt.get<AnimeDownloadManager>()
-                        state.favorites.orEmpty().forEach { downloadManager.refresh(it) }
+                        downloadManager.refreshAll(state.favorites.orEmpty())
                         ctx.toast(MR.strings.download_cache_invalidated)
                     },
                     scrollBehavior = scrollBehavior.takeIf { !state.showCategoryTabs },

@@ -9,6 +9,7 @@ import eu.kanade.core.util.insertSeparators
 import eu.kanade.domain.manga.interactor.UpdateManga
 import eu.kanade.domain.track.interactor.AddTracks
 import eu.kanade.presentation.history.HistoryUiModel
+import eu.kanade.tachiyomi.ui.library.LibraryRefresh
 import eu.kanade.tachiyomi.util.lang.toLocalDate
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
@@ -94,13 +95,16 @@ class HistoryScreenModel(
             ) { query, itemPreferences -> query to itemPreferences }
                 .flatMapLatest { (query, pref) ->
                     // KMK <--
-                    getHistory.subscribe(
-                        query ?: "",
-                        // KMK -->
-                        unfinishedManga = pref.filterUnfinishedManga.toBooleanOrNull(),
-                        unfinishedChapter = pref.filterUnfinishedChapter.toBooleanOrNull(),
-                        nonLibraryEntries = pref.filterNonLibraryManga.toBooleanOrNull(),
-                        // KMK <--
+                    // KMK (r94): not re-read for every title a restore or pair sync merge adds
+                    LibraryRefresh.pausedWhileRestoring(
+                        getHistory.subscribe(
+                            query ?: "",
+                            // KMK -->
+                            unfinishedManga = pref.filterUnfinishedManga.toBooleanOrNull(),
+                            unfinishedChapter = pref.filterUnfinishedChapter.toBooleanOrNull(),
+                            nonLibraryEntries = pref.filterNonLibraryManga.toBooleanOrNull(),
+                            // KMK <--
+                        ),
                     )
                         // Device files keep their own history, behind the History toolbar's folder button
                         .map { list ->
