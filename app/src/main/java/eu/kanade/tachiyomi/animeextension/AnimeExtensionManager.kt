@@ -9,6 +9,7 @@ import eu.kanade.tachiyomi.animeextension.model.AnimeLoadResult
 import eu.kanade.tachiyomi.animeextension.util.AnimeExtensionInstallReceiver
 import eu.kanade.tachiyomi.animeextension.util.AnimeExtensionInstaller
 import eu.kanade.tachiyomi.animeextension.util.AnimeExtensionLoader
+import eu.kanade.tachiyomi.extension.INDEX_TTL_MS
 import eu.kanade.tachiyomi.extension.availableKey
 import eu.kanade.tachiyomi.extension.copyFor
 import eu.kanade.tachiyomi.extension.model.Extension
@@ -124,7 +125,12 @@ class AnimeExtensionManager(
     // (opening Extensions, a restore and a refresh each read every repo, at the same moment)
     private val findLock = kotlinx.coroutines.sync.Mutex()
 
-    suspend fun findAvailableExtensions() {
+    /**
+     * KMK (r95): a read that isn't [force]d is skipped while the last one is younger than [INDEX_TTL_MS] and covered
+     * the same enabled repos (every Browse open used to read every repo again). Refresh buttons, repo add/remove,
+     * restores and pair sync pass [force].
+     */
+    suspend fun findAvailableExtensions(force: Boolean = false) {
         if (findLock.isLocked) {
             findLock.lock()
             findLock.unlock()
@@ -132,17 +138,43 @@ class AnimeExtensionManager(
         }
         findLock.lock()
         try {
+            if (!force && indexFresh()) {
+                logcat { "Anime repos read ${(System.currentTimeMillis() - lastReadAt) / 1000} s ago; not read again" }
+                return
+            }
             findAvailableExtensionsNow()
         } finally {
             findLock.unlock()
         }
     }
 
+    // KMK (r95) -->
+    /** When the repos were last read in full, and which enabled repos that read covered */
+    @Volatile
+    private var lastReadAt = 0L
+    private var lastReadRepos: Set<String> = emptySet()
+
+    private suspend fun enabledRepoUrls(): Set<String>? = runCatching {
+        storeRepository.getAll().map { it.indexUrl }.toSet() - preferences.disabledRepos().get()
+    }.getOrNull()
+
+    /** True when every enabled repo was read successfully less than [INDEX_TTL_MS] ago */
+    private suspend fun indexFresh(): Boolean {
+        val now = System.currentTimeMillis()
+        if (now - lastReadAt >= INDEX_TTL_MS) return false
+        val repos = enabledRepoUrls() ?: return false
+        if (repos != lastReadRepos) return false
+        val status = mihon.data.extension.service.ExtensionStoreStatus.entries.value
+        return repos.all { url -> status[url]?.lastSuccess?.let { now - it < INDEX_TTL_MS } == true }
+    }
+    // KMK <--
+
     private suspend fun findAvailableExtensionsNow() {
         val extensions: List<Extension.Available> = try {
             withIOContext {
-                // Keep the store index up to date (name, signing key)
-                storeRepository.refreshAll()
+                // KMK (r95): storeRepository.refreshAll() (the repo's name and signing key, read by downloading and
+                // decoding the whole index a second time) left this path; the repo row's refresh button and adding a
+                // repo still run it
                 val disabledRepos = preferences.disabledRepos().get()
                 storeRepository.fetchExtensions(disabledRepos)
                     // KMK: manga packages of a repo that has both are listed on the manga side
@@ -154,6 +186,9 @@ class AnimeExtensionManager(
             withUIContext { context.toast(MR.strings.extension_api_error) }
             return
         }
+
+        lastReadRepos = enabledRepoUrls().orEmpty()
+        lastReadAt = System.currentTimeMillis()
 
         // KMK: one entry per package, signature and repo: two repos with the same (or no) signing key offering the
         // same package used to overwrite each other, so one of them showed fewer packages

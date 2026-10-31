@@ -208,8 +208,8 @@ class ExtensionStoresScreenModel(
             kinds += "Aniyomi"
         }
         RepoMemory.remember(found.store.name, url, kinds)
-        if (asManga) runCatching { extensionManager.findAvailableExtensions() }
-        if (asAnime) runCatching { Injekt.get<AnimeExtensionManager>().findAvailableExtensions() }
+        if (asManga) runCatching { extensionManager.findAvailableExtensions(force = true) }
+        if (asAnime) runCatching { Injekt.get<AnimeExtensionManager>().findAvailableExtensions(force = true) }
         kinds.joinToString(" + ")
     }
 
@@ -304,10 +304,11 @@ class ExtensionStoresScreenModel(
 
     // KMK -->
     private suspend fun findAvailableExtensions() {
+        // KMK (r95): a repo was added, removed or refreshed by hand: always a full read
         if (anime) {
-            Injekt.get<AnimeExtensionManager>().findAvailableExtensions()
+            Injekt.get<AnimeExtensionManager>().findAvailableExtensions(force = true)
         } else {
-            extensionManager.findAvailableExtensions()
+            extensionManager.findAvailableExtensions(force = true)
         }
     }
     // KMK <--

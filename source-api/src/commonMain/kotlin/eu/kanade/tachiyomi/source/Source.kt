@@ -10,6 +10,8 @@ import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import logcat.LogPriority
 import rx.Observable
 import tachiyomi.core.common.util.QuerySanitizer.sanitize
@@ -209,23 +211,19 @@ interface Source {
         manga: SManga,
         pushResults: suspend (relatedManga: Pair<String, List<SManga>>, completed: Boolean) -> Unit,
     ) {
-        val words = HashSet<String>()
-        words.add(manga.title)
-        if (manga.title.lowercase() != manga.originalTitle.lowercase()) words.add(manga.originalTitle)
-        manga.title.stripKeywordForRelatedMangas()
-            .filterNot { word -> words.any { it.lowercase() == word } }
-            .onEach { words.add(it) }
-        manga.originalTitle.stripKeywordForRelatedMangas()
-            .filterNot { word -> words.any { it.lowercase() == word } }
-            .onEach { words.add(it) }
+        // KMK (r95): the full title(s) plus at most RELATED_SEARCH_MAX_KEYWORDS title words of 4+ letters that
+        // aren't stop words, two searches at a time. Before, every word of the title was searched at once ("the",
+        // "ai", "gif", "26.09"), which on rate-limited sources queued behind the chapter list the user was waiting for.
+        val words = relatedSearchKeywords(manga.title, manga.originalTitle) { it.stripKeywordForRelatedMangas() }
         if (words.isEmpty()) return
 
         coroutineScope {
             val filterList = getFilterList()
+            val gate = Semaphore(RELATED_SEARCH_AT_ONCE)
             words.map { keyword ->
                 launch {
                     runCatching {
-                        getSearchManga(1, keyword.sanitize(), filterList).mangas
+                        gate.withPermit { getSearchManga(1, keyword.sanitize(), filterList).mangas }
                     }
                         .onSuccess { if (it.isNotEmpty()) pushResults(Pair(keyword, it), false) }
                         .onFailure { e ->
@@ -246,3 +244,36 @@ interface Source {
     @Deprecated("Use the suspend API instead", ReplaceWith("getPageList"))
     fun fetchPageList(chapter: SChapter): Observable<List<Page>> = throw UnsupportedOperationException()
 }
+
+// KMK (r95) -->
+/** Title words searched for related titles, beyond the full title(s) */
+internal const val RELATED_SEARCH_MAX_KEYWORDS = 3
+
+/** Related-title searches running at the same time per source */
+internal const val RELATED_SEARCH_AT_ONCE = 2
+
+/** Shortest title word worth a search of its own */
+private const val RELATED_SEARCH_MIN_LETTERS = 4
+
+/** Words never searched on their own */
+private val RELATED_SEARCH_STOP_WORDS = setOf("the", "and", "of", "a", "an", "to", "in", "no", "wa", "ga")
+
+/**
+ * What the related-titles search asks the source for: the title, the original title when it differs, then up to
+ * [RELATED_SEARCH_MAX_KEYWORDS] words from both (split by [strip]) that have at least [RELATED_SEARCH_MIN_LETTERS]
+ * characters, contain a letter and aren't in [RELATED_SEARCH_STOP_WORDS]. Order: title words first.
+ */
+internal fun relatedSearchKeywords(title: String, originalTitle: String, strip: (String) -> List<String>): List<String> {
+    val words = LinkedHashSet<String>()
+    if (title.isNotBlank()) words.add(title)
+    if (originalTitle.isNotBlank() && title.lowercase() != originalTitle.lowercase()) words.add(originalTitle)
+    val taken = words.map { it.lowercase() }.toMutableSet()
+    val keywords = (strip(title) + strip(originalTitle))
+        .asSequence()
+        .filter { it.length >= RELATED_SEARCH_MIN_LETTERS && it.any(Char::isLetter) && it !in RELATED_SEARCH_STOP_WORDS }
+        .filter { taken.add(it) }
+        .take(RELATED_SEARCH_MAX_KEYWORDS)
+    words.addAll(keywords)
+    return words.toList()
+}
+// KMK <--

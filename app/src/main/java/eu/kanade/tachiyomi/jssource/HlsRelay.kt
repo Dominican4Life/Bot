@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.jssource
 
 import android.net.Uri
 import eu.kanade.tachiyomi.network.NetworkHelper
+import eu.kanade.tachiyomi.network.NoNetLog
 import eu.kanade.tachiyomi.util.system.AppLog
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -31,6 +32,9 @@ object HlsRelay {
 
     private val network: NetworkHelper by lazy { Injekt.get() }
     private val pool = Executors.newCachedThreadPool()
+
+    /** `URI="..."` inside a playlist tag (r95: compiled once, not once per tag line) */
+    private val URI_ATTRIBUTE = Regex("""URI="([^"]+)"""")
 
     /** The streams handed out: id -> headers to fetch them with */
     private val sessions = ConcurrentHashMap<String, Headers>()
@@ -123,11 +127,15 @@ object HlsRelay {
             }
             // KMK: this stream is in use (see lastUsed)
             if (id != null) lastUsed[id] = System.currentTimeMillis()
+            // KMK (r95): pieces go through the stream client too (no 120 s call deadline, no 5 MiB HTTP cache that
+            // wrote every piece to flash once) and without the per-request "net" Logs line (one per piece pushed
+            // everything else out of Logs)
             val request = Request.Builder().url(target).headers(headers)
                 .apply { range?.takeIf { kind == "p" && it.isNotEmpty() }?.let { header("Range", it) } }
+                .apply { if (kind == "s") tag(NoNetLog::class.java, NoNetLog) }
                 .build()
             var call = try {
-                execute(request, stream = kind == "p")
+                execute(request, stream = true)
             } catch (e: java.io.IOException) {
                 AppLog.add('W', "hls", "Couldn't reach ${target.toHttpUrlOrNull()?.host ?: target}: ${e.message}")
                 respond(out, 502, "text/plain", ByteArray(0))
@@ -143,7 +151,10 @@ object HlsRelay {
                     add("Accept", "*/*")
                 }.build()
                 call = try {
-                    execute(Request.Builder().url(target).headers(plain).build())
+                    execute(
+                        Request.Builder().url(target).headers(plain).tag(NoNetLog::class.java, NoNetLog).build(),
+                        stream = true,
+                    )
                 } catch (e: java.io.IOException) {
                     AppLog.add('W', "hls", "Couldn't reach ${target.toHttpUrlOrNull()?.host ?: target}: ${e.message}")
                     respond(out, 502, "text/plain", ByteArray(0))
@@ -169,17 +180,26 @@ object HlsRelay {
                     passThrough(out, response)
                     return
                 }
-                val bytes = response.body.bytes()
-                val text = runCatching { String(bytes, Charsets.UTF_8) }.getOrDefault("")
-                if (kind == "p" || text.startsWith("#EXTM3U")) {
-                    val finalUrl = response.request.url.toString()
-                    respond(out, 200, "application/vnd.apple.mpegurl", rewrite(id, finalUrl, text).toByteArray())
-                } else {
-                    val cleaned = stripFakeImage(bytes)
-                    if (cleaned.size != bytes.size) {
-                        AppLog.add('D', "hls", "Removed a ${bytes.size - cleaned.size}-byte fake picture header from a stream piece")
+                // KMK (r95): a piece is decided from its first bytes. Only a playlist in disguise or a piece with a
+                // picture glued in front is read whole; everything else is streamed through as it arrives (before,
+                // every piece was read whole, copied into a String to test for #EXTM3U, and copied again)
+                val head = if (kind == "p") ByteArray(0) else runCatching { response.peekBody(16).bytes() }.getOrDefault(ByteArray(0))
+                val headText = String(head, Charsets.UTF_8).trimStart('\uFEFF', ' ', '\t', '\r', '\n')
+                when {
+                    kind == "p" || headText.startsWith("#EXTM3U") -> {
+                        val text = runCatching { String(response.body.bytes(), Charsets.UTF_8) }.getOrDefault("")
+                        val finalUrl = response.request.url.toString()
+                        respond(out, 200, "application/vnd.apple.mpegurl", rewrite(id, finalUrl, text).toByteArray())
                     }
-                    respond(out, 200, "video/mp2t", cleaned)
+                    looksLikeImage(head) -> {
+                        val bytes = response.body.bytes()
+                        val cleaned = stripFakeImage(bytes)
+                        if (cleaned.size != bytes.size) {
+                            AppLog.add('D', "hls", "Removed a ${bytes.size - cleaned.size}-byte fake picture header from a stream piece")
+                        }
+                        respond(out, 200, "video/mp2t", cleaned)
+                    }
+                    else -> passThrough(out, response, contentType = "video/mp2t")
                 }
             }
         }
@@ -258,6 +278,8 @@ object HlsRelay {
     private fun rewrite(id: String, base: String, playlist: String): String {
         val baseUrl = base.toHttpUrlOrNull()
         fun absolute(u: String): String = baseUrl?.resolve(u)?.toString() ?: u
+        // KMK (r95): decided once per playlist, not once per line (a long VOD playlist has thousands of lines)
+        val isMaster = playlist.contains("#EXT-X-STREAM-INF")
         return playlist.lineSequence().joinToString("\n") { raw ->
             val line = raw.trim()
             when {
@@ -265,9 +287,9 @@ object HlsRelay {
                 line.startsWith("#") -> {
                     // URI="..." inside tags: sub-playlists (media), init maps; keys stay as they are
                     if (line.startsWith("#EXT-X-KEY") || line.startsWith("#EXT-X-SESSION-KEY")) {
-                        line.replace(Regex("""URI="([^"]+)"""")) { "URI=\"${absolute(it.groupValues[1])}\"" }
+                        line.replace(URI_ATTRIBUTE) { "URI=\"${absolute(it.groupValues[1])}\"" }
                     } else {
-                        line.replace(Regex("""URI="([^"]+)"""")) { m ->
+                        line.replace(URI_ATTRIBUTE) { m ->
                             val u = absolute(m.groupValues[1])
                             val isPlaylist = line.startsWith("#EXT-X-MEDIA") || line.startsWith("#EXT-X-I-FRAME")
                             "URI=\"${relayUrl(id, u, isPlaylist)}\""
@@ -276,26 +298,29 @@ object HlsRelay {
                 }
                 else -> {
                     val u = absolute(line)
-                    val isPlaylist = u.substringBefore('?').endsWith(".m3u8", ignoreCase = true) ||
-                        playlist.contains("#EXT-X-STREAM-INF")
+                    val isPlaylist = u.substringBefore('?').endsWith(".m3u8", ignoreCase = true) || isMaster
                     relayUrl(id, u, isPlaylist)
                 }
             }
         }
     }
 
+    /** True when [data] starts like a PNG, JPEG, GIF, BMP or WebP file (the first 4 bytes are enough) */
+    private fun looksLikeImage(data: ByteArray): Boolean {
+        if (data.size < 4) return false
+        return (data[0] == 0x89.toByte() && data[1] == 'P'.code.toByte() && data[2] == 'N'.code.toByte()) ||
+            (data[0] == 0xFF.toByte() && data[1] == 0xD8.toByte()) ||
+            (data[0] == 'G'.code.toByte() && data[1] == 'I'.code.toByte() && data[2] == 'F'.code.toByte()) ||
+            (data[0] == 'B'.code.toByte() && data[1] == 'M'.code.toByte()) ||
+            // KMK: WebP ("RIFF....WEBP")
+            (data[0] == 'R'.code.toByte() && data[1] == 'I'.code.toByte() && data[2] == 'F'.code.toByte() &&
+                data[3] == 'F'.code.toByte())
+    }
+
     /** The data without a picture glued in front of it: from the first MPEG-TS packet, or MP4 box */
     private fun stripFakeImage(data: ByteArray): ByteArray {
         if (data.size < 8) return data
-        val looksLikeImage =
-            (data[0] == 0x89.toByte() && data[1] == 'P'.code.toByte() && data[2] == 'N'.code.toByte()) ||
-                (data[0] == 0xFF.toByte() && data[1] == 0xD8.toByte()) ||
-                (data[0] == 'G'.code.toByte() && data[1] == 'I'.code.toByte() && data[2] == 'F'.code.toByte()) ||
-                (data[0] == 'B'.code.toByte() && data[1] == 'M'.code.toByte()) ||
-                // KMK: WebP ("RIFF....WEBP")
-                (data[0] == 'R'.code.toByte() && data[1] == 'I'.code.toByte() && data[2] == 'F'.code.toByte() &&
-                    data[3] == 'F'.code.toByte())
-        if (!looksLikeImage) return data
+        if (!looksLikeImage(data)) return data
         val limit = minOf(data.size - 1, 1_000_000)
         // MPEG-TS: three sync bytes 188 apart
         for (i in 0 until limit) {
@@ -324,10 +349,13 @@ object HlsRelay {
         return text.startsWith("#EXTM3U")
     }
 
-    /** Sends [response] on as it came (status, type, length, range), streamed, without reading it into memory */
-    private fun passThrough(out: OutputStream, response: okhttp3.Response) {
+    /**
+     * Sends [response] on as it came (status, type, length, range), streamed, without reading it into memory.
+     * [contentType] replaces the origin's type (stream pieces are always sent as video/mp2t, as before r95).
+     */
+    private fun passThrough(out: OutputStream, response: okhttp3.Response, contentType: String? = null) {
         val body = response.body
-        val type = response.header("Content-Type") ?: "application/octet-stream"
+        val type = contentType ?: response.header("Content-Type") ?: "application/octet-stream"
         val length = body.contentLength()
         val head = StringBuilder()
             .append("HTTP/1.1 ${response.code} ${if (response.code == 206) "Partial Content" else "OK"}\r\n")

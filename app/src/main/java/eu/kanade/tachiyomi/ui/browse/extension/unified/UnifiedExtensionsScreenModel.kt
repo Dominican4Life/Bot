@@ -194,7 +194,8 @@ class UnifiedExtensionsScreenModel(
             }.collectLatest { list -> mutableState.update { it.copy(allJsSources = list) } }
         }
         // KMK <--
-        refresh()
+        // KMK (r95): skipped when every repo was read less than 15 min ago (each Browse open used to read all repos)
+        refresh(force = false)
     }
 
     private fun build(
@@ -512,10 +513,12 @@ class UnifiedExtensionsScreenModel(
         screenModelScope.launchIO {
             mutableState.update { it.copy(isRefreshing = true) }
             if (kind == ExtensionKind.ANIYOMI) {
-                runCatching { animeManager.findAvailableExtensions() }
+                // KMK (r95): the repo's name and key are read here now, not on every list read
+                runCatching { Injekt.get<AnimeExtensionStoreRepository>().refreshAll() }
+                runCatching { animeManager.findAvailableExtensions(force = true) }
             } else {
                 runCatching { Injekt.get<ExtensionStoreRepository>().refreshAll() }
-                runCatching { mangaManager.findAvailableExtensions() }
+                runCatching { mangaManager.findAvailableExtensions(force = true) }
             }
             mutableState.update { it.copy(isRefreshing = false) }
         }
@@ -593,11 +596,12 @@ class UnifiedExtensionsScreenModel(
     fun toggleFailedOnly() = mutableState.update { it.copy(failedOnly = !it.failedOnly) }
     // KMK <--
 
-    fun refresh() {
+    /** Reads every repo again; [force] false (the screen opening) lets a read from the last 15 min stand */
+    fun refresh(force: Boolean = true) {
         screenModelScope.launchIO {
             mutableState.update { it.copy(isRefreshing = true) }
-            runCatching { mangaManager.findAvailableExtensions() }
-            runCatching { animeManager.findAvailableExtensions() }
+            runCatching { mangaManager.findAvailableExtensions(force) }
+            runCatching { animeManager.findAvailableExtensions(force) }
             mutableState.update { it.copy(isRefreshing = false) }
         }
     }

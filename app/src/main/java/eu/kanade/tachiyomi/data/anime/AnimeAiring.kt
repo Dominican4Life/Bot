@@ -113,8 +113,11 @@ object AnimeAiringRepository {
                 val titleKey = titleKey(anime.id)
                 val entry = cache[titleKey]
                 if (!force && entry != null && entry.isFresh(now)) return@withLock entry.airing()
-                // A title already matched once: look it up by id from now on
-                val found = entry?.anilistId?.let { id ->
+                // A title already matched once (here, or by the episode cards' AniListEpisodeMatch, r95): look it up
+                // by id from now on instead of a second title search
+                val knownId = entry?.anilistId
+                    ?: eu.kanade.tachiyomi.ui.anime.anilist.AniListEpisodeMatch.savedId(anime.id)?.toLong()
+                val found = knownId?.let { id ->
                     fetch(listOf("al:$id"))
                     cache["al:$id"]?.copy(anilistId = id)
                 } ?: searchTitle(anime.title)

@@ -11,15 +11,17 @@ import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
 import tachiyomi.core.common.util.lang.withNonCancellableContext
 import tachiyomi.core.common.util.lang.withUIContext
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
+import uy.kohesive.injekt.injectLazy
 import java.time.OffsetDateTime
 import java.time.ZoneId
 
 class CrashLogUtil(
     private val context: Context,
-    private val extensionManager: ExtensionManager = Injekt.get(),
 ) {
+
+    // KMK (r95): lazy, so getDebugInfo() at start-up doesn't build the ExtensionManager (every extension's classes,
+    // loaded on the main thread); only getExtensionsInfo() needs it
+    private val extensionManager: ExtensionManager by injectLazy()
 
     suspend fun dumpLogs(exception: Throwable? = null) = withNonCancellableContext {
         try {

@@ -368,6 +368,7 @@ call `checkFileLoaded()`, or the spinner never ends (ANK comment).
   - The lookup runs once per screen (`episodeInfoJob`, which must be declared before `init` because init can start it).
     The episode list shows first and the cards fill in later.
 - **Caches:** `AniListApi.detailsCache` and `episodesCache` are per process.
+- **Airing lookup shares the id (r95):** `AnimeAiringRepository.forAnime` (the "next episode" line, `data/anime/AnimeAiring.kt`) first asks `AniListEpisodeMatch.savedId(animeId)` (the manual pick or the `auto:` match above) and looks the entry up by id; only an anime with no saved id gets its own title search. Up to r94 the page ran two AniList title searches for one title.
 - **Logs:**
   - `I anilist <title>: episode info from AniList "<title>" (N episodes[, source numbers start at K])`
   - `I anilist <title>: no AniList entry found for the episode info`
@@ -437,6 +438,10 @@ call `checkFileLoaded()`, or the spinner never ends (ANK comment).
   - Waits up to 10 s for extensions to load.
   - A manual run with ids (one library page) ignores the category filters.
   - Log: `anime Anime update: N checked, S skipped, F failed, U with new episodes`.
+- **Playback progress writes (r95, `PlayerViewModel.onSecondReached`):** the episode row and the history row are written every `PROGRESS_SAVE_MS` (10 s), on the first second of an episode, and when the episode turns seen; `saveCurrentEpisodeWatchingProgress` (activity pause/stop/finish, `onCleared`) and `loadEpisode` (the episode being left) still write at once. Up to r94 both rows were written every second, and every write re-ran the anime page's episode list, the library stats `GROUP BY` and any open Updates/History query. A crash loses at most 10 s of position.
+- **Suggestions on the anime page (r95, `AnimeScreenModel.loadSuggestions`):** start only after `refreshFromSource` finished (`refreshJob?.join()`), and the result is kept per (source id, anime id) for 30 min (`suggestionCache`, 20 entries). The keyword search itself (`source-api` `getRelatedAnimeListBySearch` / `getRelatedMangaListBySearch`, shared with APK extensions and the manga page) now asks for the title, the original title and at most 3 title words of 4+ characters that contain a letter and aren't in a stop list (`relatedSearchKeywords` in `Source.kt`), two searches at a time (`Semaphore(2)`). The manga page caches its related rows the same way (`MangaScreenModel.relatedMangaCache`).
+- **Filler list (r95):** `AnimeFillerListFetcher.getFillerEpisodes` runs only while `pref_skip_filler_episodes` is on (the only reader is `getAdjacentEpisodeId`); the player reacts to the setting changing.
+- **Seekbar (r95):** `demuxerCacheTime` is sampled every 500 ms, and the per-second `pos` is read inside the seekbar scope of `PlayerControls`, so a position tick recomposes the seekbar and not the whole controls layout.
 
 ---
 

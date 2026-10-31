@@ -111,6 +111,9 @@ class AppModule(val app: Application) : InjektModule {
                         cursor.close()
                     }
                 },
+                // KMK (r95): compiled statements kept for reuse (the default is 20; a restore, sync or library update
+                // runs the same handful of queries thousands of times)
+                cacheSize = 100,
             )
         }
         addSingletonFactory {

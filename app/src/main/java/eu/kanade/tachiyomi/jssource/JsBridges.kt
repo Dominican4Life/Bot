@@ -283,22 +283,43 @@ internal class JsHtmlPages(private val maxPages: Int = 24) {
         idByHtml.clear()
     }
 
+    /** Pages kept, their page text in bytes, and a rough size of their parsed DOM (r95) */
     @Synchronized
-    private fun stats(): Pair<Int, Long> = pages.size to pages.values.sumOf { it.html.length.toLong() * 2 }
+    private fun stats(): Triple<Int, Long, Long> = Triple(
+        pages.size,
+        pages.values.sumOf { it.html.length.toLong() * 2 },
+        pages.values.sumOf { it.elementCount.toLong() * DOM_BYTES_PER_ELEMENT },
+    )
 
     companion object {
         private val live = java.util.WeakHashMap<JsHtmlPages, Boolean>()
 
+        /** A guess at what one Jsoup element costs (attributes, child list, text), for the Logs line only */
+        private const val DOM_BYTES_PER_ELEMENT = 200L
+
         /** KMK: parsed pages kept by every JS source right now, and the size of their page text (for Logs) */
-        fun totals(): Pair<Int, Long> {
+        fun totals(): Pair<Int, Long> = totalsWithDom().let { (n, b, _) -> n to b }
+
+        /** KMK (r95): like [totals], plus the rough DOM size, which is usually several times the page text */
+        fun totalsWithDom(): Triple<Int, Long, Long> {
             val all = synchronized(live) { live.keys.toList() }
-            return all.fold(0 to 0L) { (n, b), p -> p.stats().let { (pn, pb) -> n + pn to b + pb } }
+            return all.fold(Triple(0, 0L, 0L)) { (n, b, d), p ->
+                p.stats().let { (pn, pb, pd) -> Triple(n + pn, b + pb, d + pd) }
+            }
+        }
+
+        /** KMK (r95): memory running low: every source lets go of its parsed pages (host.parse again to get them) */
+        fun clearAll(): Int {
+            val all = synchronized(live) { live.keys.toList() }
+            return all.sumOf { p -> p.stats().first.also { p.clear() } }
         }
     }
 
     private class Page(val html: String, val document: Document) {
         val elements = mutableListOf<Element>()
         val ids = IdentityHashMap<Element, Int>()
+        /** Counted once at parse time, so stats() doesn't walk the tree */
+        val elementCount: Int = document.allElements.size
 
         fun register(element: Element): Int = ids.getOrPut(element) {
             elements.add(element)

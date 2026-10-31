@@ -14,8 +14,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import logcat.LogPriority
 import logcat.LogcatLogger
+import java.io.BufferedWriter
 import java.io.File
+import java.io.FileOutputStream
+import java.io.OutputStreamWriter
 import java.io.RandomAccessFile
+import java.io.Writer
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -91,21 +95,36 @@ object AppLog {
                     _version.value++
                 }
             }
+            // KMK (r95): one stream kept open in append mode (O_APPEND, so a truncation by clear or trim doesn't
+            // move it), flushed when the queue drains, after FLUSH_LINES lines, and at once for W/E lines. Before,
+            // every line opened, wrote and closed the file.
+            synchronized(fileLock) { openOut(logFile) }
             var writes = 0
+            var unflushed = 0
             for (text in pending) {
                 // KMK: Clear goes through this queue, so lines queued before it aren't appended after it
                 if (text == CLEAR_MARK) {
-                    runCatching { synchronized(fileLock) { logFile.writeText("") } }
+                    runCatching { synchronized(fileLock) { flushOut(); logFile.writeText("") } }
                     writes = 0
+                    unflushed = 0
                     pendingClears.decrementAndGet()
                     continue
                 }
                 runCatching {
                     synchronized(fileLock) {
-                        logFile.appendText(text)
+                        val out = out ?: openOut(logFile)
+                        out.write(text)
+                        unflushed++
+                        val problem = text.substringAfter('\t', "").firstOrNull().let { it == 'W' || it == 'E' }
+                        if (problem || unflushed >= FLUSH_LINES || pending.isEmpty) {
+                            out.flush()
+                            unflushed = 0
+                        }
                         // KMK: keep the file small during a run too (it used to grow until the next start)
                         if (++writes >= TRIM_CHECK_EVERY) {
                             writes = 0
+                            out.flush()
+                            unflushed = 0
                             if (logFile.length() > MAX_BYTES) trim(logFile)
                         }
                     }
@@ -123,6 +142,31 @@ object AppLog {
     /** Lock for the log file: the writer, trimming, clear and the direct E lines */
     private val fileLock = Any()
 
+    /** KMK (r95): the open append stream; null until the writer opened it. Use with [fileLock] held */
+    private var out: Writer? = null
+
+    /** Lines written since the last flush when the queue hadn't drained */
+    private const val FLUSH_LINES = 64
+
+    /** Opens the append stream. Call with [fileLock] held */
+    private fun openOut(logFile: File): Writer {
+        out?.let { runCatching { it.close() } }
+        return BufferedWriter(
+            OutputStreamWriter(FileOutputStream(logFile, true), Charsets.UTF_8),
+            16 * 1024,
+        ).also { out = it }
+    }
+
+    /** Pushes buffered lines to the file. Call with [fileLock] held */
+    private fun flushOut() {
+        runCatching { out?.flush() }
+    }
+
+    /** Writes everything buffered so far; for paths where the process may end (crash, going to the background) */
+    fun flush() {
+        synchronized(fileLock) { flushOut() }
+    }
+
     /** KMK: queued in [pending] by [clear]; never equal to an encoded line (those always hold tabs) */
     private const val CLEAR_MARK = "\u0000clear"
 
@@ -131,6 +175,7 @@ object AppLog {
 
     /** Keeps the newest [TRIM_TO_BYTES] of the file, starting at a whole line. Call with [fileLock] held */
     private fun trim(logFile: File) {
+        flushOut()
         val length = logFile.length()
         val tail = readRange(logFile, (length - TRIM_TO_BYTES).coerceAtLeast(0L), length)
         val text = if (length > TRIM_TO_BYTES) tail.substringAfter('\n', "") else tail
@@ -171,8 +216,21 @@ object AppLog {
             while (lines.size > MAX_LINES) lines.removeFirst()
         }
         if (level == 'E' && pendingClears.get() == 0) {
-            // A crash may end the process before the writer runs: write problems right away
-            runCatching { file?.let { f -> synchronized(fileLock) { f.appendText(encode(line)) } } }
+            // A crash may end the process before the writer runs: write problems right away (through the open
+            // stream when there is one, after what it buffered, so the file keeps its order)
+            runCatching {
+                file?.let { f ->
+                    synchronized(fileLock) {
+                        val o = out
+                        if (o != null) {
+                            o.write(encode(line))
+                            o.flush()
+                        } else {
+                            f.appendText(encode(line))
+                        }
+                    }
+                }
+            }
         } else {
             pending.trySend(encode(line))
         }

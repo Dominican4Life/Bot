@@ -25,7 +25,7 @@ Log tags named below (`cover`, `pages`, `Memory`, `reader`) are the tag column o
 
 **Caches and limits (upstream values; don't assume otherwise):**
 - **Disk cache** `cacheDir/image_cache`, `maxSizePercent(0.02)`. Coil clamps this to **at most 250 MB** (`DiskCache.Builder` defaults: min 10 MB, max 250 MB; checked in the Coil source). Everything below shares this one cache: covers outside the library, Browse preview page tiles (`source-page;…`), and JS `getPagePreviews` tiles.
-- **Memory cache**: `MemoryCache.Builder().maxSizePercent(context)` (Coil's default share of the app's memory). `MemoryLog.trim()` clears it when the heap passes 75 % of the limit.
+- **Memory cache**: `MemoryCache.Builder().maxSizePercent(context)` (Coil's default share of the app's memory). `MemoryLog.trim()` clears it when the Java heap passes 75 % of the limit on **two samples in a row** (10 s apart) and no trim ran in the last 120 s (r95; up to r94 one sample was enough, it could repeat every 10 s and it called `System.gc()`). The `Memory` lines also show the native heap (`native N MB`, `Debug.getNativeHeapAllocatedSize()`: bitmaps, QuickJS, decoders) since r95.
 - `fetcherCoroutineContext(Dispatchers.IO.limitedParallelism(8))` and `decoderCoroutineContext(Dispatchers.IO.limitedParallelism(3))` are upstream. They are why the tile timing log separates "waiting for a reader" (a fetcher slot) from "waiting for a decoder" (a decoder slot).
 - `allowRgb565` is on only on low-RAM devices. `crossfade` is 300 ms × the animator scale.
 - **Fork addition (r81, 51aa5c18):** `eventListenerFactory(ImageEvents)`. See §3.

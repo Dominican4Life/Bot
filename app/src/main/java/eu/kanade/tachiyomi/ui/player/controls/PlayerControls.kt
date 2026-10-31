@@ -69,20 +69,20 @@ import androidx.compose.ui.unit.dp
 import androidx.constraintlayout.compose.ConstraintLayout
 import androidx.constraintlayout.compose.Dimension
 import eu.kanade.presentation.theme.playerRippleConfiguration
-import eu.kanade.tachiyomi.ui.player.Dialogs
 import eu.kanade.tachiyomi.ui.player.CastManager
+import eu.kanade.tachiyomi.ui.player.Dialogs
 import eu.kanade.tachiyomi.ui.player.Panels
 import eu.kanade.tachiyomi.ui.player.PlayerActivity
 import eu.kanade.tachiyomi.ui.player.PlayerUpdates
 import eu.kanade.tachiyomi.ui.player.PlayerViewModel
-import eu.kanade.tachiyomi.ui.player.cast.components.CastSheet
 import eu.kanade.tachiyomi.ui.player.Sheets
 import eu.kanade.tachiyomi.ui.player.VideoTrack
+import eu.kanade.tachiyomi.ui.player.cast.components.CastSheet
 import eu.kanade.tachiyomi.ui.player.controls.components.BrightnessOverlay
 import eu.kanade.tachiyomi.ui.player.controls.components.BrightnessSlider
 import eu.kanade.tachiyomi.ui.player.controls.components.DoubleTapToSeekOvals
-import eu.kanade.tachiyomi.ui.player.controls.components.InterpolationStatsOverlay
 import eu.kanade.tachiyomi.ui.player.controls.components.FilledControlsButton
+import eu.kanade.tachiyomi.ui.player.controls.components.InterpolationStatsOverlay
 import eu.kanade.tachiyomi.ui.player.controls.components.SeekbarWithTimers
 import eu.kanade.tachiyomi.ui.player.controls.components.TextPlayerUpdate
 import eu.kanade.tachiyomi.ui.player.controls.components.ThumbnailPreview
@@ -140,7 +140,6 @@ fun PlayerControls(
     val isLoadingEpisode by viewModel.isLoadingEpisode.collectAsState()
     val isStopped by viewModel.isStopped.collectAsState()
     val duration by viewModel.duration.collectAsState()
-    val position by viewModel.pos.collectAsState()
     val paused by viewModel.paused.collectAsState()
     // ANZ -->
     val showLoadingCircle by playerPreferences.showLoadingCircle().collectAsState()
@@ -155,7 +154,6 @@ fun PlayerControls(
     val chapters by viewModel.chapters.collectAsState(persistentListOf())
     val currentBrightness by viewModel.currentBrightness.collectAsState()
 
-    val currentPosition = (position ?: 0).toFloat()
     val totalDuration = (duration ?: 0).toFloat()
 
     val playerTimeToDisappear by playerPreferences.playerTimeToDisappear().collectAsState()
@@ -507,6 +505,11 @@ fun PlayerControls(
                         val readAhead by viewModel.demuxerCacheTime.collectAsState()
                         // ANZ <--
                     val preciseSeeking by gesturePreferences.playerSmoothSeek().collectAsState()
+
+                    // KMK (r95): read here, the only place that uses it, so the per-second position change recomposes
+                    // the seekbar scope and not the whole controls layout
+                    val position by viewModel.pos.collectAsState()
+                    val currentPosition = (position ?: 0).toFloat()
 
                     var wasPlayerAlreadyPause by remember { mutableStateOf(false) }
                     var sliderPosition by remember { androidx.compose.runtime.mutableFloatStateOf(currentPosition) }

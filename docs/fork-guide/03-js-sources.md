@@ -292,7 +292,7 @@ Registered in `di/AppModule.kt` (`addSingletonFactory { JsSourceManager(app) }`)
   - any URI line in a playlist containing `#EXT-X-STREAM-INF` is treated as a sub-playlist
 - Piece (`s`): if the source's headers get a non-2xx, it tries again with only `User-Agent` + `Accept: */*`. That covers pieces on image CDNs that refuse the Referer. Logged D or W `hls` "Stream piece answered 403 with the source's headers, worked without them: host".
 - `stripFakeImage`: if the bytes start with an image signature, it searches the first 1 MB for three TS sync bytes 188 apart, else an fMP4 box (`ftyp/styp/moof/sidx`), and cuts there. Logged D `hls` "Removed a N-byte fake picture header from a stream piece".
-- Bodies are read **fully into memory** (`body.bytes()`), not streamed.
+- r95: a piece is decided from `peekBody(16)`: `#EXTM3U` → read whole and rewritten; an image signature (`looksLikeImage`) → read whole and `stripFakeImage`; anything else → `passThrough` (streamed in 64 KB blocks, sent as `video/mp2t`). Pieces use `streamClient` (no call deadline, no HTTP cache) and are tagged `NoNetLog`, so they write no `net` Logs line. Up to r94 every piece was read whole (`body.bytes()`), copied into a `String` to test for `#EXTM3U`, and logged.
 - **DNS bypass (r68, b2836e9f).** If a request fails with an IOException mentioning `/0.0.0.0` or `/127.0.0.1:`, or the system resolver returns only any-local or loopback addresses (what ad blockers and filtering DNS answer), the request is retried through a client with DNS-over-HTTPS. It tries Cloudflare (`cloudflare-dns.com`, bootstrap 1.1.1.1/1.0.0.1), then Google (`dns.google`, 8.8.8.8/8.8.4.4), and drops local or loopback answers. The host is remembered in `bypassedHosts` for the process. Logs: W `hls` "<host> is blocked by this device's DNS or ad blocker (it answers 0.0.0.0); asking Cloudflare / Google DNS instead", then I `hls` "<host> reached through Cloudflare / Google DNS (200)". Only relayed requests get this: JS `host.fetch`, ffmpeg on direct URLs and mpv on non-HLS URLs do not.
 
 **Predictable failure modes**
@@ -423,7 +423,7 @@ There are no app-wide preferences specific to JS sources. These stores change th
 - Changing **`JsRuntime` limits or the mutex** affects Browse, details, the player (`getVideoList`), downloads (`getPageList`), tag downloads and the editor at once. They all share one runtime per source, except tags and the editor.
 - Changing **`JsSourceInfo` fields** affects meta.json loading, backups (proto 710 stores it as a JSON string) and pairing payloads between devices on different releases.
 - Changing **`JsPreferences.write`/types** affects the backup preference mapping (`toBackupPreferences`), the editor's Settings dialog and the normal source settings screen.
-- Changing **`JsHtmlPages`** affects the memory lines in Logs (`JsHtmlPages.totals()`).
+- Changing **`JsHtmlPages`** affects the memory lines in Logs (`JsHtmlPages.totals()` / `totalsWithDom()`) and the memory trim (`MemoryLog.trim()` calls `JsHtmlPages.clearAll()` since r95, so every source's parsed pages are gone after a "Memory low" line; `host.parse` again to get them).
 - **`host.fetch` cookies** are the app's shared cookie jar, so passing a bot check in WebView helps JS sources and APK sources alike.
 
 ### Build pitfalls seen in this area

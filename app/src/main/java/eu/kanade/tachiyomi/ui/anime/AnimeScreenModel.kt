@@ -416,7 +416,6 @@ class AnimeScreenModel(
             // KMK: same "Name (flag)" label as manga sources
             val label = found?.let { src -> "${src.name} (${FlagEmoji.getEmojiLangFlag(src.lang)})" }
             mutableState.update { it.copy(sourceName = label, sourceMissing = found == null) }
-            loadSuggestions()
             val anime = repository.getAnime(animeId) ?: return@launchIO
             // KMK: just loaded (by the Browse / library preview a moment ago): not again. A load still running is
             // joined by refresh() rather than started twice (AnimeRepository.refreshFromSource)
@@ -433,6 +432,10 @@ class AnimeScreenModel(
                     refreshedThisRun.add(animeId)
                 if ((episodes.isEmpty() && !(recent && anime.fetchType == FetchType.Seasons)) || bare) refresh()
             }
+            // KMK (r95): suggestions only once the details and episodes are in. They used to start first, and on a
+            // JS or rate-limited source their searches queued ahead of the episode list the user was waiting for.
+            refreshJob?.join()
+            loadSuggestions()
         }
     }
 
@@ -469,6 +472,15 @@ class AnimeScreenModel(
         if (!Injekt.get<eu.kanade.domain.source.service.SourcePreferences>().relatedMangas().get()) return
         screenModelScope.launchIO {
             val anime = repository.getAnime(animeId) ?: return@launchIO
+            // r95: the same page opened again a short while ago gets the rows it had, without new searches
+            val cacheKey = source.id to animeId
+            val cached = synchronized(suggestionCache) {
+                suggestionCache[cacheKey]?.takeIf { System.currentTimeMillis() - it.first < SUGGESTION_CACHE_MS }
+            }
+            if (cached != null) {
+                mutableState.update { it.copy(suggestions = cached.second) }
+                return@launchIO
+            }
             mutableState.update { it.copy(suggestionsLoading = true) }
             try {
                 source.getRelatedAnimeList(
@@ -483,6 +495,12 @@ class AnimeScreenModel(
                         }
                     },
                 )
+                synchronized(suggestionCache) {
+                    if (suggestionCache.size >= SUGGESTION_CACHE_SIZE) {
+                        suggestionCache.remove(suggestionCache.keys.first())
+                    }
+                    suggestionCache[cacheKey] = System.currentTimeMillis() to state.value.suggestions
+                }
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
                 logcat(LogPriority.WARN, e) { "Suggestions failed" }
@@ -1039,5 +1057,10 @@ class AnimeScreenModel(
 
         /** Anime whose bare episode list was already refreshed in this run */
         val refreshedThisRun: MutableSet<Long> = java.util.Collections.synchronizedSet(HashSet())
+
+        /** r95: suggestions by (source id, anime id), with when they were found; oldest dropped past the size */
+        private val suggestionCache = LinkedHashMap<Pair<Long, Long>, Pair<Long, List<Anime>>>()
+        private const val SUGGESTION_CACHE_SIZE = 20
+        private const val SUGGESTION_CACHE_MS = 30 * 60_000L
     }
 }

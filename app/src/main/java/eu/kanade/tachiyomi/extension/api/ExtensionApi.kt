@@ -4,10 +4,9 @@ import android.content.Context
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.extension.model.Extension
-import eu.kanade.tachiyomi.extension.model.LoadResult
-import eu.kanade.tachiyomi.extension.util.ExtensionLoader
 import exh.source.BlacklistedSources
 import exh.source.ExhPreferences
+import kotlinx.coroutines.flow.first
 import mihon.domain.extension.interactor.UpdateExtensionStores
 import mihon.domain.extension.repository.ExtensionStoreRepository
 import tachiyomi.core.common.preference.Preference
@@ -71,9 +70,11 @@ internal class ExtensionApi {
         val blacklistEnabled = sourcePreferences.enableSourceBlacklist().get()
         // SY <--
 
-        val installedExtensions = ExtensionLoader.loadExtensions(context)
-            .filterIsInstance<LoadResult.Success>()
-            .map { it.extension }
+        // KMK (r95): the manager's list is already loaded and kept current by ExtensionInstallReceiver; the old
+        // ExtensionLoader.loadExtensions(context) re-read every extension's classes on the caller's (main) thread.
+        // Waits for the first load, so an early check doesn't compare against an empty list.
+        extensionManager.isInitialized.first { it }
+        val installedExtensions = extensionManager.installedExtensionsFlow.value
             // SY -->
             .filterNot { it.isBlacklisted(blacklistEnabled) }
         // SY <--

@@ -319,7 +319,8 @@ The Sources tab has a manga/anime toggle in its toolbar (`withAnimeSwitch`, pref
 - Manga: `ExtensionManager.findAvailableExtensions()` calls `ExtensionApi.findExtensions()`, which calls `ExtensionStoreRepositoryImpl.fetchExtensions(disabledRepos)`. That runs one `async` per enabled repo, on IO, under `supervisorScope`. For each repo:
   - `ExtensionStoreStatus.record(indexUrl, result)`.
   - Log `I ExtensionStoreRepositoryImpl Repo <name>: N packages read (<url>)`, or `E … Failed to fetch extensions for store '<name> (<url>)'`.
-- Anime: the same, plus `storeRepository.refreshAll()` (re-reads each repo's details) **on every read**.
+- Anime: the same. Up to r94 it also ran `storeRepository.refreshAll()` (re-reads each repo's name and signing key, by downloading and decoding the whole index again) **on every read**; since r95 only the repo row's refresh button (`UnifiedExtensionsScreenModel.refreshRepos`) and adding a repo run it.
+- r95: `findAvailableExtensions(force = false)` is skipped while the last full read is under 15 min old (`INDEX_TTL_MS`), covered the same set of enabled repos, and every one of them has an `ExtensionStoreStatus` success inside that window; logged D "Repos read N s ago; not read again". Screen opening (Unified `init` → `refresh(force = false)`, the old `ExtensionsScreenModel.init`, Sideload, pair sync's empty-list reads) is non-forced; refresh buttons, repo add/remove in `ExtensionStoresScreenModel`, pair sync's repo import and the anime-repo move pass `force = true`. A repo set change (add, remove, enable, disable) always reads, because the enabled set no longer matches.
 - `findLock` (r76): a `Mutex` per manager. A read requested while one runs waits for it and returns, without reading again. Before this, opening Extensions, a restore and a refresh each read every repo at the same moment. Logs from r74 (10859) show each repo read three times within milliseconds.
 - Kind sorting:
   - The manga side partitions out packages containing `.animeextension.`. If a manga repo has anime packages, the repo is **inserted into the anime table**, removed from the manga table if it has nothing for manga, and the user sees the toast `anime_repo_moved`.
@@ -351,7 +352,7 @@ The Sources tab has a manga/anime toggle in its toolbar (`withAnimeSwitch`, pref
 - Two repos' copies with the same package and signature share one install download id (`pkg_sig`), so installing one cancels an install of the other in progress.
 - `ExtensionApi.checkForUpdates` (the background update notifier, upstream) matches by package name only. It can announce an update that comes from another repo's copy.
 - A manga repo that briefly serves only anime packages is moved out of the manga table. This is automatic and not undone.
-- Disabled repos never get a status entry, so the "unread repos" check in `UnifiedExtensionsScreenModel.init` triggers a full read on **every** screen-model creation while any repo is disabled. The read is folded by `findLock`, but it still costs network.
+- Disabled repos never get a status entry, so the "unread repos" check in `UnifiedExtensionsScreenModel.init` triggers a full read on **every** screen-model creation while any repo is disabled. The read is folded by `findLock`, but it still costs network. Since r95 that read is non-forced, so the 15-min TTL skips it as long as the enabled repos were read recently.
 
 **How to check (Logs).**
 - Good: one line per repo and kind per refresh, for example

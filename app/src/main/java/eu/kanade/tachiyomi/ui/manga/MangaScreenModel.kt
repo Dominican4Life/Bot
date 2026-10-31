@@ -1170,6 +1170,17 @@ class MangaScreenModel(
         val state = successState ?: return
         val relatedMangasEnabled = sourcePreferences.relatedMangas().get()
 
+        // KMK (r95): the same page opened again a short while ago gets the rows it had, without new searches
+        val cacheKey = state.source.id to mangaId
+        val cached = synchronized(relatedMangaCache) {
+            relatedMangaCache[cacheKey]?.takeIf { System.currentTimeMillis() - it.first < RELATED_CACHE_MS }
+        }
+        if (cached != null) {
+            updateSuccessState { it.copy(relatedMangaCollection = cached.second) }
+            if (onFinish != null) onFinish() else setRelatedMangasFetchedStatus(true)
+            return
+        }
+
         try {
             if (state.source !is StubSource && relatedMangasEnabled) {
                 state.source.getRelatedMangaList(state.manga.toSManga(), { e -> exceptionHandler(e) }) { pair, _ ->
@@ -1188,6 +1199,14 @@ class MangaScreenModel(
                                 ?.apply { add(relatedManga) }
                                 ?: listOf(relatedManga)
                         successState.copy(relatedMangaCollection = relatedMangaCollection)
+                    }
+                }
+                successState?.relatedMangaCollection?.let { found ->
+                    synchronized(relatedMangaCache) {
+                        if (relatedMangaCache.size >= RELATED_CACHE_SIZE) {
+                            relatedMangaCache.remove(relatedMangaCache.keys.first())
+                        }
+                        relatedMangaCache[cacheKey] = System.currentTimeMillis() to found
                     }
                 }
             }
@@ -2107,6 +2126,15 @@ class MangaScreenModel(
             }
         }
     }
+
+    // KMK (r95) -->
+    private companion object {
+        /** Related titles by (source id, manga id), with when they were found; oldest dropped past the size */
+        val relatedMangaCache = LinkedHashMap<Pair<Long, Long>, Pair<Long, List<RelatedManga>>>()
+        const val RELATED_CACHE_SIZE = 20
+        const val RELATED_CACHE_MS = 30 * 60_000L
+    }
+    // KMK <--
 }
 
 // SY -->

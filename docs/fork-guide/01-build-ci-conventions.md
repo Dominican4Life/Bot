@@ -175,7 +175,7 @@ Where the fork actually deviates, and what to do about it:
 
 ### Logging conventions
 
-- **`AppLog`** (`eu/kanade/tachiyomi/util/system/AppLog.kt`, fork-added in 4735057d) is the in-app log behind the **Logs** screen (`eu/kanade/tachiyomi/ui/logs/LogsScreen.kt`).
+- **`AppLog`** (`eu/kanade/tachiyomi/util/system/AppLog.kt`, fork-added in 4735057d) is the in-app log behind the **Logs** screen (`eu/kanade/tachiyomi/ui/logs/LogsScreen.kt`). r95: the file is written through one buffered append stream (flushed when the queue drains, every 64 lines, at once for W/E lines, and from `App.onStop`); up to r94 every line opened and closed the file.
   - It keeps the last `MAX_LINES = 4000` lines in memory and in `filesDir/app_log/log.txt`. Lines from earlier runs show with a negative time.
   - Format: `+12.345s W tag message`. Filters: All / Info (I, W, E) / Problems (W, E), plus a text search on message and tag. Copy trims to what fits; Share writes a file.
   - `E` lines are written synchronously so they survive a crash.
@@ -194,7 +194,7 @@ Where the fork actually deviates, and what to do about it:
 
 ### Networking basics
 
-`core/common/src/main/kotlin/eu/kanade/tachiyomi/network/NetworkHelper.kt`. It is one `NetworkHelper` from Injekt. `clientBuilder()` is a **function** (KMK), so every client gets its own builder.
+`core/common/src/main/kotlin/eu/kanade/tachiyomi/network/NetworkHelper.kt`. It is one `NetworkHelper` from Injekt. `clientBuilder()` is a **function** (KMK), so every client gets its own builder, but since r95 they all share **one** OkHttp `Cache` (`httpCache`, 5 MiB over `cacheDir/network_cache`; OkHttp wants one `Cache` per directory, and up to r94 each builder made its own, so the journals clashed). A request tagged `NoNetLog` (`Request.Builder().tag(NoNetLog::class.java, NoNetLog)`) writes no `net` Logs line (HLS pieces, r95).
 
 - **Timeouts** (seconds): connect 30, read 30, call 120. `torrentClient` (ANZ, 1546a765): read 10 min, no call timeout. `clientWithTimeOut()` is for `downloadFileWithResume` (5 tries, Range resume, exponential backoff up to 32 s).
 - **Interceptor order** (outermost first):

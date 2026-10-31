@@ -50,6 +50,17 @@ object AniListEpisodeMatch {
 
     fun clear(animeId: Long) = pref(animeId).delete()
 
+    /**
+     * KMK (r95): the AniList id already known for [animeId] (a manual pick or an earlier title match), without any
+     * request; null when none or when the anime was marked as having no entry. The airing lookup reuses it instead
+     * of running a second title search.
+     */
+    fun savedId(animeId: Long): Int? {
+        val saved = pref(animeId).get()
+        if (saved.isEmpty() || saved == NONE) return null
+        return saved.removePrefix(AUTO).toIntOrNull()
+    }
+
     /** The episode info of [anime], whose source numbers its episodes [numbers]; null when it has no match */
     suspend fun load(anime: Anime, numbers: List<Double>): AniListEpisodeInfo? = withIOContext {
         try {

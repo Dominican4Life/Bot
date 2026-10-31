@@ -48,6 +48,8 @@ object MangaCoverMetadata {
                 }
             }.toMap(),
         )
+        savedRatios = MangaCover.coverRatioMap.toMap()
+        savedColors = MangaCover.dominantCoverColorMap.toMap()
     }
 
     /**
@@ -153,11 +155,24 @@ object MangaCoverMetadata {
         MangaCover.dominantCoverColorMap.remove(mangaId)
     }
 
+    // KMK (r95): what was last written, so an unchanged map isn't serialised and rewritten (about 4,000 entries
+    // each in the default SharedPreferences file) on every pause
+    private var savedRatios: Map<Long, Float>? = null
+    private var savedColors: Map<Long, Pair<Int, Int>>? = null
+
     fun savePrefs() {
         val mapCopy = MangaCover.coverRatioMap.toMap()
-        preferences.coverRatios().set(mapCopy.map { "${it.key}|${it.value}" }.toSet())
+        if (mapCopy != savedRatios) {
+            preferences.coverRatios().set(mapCopy.map { "${it.key}|${it.value}" }.toSet())
+            savedRatios = mapCopy
+        }
         val mapColorCopy = MangaCover.dominantCoverColorMap.toMap()
-        preferences.coverColors().set(mapColorCopy.map { "${it.key}|${it.value.first}|${it.value.second}" }.toSet())
+        if (mapColorCopy != savedColors) {
+            preferences.coverColors().set(
+                mapColorCopy.map { "${it.key}|${it.value.first}|${it.value.second}" }.toSet(),
+            )
+            savedColors = mapColorCopy
+        }
     }
 
     private const val SUB_SAMPLE = 4

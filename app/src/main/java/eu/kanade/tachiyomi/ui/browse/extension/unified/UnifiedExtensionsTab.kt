@@ -107,7 +107,7 @@ fun unifiedExtensionsTab(
                 pagerState = pagerState,
                 contentPadding = contentPadding,
                 onSearch = screenModel::search,
-                onRefresh = screenModel::refresh,
+                onRefresh = { screenModel.refresh() },
                 onKindClick = screenModel::toggleKind,
                 onRepoClick = screenModel::selectRepo,
                 onStatusClick = screenModel::selectStatus,

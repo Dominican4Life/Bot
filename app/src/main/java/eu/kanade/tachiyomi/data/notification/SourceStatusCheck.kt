@@ -2,9 +2,9 @@ package eu.kanade.tachiyomi.data.notification
 
 import eu.kanade.tachiyomi.data.anime.AnimeRepository
 import eu.kanade.tachiyomi.network.BotCheckReporter
-import eu.kanade.tachiyomi.source.DisabledSources
 import eu.kanade.tachiyomi.network.SiteBlockedException
 import eu.kanade.tachiyomi.network.await
+import eu.kanade.tachiyomi.source.DisabledSources
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -21,6 +21,8 @@ import logcat.LogPriority
 import logcat.logcat
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
+import tachiyomi.core.common.preference.Preference
+import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.domain.manga.interactor.GetFavorites
 import tachiyomi.domain.source.service.SourceManager
 import uy.kohesive.injekt.Injekt
@@ -44,12 +46,20 @@ object SourceStatusCheck {
     @Volatile
     private var startedOnOpen = false
 
-    /** When the app opens: the sources of your library titles, once the sources are loaded */
-    fun checkLibrarySources() {
+    /**
+     * When the app opens: the sources of your library titles, once the sources are loaded.
+     *
+     * KMK (r95): waits until the first page is drawn ([ready], capped at [READY_WAIT_MS]) so the home-page requests
+     * don't compete with the first covers, and skips sources that passed a check in the last [SKIP_IF_PASSED_MS]
+     * (remembered across starts in [passedAt]). A source that needed attention is checked again on every start.
+     */
+    fun checkLibrarySources(ready: () -> Boolean = { true }) {
         if (startedOnOpen) return
         startedOnOpen = true
         scope.launch {
             runCatching { Injekt.get<SourceManager>().isInitialized.first { it } }
+            val waitStart = System.currentTimeMillis()
+            while (!ready() && System.currentTimeMillis() - waitStart < READY_WAIT_MS) delay(READY_POLL_MS)
             // Anime sources load a little after manga sources
             delay(ANIME_SOURCES_DELAY_MS)
             val manga = runCatching { Injekt.get<GetFavorites>().await().map { it.source } }
@@ -57,14 +67,33 @@ object SourceStatusCheck {
             val anime = runCatching { Injekt.get<AnimeRepository>().getFavorites().map { it.source } }
                 .getOrDefault(emptyList())
             // Turned-off sources are left alone
-            val ids = (manga + anime).toSet() - DisabledSources.ids()
-            logcat(TAG) { "Checking ${ids.size} library sources for bot checks" }
+            val all = (manga + anime).toSet() - DisabledSources.ids()
+            val now = System.currentTimeMillis()
+            val passed = readPassedAt().filterValues { now - it < SKIP_IF_PASSED_MS }
+            val ids = all - passed.keys
+            val skippedNote = if (passed.isEmpty()) "" else " (${passed.size} passed within ${SKIP_IF_PASSED_H} h)"
+            logcat(TAG) { "Checking ${ids.size} library sources for bot checks$skippedNote" }
             val semaphore = Semaphore(MAX_CHECKS_AT_ONCE)
-            coroutineScope {
-                ids.map { id -> async { semaphore.withPermit { checkAndNotify(id) } } }.awaitAll()
-            }
+            val fine = coroutineScope {
+                ids.map { id -> async { semaphore.withPermit { id.takeIf { checkAndNotify(id) } } } }.awaitAll()
+            }.filterNotNull()
+            // One write per start: the sources that passed now, plus the ones still inside the window
+            val kept = passed.filterKeys { it in all } + fine.associateWith { now }
+            runCatching { passedAt.set(kept.map { (id, at) -> "$id|$at" }.toSet()) }
         }
     }
+
+    private val passedAt by lazy {
+        Injekt.get<PreferenceStore>().getStringSet(Preference.appStateKey("source_check_passed"))
+    }
+
+    private fun readPassedAt(): Map<Long, Long> = runCatching {
+        passedAt.get().mapNotNull { entry ->
+            val id = entry.substringBefore('|').toLongOrNull() ?: return@mapNotNull null
+            val at = entry.substringAfter('|', "").toLongOrNull() ?: return@mapNotNull null
+            id to at
+        }.toMap()
+    }.getOrDefault(emptyMap())
 
     /** A cover of [sourceId] failed to load: its source is checked, unless it was checked a short while ago */
     fun onCoverFailed(sourceId: Long) {
@@ -88,12 +117,14 @@ object SourceStatusCheck {
         }
     }
 
-    private suspend fun checkAndNotify(sourceId: Long) {
+    /** Returns true when the source is fine (or couldn't be checked), false when it needs attention */
+    private suspend fun checkAndNotify(sourceId: Long): Boolean {
         lastChecked[sourceId] = System.currentTimeMillis()
-        val site = BotCheckNotifier.siteInfo(sourceId) ?: return
-        val kind = check(sourceId) ?: return
+        val site = BotCheckNotifier.siteInfo(sourceId) ?: return true
+        val kind = check(sourceId) ?: return true
         logcat(TAG, LogPriority.WARN) { "${site.name} needs attention: $kind" }
         BotCheckNotifier.onReport(site.baseUrl, kind, sourceId, force = false)
+        return false
     }
 
     /** One request to the source's home page: a bot check, too many requests, or null when it's fine */
@@ -123,6 +154,11 @@ object SourceStatusCheck {
     private const val TAG = "source-check"
     private const val MAX_CHECKS_AT_ONCE = 8
     private const val ANIME_SOURCES_DELAY_MS = 5_000L
+    private const val READY_WAIT_MS = 20_000L
+    private const val READY_POLL_MS = 250L
+    /** A source that passed its check this recently isn't asked again on the next starts */
+    private const val SKIP_IF_PASSED_H = 8
+    private const val SKIP_IF_PASSED_MS = SKIP_IF_PASSED_H * 3_600_000L
     private const val RECHECK_AFTER_MS = 5 * 60_000L
 
     private val BOT_CHECK_ERROR = Regex("cloudflare|bot check|captcha|challenge", RegexOption.IGNORE_CASE)

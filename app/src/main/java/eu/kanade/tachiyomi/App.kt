@@ -83,6 +83,7 @@ import exh.log.EnhancedFilePrinter
 import exh.log.XLogLogcatLogger
 import exh.log.xLogD
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import logcat.AndroidLogcatLogger
@@ -114,6 +115,9 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
     private val privacyPreferences: PrivacyPreferences by injectLazy()
 
     private val disableIncognitoReceiver = DisableIncognitoReceiver()
+
+    /** KMK (r95): one tick per return to the foreground, for things re-checked then (the Updates widget) */
+    private val foregroundTick = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
 
     @SuppressLint("LaunchActivityFromNotification")
     override fun onCreate() {
@@ -239,7 +243,15 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
         // KMK <--
 
         // Updates widget update
-        WidgetManager(Injekt.get(), Injekt.get()).apply { init(scope) }
+        // KMK (r95): paused during restores and pair syncs (its Updates query re-ran for every merged title), and
+        // only while a widget is placed (checked again each time the app comes to the foreground)
+        WidgetManager(Injekt.get(), Injekt.get()).apply {
+            init(
+                scope,
+                paused = eu.kanade.tachiyomi.ui.library.LibraryRefresh.restoring,
+                recheck = foregroundTick,
+            )
+        }
 
         if (!WorkManager.isInitialized()) {
             WorkManager.initialize(this, Configuration.Builder().build())
@@ -331,6 +343,7 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
 
     override fun onStart(owner: LifecycleOwner) {
         SecureActivityDelegate.onApplicationStart()
+        foregroundTick.tryEmit(Unit)
 
         val syncPreferences: SyncPreferences = Injekt.get()
         val syncTriggerOpt = syncPreferences.getSyncTriggerOptions()
@@ -349,6 +362,8 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
 
     override fun onStop(owner: LifecycleOwner) {
         SecureActivityDelegate.onApplicationStopped()
+        // KMK (r95): the Logs file is written through a buffer; a backgrounded process may be killed any time
+        eu.kanade.tachiyomi.util.system.AppLog.flush()
 
         // AM (DISCORD) -->
         DiscordRPCService.stop(applicationContext)
@@ -445,7 +460,9 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
         )
 
         xLogD("Application booting...")
-        xLogD(CrashLogUtil(applicationContext).getDebugInfo())
+        // KMK (r95): at the default WARN level XLog drops this line, so don't build it (it looked up the WebView
+        // package on the main thread, and CrashLogUtil used to build the whole ExtensionManager just to exist)
+        if (EHLogLevel.isExtraLogging()) xLogD(CrashLogUtil(applicationContext).getDebugInfo())
     }
 
     private inner class DisableIncognitoReceiver : BroadcastReceiver() {

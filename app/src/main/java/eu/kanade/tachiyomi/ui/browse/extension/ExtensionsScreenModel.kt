@@ -241,7 +241,7 @@ class ExtensionsScreenModel(
         screenModelScope.launchIO {
             mutableState.update { it.copy(isRefreshing = true) }
 
-            extensionManager.findAvailableExtensions()
+            extensionManager.findAvailableExtensions(force = true)
 
             // Fake slower refresh so it doesn't seem like it's not doing anything
             delay(1.seconds)

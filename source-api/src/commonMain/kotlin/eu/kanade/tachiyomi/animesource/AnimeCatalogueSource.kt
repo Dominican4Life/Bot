@@ -3,10 +3,14 @@ package eu.kanade.tachiyomi.animesource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
+import eu.kanade.tachiyomi.source.RELATED_SEARCH_AT_ONCE
+import eu.kanade.tachiyomi.source.relatedSearchKeywords
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import logcat.LogPriority
 import rx.Observable
 import tachiyomi.core.common.util.QuerySanitizer.sanitize
@@ -218,23 +222,18 @@ interface AnimeCatalogueSource : AnimeSource {
         anime: SAnime,
         pushResults: suspend (relatedAnime: Pair<String, List<SAnime>>, completed: Boolean) -> Unit,
     ) {
-        val words = HashSet<String>()
-        words.add(anime.title)
-        if (anime.title.lowercase() != anime.originalTitle.lowercase()) words.add(anime.originalTitle)
-        anime.title.stripKeywordForRelatedAnimes()
-            .filterNot { word -> words.any { it.lowercase() == word } }
-            .onEach { words.add(it) }
-        anime.originalTitle.stripKeywordForRelatedAnimes()
-            .filterNot { word -> words.any { it.lowercase() == word } }
-            .onEach { words.add(it) }
+        // KMK (r95): the full title(s) plus at most 3 title words of 4+ letters that aren't stop words, two searches
+        // at a time (see relatedSearchKeywords). Before, every word of the title was searched at once.
+        val words = relatedSearchKeywords(anime.title, anime.originalTitle) { it.stripKeywordForRelatedAnimes() }
         if (words.isEmpty()) return
 
         coroutineScope {
             val filterList = getFilterList()
+            val gate = Semaphore(RELATED_SEARCH_AT_ONCE)
             words.map { keyword ->
                 launch {
                     runCatching {
-                        getSearchAnime(1, keyword.sanitize(), filterList).animes
+                        gate.withPermit { getSearchAnime(1, keyword.sanitize(), filterList).animes }
                     }
                         .onSuccess { if (it.isNotEmpty()) pushResults(Pair(keyword, it), false) }
                         .onFailure { e ->

@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.util.system
 
 import android.app.Application
+import android.os.Debug
 import coil3.imageLoader
 import eu.kanade.tachiyomi.data.cache.CoverFolders
 import eu.kanade.tachiyomi.jssource.JsSourceManager
@@ -36,6 +37,10 @@ object MemoryLog {
         CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
             var lastLineAt = 0L
             var lastLogged = 0L
+            // KMK (r95): one high sample is often just garbage waiting for the next collection (ART lets the heap
+            // reach about 75 % before it collects), so a trim needs two high samples in a row and a cooldown
+            var highSamples = 0
+            var lastTrimAt = 0L
             while (true) {
                 delay(SAMPLE_MS)
                 runCatching {
@@ -49,7 +54,12 @@ object MemoryLog {
                         lastLineAt = now
                         lastLogged = used
                     }
-                    if (used >= max * TRIM_AT) trim(used, max)
+                    highSamples = if (used >= max * TRIM_AT) highSamples + 1 else 0
+                    if (highSamples >= TRIM_AFTER_SAMPLES && now - lastTrimAt >= TRIM_COOLDOWN_MS) {
+                        lastTrimAt = now
+                        highSamples = 0
+                        trim(used, max)
+                    }
                 }
             }
         }
@@ -86,15 +96,24 @@ object MemoryLog {
         runCatching { line(if (open) "reader opened" else "reader closed") }
     }
 
+    /** Java heap in use and its limit, in MB. Bitmaps and the JS engines live in the native heap, see [nativeMb] */
     private fun usage(): Pair<Long, Long> {
         val runtime = Runtime.getRuntime()
         return (runtime.totalMemory() - runtime.freeMemory()) / MB to runtime.maxMemory() / MB
     }
 
+    /** KMK (r95): the native heap (bitmap pixels, QuickJS, decoders), which the Java figures leave out */
+    private fun nativeMb(): Long = Debug.getNativeHeapAllocatedSize() / MB
+
     private fun line(event: String?) {
         val (used, max) = usage()
         val level = if (used * 100 / max.coerceAtLeast(1) >= 75) 'W' else 'I'
-        AppLog.add(level, "Memory", "$used / $max MB in use (screen: $currentScreen${event?.let { ", $it" } ?: ""})" + " · " + caches())
+        AppLog.add(
+            level,
+            "Memory",
+            "$used / $max MB in use (screen: $currentScreen${event?.let { ", $it" } ?: ""})" +
+                " · native ${nativeMb()} MB · " + caches(),
+        )
     }
 
     private fun caches(): String = buildList {
@@ -106,20 +125,28 @@ object MemoryLog {
         runCatching { add("folder listings ${CoverFolders.listingCount}") }
         runCatching { add("JS sources running ${Injekt.get<JsSourceManager>().runningCount}") }
         runCatching {
-            val (pages, bytes) = eu.kanade.tachiyomi.jssource.JsHtmlPages.totals()
-            add("JS parsed pages $pages (page text ${bytes / MB} MB)")
+            val (pages, bytes, dom) = eu.kanade.tachiyomi.jssource.JsHtmlPages.totalsWithDom()
+            add("JS parsed pages $pages (page text ${bytes / MB} MB, DOM about ${dom / MB} MB)")
         }
         runCatching { add("animated tiles ${eu.kanade.presentation.components.AnimatedTiles.count.get()}") }
     }.joinToString(", ")
 
-    /** Memory running low: let go of what can be loaded again */
+    /**
+     * Memory running low: let go of what can be loaded again. KMK (r95): no forced System.gc() any more (ART
+     * collects on its own once the caches are released; a forced full collection only added a pause), and the JS
+     * sources' parsed pages are released too.
+     */
     private fun trim(used: Long, max: Long) {
         runCatching { Injekt.get<Application>().imageLoader.memoryCache?.clear() }
         runCatching { BrowseTabCache.trim(keep = 2) }
         runCatching { CoverFolders.dropListings() }
-        System.gc()
-        val (after, _) = usage()
-        AppLog.add('W', "Memory", "Memory low ($used / $max MB): cleared images in memory, older Browse tabs and folder listings; now $after MB")
+        val jsPages = runCatching { eu.kanade.tachiyomi.jssource.JsHtmlPages.clearAll() }.getOrDefault(0)
+        AppLog.add(
+            'W',
+            "Memory",
+            "Memory low ($used / $max MB, native ${nativeMb()} MB): cleared images in memory, older Browse tabs, " +
+                "folder listings and $jsPages JS parsed pages",
+        )
     }
 
     /** A readable name from a screen's key ("Screen#…#AnimeSourceScreen", or a class name) */
@@ -131,4 +158,8 @@ object MemoryLog {
     private const val HIGH_PERCENT = 60L
     private const val MB = 1024L * 1024L
     private const val TRIM_AT = 0.75
+    /** Samples in a row (10 s apart) past [TRIM_AT] before a trim */
+    private const val TRIM_AFTER_SAMPLES = 2
+    /** No second trim within this time of the last one */
+    private const val TRIM_COOLDOWN_MS = 120_000L
 }

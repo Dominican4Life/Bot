@@ -34,6 +34,15 @@ import kotlin.random.Random
     private val delegatedSourcesEnabled = delegateSourcePreferences.delegateSources().get()
     // KMK <--
 
+    // KMK (r95): one Cache for every client built here. OkHttp wants one Cache instance per directory; before, each
+    // clientBuilder() call made its own over "network_cache", so three journals fought over the same 5 MiB.
+    private val httpCache by lazy {
+        Cache(
+            directory = File(context.cacheDir, "network_cache"),
+            maxSize = 5L * 1024 * 1024, // 5 MiB
+        )
+    }
+
     /**
      * Timeout in unit of seconds.
      */
@@ -51,17 +60,13 @@ import kotlin.random.Random
             .readTimeout(readTimeout, TimeUnit.SECONDS)
             .callTimeout(callTimeout, TimeUnit.SECONDS)
             // KMK <--
-            .cache(
-                Cache(
-                    directory = File(context.cacheDir, "network_cache"),
-                    maxSize = 5L * 1024 * 1024, // 5 MiB
-                ),
-            )
+            .cache(httpCache)
             .addInterceptor(UncaughtExceptionInterceptor())
             .addInterceptor(UserAgentInterceptor(::defaultUserAgentProvider))
-            // KMK: each request in the in-app Logs screen
+            // KMK: each request in the in-app Logs screen (r95: unless tagged NoNetLog, as HLS stream pieces are)
             .addInterceptor { chain ->
                 val request = chain.request()
+                if (request.tag(NoNetLog::class.java) != null) return@addInterceptor chain.proceed(request)
                 val started = System.nanoTime()
                 try {
                     val response = chain.proceed(request)
@@ -282,3 +287,11 @@ import kotlin.random.Random
         // KMK <--
     }
 }
+
+// KMK (r95) -->
+/**
+ * Request tag that keeps a request out of the per-request "net" Logs line: `Request.Builder().tag(NoNetLog::class.java,
+ * NoNetLog)`. Used for HLS stream pieces, which arrive every few seconds for a whole episode.
+ */
+object NoNetLog
+// KMK <--

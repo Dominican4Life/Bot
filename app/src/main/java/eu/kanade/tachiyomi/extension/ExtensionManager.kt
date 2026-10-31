@@ -210,7 +210,12 @@ class ExtensionManager(
     // (opening Extensions, a restore and a refresh each read every repo, at the same moment)
     private val findLock = kotlinx.coroutines.sync.Mutex()
 
-    suspend fun findAvailableExtensions() {
+    /**
+     * KMK (r95): a read that isn't [force]d is skipped while the last one is younger than [INDEX_TTL_MS] and covered
+     * the same enabled repos (every Browse open used to read every repo again). Refresh buttons, repo add/remove,
+     * restores and pair sync pass [force].
+     */
+    suspend fun findAvailableExtensions(force: Boolean = false) {
         if (findLock.isLocked) {
             findLock.lock()
             findLock.unlock()
@@ -218,11 +223,37 @@ class ExtensionManager(
         }
         findLock.lock()
         try {
+            if (!force && indexFresh()) {
+                logcat { "Repos read ${(System.currentTimeMillis() - lastReadAt) / 1000} s ago; not read again" }
+                return
+            }
             findAvailableExtensionsNow()
         } finally {
             findLock.unlock()
         }
     }
+
+    // KMK (r95) -->
+    /** When the repos were last read in full, and which enabled repos that read covered */
+    @Volatile
+    private var lastReadAt = 0L
+    private var lastReadRepos: Set<String> = emptySet()
+
+    private suspend fun enabledRepoUrls(): Set<String>? = runCatching {
+        Injekt.get<mihon.domain.extension.repository.ExtensionStoreRepository>().getAll().map { it.indexUrl }.toSet() -
+            preferences.disabledRepos().get()
+    }.getOrNull()
+
+    /** True when every enabled repo was read successfully less than [INDEX_TTL_MS] ago */
+    private suspend fun indexFresh(): Boolean {
+        val now = System.currentTimeMillis()
+        if (now - lastReadAt >= INDEX_TTL_MS) return false
+        val repos = enabledRepoUrls() ?: return false
+        if (repos != lastReadRepos) return false
+        val status = mihon.data.extension.service.ExtensionStoreStatus.entries.value
+        return repos.all { url -> status[url]?.lastSuccess?.let { now - it < INDEX_TTL_MS } == true }
+    }
+    // KMK <--
 
     private suspend fun findAvailableExtensionsNow() {
         val allExtensions: List<Extension.Available> = try {
@@ -232,6 +263,8 @@ class ExtensionManager(
             withUIContext { context.toast(MR.strings.extension_api_error) }
             return
         }
+        lastReadRepos = enabledRepoUrls().orEmpty()
+        lastReadAt = System.currentTimeMillis()
 
         // KMK: anime packages in a manga repo: the repo is added to the anime repos too (and leaves the manga repos
         // when it has nothing for manga), so they show up and install as anime extensions
@@ -252,7 +285,7 @@ class ExtensionManager(
                 }.onFailure { logcat(LogPriority.WARN, it) { "Couldn't add anime repo ${store.indexUrl}" } }
             }
             if (moved) {
-                Injekt.get<eu.kanade.tachiyomi.animeextension.AnimeExtensionManager>().findAvailableExtensions()
+                Injekt.get<eu.kanade.tachiyomi.animeextension.AnimeExtensionManager>().findAvailableExtensions(force = true)
                 withUIContext { context.toast(tachiyomi.i18n.kmk.KMR.strings.anime_repo_moved) }
             }
         }
@@ -583,3 +616,6 @@ fun Collection<Extension.Available>.copyFor(
     return signed.firstOrNull() ?: byName.firstOrNull()
 }
 // KMK <--
+
+/** KMK (r95): a non-forced read of the extension repos is skipped while the last one is younger than this */
+internal const val INDEX_TTL_MS = 15 * 60_000L

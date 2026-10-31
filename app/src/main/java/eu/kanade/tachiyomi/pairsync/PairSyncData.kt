@@ -1297,8 +1297,8 @@ object PairSyncData {
                 failed++
             }
         }
-        if (mangaAdded) runCatching { Injekt.get<ExtensionManager>().findAvailableExtensions() }
-        if (animeAdded) runCatching { Injekt.get<AnimeExtensionManager>().findAvailableExtensions() }
+        if (mangaAdded) runCatching { Injekt.get<ExtensionManager>().findAvailableExtensions(force = true) }
+        if (animeAdded) runCatching { Injekt.get<AnimeExtensionManager>().findAvailableExtensions(force = true) }
         if (added > 0 || failed > 0) {
             log("Repos: $added added" + if (failed > 0) ", $failed couldn't be reached" else "")
         }

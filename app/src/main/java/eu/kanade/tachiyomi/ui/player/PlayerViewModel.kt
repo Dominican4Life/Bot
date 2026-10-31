@@ -116,6 +116,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.sample
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -277,7 +278,10 @@ class PlayerViewModel @JvmOverloads constructor(
     val pos: kotlinx.coroutines.flow.StateFlow<Int?> = mpv.propFlow<Int>("time-pos")
     val duration: kotlinx.coroutines.flow.StateFlow<Int?> = mpv.propFlow<Int>("duration")
     // ANZ -->
+    // KMK (r95): mpv reports the read-ahead on every demuxer read; the seekbar only needs it twice a second
     val demuxerCacheTime: kotlinx.coroutines.flow.StateFlow<Float?> = mpv.propFlow<Float>("demuxer-cache-time")
+        .sample(500)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
     // ANZ <--
 
     val currentVolume = MutableStateFlow(audioManager.getVolume())
@@ -483,7 +487,11 @@ class PlayerViewModel @JvmOverloads constructor(
         // ANZ -->
         viewModelScope.launchIO {
             try {
-                currentAnime.collect { anime ->
+                // KMK (r95): only while "Skip filler episodes" is on (the only reader of fillerEpisodes); before, every
+                // title's first play cost 2–4 requests to animefillerlist.com for a setting that is off by default
+                combine(currentAnime, playerPreferences.skipFillerEpisodes().changes()) { anime, skip ->
+                    anime.takeIf { skip }
+                }.collect { anime ->
                     // KMK: not for videos inside manga chapters (played through a hidden source): they have no
                     // filler episodes, and the lookup was a wasted request to animefillerlist.com
                     if (anime != null && fillerEpisodes.isEmpty() &&
@@ -2386,6 +2394,9 @@ class PlayerViewModel @JvmOverloads constructor(
 
         val chosenEpisode = currentPlaylist.value.firstOrNull { ep -> ep.id == episodeId } ?: return null
 
+        // KMK (r95): progress is written every 10 s now, so the episode being left gets its last position saved
+        currentEpisode.value?.takeIf { it.id != null && it.id != chosenEpisode.id && !incognitoMode }
+            ?.let { saveWatchingProgress(it) }
         _currentEpisode.update { _ -> chosenEpisode }
         // KMK: nothing carried over from the previous episode
         pendingStart = null
@@ -2820,6 +2831,7 @@ class PlayerViewModel @JvmOverloads constructor(
             currentEp.last_second_seen = seconds
 
             val progress = playerPreferences.progressPreference().get()
+            val wasSeen = currentEp.seen
             if (seconds >= totalSeconds * progress) {
                 updateEpisodeProgressOnComplete(currentEp)
             }
@@ -2838,9 +2850,25 @@ class PlayerViewModel @JvmOverloads constructor(
                 watchTimeLastPos = seconds
             }
 
-            saveWatchingProgress(currentEp)
+            // KMK (r95): the row is written every PROGRESS_SAVE_MS instead of every second (each write re-ran the
+            // anime page's episode list, the library stats GROUP BY and the Updates/History queries underneath the
+            // player). The first second of an episode and the moment it turns seen still write at once, and
+            // pause/stop/episode change/close flush through saveCurrentEpisodeWatchingProgress and loadEpisode.
+            val now = System.currentTimeMillis()
+            val newEpisode = currentEp.id != progressSavedEpisodeId
+            if (newEpisode || (!wasSeen && currentEp.seen) || now - progressSavedAt >= PROGRESS_SAVE_MS) {
+                progressSavedEpisodeId = currentEp.id
+                progressSavedAt = now
+                saveWatchingProgress(currentEp)
+            }
         }
     }
+
+    // KMK -->
+    /** When and for which episode [onSecondReached] last wrote the progress */
+    private var progressSavedAt = 0L
+    private var progressSavedEpisodeId: Long? = null
+    // KMK <--
 
     // KMK -->
     private var watchTimeEpisodeId = -1L
@@ -3627,6 +3655,9 @@ class PlayerViewModel @JvmOverloads constructor(
 
         /** Playing this long after a repair gives a later failure the full set of attempts again */
         private const val SELF_HEAL_RESET_MS = 2 * 60 * 1000L
+
+        /** r95: how often playback writes the position to the database (it was every second) */
+        private const val PROGRESS_SAVE_MS = 10_000L
 
         private const val FRAME_DROP_WINDOW_MS = 10_000L
         private const val FRAME_DROP_LIMIT = 20

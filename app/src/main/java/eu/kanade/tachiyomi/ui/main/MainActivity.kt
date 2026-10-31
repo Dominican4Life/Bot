@@ -216,7 +216,8 @@ class MainActivity : BaseActivity() {
         if (isLaunch) {
             uy.kohesive.injekt.Injekt.get<animiru.feature.mpvfiles.MpvConfig>().copyFiles()
             // Your library's sources are checked for bot checks; any that need one get a notification
-            eu.kanade.tachiyomi.data.notification.SourceStatusCheck.checkLibrarySources()
+            // (r95: once the first page is drawn, so the requests don't compete with the first covers)
+            eu.kanade.tachiyomi.data.notification.SourceStatusCheck.checkLibrarySources { ready }
         }
         // KMK <--
 
@@ -417,10 +418,13 @@ class MainActivity : BaseActivity() {
             // SY <--
 
             // KMK -->
-            val previewLastVersion = Injekt.get<PreferenceStore>().getInt(
-                Preference.appStateKey("preview_last_version_code"),
-                0,
-            )
+            // KMK (r95): read once; this body recomposes on every banner/theme change
+            val previewLastVersion = remember {
+                Injekt.get<PreferenceStore>().getInt(
+                    Preference.appStateKey("preview_last_version_code"),
+                    0,
+                )
+            }
             val previewCurrentVersion = BuildConfig.COMMIT_COUNT.toInt()
             // KMK: nothing recorded yet = a fresh install (the value is set below once shown)
             val firstInstall = remember { previewLastVersion.get() == 0 }
@@ -469,7 +473,11 @@ class MainActivity : BaseActivity() {
                 // KMK <--
             }
             // KMK -->
-            previewLastVersion.set(previewCurrentVersion)
+            // KMK (r95): written once after the first composition (firstInstall/showChangelog above are already
+            // remembered), not on every recomposition
+            LaunchedEffect(Unit) {
+                previewLastVersion.set(previewCurrentVersion)
+            }
             // KMK <--
 
             // SY -->
