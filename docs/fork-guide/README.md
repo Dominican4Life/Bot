@@ -348,7 +348,7 @@ Commit 94726be6. Three fixes for what the r93 test on the phone showed: an app-w
 
 ## Changes in r95 (31 October 2026)
 
-Commit TBD. "Start-up and battery": a read-only efficiency audit in five parts (app start/memory/UI, library/database, browse/sources/JS, reader/images/downloads, player/anime; `scratchpad/r95/audit/`) ranked what the app does that it doesn't need to, with file:line evidence from the owner's r94 logs (4,097 titles). This release takes the low-risk items. Nothing changes what the user sees except where noted; the gains are fewer requests, fewer database writes and less main-thread work.
+Commit d972fe01. "Start-up and battery": a read-only efficiency audit in five parts (app start/memory/UI, library/database, browse/sources/JS, reader/images/downloads, player/anime; `scratchpad/r95/audit/`) ranked what the app does that it doesn't need to, with file:line evidence from the owner's r94 logs (4,097 titles). This release takes the low-risk items. Nothing changes what the user sees except where noted; the gains are fewer requests, fewer database writes and less main-thread work.
 
 **App start and memory**
 - **`CrashLogUtil`** (`util/CrashLogUtil.kt`): `extensionManager` is `by injectLazy()`. **`App.setupExhLogging`** builds the debug-info line only when `EHLogLevel.isExtraLogging()`. Why: `xLogD(getDebugInfo())` at start-up constructed the whole `ExtensionManager` (every installed extension's classes, loaded serially on the main thread) and looked up the WebView package, to format a line XLog then dropped at the default WARN level.
