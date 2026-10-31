@@ -332,7 +332,7 @@ Commit 3ce17608. Brief and contract: `scratchpad/r93/`. Two writers in parallel 
 
 ## Changes in r94 (30 October 2026)
 
-Commit TBD. Three fixes for what the r93 test on the phone showed: an app-wide spinner after a sync, no way to tell where a slow merge spends its time, and a "Got: covers" count lower than what was sent.
+Commit 94726be6. Three fixes for what the r93 test on the phone showed: an app-wide spinner after a sync, no way to tell where a slow merge spends its time, and a "Got: covers" count lower than what was sent.
 
 - **The IO pool deadlock (every screen frozen after a sync)** (`data/anime/download/AnimeDownloadManager.kt`, `data/anime/AnimeRepository.kt`). The anime library refreshed download badges with one coroutine per favourite on `Dispatchers.IO` (`AnimeLibraryContent`, and "Invalidate download cache" in `AnimeLibraryTab`). Each `reload` → `listFiles` → `findAnimeFolder` → `caseTwinNames` ran `runBlocking(Dispatchers.IO) { loadLibraryNames() }` when the 10 s names cache was empty or stale (pair sync's `forgetLibraryNames()` empties it), and `nameCountsOf` did the same for the episode names. The inner read is a `withContext(Dispatchers.IO)` database call queued on the same 64-thread pool the callers were blocking in: with 64 or more anime every IO thread parked in `runBlocking`, waiting for work that could never run. From then on every database read, every Browse `flowOn(IO)` and every cover load hung until the app was killed. Fixed in three places:
   - `reload` calls `ensureLibraryNames()` first: a suspend, `Mutex`-guarded, TTL-cached loader, like the episode names (`loadNameCounts`) already were. The coroutine path never falls back to a synchronous read now.
