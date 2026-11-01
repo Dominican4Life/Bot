@@ -55,13 +55,20 @@ class MangaRepositoryImpl(
         return handler.awaitList { mangasQueries.getReadMangaNotInLibrary(MangaMapper::mapManga) }
     }
 
+    // KMK -->
+    // r96: `libraryFavorites` reads only favourites' chapters (same rows and columns as
+    // `library`, which is the view filtered to favorite = 1). The flow runs once per burst of
+    // writes instead of once per write.
     override suspend fun getLibraryManga(): List<LibraryManga> {
-        return handler.awaitList { libraryViewQueries.library(MangaMapper::mapLibraryManga) }
+        return handler.awaitList { libraryViewQueries.libraryFavorites(MangaMapper::mapLibraryManga) }
     }
 
     override fun getLibraryMangaAsFlow(): Flow<List<LibraryManga>> {
-        return handler.subscribeToList { libraryViewQueries.library(MangaMapper::mapLibraryManga) }
+        return handler.subscribeToListDebounced(LIBRARY_FLOW_DEBOUNCE_MS) {
+            libraryViewQueries.libraryFavorites(MangaMapper::mapLibraryManga)
+        }
     }
+    // KMK <--
 
     override fun getFavoritesBySourceId(sourceId: Long): Flow<List<Manga>> {
         return handler.subscribeToList { mangasQueries.getFavoriteBySourceId(sourceId, MangaMapper::mapManga) }
@@ -216,4 +223,11 @@ class MangaRepositoryImpl(
         return handler.awaitList { libraryViewQueries.readMangaNonLibrary(MangaMapper::mapLibraryManga) }
     }
     // SY <--
+
+    // KMK -->
+    private companion object {
+        /** r96: how long the library flow waits after the last table write before re-running its query. */
+        const val LIBRARY_FLOW_DEBOUNCE_MS = 400L
+    }
+    // KMK <--
 }

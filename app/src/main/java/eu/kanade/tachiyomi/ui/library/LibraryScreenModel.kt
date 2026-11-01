@@ -91,6 +91,7 @@ import tachiyomi.core.common.preference.CheckboxState
 import tachiyomi.core.common.preference.TriState
 import tachiyomi.core.common.preference.mapAsCheckboxState
 import tachiyomi.core.common.util.lang.compareToWithCollator
+import tachiyomi.core.common.util.lang.debounceAfterFirst
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.launchNonCancellable
 import tachiyomi.core.common.util.lang.withIOContext
@@ -807,7 +808,8 @@ class LibraryScreenModel(
             // KMK: not read again for every title while a restore runs
             LibraryRefresh.pausedWhileRestoring(getLibraryManga.subscribe()),
             getLibraryItemPreferencesFlow(),
-            downloadCache.changes,
+            // KMK: r96, one rebuild per burst of finished downloads, not one per chapter
+            downloadCache.changes.debounceAfterFirst(DOWNLOAD_CHANGES_DEBOUNCE_MS),
             // KMK: again when sources finish loading (their languages) and when asked (after a restore)
             kotlinx.coroutines.flow.combine(
                 sourceManager.sources.map { it.size }.distinctUntilChanged(),
@@ -1929,6 +1931,9 @@ class LibraryScreenModel(
     companion object {
         // KMK: removals this big show a "Removing…" and a "Removed" message
         private const val BULK_REMOVE_NOTICE = 50
+
+        /** r96: download badge rebuilds wait this long after the last finished chapter. */
+        private const val DOWNLOAD_CHANGES_DEBOUNCE_MS = 500L
 
         /** List of MangaDex UUIDs subject to DMCA takedowns */
         @Volatile

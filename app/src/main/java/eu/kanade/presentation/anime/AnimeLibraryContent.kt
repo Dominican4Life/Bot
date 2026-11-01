@@ -28,7 +28,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -60,17 +59,10 @@ import eu.kanade.presentation.library.components.MangaListItem
 import eu.kanade.presentation.library.components.SourceIconBadge
 import eu.kanade.presentation.library.components.UnreadBadge
 import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
-import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.data.anime.Anime
-import eu.kanade.tachiyomi.data.anime.AnimeAiring
-import eu.kanade.tachiyomi.data.anime.AnimeAiringRepository
 import eu.kanade.tachiyomi.data.anime.AnimeLibraryStats
 import eu.kanade.tachiyomi.data.anime.AnimeRepository
 import eu.kanade.tachiyomi.data.anime.Episode
-import eu.kanade.tachiyomi.data.anime.download.AnimeDownloadManager
-import eu.kanade.tachiyomi.data.anime.track.AnimeTrack
-import eu.kanade.tachiyomi.data.anime.track.AnimeTrackRepository
-import eu.kanade.tachiyomi.data.anime.track.AnimeTrackStatus
 import eu.kanade.tachiyomi.ui.player.PlayerActivity
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.delay
@@ -79,12 +71,10 @@ import mihon.feature.migration.anime.AnimeMigrateSources
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.domain.category.model.Category
 import tachiyomi.domain.library.model.LibraryDisplayMode
-import tachiyomi.domain.library.model.LibraryGroup
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.model.MangaCover
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
-import tachiyomi.i18n.sy.SYMR
 import tachiyomi.presentation.core.components.FastScrollLazyVerticalGrid
 import tachiyomi.presentation.core.components.material.PullRefresh
 import tachiyomi.presentation.core.i18n.stringResource
@@ -124,186 +114,7 @@ class AnimeLibraryState(
     fun page(index: Int): AnimeLibraryPage? = pages.getOrNull(index.coerceIn(0, (pages.size - 1).coerceAtLeast(0)))
 }
 
-private const val NOT_TRACKED_GROUP = 7L
-
-/** Tracking statuses in the order the manga library shows its own */
-private val trackStatusOrder = listOf(
-    AnimeTrackStatus.WATCHING,
-    AnimeTrackStatus.REWATCHING,
-    AnimeTrackStatus.PLAN_TO_WATCH,
-    AnimeTrackStatus.ON_HOLD,
-    AnimeTrackStatus.COMPLETED,
-    AnimeTrackStatus.DROPPED,
-)
-
-private fun trackStatusName(status: Long) = when (status) {
-    AnimeTrackStatus.WATCHING -> KMR.strings.anime_track_status_watching
-    AnimeTrackStatus.COMPLETED -> KMR.strings.anime_track_status_completed
-    AnimeTrackStatus.ON_HOLD -> KMR.strings.anime_track_status_on_hold
-    AnimeTrackStatus.DROPPED -> KMR.strings.anime_track_status_dropped
-    AnimeTrackStatus.REWATCHING -> KMR.strings.anime_track_status_rewatching
-    AnimeTrackStatus.PLAN_TO_WATCH -> KMR.strings.anime_track_status_plan
-    else -> SYMR.strings.not_tracked
-}
-
-/** Anime statuses with their name and place, like the manga library's Status groups */
-private val statusGroups = mapOf(
-    SAnime.ONGOING.toLong() to (MR.strings.ongoing to 1L),
-    SAnime.COMPLETED.toLong() to (MR.strings.completed to 2L),
-    SAnime.PUBLISHING_FINISHED.toLong() to (MR.strings.publishing_finished to 3L),
-    SAnime.LICENSED.toLong() to (MR.strings.licensed to 4L),
-    SAnime.ON_HIATUS.toLong() to (MR.strings.on_hiatus to 5L),
-    SAnime.CANCELLED.toLong() to (MR.strings.cancelled to 6L),
-    SAnime.UPCOMING.toLong() to (MR.strings.label_upcoming to 7L),
-)
-
-private fun pageCategory(id: Long, name: String, order: Long) =
-    Category(id = id, name = name, order = order, flags = 0, hidden = false)
-
-/** KMK: loads the anime library and makes its pages, following every setting */
-@Composable
-fun rememberAnimeLibraryState(searchQuery: String?): AnimeLibraryState {
-    val context = LocalContext.current
-    val repository = remember { Injekt.get<AnimeRepository>() }
-    val sourceManager = remember { Injekt.get<AnimeSourceManager>() }
-    val libraryPreferences = remember { Injekt.get<LibraryPreferences>() }
-    val favorites by remember { eu.kanade.tachiyomi.ui.library.LibraryRefresh.pausedWhileRestoring(repository.subscribeFavorites()) }.collectAsState(initial = null)
-    val stats by remember { eu.kanade.tachiyomi.ui.library.LibraryRefresh.pausedWhileRestoring(repository.subscribeLibraryStats()) }.collectAsState(initial = emptyMap())
-    val categories by remember { repository.subscribeCategories() }.collectAsState(initial = emptyList())
-    val links by remember { eu.kanade.tachiyomi.ui.library.LibraryRefresh.pausedWhileRestoring(repository.subscribeCategoryLinks()) }.collectAsState(initial = emptyMap())
-
-    val filters = rememberAnimeLibraryFilters()
-    val sortMode by remember { AnimeLibraryPrefs.sort() }.collectAsState()
-    val sortAscending by remember { AnimeLibraryPrefs.sortAscending() }.collectAsState()
-    val randomSeed by remember { AnimeLibraryPrefs.randomSeed() }.collectAsState()
-    val groupType by remember { AnimeLibraryPrefs.groupType() }.collectAsState()
-    val restoreTick by eu.kanade.tachiyomi.ui.library.LibraryRefresh.tick.collectAsState()
-    val showDownloadBadge by remember(restoreTick) { AnimeLibraryPrefs.downloadBadge() }.collectAsState()
-    val showCategoryTabs by remember { libraryPreferences.categoryTabs() }.collectAsState()
-    val showItemCount by remember { libraryPreferences.categoryNumberOfItems() }.collectAsState()
-
-    val downloadManager = remember { Injekt.get<AnimeDownloadManager>() }
-    val downloadChanges by downloadManager.changes.collectAsState()
-    val needDownloads = showDownloadBadge || filters.downloaded != tachiyomi.core.common.preference.TriState.DISABLED
-    // KMK: asked again after a restore (see LibraryRefresh), and when anime sources finish loading
-    val refreshTick by eu.kanade.tachiyomi.ui.library.LibraryRefresh.tick.collectAsState()
-    // Look at each anime's download folder once, when downloads matter
-    // KMK: not while restoring: it looked at every anime's folder again for each anime added
-    val restoring by eu.kanade.tachiyomi.ui.library.LibraryRefresh.restoring.collectAsState()
-    LaunchedEffect(favorites?.size, needDownloads, refreshTick, restoring) {
-        // KMK (r94): one bounded scan, not one coroutine per title (that parked the IO pool with 64+ titles)
-        if (needDownloads && !restoring) downloadManager.refreshAll(favorites.orEmpty())
-    }
-    val downloaded = remember(favorites, downloadChanges, needDownloads, refreshTick) {
-        if (!needDownloads) {
-            emptyMap()
-        } else {
-            favorites.orEmpty().associate { it.id to downloadManager.downloadedCount(it) }
-        }
-    }
-    val needTracks = filters.usesTracks || sortMode == AnimeLibrarySort.TRACKER_SCORE ||
-        groupType == LibraryGroup.BY_TRACK_STATUS
-    val tracks by produceState(initialValue = emptyMap<Long, List<AnimeTrack>>(), favorites, needTracks) {
-        value = if (needTracks) {
-            runCatching { Injekt.get<AnimeTrackRepository>().getAll().groupBy { it.animeId } }.getOrDefault(emptyMap())
-        } else {
-            emptyMap()
-        }
-    }
-
-    // Next airing episodes from AniList, only while sorting by them (one batched request per 50 tracked anime)
-    val airing by produceState(initialValue = emptyMap<Long, AnimeAiring>(), favorites, sortMode) {
-        if (sortMode == AnimeLibrarySort.NEXT_AIRING) {
-            val animes = favorites ?: return@produceState
-            value = runCatching { AnimeAiringRepository.forLibrary(animes) }.getOrDefault(value)
-        }
-    }
-
-    // The pages: categories, or groups of the whole library
-    // Hidden anime categories (More › Categories › Anime), unless "Show hidden categories" is on
-    val hiddenCategoryIds by remember { AnimeLibraryPrefs.hiddenCategories() }.collectAsState()
-    val showHidden by remember { AnimeLibraryPrefs.showHiddenCategories() }.collectAsState()
-    val groups = remember(favorites, categories, links, groupType, tracks, hiddenCategoryIds, showHidden) {
-        val list = favorites.orEmpty()
-        when (groupType) {
-            LibraryGroup.BY_SOURCE -> list.groupBy { it.source }
-                .map { (sourceId, animes) ->
-                    val name = sourceManager.get(sourceId)?.name ?: sourceId.toString()
-                    name to (sourceId to animes)
-                }
-                .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { pair: Pair<String, Pair<Long, List<Anime>>> -> pair.first })
-                .mapIndexed { index, (name, group) -> pageCategory(group.first, name, index.toLong()) to group.second }
-            LibraryGroup.BY_STATUS -> list.groupBy { it.status }
-                .map { (status, animes) ->
-                    val (nameRes, order) = statusGroups[status] ?: (MR.strings.unknown to 8L)
-                    // + 1: the "unknown" status (0) isn't the system category
-                    pageCategory(status + 1, context.stringResource(nameRes), order) to animes
-                }
-                .sortedBy { it.first.order }
-            LibraryGroup.BY_TRACK_STATUS -> {
-                val byStatus = mutableMapOf<Long, MutableList<Anime>>()
-                list.forEach { anime ->
-                    val statuses = tracks[anime.id].orEmpty().map { it.status }.filter { it in trackStatusOrder }
-                        .distinct()
-                        .ifEmpty { listOf(NOT_TRACKED_GROUP) }
-                    statuses.forEach { byStatus.getOrPut(it) { mutableListOf() }.add(anime) }
-                }
-                byStatus.map { (status, animes) ->
-                    val order = trackStatusOrder.indexOf(status).takeIf { it >= 0 } ?: trackStatusOrder.size
-                    pageCategory(status, context.stringResource(trackStatusName(status)), order.toLong()) to
-                        animes.toList()
-                }
-                    .sortedBy { it.first.order }
-            }
-            LibraryGroup.UNGROUPED -> listOf(pageCategory(Category.UNCATEGORIZED_ID, "", 0) to list)
-            else -> {
-                // Categories, like the manga library: "Default" holds the anime in no category
-                val uncategorized = list.filter { links[it.id].isNullOrEmpty() }
-                buildList {
-                    if (categories.isEmpty() || uncategorized.isNotEmpty()) {
-                        add(pageCategory(Category.UNCATEGORIZED_ID, "", -1) to uncategorized)
-                    }
-                    categories.forEach { category ->
-                        if (!showHidden && category.id.toString() in hiddenCategoryIds) return@forEach
-                        add(
-                            pageCategory(category.id, category.name, category.order) to
-                                list.filter { category.id in links[it.id].orEmpty() },
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    val pages = remember(
-        groups, searchQuery, stats, downloaded, tracks, filters, sortMode, sortAscending, randomSeed, airing, links,
-    ) {
-        groups.map { (category, animes) ->
-            val searched = if (searchQuery.isNullOrBlank()) {
-                animes
-            } else {
-                animes.filter { it.title.contains(searchQuery, ignoreCase = true) }
-            }
-            val shown = searched.filterAndSortAnime(
-                stats, downloaded, tracks, filters, sortMode, sortAscending, randomSeed,
-                airing = airing,
-                links = links,
-            )
-            AnimeLibraryPage(category, animes, shown)
-        }
-    }
-
-    return AnimeLibraryState(
-        favorites = favorites,
-        pages = pages,
-        stats = stats,
-        downloaded = downloaded,
-        filters = filters,
-        groupType = groupType,
-        showCategoryTabs = showCategoryTabs,
-        showItemCount = showItemCount,
-    )
-}
+/** KMK (r96): the pages are made by `AnimeLibraryScreenModel` (ui/library), off the main thread. */
 
 /** KMK: The anime half of the library: its pages (categories or groups), swiped like the manga library's. */
 @Composable

@@ -31,9 +31,16 @@ object UpdateStrategyColumnAdapter : ColumnAdapter<UpdateStrategy, Long> {
 }
 
 object MemoColumnAdapter : ColumnAdapter<JsonObject, ByteArray> {
+    // KMK (r96): nearly every row's memo is "{}"; no JSON parser run for those (one per library row per emission)
+    private val emptyMemo = JsonObject(emptyMap())
+
     override fun decode(databaseValue: ByteArray): JsonObject {
+        if (isEmptyObject(databaseValue)) return emptyMemo
         return Json.decodeFromString<JsonObject>(databaseValue.decodeToString())
     }
+
+    private fun isEmptyObject(bytes: ByteArray): Boolean =
+        bytes.size == 2 && bytes[0] == '{'.code.toByte() && bytes[1] == '}'.code.toByte()
 
     override fun encode(value: JsonObject): ByteArray {
         return value.toString().encodeToByteArray()

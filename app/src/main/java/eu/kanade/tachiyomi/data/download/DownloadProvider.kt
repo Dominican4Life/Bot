@@ -5,6 +5,9 @@ import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.util.lang.Hash.md5
 import eu.kanade.tachiyomi.util.storage.DiskUtil
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import logcat.LogPriority
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.storage.displayablePath
@@ -37,7 +40,35 @@ class DownloadProvider(
 
     private val downloadsDir: UniFile?
         // KMK: manga downloads go in downloads/Manga
-        get() = storageManager.getMangaDownloadsDirectory()
+        // KMK (r96): resolved once per DOWNLOADS_DIR_TTL_MS (two or three storage calls each time: downloads, then
+        // Manga); a library update asked for it for every title. Dropped when the storage folder changes, and
+        // when the cached folder is gone (deleted or the card was removed), so a stale handle isn't used for 30 s.
+        get() {
+            val now = System.currentTimeMillis()
+            cachedDownloadsDir?.takeIf { now - cachedDownloadsDirAt < DOWNLOADS_DIR_TTL_MS && it.exists() }
+                ?.let { return it }
+            return storageManager.getMangaDownloadsDirectory().also {
+                cachedDownloadsDir = it
+                cachedDownloadsDirAt = if (it != null) now else 0L
+            }
+        }
+
+    // KMK -->
+    @Volatile
+    private var cachedDownloadsDir: UniFile? = null
+
+    @Volatile
+    private var cachedDownloadsDirAt = 0L
+
+    init {
+        CoroutineScope(Dispatchers.IO).launch {
+            storageManager.changes.collect {
+                cachedDownloadsDir = null
+                cachedDownloadsDirAt = 0L
+            }
+        }
+    }
+    // KMK <--
 
     /**
      * Returns the download directory for a manga. For internal use only.
@@ -339,4 +370,11 @@ class DownloadProvider(
             }
         }
     }
+
+    // KMK -->
+    private companion object {
+        /** r96: how long the resolved downloads/Manga folder is reused */
+        const val DOWNLOADS_DIR_TTL_MS = 30_000L
+    }
+    // KMK <--
 }

@@ -4,6 +4,7 @@ import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaUpdate
+import tachiyomi.domain.manga.model.applyFilter
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZonedDateTime
@@ -23,6 +24,44 @@ class FetchInterval(
             chapters = getChaptersByMangaId.await(manga.id, applyFilter = true),
             zone = dateTime.zone,
         )
+        return toMangaUpdate(manga, interval, dateTime, window)
+    }
+
+    // KMK -->
+    /**
+     * KMK (r96): [toMangaUpdate] from chapters the caller already has, so the chapter sync and the backup restore
+     * don't read them again. [chapters] must be the title's whole list; [excludedScanlators] are left out and the
+     * bookmark filter applied here, as `getChaptersByMangaId(applyFilter = true)` does in SQL.
+     */
+    fun toMangaUpdate(
+        manga: Manga,
+        chapters: List<Chapter>,
+        excludedScanlators: Set<String>,
+        dateTime: ZonedDateTime,
+        window: Pair<Long, Long>,
+    ): MangaUpdate {
+        val interval = manga.fetchInterval.takeIf { it < 0 } ?: calculateInterval(
+            chapters = filterForInterval(manga, chapters, excludedScanlators),
+            zone = dateTime.zone,
+        )
+        return toMangaUpdate(manga, interval, dateTime, window)
+    }
+
+    /** The chapters `getChaptersByMangaId(applyFilter = true)` would return: no excluded scanlator, bookmark filter */
+    private fun filterForInterval(manga: Manga, chapters: List<Chapter>, excludedScanlators: Set<String>): List<Chapter> {
+        val bookmarkedFilter = manga.bookmarkedFilter
+        return chapters.filter { chapter ->
+            chapter.scanlator !in excludedScanlators && applyFilter(bookmarkedFilter) { chapter.bookmark }
+        }
+    }
+    // KMK <--
+
+    private fun toMangaUpdate(
+        manga: Manga,
+        interval: Int,
+        dateTime: ZonedDateTime,
+        window: Pair<Long, Long>,
+    ): MangaUpdate {
         val currentWindow = if (window.first == 0L && window.second == 0L) {
             getWindow(ZonedDateTime.now())
         } else {

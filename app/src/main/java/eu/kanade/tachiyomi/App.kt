@@ -59,7 +59,6 @@ import eu.kanade.tachiyomi.data.coil.ReaderPageKeyer
 import eu.kanade.tachiyomi.data.coil.SourcePageFetcher
 import eu.kanade.tachiyomi.data.coil.SourcePageKeyer
 import eu.kanade.tachiyomi.data.coil.TachiyomiImageDecoder
-import eu.kanade.tachiyomi.data.connections.discord.DiscordRPCService
 import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.data.sync.SyncDataJob
 import eu.kanade.tachiyomi.di.AppModule
@@ -351,10 +350,6 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
             SyncDataJob.startNow(this@App)
         }
 
-        // AM (DISCORD) -->
-        DiscordRPCService.start(applicationContext)
-        // <-- AM (DISCORD)
-
         // KMK (r93): a sync's staged data whose apply was interrupted (killed, or Stop) is applied once the app is in
         // the foreground (its service may start then); nothing happens while a sync runs or when nothing waits
         runCatching { eu.kanade.tachiyomi.pairsync.PairSync.resumePendingApply(this) }
@@ -364,10 +359,6 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
         SecureActivityDelegate.onApplicationStopped()
         // KMK (r95): the Logs file is written through a buffer; a backgrounded process may be killed any time
         eu.kanade.tachiyomi.util.system.AppLog.flush()
-
-        // AM (DISCORD) -->
-        DiscordRPCService.stop(applicationContext)
-        // <-- AM (DISCORD)
     }
 
     override fun getPackageName(): String {

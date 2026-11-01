@@ -1,0 +1,15 @@
+{
+  "name": "Keyoapp",
+  "kind": "manga",
+  "defaults": { "imageReferer": "unknown" },
+  "parts": {
+    "headers": { "title": "Headers", "text": "The site as Referer on every picture, which the Keyoapp CDN checks.", "ruleIds": ["referer-on-images"] },
+    "getPopular": { "title": "Popular", "text": "The home page's grid of /series/ links; the theme shows one page, so later pages are empty.", "ruleIds": [] },
+    "getLatest": { "title": "Latest", "text": "/latest/ when the site has it, else the home page again.", "ruleIds": [] },
+    "search": { "title": "Search", "text": "Reads the /series/ directory and filters it by the words here, because the theme searches in the browser.", "ruleIds": [] },
+    "getDetails": { "title": "Title page", "text": "The h1, the cover's CSS background image, the description paragraph, genre tags and a status word found in the page.", "optional": true, "ruleIds": ["status-default-filled"] },
+    "getChapterList": { "title": "Chapters", "text": "The #chapters links of the title page (each /chapter/ address once), the number from the link text, the date from the span next to it.", "ruleIds": ["stable-chapter-url", "date-format-known"] },
+    "getPageList": { "title": "Pages", "text": "The reader's images: a uid attribute becomes https://cdn.keyoapp.com/<uid>, plain src images otherwise.", "ruleIds": ["relative-url-returned"] },
+    "helpers": { "title": "Helpers", "text": "One request with the site as Referer, the card parser with covers from CSS background images, absolute addresses and the first number of a text.", "ruleIds": [] }
+  }
+}

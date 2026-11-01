@@ -84,6 +84,10 @@ fun CodeEditor(
     findOpen: Boolean = false,
     onOpenFind: () -> Unit = {},
     onCloseFind: () -> Unit = {},
+    // KMK --> (r96) Source Lab: the Explain pane lights up a part's lines (1-based, inclusive) and scrolls to one
+    highlight: IntRange? = null,
+    revealLine: Int? = null,
+    // KMK <--
 ) {
     var value by remember { mutableStateOf(TextFieldValue(code)) }
     LaunchedEffect(code) {
@@ -114,8 +118,20 @@ fun CodeEditor(
     var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
     // Scrolls only when asked (a search or ▲ / ▼), not while the code is being typed in
     var revealTick by remember { mutableIntStateOf(0) }
-    val transformation = remember(syntax, matches, current, dark) {
-        FindHighlight(syntax, matches, current.takeIf { matches.isNotEmpty() }, dark)
+    // KMK (r96): the highlighted part as a character range of the current text
+    val highlightChars = remember(value.text, highlight) { highlight?.let { lineRangeToChars(value.text, it) } }
+    val transformation = remember(syntax, matches, current, dark, highlightChars) {
+        FindHighlight(syntax, matches, current.takeIf { matches.isNotEmpty() }, dark, highlightChars)
+    }
+    // KMK (r96): scrolls to a line the Explain pane asked for (once per change of the line)
+    LaunchedEffect(revealLine, layout != null) {
+        val line = revealLine ?: return@LaunchedEffect
+        val text = value.text
+        val offset = lineStartOffset(text, line)
+        val box = layout?.takeIf { offset < it.layoutInput.text.length }?.getBoundingBox(offset) ?: return@LaunchedEffect
+        val top = with(density) { 8.dp.toPx() }
+        val viewport = vertical.viewportSize.takeIf { it > 0 } ?: return@LaunchedEffect
+        vertical.animateScrollTo((top + box.top - viewport / 4f).toInt().coerceIn(0, vertical.maxValue))
     }
     // Brings the current match into view and puts the cursor on it
     fun reveal(index: Int) {
@@ -308,19 +324,54 @@ private fun findAll(text: String, query: String, matchCase: Boolean): List<IntRa
 
 private const val MAX_MATCHES = 10_000
 
+/** KMK (r96): the character range (inclusive start, exclusive end) of 1-based [lines] in [text] */
+private fun lineRangeToChars(text: String, lines: IntRange): IntRange? {
+    if (lines.first < 1 || lines.last < lines.first) return null
+    val start = lineStartOffset(text, lines.first)
+    if (start >= text.length && text.isNotEmpty()) return null
+    var end = lineStartOffset(text, lines.last + 1)
+    if (end > start && end <= text.length && text.getOrNull(end - 1) == '\n') end--
+    return start until end.coerceAtLeast(start)
+}
+
+/** KMK (r96): the offset where 1-based [line] starts (the text length when the line is past the end) */
+private fun lineStartOffset(text: String, line: Int): Int {
+    if (line <= 1) return 0
+    var offset = 0
+    var n = 1
+    while (n < line) {
+        val next = text.indexOf('\n', offset)
+        if (next < 0) return text.length
+        offset = next + 1
+        n++
+    }
+    return offset
+}
+
 /** The code colours, plus a yellow mark on every match and an orange one on the current match */
 private class FindHighlight(
     private val syntax: SyntaxHighlight,
     private val matches: List<IntRange>,
     private val current: Int?,
     private val dark: Boolean,
+    // KMK (r96): the Explain pane's part, as a faint band under the colours
+    private val highlight: IntRange? = null,
 ) : VisualTransformation {
     override fun filter(text: AnnotatedString): TransformedText {
         val coloured = syntax.filter(text).text
-        if (matches.isEmpty()) return TransformedText(coloured, OffsetMapping.Identity)
+        if (matches.isEmpty() && highlight == null) return TransformedText(coloured, OffsetMapping.Identity)
         val length = coloured.length
         val marked = buildAnnotatedString {
             append(coloured)
+            highlight?.let { band ->
+                if (band.first < length && band.last >= band.first) {
+                    addStyle(
+                        SpanStyle(background = if (dark) Color(0x332E7DFF) else Color(0x332E7DFF)),
+                        band.first,
+                        (band.last + 1).coerceAtMost(length),
+                    )
+                }
+            }
             val other = SpanStyle(background = if (dark) Color(0x66C9A100) else Color(0x80FFE14D))
             val now = SpanStyle(
                 background = if (dark) Color(0xCCE07B00) else Color(0xFFFF9632),

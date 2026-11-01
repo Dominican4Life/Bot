@@ -1,0 +1,71 @@
+{
+  "__version": 1,
+  "__comment": "Blank anime definition: the editor's skeleton. Each section is one request plus the selectors that read it (guide 08 §5).",
+  "__part_headers": "start",
+  "__comment_headers": "Identity: name, language, the site's address and an icon.",
+  "name": "{{name}}",
+  "lang": "{{lang}}",
+  "baseUrl": "{{baseUrl}}",
+  "iconUrl": "{{iconUrl}}",
+  "__part_headers_end": true,
+  "__part_getPopular": "start",
+  "__comment_getPopular": "The popular list: one item per div.item with its link, text and cover.",
+  "popular": {
+    "url": "{baseUrl}/popular?page={page}",
+    "itemSelector": "div.item",
+    "fields": {
+      "url": { "selector": "a", "attr": "href" },
+      "title": { "selector": "a", "attr": "text" },
+      "coverUrl": { "selector": "img", "attr": "src" }
+    }
+  },
+  "__part_getPopular_end": true,
+  "__part_getLatest": "start",
+  "__comment_getLatest": "The latest list, the same shape.",
+  "latest": {
+    "url": "{baseUrl}/latest?page={page}",
+    "itemSelector": "div.item",
+    "fields": {
+      "url": { "selector": "a", "attr": "href" },
+      "title": { "selector": "a", "attr": "text" },
+      "coverUrl": { "selector": "img", "attr": "src" }
+    }
+  },
+  "__part_getLatest_end": true,
+  "__part_search": "start",
+  "__comment_search": "The search page with {query} and {page} filled.",
+  "search": {
+    "url": "{baseUrl}/search?q={query}&page={page}",
+    "itemSelector": "div.item",
+    "fields": {
+      "url": { "selector": "a", "attr": "href" },
+      "title": { "selector": "a", "attr": "text" },
+      "coverUrl": { "selector": "img", "attr": "src" }
+    }
+  },
+  "__part_search_end": true,
+  "__part_getChapterList": "start",
+  "__comment_getChapterList": "The episode links of the title page.",
+  "chapters": {
+    "url": "{entryUrl}",
+    "itemSelector": "ul.episodes li a",
+    "fields": {
+      "url": { "attr": "href" },
+      "title": { "attr": "text" }
+    }
+  },
+  "__part_getChapterList_end": true,
+  "__part_getVideoList": "start",
+  "__comment_getVideoList": "The video sources of an episode page, with the site as Referer.",
+  "videos": {
+    "url": "{chapterUrl}",
+    "itemSelector": "video source",
+    "fields": {
+      "url": { "attr": "src" },
+      "quality": { "attr": "label" },
+      "server": { "template": "Direct" }
+    },
+    "videoHeaders": { "Referer": "{baseUrl}/" }
+  },
+  "__part_getVideoList_end": true
+}

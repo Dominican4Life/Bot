@@ -1,0 +1,15 @@
+{
+  "name": "JSON API site",
+  "kind": "either",
+  "defaults": { "apiPath": "/api/" },
+  "parts": {
+    "headers": { "title": "Headers and constants", "text": "The site as Referer and Accept: application/json on every API call; API is the path detection saw in the page's scripts.", "ruleIds": [] },
+    "getPopular": { "title": "Popular", "text": "GET API?page=N&sort=popular and the reply's list under data / items / results, read by the common field names. The real list path and sort parameter must be checked in the site's network calls.", "ruleIds": [] },
+    "getLatest": { "title": "Latest", "text": "The same list sorted by update; the sort parameter is a guess.", "ruleIds": [] },
+    "search": { "title": "Search", "text": "The same list with q=words; some APIs call it search, keyword or title.", "ruleIds": [] },
+    "getDetails": { "title": "Title page", "text": "GET API/<slug or id> and the common detail fields (description, authors, genres, status).", "optional": true, "ruleIds": [] },
+    "getChapterList": { "title": "Chapters", "text": "GET <entry>/chapters, each item's number, name and date. The chapters path is a guess until tested.", "ruleIds": ["stable-chapter-url"] },
+    "getPageList": { "title": "Pages", "text": "GET <chapter>, the picture list under images / pages / data, each a string or an object with url / image / src.", "ruleIds": ["relative-url-returned"] },
+    "helpers": { "title": "Helpers", "text": "One API call read as JSON (an HTML reply is an error), list unwrapping, the common entry fields and absolute addresses.", "ruleIds": [] }
+  }
+}

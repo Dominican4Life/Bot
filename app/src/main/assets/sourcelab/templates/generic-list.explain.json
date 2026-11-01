@@ -1,0 +1,21 @@
+{
+  "name": "Generic list (Build by tapping)",
+  "kind": "either",
+  "defaults": {
+    "popularPath": "/?page={page}", "latestPath": "/?page={page}", "searchPath": "/?s={q}&page={page}",
+    "itemSelector": "article", "titleSelector": "a", "coverSelector": "img", "coverAttr": "src", "nextSelector": "a.next",
+    "chapterSelector": "a[href*='chapter']", "dateSelector": "time", "imageSelector": "img", "imageAttr": "src",
+    "videoFrame": "iframe", "videoNote": "TODO: unknown player: the hidden browser is tried; add an extractor if nothing is caught."
+  },
+  "parts": {
+    "headers": { "title": "Headers and constants", "text": "The site as Referer on every picture, and the selectors and list paths the builder derived; each has its reason in the builder's card.", "ruleIds": ["referer-on-images", "selector-generated-class"] },
+    "getPopular": { "title": "Popular", "text": "The popular list path with {page} filled, one ITEM card per title: TITLE for the name and link, COVER for the picture through COVER_ATTR.", "ruleIds": ["lazy-cover-attrs"] },
+    "getLatest": { "title": "Latest", "text": "The latest list path, the same cards (the popular path again when the site has no separate list).", "ruleIds": [] },
+    "search": { "title": "Search", "text": "The search path with the words and page filled, the same cards.", "ruleIds": [] },
+    "getDetails": { "title": "Title page", "text": "The h1 or og:title, og:image as cover, the meta description and genre-looking links: what every site prints, until a tap says otherwise.", "optional": true, "ruleIds": [] },
+    "getChapterList": { "title": "Chapters / episodes", "text": "The CHAPTER links of the title page, each address once, the last number in the text as the number, the picked date element when there is one.", "ruleIds": ["stable-chapter-url", "date-format-known"] },
+    "getPageList": { "title": "Pages", "text": "The IMAGE pictures of the chapter page, the address from IMAGE_ATTR then the lazy-load attributes and src.", "ruleIds": ["relative-url-returned"] },
+    "getVideoList": { "title": "Videos", "text": "The picked player frame: a plain <source> is a direct file; an embed is rendered in the hidden browser and the .m3u8 / .mp4 it loads is the video, with the embed as Referer under its host's server group. An unknown host leaves this part as a TODO.", "ruleIds": ["referer-on-videos"] },
+    "helpers": { "title": "Helpers", "text": "One request with the site as Referer, the list path with {page} / {q} filled, the shared card parser, absolute addresses and the last number of a text.", "ruleIds": [] }
+  }
+}

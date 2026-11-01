@@ -33,8 +33,6 @@ import eu.kanade.presentation.components.TabbedScreen
 import eu.kanade.presentation.more.settings.screen.browse.ExtensionStoresScreenModel
 import eu.kanade.presentation.util.Tab
 import eu.kanade.tachiyomi.R
-import eu.kanade.tachiyomi.data.connections.discord.DiscordRPCService
-import eu.kanade.tachiyomi.data.connections.discord.DiscordScreen
 import eu.kanade.tachiyomi.ui.browse.anime.AnimeBrowseScreenModel
 import eu.kanade.tachiyomi.ui.browse.anime.AnimeExtensionDetailsScreen
 import eu.kanade.tachiyomi.ui.browse.extension.ExtensionsScreenModel
@@ -51,7 +49,6 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.receiveAsFlow
-import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.i18n.stringResource
@@ -245,12 +242,6 @@ data object BrowseTab : Tab {
 
         LaunchedEffect(Unit) {
             (context as? MainActivity)?.ready = true
-
-            // AM (DISCORD) -->
-            with(DiscordRPCService) {
-                discordScope.launchIO { setScreen(context, DiscordScreen.BROWSE) }
-            }
-            // <-- AM (DISCORD)
         }
     }
 }

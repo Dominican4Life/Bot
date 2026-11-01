@@ -71,6 +71,11 @@ class SourceEditorScreenModel(
         val millis: Long,
         val items: List<Item> = emptyList(),
         val text: String? = null,
+        // KMK --> (r96) Source Lab Test Run: which step this was, the console lines it logged, the raw objects
+        val step: String? = null,
+        val requests: List<String> = emptyList(),
+        val raw: List<JsonObject> = emptyList(),
+        // KMK <--
     )
 
     /** An entry, chapter, page or video in a result, with what to run when it's opened */
@@ -229,9 +234,16 @@ class SourceEditorScreenModel(
         }.toMap()
     }
 
+    // KMK --> (r96) Source Lab: the History note of the next save ("Lint fix applied: …"), set by the Lab's Apply and
+    // dropped when another source opens or the save it was meant for went through
+    @Volatile
+    var saveNote: String? = null
+    // KMK <--
+
     fun newSource(json: Boolean, anime: Boolean) {
         closeRuntime()
         dropUnsavedTestCopy()
+        saveNote = null
         mutableState.value = State(
             key = manager.newKey(),
             json = json,
@@ -245,6 +257,7 @@ class SourceEditorScreenModel(
         val info = manager.get(key) ?: return
         val code = manager.code(key) ?: return
         if (key != state.value.key) dropUnsavedTestCopy()
+        saveNote = null
         mutableState.value = State(
             key = info.key,
             saved = true,
@@ -257,6 +270,26 @@ class SourceEditorScreenModel(
             baseUrl = info.baseUrl,
         )
     }
+
+    // KMK --> (r96) Source Lab: a generated source whose contract script failed opens here unsaved, with the error
+    fun openUnsaved(key: String, code: String, json: Boolean, anime: Boolean, name: String, baseUrl: String, error: String) {
+        closeRuntime()
+        if (key != state.value.key) dropUnsavedTestCopy()
+        saveNote = null
+        mutableState.value = State(
+            key = key,
+            saved = false,
+            json = json,
+            anime = anime,
+            code = code,
+            name = name,
+            baseUrl = baseUrl,
+            dirty = true,
+            saveError = error,
+        )
+        detectDetails(delayMs = 0)
+    }
+    // KMK <--
 
     fun delete(): Boolean {
         val key = state.value.key
@@ -281,6 +314,7 @@ class SourceEditorScreenModel(
 
     fun save() {
         val s = state.value
+        val note = saveNote // KMK (r96)
         screenModelScope.launchIO {
             mutableState.update { it.copy(running = "Saving") }
             runCatching {
@@ -296,8 +330,10 @@ class SourceEditorScreenModel(
                         iconUrl = s.iconUrl.trim(),
                         baseUrl = s.baseUrl.trim(),
                     ),
+                    note = note,
                 )
             }.onSuccess { info ->
+                if (saveNote == note) saveNote = null // KMK (r96): used; a note set meanwhile stays for the next save
                 mutableState.update {
                     // KMK: another source was opened meanwhile: leave it alone
                     if (it.key != s.key) return@update it.copy(running = null)
@@ -433,31 +469,43 @@ class SourceEditorScreenModel(
      */
     fun runAll(query: String) {
         job?.cancel()
-        job = screenModelScope.launchIO {
-            val tabs = tabCatalogs()
-            val tabResults = tabs.map { tab ->
-                execute("Tab ${tab.name} · page 1") { entries(it.call("getCatalog", tab.id, 1)) }
-            }
-            val meta = if (tabs.isEmpty()) null else runCatching { runtime().metadata() }.getOrNull()
-            val popular = if (tabs.isEmpty() || meta?.flag("hasPopular") != false) {
-                execute("Popular · page 1") { entries(it.call("getPopular", 1)) }
-            } else {
-                null
-            }
-            if (tabs.isEmpty() || meta?.flag("hasLatest") != false) {
-                execute("Latest · page 1") { entries(it.call("getLatest", 1)) }
-            }
-            if (query.isNotBlank()) {
-                execute("Search \"$query\"") { entries(it.call("search", query, 1, emptyMap<String, Any>())) }
-            }
-            val lists = if (tabs.isEmpty()) listOf(popular) else tabResults + popular
-            val entry = lists.firstNotNullOfOrNull { r -> r?.items?.firstOrNull { it.kind == Kind.Entry } } ?: return@launchIO
-            val chapters = execute("Chapters of ${entry.title}") { chapters(it, entry.url) } ?: return@launchIO
-            val chapter = chapters.items.firstOrNull() ?: return@launchIO
-            val what = if (state.value.anime) "Videos" else "Pages"
-            execute("$what of ${chapter.title}") { content(it, chapter.url) }
-        }
+        job = screenModelScope.launchIO { runAllSteps(query) }
     }
+
+    // KMK --> (r96) Source Lab
+    /**
+     * The steps of a Test Run, in order, each added to the panel as it finishes (TestRuns.pipeline: tabs → Popular
+     * → Latest → search → title → chapters → pages or hosters). The runtime is the editor's test copy. Cancelling
+     * the calling job stops after the current step.
+     */
+    suspend fun runAllSteps(query: String): List<Result> {
+        val rt = runtime()
+        val anime = state.value.anime
+        val results = try {
+            eu.kanade.tachiyomi.jssource.lab.TestRuns.pipeline(
+                rt = rt,
+                anime = anime,
+                query = query,
+                onRunning = { title -> mutableState.update { it.copy(running = title) } },
+                onResult = { result ->
+                    mutableState.update {
+                        it.copy(running = null, results = (listOf(result) + it.results).take(20), console = rt.console)
+                    }
+                },
+            )
+        } finally {
+            rt.stepTag = null
+            mutableState.update { it.copy(running = null, console = runtime?.console.orEmpty()) }
+        }
+        return results
+    }
+
+    /** The editor's test-copy runtime for the current code (built or reused), for the Lab's Test Run */
+    suspend fun testRuntime(): JsRuntime = runtime()
+
+    /** The console of the test runtime right now (the state's copy lags a step behind) */
+    fun consoleNow(): List<String> = runtime?.console.orEmpty()
+    // KMK <--
 
     /** The source's tab catalogs ("tab": true), in the order Browse shows them; none when it has no catalogs */
     private suspend fun tabCatalogs(): List<JsFilters.Catalog> = runCatching {
@@ -590,6 +638,7 @@ class SourceEditorScreenModel(
             },
             // KMK: an empty answer says so (it read "0 entries" before)
             text = if (list.isEmpty()) "No results: the source returned an empty list." else "${list.size} entries",
+            raw = list.take(60),
         )
     }
 

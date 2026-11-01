@@ -12,8 +12,6 @@ import androidx.core.net.toUri
 import androidx.lifecycle.lifecycleScope
 import eu.kanade.presentation.webview.WebViewScreenContent
 import eu.kanade.tachiyomi.R
-import eu.kanade.tachiyomi.data.connections.discord.DiscordRPCService
-import eu.kanade.tachiyomi.data.connections.discord.DiscordScreen
 import eu.kanade.tachiyomi.network.BotCheckCoordinator
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.source.online.HttpSource
@@ -28,7 +26,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import logcat.LogPriority
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
@@ -122,14 +119,8 @@ class WebViewActivity : BaseActivity() {
                 onClearCookies = this::clearCookies,
             )
         }
-        // AM (DISCORD) -->
-        with(DiscordRPCService) {
-            discordScope.launchIO { setScreen(this@WebViewActivity, DiscordScreen.WEBVIEW) }
-        }
-        // <-- AM (DISCORD)
     }
 
-    // AM (DISCORD) -->
     override fun onDestroy() {
         // KMK: whoever waits for this bot check is told how it went (not when only turning the screen)
         if (!isChangingConfigurations) {
@@ -137,12 +128,8 @@ class WebViewActivity : BaseActivity() {
         }
         // KMK: a source opened to pass its bot check is checked again once WebView closes
         botCheckSourceId?.let { eu.kanade.tachiyomi.data.notification.SourceStatusCheck.recheck(it) }
-        with(DiscordRPCService) {
-            discordScope.launchIO { setScreen(this@WebViewActivity) }
-        }
         super.onDestroy()
     }
-    // <-- AM (DISCORD)
 
     /**
      * KMK: Looks every second for the site's Cloudflare pass (a new cf_clearance cookie, shared with the app's own

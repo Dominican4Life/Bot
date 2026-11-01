@@ -29,8 +29,6 @@ import eu.kanade.presentation.history.components.HistoryDeleteDialog
 import eu.kanade.presentation.manga.DuplicateMangaDialog
 import eu.kanade.presentation.util.Tab
 import eu.kanade.tachiyomi.R
-import eu.kanade.tachiyomi.data.connections.discord.DiscordRPCService
-import eu.kanade.tachiyomi.data.connections.discord.DiscordScreen
 import eu.kanade.tachiyomi.ui.category.CategoryScreen
 import eu.kanade.tachiyomi.ui.main.MainActivity
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
@@ -40,7 +38,6 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.receiveAsFlow
 import mihon.feature.migration.dialog.MigrateMangaDialog
 import tachiyomi.core.common.i18n.stringResource
-import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
@@ -199,12 +196,6 @@ data object HistoryTab : Tab {
             if (!state.isLoading) {
                 // KMK <--
                 (context as? MainActivity)?.ready = true
-
-                // AM (DISCORD) -->
-                with(DiscordRPCService) {
-                    discordScope.launchIO { setScreen(context, DiscordScreen.HISTORY) }
-                }
-                // <-- AM (DISCORD)
             }
         }
 

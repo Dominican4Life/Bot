@@ -1,0 +1,15 @@
+{
+  "name": "Next.js",
+  "kind": "either",
+  "defaults": { "buildId": "", "coverAttr": "src" },
+  "parts": {
+    "headers": { "title": "Headers and constants", "text": "The site as Referer on every picture (covers through /_next/image want it too); COVER_ATTR the image attribute that held a real address.", "ruleIds": ["referer-on-images"] },
+    "getPopular": { "title": "Popular", "text": "The home page's __NEXT_DATA__ pageProps: the first list of title-like objects (a title and a slug, id or address). The real list key must be checked.", "ruleIds": [] },
+    "getLatest": { "title": "Latest", "text": "The same page; the list whose key mentions latest, recent or update when there is one.", "ruleIds": [] },
+    "search": { "title": "Search", "text": "/search?q=words and its pageProps list; the search path is a guess until tested.", "ruleIds": [] },
+    "getDetails": { "title": "Title page", "text": "The first pageProps object with a title and a description.", "optional": true, "ruleIds": [] },
+    "getChapterList": { "title": "Chapters", "text": "The pageProps list whose items carry a chapter number; addresses built from the item's slug or id under the title's address. The site's chapter path must be checked.", "ruleIds": ["stable-chapter-url"] },
+    "getPageList": { "title": "Pages", "text": "The chapter page's pageProps list of pictures, else the <img> tags under the reader.", "ruleIds": ["relative-url-returned"] },
+    "helpers": { "title": "Helpers", "text": "One request with the site as Referer, the __NEXT_DATA__ JSON of a page, searches of that JSON for lists and objects, the common entry fields, /_next/image unwrapping and absolute addresses.", "ruleIds": [] }
+  }
+}

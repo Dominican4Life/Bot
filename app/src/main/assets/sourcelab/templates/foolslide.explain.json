@@ -1,0 +1,15 @@
+{
+  "name": "FoolSlide",
+  "kind": "manga",
+  "defaults": { "coverAttr": "src" },
+  "parts": {
+    "headers": { "title": "Headers and constants", "text": "The site as Referer on every picture; COVER_ATTR the image attribute of the covers.", "ruleIds": ["referer-on-images"] },
+    "getPopular": { "title": "Popular (directory)", "text": "FoolSlide has no popularity order, so Popular is the alphabetical /directory/N/: .group blocks with .title a and a cover.", "ruleIds": [] },
+    "getLatest": { "title": "Latest", "text": "/latest/N/, one .group per series with its newest chapters.", "ruleIds": [] },
+    "search": { "title": "Search", "text": "POST /search/ with search=words; FoolSlide gives one page of results.", "ruleIds": [] },
+    "getDetails": { "title": "Title page", "text": "h1.title, the .thumbnail image and the Author / Synopsis lines of the .info text.", "optional": true, "ruleIds": [] },
+    "getChapterList": { "title": "Chapters", "text": ".list .element rows: .title a as link and name, .meta_r for the group and date; the number comes from the /read/ address (volume/chapter/sub).", "ruleIds": ["stable-chapter-url", "date-format-known"] },
+    "getPageList": { "title": "Pages", "text": "The reader's `var pages = [...]` script; older readers print <img> tags in #page.", "ruleIds": ["relative-url-returned"] },
+    "helpers": { "title": "Helpers", "text": "One request with the site as Referer, the shared .group parser (each series once), absolute addresses, the cover attribute chain and the first number of a text.", "ruleIds": [] }
+  }
+}

@@ -119,6 +119,7 @@ class DownloadCache(
                             ProtoBuf.decodeFromByteArray<RootDirectory>(it.readBytes())
                         }
                         rootDownloadsDir = diskCache
+                        isIndexLoaded = true
                         lastRenew = System.currentTimeMillis()
                     }
                 } catch (e: Throwable) {
@@ -184,6 +185,31 @@ class DownloadCache(
             }
         }
     }
+
+    // KMK -->
+    /**
+     * KMK (r96): true once the index holds a listing (the disk cache, or one renew finished). Before that
+     * [rootDownloadsDir] is the empty initial root and "no folder" means nothing.
+     */
+    @Volatile
+    var isIndexLoaded = false
+        private set
+
+    /**
+     * KMK (r96): whether the index knows a download folder for [manga], and that folder, without touching storage.
+     * `false` when the index has no folder for it (a title that was never downloaded has none: nothing to write
+     * there). The `UniFile` may be null when the index came from the disk cache; callers then look it up.
+     * **`null` when the index isn't loaded yet** ([isIndexLoaded]): the caller falls back to a storage lookup.
+     */
+    fun findMangaDirInIndex(manga: Manga): Pair<Boolean, UniFile?>? {
+        renewCache()
+        if (!isIndexLoaded) return null
+        val mangaDir = rootDownloadsDir.sourceDirs[manga.source]
+            ?.mangaDirs?.get(provider.getMangaDirName(manga.ogTitle))
+            ?: return false to null
+        return true to mangaDir.dir
+    }
+    // KMK <--
 
     /**
      * Returns the amount of downloaded chapters for a manga.
@@ -528,6 +554,7 @@ class DownloadCache(
                     .awaitAll()
 
                 rootDownloadsDir = updatedRootDir
+                isIndexLoaded = true
             }
 
             _isInitializing.emit(false)

@@ -25,7 +25,6 @@ import cafe.adriel.voyager.navigator.tab.LocalTabNavigator
 import cafe.adriel.voyager.navigator.tab.TabOptions
 import eu.kanade.presentation.anime.AnimeLibraryContent
 import eu.kanade.presentation.anime.AnimeLibrarySettingsDialog
-import eu.kanade.presentation.anime.rememberAnimeLibraryState
 import eu.kanade.presentation.category.visualName
 import eu.kanade.presentation.library.components.LibraryToolbar
 import eu.kanade.presentation.library.components.LibraryToolbarTitle
@@ -34,8 +33,6 @@ import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.anime.AnimeLibraryUpdateJob
 import eu.kanade.tachiyomi.data.anime.AnimeRefreshMissingCovers
 import eu.kanade.tachiyomi.data.anime.download.AnimeDownloadManager
-import eu.kanade.tachiyomi.data.connections.discord.DiscordRPCService
-import eu.kanade.tachiyomi.data.connections.discord.DiscordScreen
 import eu.kanade.tachiyomi.ui.anime.AnimeComingUpScreen
 import eu.kanade.tachiyomi.ui.anime.AnimeScreen
 import eu.kanade.tachiyomi.ui.main.MainActivity
@@ -46,7 +43,6 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import mihon.feature.migration.anime.AnimeMigrationStart
 import tachiyomi.core.common.i18n.stringResource
-import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.domain.library.model.LibraryGroup
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
@@ -93,7 +89,10 @@ data object AnimeLibraryTab : Tab {
         var searchQuery by rememberSaveable { mutableStateOf<String?>(null) }
         var currentPage by rememberSaveable { mutableIntStateOf(0) }
         var showSettings by remember { mutableStateOf(false) }
-        val state = rememberAnimeLibraryState(searchQuery)
+        // KMK (r96): the pages are made in a screen model on Dispatchers.Default, not in composition
+        val libraryModel = rememberScreenModel { AnimeLibraryScreenModel() }
+        LaunchedEffect(searchQuery) { libraryModel.search(searchQuery) }
+        val state by libraryModel.state.collectAsState()
         val page = state.page(currentPage)
 
         if (showSettings) {
@@ -208,9 +207,6 @@ data object AnimeLibraryTab : Tab {
         LaunchedEffect(loaded) {
             if (loaded) {
                 (context as? MainActivity)?.ready = true
-                with(DiscordRPCService) {
-                    discordScope.launchIO { setScreen(context, DiscordScreen.LIBRARY) }
-                }
             }
         }
 

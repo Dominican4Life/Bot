@@ -1,0 +1,48 @@
+{
+  "name": "Madara (WordPress)",
+  "kind": "manga",
+  "defaults": { "postType": "wp-manga", "coverAttr": "data-src", "chaptersVia": "ajax/chapters/", "imageReferer": "unknown" },
+  "parts": {
+    "headers": {
+      "title": "Headers and constants",
+      "text": "Sends the site's own address as Referer with every picture, so covers and pages load from its CDN. POST_TYPE is the WordPress post type of titles, COVER_ATTR the image attribute that held a real address on the home page, CHAPTERS_VIA how the theme serves chapter lists.",
+      "ruleIds": ["referer-on-images", "lazy-cover-attrs"]
+    },
+    "getPopular": {
+      "title": "Popular",
+      "text": "Asks the theme's load-more endpoint (admin-ajax.php, action madara_load_more) for one page sorted by views. Each card is .page-item-detail with the title link in .post-title a and a lazy-loaded cover.",
+      "ruleIds": ["lazy-cover-attrs"]
+    },
+    "getLatest": {
+      "title": "Latest",
+      "text": "The same load-more call sorted by the last update (meta key _latest_update).",
+      "ruleIds": []
+    },
+    "search": {
+      "title": "Search",
+      "text": "Loads the site's search page (?s=words&post_type=…) page by page and reads its .c-tabs-item__content cards, which look like the home cards.",
+      "ruleIds": []
+    },
+    "getDetails": {
+      "title": "Title page",
+      "text": "Reads the name from .post-title, the cover from .summary_image, the description from .summary__content, and author, genres and status from the theme's post-content rows.",
+      "optional": true,
+      "ruleIds": ["status-default-filled"]
+    },
+    "getChapterList": {
+      "title": "Chapters",
+      "text": "Posts to the title's ajax/chapters/ (or admin-ajax.php with the post id on older themes) and reads li.wp-manga-chapter rows: link, text as title and number, date from .chapter-release-date. Addresses stay absolute, like the APK's.",
+      "ruleIds": ["stable-chapter-url", "date-format-known"]
+    },
+    "getPageList": {
+      "title": "Pages",
+      "text": "Loads the chapter with ?style=list so every picture is in one page and reads the images of .reading-content through their lazy-load attribute.",
+      "ruleIds": ["relative-url-returned"]
+    },
+    "helpers": {
+      "title": "Helpers",
+      "text": "One request with the site as Referer, the shared load-more POST, the card parser, absolute addresses, the cover attribute fallback chain and the first number of a chapter title.",
+      "ruleIds": []
+    }
+  }
+}

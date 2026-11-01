@@ -68,6 +68,9 @@ class PreferenceRestorer(
         toRestore.forEach { (key, value) ->
             // KMK: settings holding anime ids are restored by the anime restore (mapped to the new ids) or not at all
             if (eu.kanade.tachiyomi.data.backup.AnimeBackupHelper.isAnimeIdKey(key)) return@forEach
+            // KMK (r96): Discord Rich Presence is gone from the app (its hooks were removed); a backup from Anikku or
+            // an old build must not switch a setting on that nothing reads and no screen can turn off
+            if (key == DISCORD_RPC_KEY) return@forEach
             try {
                 when (value) {
                     is IntPreferenceValue -> {
@@ -168,4 +171,11 @@ class PreferenceRestorer(
         val valueToSet = EXHMigrations.migrateSourceIds(value)
         preferenceStore.getStringSet(key).set(valueToSet)
     }
+
+    // KMK -->
+    private companion object {
+        /** r96: `ConnectionsPreferences.enableDiscordRPC()`; never restored */
+        const val DISCORD_RPC_KEY = "pref_enable_discord_rpc"
+    }
+    // KMK <--
 }

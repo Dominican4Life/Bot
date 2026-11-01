@@ -107,3 +107,24 @@ SELECT
 FROM episodes ep
 LEFT JOIN anime_history h ON h.episode_id = ep._id
 GROUP BY ep.anime_id;
+
+-- KMK (r96): the same numbers for library anime only (favourites and their seasons, which the anime
+-- library and Stats show), so the library's flow doesn't aggregate the episodes of every anime ever browsed.
+-- Same columns as animeLibraryStats; the anime page keeps the unfiltered one for a non-library anime's seasons.
+animeLibraryStatsFavorites:
+SELECT
+    ep.anime_id AS animeId,
+    COUNT(*) AS total,
+    coalesce(SUM(CASE WHEN ep.seen = 1 THEN 1 ELSE 0 END), 0) AS seenCount,
+    coalesce(SUM(CASE WHEN ep.bookmark = 1 THEN 1 ELSE 0 END), 0) AS bookmarkCount,
+    coalesce(SUM(CASE WHEN ep.seen = 0 AND ep.last_second_seen > 0 THEN 1 ELSE 0 END), 0) AS inProgressCount,
+    coalesce(MAX(ep.date_upload), 0) AS latestUpload,
+    coalesce(MAX(ep.date_fetch), 0) AS latestFetch,
+    coalesce(MAX(h.last_seen), 0) AS lastSeen
+FROM episodes ep
+LEFT JOIN anime_history h ON h.episode_id = ep._id
+WHERE ep.anime_id IN (
+    SELECT _id FROM animes
+    WHERE favorite = 1 OR parent_id IN (SELECT _id FROM animes WHERE favorite = 1)
+)
+GROUP BY ep.anime_id;

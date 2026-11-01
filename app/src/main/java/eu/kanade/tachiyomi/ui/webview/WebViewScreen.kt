@@ -1,7 +1,6 @@
 package eu.kanade.tachiyomi.ui.webview
 
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalContext
 import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.navigator.LocalNavigator
@@ -9,9 +8,6 @@ import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.util.AssistContentScreen
 import eu.kanade.presentation.util.Screen
 import eu.kanade.presentation.webview.WebViewScreenContent
-import eu.kanade.tachiyomi.data.connections.discord.DiscordRPCService
-import eu.kanade.tachiyomi.data.connections.discord.DiscordScreen
-import tachiyomi.core.common.util.lang.launchIO
 
 class WebViewScreen(
     private val url: String,
@@ -39,13 +35,5 @@ class WebViewScreen(
             onOpenInBrowser = { screenModel.openInBrowser(context, it) },
             onClearCookies = screenModel::clearCookies,
         )
-
-        // KMK -->
-        LaunchedEffect(Unit) {
-            with(DiscordRPCService) {
-                discordScope.launchIO { setScreen(context, DiscordScreen.WEBVIEW) }
-            }
-        }
-        // <-- KMK
     }
 }

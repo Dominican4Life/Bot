@@ -1,5 +1,6 @@
 package eu.kanade.domain.manga.interactor
 
+import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.interactor.FetchInterval
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaUpdate
@@ -29,6 +30,27 @@ class UpdateManga(
             fetchInterval.toMangaUpdate(manga, dateTime, window),
         )
     }
+
+    // KMK -->
+    /**
+     * KMK (r96): the fetch interval from chapters already in memory (see [FetchInterval.toMangaUpdate]), and,
+     * with [touchLastUpdate], the `lastUpdate` stamp in the same UPDATE. The chapter sync used to run two UPDATEs
+     * and one more chapter read per title here.
+     */
+    suspend fun awaitUpdateFetchInterval(
+        manga: Manga,
+        chapters: List<Chapter>,
+        excludedScanlators: Set<String>,
+        dateTime: ZonedDateTime,
+        window: Pair<Long, Long>,
+        touchLastUpdate: Boolean = false,
+    ): Boolean {
+        val update = fetchInterval.toMangaUpdate(manga, chapters, excludedScanlators, dateTime, window)
+        return mangaRepository.update(
+            if (touchLastUpdate) update.copy(lastUpdate = Instant.now().toEpochMilli()) else update,
+        )
+    }
+    // KMK <--
 
     suspend fun awaitUpdateLastUpdate(mangaId: Long): Boolean {
         return mangaRepository.update(MangaUpdate(id = mangaId, lastUpdate = Instant.now().toEpochMilli()))

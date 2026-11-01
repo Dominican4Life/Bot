@@ -51,6 +51,13 @@ class JsRuntime private constructor(
 
     fun clearConsole() = host.console.clear()
 
+    // KMK (r96): the Source Lab's Test Run names the step it is on; console lines then read `[net][popular] …`
+    var stepTag: String?
+        get() = host.stepTag
+        set(value) {
+            host.stepTag = value
+        }
+
     /** name, lang, iconUrl, baseUrl, hasPopular, hasLatest, hasDetails, hasFilters, hasTags, hasRelated, hasCatalogs, hasPreferences, rateLimitMs, headers */
     suspend fun metadata(): JsonObject = mutex.withLock {
         val text = watchdog.guard { qjs.evaluate<String>(METADATA_SCRIPT, "<metadata>") }
@@ -91,6 +98,7 @@ class JsRuntime private constructor(
             val message = e.message.orEmpty()
             if ("__NOT_IMPLEMENTED__" in message) throw NotImplementedError("This source has no $method")
             host.log("error", "$method failed: $message")
+            runCatching { host.health?.error(method, message) } // KMK (r96): Source Lab health counters
             throw JsException(message.substringBefore("\n    at ").ifBlank { e.toString() }, e)
         }
         jsJson.parseToJsonElement(text ?: "null")
@@ -100,6 +108,7 @@ class JsRuntime private constructor(
         runCatching { qjs.close() }
         // KMK: and its parsed pages go with it (a tag download's copy kept up to 24 big pages after it finished)
         runCatching { host.clearPages() }
+        runCatching { host.health?.flush() } // KMK (r96)
     }
 
     class JsException(message: String, cause: Throwable? = null) : Exception(message, cause)
@@ -195,6 +204,14 @@ class JsRuntime private constructor(
         var rateLimitMs: Long = 0L
         private var lastRequestAt = 0L
 
+        // KMK --> (r96) Source Lab: health counters of the real source (null for test copies and probes), and the
+        // Test Run's step tag, written into every console line while set
+        var health: SourceHealth.Sink? = null
+
+        @Volatile
+        var stepTag: String? = null
+        // KMK <--
+
         /** Default values from getSourcePreferences(), used until the user changes one */
         var preferenceDefaults: Map<String, JsonElement> = emptyMap()
 
@@ -208,7 +225,7 @@ class JsRuntime private constructor(
 
         fun log(level: String, text: String) {
             synchronized(console) {
-                console.addLast("[$level] $text")
+                console.addLast("[$level]${stepTag?.let { "[$it]" }.orEmpty()} $text")
                 while (console.size > 500) console.removeFirst()
             }
             val l = when (level) {
@@ -383,6 +400,7 @@ class JsRuntime private constructor(
         // Requests
 
         private suspend fun fetch(payload: JsonObject): Map<String, Any?> = withContext(Dispatchers.IO) {
+            runCatching { health?.request() } // KMK (r96)
             val url = payload.str("url").orEmpty().trim()
             val options = payload.obj("options") ?: JsonObject(emptyMap())
             val method = (options.str("method") ?: "GET").uppercase()
@@ -495,6 +513,9 @@ class JsRuntime private constructor(
             // KMK: the Code editor's test copy: its own settings and storage (testStorageKey, JsPreferences.testOf),
             // so a test doesn't change the saved source
             testCopy: Boolean = false,
+            // KMK (r96): false for a runtime that isn't the source serving the app (the save-time describe() run,
+            // JsTags' suggestions), so its requests and errors don't land in the Source Lab's health counters
+            health: Boolean = true,
         ): JsRuntime {
             val host = Host(
                 context = context.applicationContext,
@@ -507,6 +528,9 @@ class JsRuntime private constructor(
                 },
                 testing = testing,
             )
+            // KMK (r96): only the real source counts towards its health (not the editor's test copy, a probe, the
+            // describe run of a save or the tag suggestions)
+            if (health && !testing && !testCopy) host.health = runCatching { SourceHealth.of(context).sink(key) }.getOrNull()
             loadNativeLibrary()
             val qjs = QuickJs.create(jobDispatcher = Dispatchers.Default)
             val watchdog = Watchdog(name).also { it.qjs = qjs }

@@ -220,6 +220,11 @@ class DownloadManager(
         return cache.getDownloadCount(manga)
     }
 
+    // KMK -->
+    /** KMK (r96): see [DownloadCache.findMangaDirInIndex] */
+    fun findMangaDirInIndex(manga: Manga): Pair<Boolean, UniFile?>? = cache.findMangaDirInIndex(manga)
+    // KMK <--
+
     fun cancelQueuedDownloads(downloads: List<Download>) {
         removeFromDownloadQueue(downloads.map { it.chapter })
     }

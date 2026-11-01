@@ -80,15 +80,15 @@ fun Screen.sourcesTab(
             ),
             // KMK <--
         ).let { base ->
-            // KMK: the Code editor, for JS / JSON sources
+            // KMK: the Source Lab (r96; the Code editor before), for JS / JSON sources
             if (smartSearchConfig != null) {
                 base
             } else {
                 base.add(
                     AppBar.Action(
-                        title = "Code editor",
+                        title = "Source Lab",
                         icon = Icons.Outlined.Code,
-                        onClick = { navigator.push(eu.kanade.tachiyomi.ui.codeeditor.SourceEditorScreen()) },
+                        onClick = { navigator.push(eu.kanade.tachiyomi.ui.sourcelab.SourceLabScreen()) },
                     ),
                 )
             }
@@ -204,7 +204,7 @@ fun Screen.sourcesTab(
                     onOpenCodeEditor = (httpSource as? eu.kanade.tachiyomi.jssource.JsMangaSource)?.let { js ->
                         {
                             sheetSource = null
-                            navigator.push(eu.kanade.tachiyomi.ui.codeeditor.SourceEditorScreen(js.info.key))
+                            navigator.push(eu.kanade.tachiyomi.ui.sourcelab.SourceLabScreen(js.info.key))
                         }
                     },
                 )

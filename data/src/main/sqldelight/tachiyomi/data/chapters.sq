@@ -82,6 +82,12 @@ SELECT scanlator
 FROM chapters
 WHERE manga_id = :mangaId;
 
+-- KMK (r96): just the ids and urls, for the backup restore's history (url -> id), not 25-column rows
+getChapterIdsAndUrlsByMangaId:
+SELECT _id, url
+FROM chapters
+WHERE manga_id = :mangaId;
+
 getBookmarkedChaptersByMangaId:
 SELECT *
 FROM chapters

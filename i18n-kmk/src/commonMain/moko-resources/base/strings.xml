@@ -415,8 +415,8 @@
     <string name="feed_tab_manga">Manga</string>
     <string name="feed_tab_anime">Anime</string>
     <string name="ext_js_new">New JS source</string>
-    <string name="ext_js_empty">No JS sources yet. Make one with New JS source, or import one in the Code editor.</string>
-    <string name="ext_js_edit">Edit in Code editor</string>
+    <string name="ext_js_empty">No JS sources yet. Make one with New JS source, or import one in the Source Lab.</string>
+    <string name="ext_js_edit">Open in Source Lab</string>
     <string name="ext_js_manga">Manga</string>
     <string name="ext_js_anime">Anime</string>
     <string name="ext_js_delete_title">Delete JS source?</string>
@@ -464,7 +464,7 @@
     <!-- Source sheet -->
     <string name="source_sheet_enabled">Enabled</string>
     <string name="source_sheet_clear_site_data">Clear site data</string>
-    <string name="source_sheet_code_editor">Code editor</string>
+    <string name="source_sheet_code_editor">Source Lab</string>
     <string name="source_sheet_site_data_cleared">Cookies and WebView data cleared for this source</string>
     <!-- Categories: Manga | Anime | Sources -->
     <string name="anime_categories_empty">You have no anime categories. Tap the plus button to create one for organizing your anime library.</string>

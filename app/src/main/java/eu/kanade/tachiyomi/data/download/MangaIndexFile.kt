@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.data.download
 
+import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
@@ -56,10 +57,14 @@ object MangaIndexFile {
 
     private val provider: DownloadProvider by lazy { Injekt.get() }
 
-    /** Writes the title's index.json, when it has a download folder. Chapters in the source's order (newest first) */
-    fun write(manga: Manga, chapters: List<Chapter>, source: Source) {
+    /**
+     * Writes the title's index.json, when it has a download folder. Chapters in the source's order (newest first).
+     * KMK (r96): [mangaDir] is the folder when the caller already has it (the downloader, or the download index),
+     * so the download root isn't listed again for every title of a library update.
+     */
+    fun write(manga: Manga, chapters: List<Chapter>, source: Source, mangaDir: UniFile? = null) {
         runCatching {
-            val dir = provider.findMangaDir(manga.ogTitle, source) ?: return
+            val dir = mangaDir ?: provider.findMangaDir(manga.ogTitle, source) ?: return
             val index = Index(
                 source = manga.source,
                 url = manga.url,

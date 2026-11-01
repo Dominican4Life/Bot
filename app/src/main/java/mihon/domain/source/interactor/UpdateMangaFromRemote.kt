@@ -124,22 +124,35 @@ class UpdateMangaFromRemote(
                 // KMK <--
                 awaitUpdateFromSource(manga, update.manga, manualFetch)
                 // SY -->
+                // KMK (r96): `sync` carries the chapter list after the sync, so it isn't read again for index.json
+                var sync: SyncChaptersWithSource.SyncResult? = null
                 val newChapters = if (source is MergedSource) {
                     source.fetchChaptersAndSync(manga, downloadChapters = manualFetch)
                 } else {
                     // SY <--
-                    syncChaptersWithSource.await(
+                    syncChaptersWithSource.awaitResult(
                         rawSourceChapters = update.chapters,
                         manga = manga,
                         source = source,
                         manualFetch = manualFetch,
                         fetchWindow = fetchWindow,
-                    )
+                    ).also { sync = it }.newChapters
                 }
                 val updatedManga = mangaRepository.getMangaById(manga.id)
                 // KMK: keep the title's index.json (in its download folder, when it has one) up to date
-                if (fromIndex == null && fetchDetails && fetchChapters && !updatedManga.isLocal()) {
-                    MangaIndexFile.write(updatedManga, chapterRepository.getChapterByMangaId(manga.id), source)
+                // KMK (r96): only when the chapter list changed, and only for a title the download index knows a
+                // folder for (no storage listing per title; a title with no downloads has nowhere to write)
+                val changedChapters = sync?.takeIf { it.changed }
+                if (fromIndex == null && fetchDetails && fetchChapters && changedChapters != null &&
+                    !updatedManga.isLocal()
+                ) {
+                    val inIndex = downloadManager.findMangaDirInIndex(updatedManga)
+                    if (inIndex == null) {
+                        // Index not loaded yet (first start, cache rebuilt): the pre-r96 storage lookup
+                        MangaIndexFile.write(updatedManga, changedChapters.chapters, source)
+                    } else if (inIndex.first) {
+                        MangaIndexFile.write(updatedManga, changedChapters.chapters, source, inIndex.second)
+                    }
                 }
                 // KMK -->
                 RemoteMangaUpdate(manga = updatedManga, newChapters = newChapters)

@@ -25,8 +25,6 @@ import eu.kanade.presentation.updates.UpdateScreen
 import eu.kanade.presentation.updates.UpdatesDeleteConfirmationDialog
 import eu.kanade.presentation.util.Tab
 import eu.kanade.tachiyomi.R
-import eu.kanade.tachiyomi.data.connections.discord.DiscordRPCService
-import eu.kanade.tachiyomi.data.connections.discord.DiscordScreen
 import eu.kanade.tachiyomi.ui.download.DownloadQueueScreen
 import eu.kanade.tachiyomi.ui.home.HomeScreen
 import eu.kanade.tachiyomi.ui.main.MainActivity
@@ -36,7 +34,6 @@ import eu.kanade.tachiyomi.ui.updates.UpdatesScreenModel.Event
 import kotlinx.coroutines.flow.collectLatest
 import mihon.feature.upcoming.UpcomingScreen
 import tachiyomi.core.common.i18n.stringResource
-import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
@@ -181,12 +178,6 @@ data object UpdatesTab : Tab {
         LaunchedEffect(state.isLoading) {
             if (!state.isLoading) {
                 (context as? MainActivity)?.ready = true
-
-                // AM (DISCORD) -->
-                with(DiscordRPCService) {
-                    discordScope.launchIO { setScreen(context, DiscordScreen.UPDATES) }
-                }
-                // <-- AM (DISCORD)
             }
         }
         DisposableEffect(Unit) {

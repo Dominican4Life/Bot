@@ -1,0 +1,15 @@
+{
+  "name": "MangaReader (mangareader.to layout)",
+  "kind": "manga",
+  "defaults": { "coverAttr": "src", "imageReferer": "unknown" },
+  "parts": {
+    "headers": { "title": "Headers and constants", "text": "The site as Referer on every picture; COVER_ATTR the image attribute that held a real address on the home page.", "ruleIds": ["referer-on-images"] },
+    "getPopular": { "title": "Popular", "text": "/most-viewed?page=N, the .manga-poster cards with the title in .manga-name a.", "ruleIds": [] },
+    "getLatest": { "title": "Latest", "text": "/latest-updated?page=N, the same cards.", "ruleIds": [] },
+    "search": { "title": "Search", "text": "/search?keyword=words&page=N.", "ruleIds": [] },
+    "getDetails": { "title": "Title page", "text": ".manga-name, the poster image, .description, the .anisc-info rows for authors and status, the genre links.", "optional": true, "ruleIds": [] },
+    "getChapterList": { "title": "Chapters", "text": "Finds the title's numeric id and asks /ajax/manga/reading-list/<id>; the reply's html holds .chapter-item rows with data-number. This layout prints no dates.", "ruleIds": ["stable-chapter-url"] },
+    "getPageList": { "title": "Pages", "text": "Finds the chapter's reading id and asks /ajax/image/list/chap/<id>; each .iv-card's data-url is a picture. Shuffled pictures are returned as they come.", "ruleIds": ["relative-url-returned"] },
+    "helpers": { "title": "Helpers", "text": "One request with the site as Referer, the shared card parser, absolute addresses, the cover attribute chain and the first number of a text.", "ruleIds": [] }
+  }
+}

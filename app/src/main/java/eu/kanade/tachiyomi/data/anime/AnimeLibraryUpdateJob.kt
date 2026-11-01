@@ -201,7 +201,8 @@ class AnimeLibraryUpdateJob(
             emptyMap()
         }
         val stats = if (AnimePrefs.SKIP_HAS_UNSEEN in skip || AnimePrefs.SKIP_NOT_STARTED in skip) {
-            repository.subscribeLibraryStats().first()
+            // KMK (r96): favourites only; the filter below only looks up favourites
+            repository.subscribeFavoritesLibraryStats().first()
         } else {
             emptyMap()
         }

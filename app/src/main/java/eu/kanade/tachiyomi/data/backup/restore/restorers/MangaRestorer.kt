@@ -82,6 +82,10 @@ class MangaRestorer(
 
     /**
      * Restore a single manga
+     *
+     * KMK (r96): one transaction per title (r73; don't batch titles). The write helpers below run inside it with a
+     * plain `handler.await { }`: on the transaction thread that is a direct call, where `await(inTransaction = true)`
+     * added a context switch, a nested `transactionWithResult` and a `runBlocking` for each of the 8-10 writes.
      */
     suspend fun restore(
         backupManga: BackupManga,
@@ -159,7 +163,7 @@ class MangaRestorer(
     }
 
     suspend fun updateManga(manga: Manga): Manga {
-        handler.await(true) {
+        handler.await {
             mangasQueries.update(
                 source = manga.source,
                 url = manga.url,
@@ -200,7 +204,15 @@ class MangaRestorer(
         )
     }
 
-    private suspend fun restoreChapters(manga: Manga, backupChapters: List<BackupChapter>, isNew: Boolean = false) {
+    /**
+     * @return KMK (r96): the title's chapters as the database holds them after this (the saved ones with the
+     * backup's state applied, plus the inserted ones, whose ids aren't known), for the fetch interval.
+     */
+    private suspend fun restoreChapters(
+        manga: Manga,
+        backupChapters: List<BackupChapter>,
+        isNew: Boolean = false,
+    ): List<Chapter> {
         // KMK (r94): a just-inserted manga has no chapters to compare with
         val dbChaptersByUrl = if (isNew) emptyMap() else getChaptersByMangaId.await(manga.id).associateBy { it.url }
 
@@ -219,6 +231,12 @@ class MangaRestorer(
 
         insertNewChapters(newChapters)
         updateExistingChapters(existingChapters)
+
+        // KMK (r96) -->
+        if (dbChaptersByUrl.isEmpty()) return newChapters
+        val updatedById = existingChapters.associateBy { it.id }
+        return dbChaptersByUrl.values.map { updatedById[it.id] ?: it } + newChapters
+        // KMK (r96) <--
     }
 
     private fun updateChapterBasedOnSyncState(chapter: Chapter, dbChapter: Chapter): Chapter {
@@ -231,6 +249,9 @@ class MangaRestorer(
                 // KMK -->
                 sourceOrder = max(chapter.sourceOrder, dbChapter.sourceOrder),
                 dateUpload = min(chapter.dateUpload, dbChapter.dateUpload),
+                // KMK (r96): the UPDATE doesn't write dateFetch; keep the row's value so the in-memory list the
+                // fetch interval reads matches the database
+                dateFetch = dbChapter.dateFetch,
                 // KMK <--
             )
         } else {
@@ -241,6 +262,7 @@ class MangaRestorer(
                     bookmark = chapter.bookmark || dbChapter.bookmark,
                     sourceOrder = max(chapter.sourceOrder, dbChapter.sourceOrder),
                     dateUpload = min(chapter.dateUpload, dbChapter.dateUpload),
+                    dateFetch = dbChapter.dateFetch, // KMK (r96): see the sync branch
                 )
                 // KMK <--
                 .let {
@@ -269,7 +291,7 @@ class MangaRestorer(
         )
 
     private suspend fun insertNewChapters(chapters: List<Chapter>) {
-        handler.await(true) {
+        handler.await {
             chapters.forEach { chapter ->
                 chaptersQueries.insert(
                     chapter.mangaId,
@@ -291,7 +313,7 @@ class MangaRestorer(
     }
 
     private suspend fun updateExistingChapters(chapters: List<Chapter>) {
-        handler.await(true) {
+        handler.await {
             chapters.forEach { chapter ->
                 chaptersQueries.update(
                     mangaId = null,
@@ -322,7 +344,7 @@ class MangaRestorer(
      * @return id of [Manga], null if not found
      */
     private suspend fun insertManga(manga: Manga): Long {
-        return handler.awaitOneExecutable(true) {
+        return handler.awaitOneExecutable {
             mangasQueries.insert(
                 source = manga.source,
                 url = manga.url,
@@ -369,11 +391,12 @@ class MangaRestorer(
         // SY <--
     ): Manga {
         restoreCategories(manga, categories, backupCategories, isNew)
-        restoreChapters(manga, chapters, isNew)
+        val chaptersNow = restoreChapters(manga, chapters, isNew)
         restoreTracking(manga, tracks, isNew)
         restoreHistory(manga, history, isNew)
-        restoreExcludedScanlators(manga, excludedScanlators, isNew)
-        updateManga.awaitUpdateFetchInterval(manga, now, currentFetchWindow)
+        val excludedNow = restoreExcludedScanlators(manga, excludedScanlators, isNew)
+        // KMK (r96): from the chapters already in memory, not another read of them with the scanlator join
+        updateManga.awaitUpdateFetchInterval(manga, chaptersNow, excludedNow, now, currentFetchWindow)
         // SY -->
         restoreMergedMangaReferencesForManga(manga.id, mergedMangaReferences)
         flatMetadata?.let { restoreFlatMetadata(manga.id, it) }
@@ -416,7 +439,7 @@ class MangaRestorer(
             } else {
                 emptySet()
             }
-            handler.await(true) {
+            handler.await {
                 if (!addCategoriesOnly && !isNew) mangas_categoriesQueries.deleteMangaCategoryByMangaId(manga.id)
                 mangaCategoriesToUpdate.forEach { (mangaId, categoryId) ->
                     if (categoryId !in linkedHere) mangas_categoriesQueries.insert(mangaId, categoryId)
@@ -428,7 +451,9 @@ class MangaRestorer(
     private suspend fun restoreHistory(manga: Manga, backupHistory: List<BackupHistory>, isNew: Boolean = false) {
         if (backupHistory.isEmpty()) return
         // KMK: the title's chapters and history read once, instead of one or two lookups per history entry
-        val chapterIdByUrl = getChaptersByMangaId.await(manga.id).associate { it.url to it.id }
+        // KMK (r96): ids and urls only, not whole chapter rows
+        val chapterIdByUrl = handler.awaitList { chaptersQueries.getChapterIdsAndUrlsByMangaId(manga.id) }
+            .associate { it.url to it._id }
         // KMK (r94): a just-inserted manga has no history rows yet
         val dbHistoryByChapterId = if (isNew) {
             emptyMap()
@@ -458,7 +483,7 @@ class MangaRestorer(
         }
 
         if (toUpdate.isNotEmpty()) {
-            handler.await(true) {
+            handler.await {
                 toUpdate.forEach {
                     historyQueries.upsert(
                         it.chapterId,
@@ -503,7 +528,7 @@ class MangaRestorer(
             insertTrack.awaitAll(newTracks)
         }
         if (existingTracks.isNotEmpty()) {
-            handler.await(true) {
+            handler.await {
                 existingTracks.forEach { track ->
                     manga_syncQueries.update(
                         track.mangaId,
@@ -634,13 +659,15 @@ class MangaRestorer(
      * @param manga the manga whose excluded scanlators have to be restored.
      * @param excludedScanlators the excluded scanlators to restore.
      */
+    /** @return KMK (r96): the title's excluded scanlators after this, for the fetch interval */
     private suspend fun restoreExcludedScanlators(
         manga: Manga,
         excludedScanlators: List<String>,
         isNew: Boolean = false,
-    ) {
-        if (excludedScanlators.isEmpty()) return
+    ): Set<String> {
         // KMK (r94): a just-inserted manga has none yet
+        // KMK (r96): for an existing title the saved set is read even when the backup brings none, so the fetch
+        // interval below leaves out the same chapters the old chapter read (with its scanlator join) did
         val existingExcludedScanlators = if (isNew) {
             emptySet()
         } else {
@@ -648,15 +675,17 @@ class MangaRestorer(
                 excluded_scanlatorsQueries.getExcludedScanlatorsByMangaId(manga.id)
             }.toSet()
         }
+        if (excludedScanlators.isEmpty()) return existingExcludedScanlators
         // KMK -->
         val toInsert = excludedScanlators.toSet().subtract(existingExcludedScanlators)
         if (toInsert.isNotEmpty()) {
-            handler.await(inTransaction = true) {
+            handler.await {
                 // KMK <--
                 toInsert.forEach {
                     excluded_scanlatorsQueries.insert(manga.id, it)
                 }
             }
         }
+        return existingExcludedScanlators + toInsert
     }
 }

@@ -7,6 +7,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -64,3 +68,24 @@ suspend fun <T> withIOContext(block: suspend CoroutineScope.() -> T) = withConte
 
 suspend fun <T> withNonCancellableContext(block: suspend CoroutineScope.() -> T) =
     withContext(NonCancellable, block)
+
+// KMK -->
+/**
+ * [debounce] that lets the first value through at once and only debounces the ones after it,
+ * so a flow with an initial/replayed value (a database subscription, a shared `changes` flow)
+ * still shows its first result without waiting [timeoutMillis].
+ */
+fun <T> Flow<T>.debounceAfterFirst(timeoutMillis: Long): Flow<T> = flow {
+    var first = true
+    emitAll(
+        debounce {
+            if (first) {
+                first = false
+                0L
+            } else {
+                timeoutMillis
+            }
+        },
+    )
+}
+// KMK <--

@@ -49,6 +49,15 @@ data class JsSourceInfo(
     val enabled: Boolean = true,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
+    // KMK -->
+    /**
+     * KMK (r96): the Source Lab's record of where the code came from (`LabMeta`: engine, confidence, markers,
+     * template, builder picks), kept as JSON because `LabMeta` is internal and this class is public. Null for
+     * hand-written sources; old meta.json files without it still load. Read through `labMeta`, written through
+     * `withLab` (jssource/lab/LabStore.kt).
+     */
+    val lab: JsonElement? = null,
+    // KMK <--
 ) {
     val id: Long get() = customId ?: idFor(key)
 

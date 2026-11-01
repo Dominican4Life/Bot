@@ -1,0 +1,12 @@
+{
+  "name": "Blank anime source",
+  "kind": "anime",
+  "parts": {
+    "headers": { "title": "Identity", "text": "Name, language, the site's address (also the Referer of its pictures) and an icon.", "ruleIds": [] },
+    "search": { "title": "Search", "text": "Not written yet: return a list of entries for the words and page. TODO", "ruleIds": [] },
+    "getPopular": { "title": "Popular", "text": "Not written yet: return a list of entries for one page. TODO", "ruleIds": [] },
+    "getLatest": { "title": "Latest", "text": "Not written yet: return a list of entries for one page. TODO", "ruleIds": [] },
+    "getChapterList": { "title": "Episodes", "text": "Not written yet: one chapter per episode, with season fields when the site has seasons. TODO", "ruleIds": ["stable-chapter-url"] },
+    "getVideoList": { "title": "Videos", "text": "Not written yet: every video with url, quality, server and headers.Referer. TODO", "ruleIds": ["referer-on-videos"] }
+  }
+}

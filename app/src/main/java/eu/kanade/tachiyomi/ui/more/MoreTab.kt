@@ -10,7 +10,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.platform.LocalContext
 import cafe.adriel.voyager.core.model.ScreenModel
 import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
@@ -25,8 +24,6 @@ import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.presentation.more.MoreScreen
 import eu.kanade.presentation.util.Tab
 import eu.kanade.tachiyomi.R
-import eu.kanade.tachiyomi.data.connections.discord.DiscordRPCService
-import eu.kanade.tachiyomi.data.connections.discord.DiscordScreen
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.ui.category.CategoryScreen
 import eu.kanade.tachiyomi.ui.download.DownloadQueueScreen
@@ -72,7 +69,6 @@ data object MoreTab : Tab {
 
     @Composable
     override fun Content() {
-        val context = LocalContext.current
         val navigator = LocalNavigator.currentOrThrow
         val screenModel = rememberScreenModel { MoreScreenModel() }
         val downloadQueueState by screenModel.downloadQueueState.collectAsState()
@@ -117,14 +113,6 @@ data object MoreTab : Tab {
             onClickPairSync = { showPairSync = true },
             // KMK <--
         )
-
-        // AM (DISCORD) -->
-        LaunchedEffect(Unit) {
-            with(DiscordRPCService) {
-                discordScope.launchIO { setScreen(context, DiscordScreen.MORE) }
-            }
-        }
-        // <-- AM (DISCORD)
     }
 }
 

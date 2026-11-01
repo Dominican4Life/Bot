@@ -1,0 +1,107 @@
+{
+  "__version": 1,
+  "__comment": "Generic list definition of the Source Lab for {{name}} ({{baseUrl}}): every section is one request plus the selectors Build by tapping derived. The __part_* and __comment_* keys are notes the engine ignores.",
+
+  "__part_headers": "start",
+  "__comment_headers": "The site as Referer on every picture, so covers and pages load from its CDN.",
+  "name": "{{name}}",
+  "lang": "{{lang}}",
+  "baseUrl": "{{baseUrl}}",
+  "iconUrl": "{{iconUrl}}",
+  "headers": { "Referer": "{{baseUrl}}/" },
+  "__part_headers_end": true,
+
+  "__part_getPopular": "start",
+  "__comment_getPopular": "The popular list page, one ITEM card per title: the title link's text and href, the cover image's attribute.",
+  "popular": {
+    "url": "{baseUrl}{{popularPathJson}}",
+    "itemSelector": "{{itemSelector}}",
+    "fields": {
+      "url": { "selector": "{{titleSelector}}", "attr": "href", "resolve": true },
+      "title": { "or": [ { "selector": "{{titleSelector}}", "attr": "title" }, { "selector": "{{titleSelector}}" } ] },
+      "coverUrl": { "or": [ { "selector": "{{coverSelector}}", "attr": "{{coverAttr}}" }, { "selector": "img", "attr": "data-src" }, { "selector": "img", "attr": "src" } ], "resolve": true }
+    }
+  },
+  "__part_getPopular_end": true,
+
+  "__part_getLatest": "start",
+  "__comment_getLatest": "The latest list page, the same cards.",
+  "latest": {
+    "url": "{baseUrl}{{latestPathJson}}",
+    "itemSelector": "{{itemSelector}}",
+    "fields": {
+      "url": { "selector": "{{titleSelector}}", "attr": "href", "resolve": true },
+      "title": { "or": [ { "selector": "{{titleSelector}}", "attr": "title" }, { "selector": "{{titleSelector}}" } ] },
+      "coverUrl": { "or": [ { "selector": "{{coverSelector}}", "attr": "{{coverAttr}}" }, { "selector": "img", "attr": "data-src" }, { "selector": "img", "attr": "src" } ], "resolve": true }
+    }
+  },
+  "__part_getLatest_end": true,
+
+  "__part_search": "start",
+  "__comment_search": "The search page with {query} and {page} filled, the same cards.",
+  "search": {
+    "url": "{baseUrl}{{searchPathJson}}",
+    "itemSelector": "{{itemSelector}}",
+    "fields": {
+      "url": { "selector": "{{titleSelector}}", "attr": "href", "resolve": true },
+      "title": { "or": [ { "selector": "{{titleSelector}}", "attr": "title" }, { "selector": "{{titleSelector}}" } ] },
+      "coverUrl": { "or": [ { "selector": "{{coverSelector}}", "attr": "{{coverAttr}}" }, { "selector": "img", "attr": "data-src" }, { "selector": "img", "attr": "src" } ], "resolve": true }
+    }
+  },
+  "__part_search_end": true,
+
+  "__part_getDetails": "start",
+  "__comment_getDetails": "The title page: the h1, og:image as cover, the meta description, genre-looking links.",
+  "details": {
+    "url": "{entryUrl}",
+    "fields": {
+      "url": { "template": "{entryUrl}" },
+      "title": { "or": [ { "selector": "h1" }, { "selector": "meta[property='og:title']", "attr": "content" } ] },
+      "coverUrl": { "selector": "meta[property='og:image']", "attr": "content", "resolve": true },
+      "description": { "or": [ { "selector": "meta[property='og:description']", "attr": "content" }, { "selector": "meta[name='description']", "attr": "content" } ] },
+      "genres": { "selector": "a[href*='/genre'], a[href*='/tag'], a[rel~=tag]", "all": true }
+    }
+  },
+  "__part_getDetails_end": true,
+
+  "__part_getChapterList": "start",
+  "__comment_getChapterList": "The CHAPTER links of the title page: href, text as title, the last number in the text, the date element when one was picked.",
+  "chapters": {
+    "url": "{entryUrl}",
+    "itemSelector": "{{chapterSelector}}",
+    "fields": {
+      "url": { "or": [ { "attr": "href" }, { "selector": "a", "attr": "href" } ], "resolve": true },
+      "title": { "or": [ { "attr": "title" }, { "selector": "a", "attr": "title" }, { "selector": "a" }, { "attr": "text" } ] },
+      "number": { "or": [ { "selector": "a" }, { "attr": "text" } ], "regex": "(\\d+(?:[.,]\\d+)?)(?!.*\\d)", "transform": "number" },
+      "dateUploaded": { "selector": "{{dateSelectorJson}}", "transform": "parseDate" }
+    }
+  },
+  "__part_getChapterList_end": true,
+
+  "__part_getPageList": "start",
+  "__comment_getPageList": "The IMAGE pictures of the chapter page, the address from IMAGE_ATTR then the lazy-load attributes and src.",
+  "pages": {
+    "url": "{chapterUrl}",
+    "itemSelector": "{{imageSelector}}",
+    "fields": {
+      "imageUrl": { "or": [ { "attr": "{{imageAttr}}" }, { "attr": "data-src" }, { "attr": "data-lazy-src" }, { "attr": "src" } ], "resolve": true }
+    }
+  },
+  "__part_getPageList_end": true,
+
+  "__part_getVideoList": "start",
+  "__comment_getVideoList": "The VIDEO_FRAME of the episode page: a plain <source> is a direct file; an embed is rendered in the hidden browser and the .m3u8 it loads is caught. {{videoNote}}",
+  "videos": {
+    "url": "{chapterUrl}",
+    "render": { "capture": "\\.m3u8|\\.mp4" },
+    "itemSelector": "#captured a, video source[src]",
+    "fields": {
+      "url": { "or": [ { "attr": "href" }, { "attr": "src" } ] },
+      "quality": { "or": [ { "attr": "label" }, { "template": "Auto" } ] },
+      "server": { "template": "Direct" }
+    },
+    "videoHeaders": { "Referer": "{baseUrl}/" },
+    "expandPlaylists": true
+  },
+  "__part_getVideoList_end": true
+}

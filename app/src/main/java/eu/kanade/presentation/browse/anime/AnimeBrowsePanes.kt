@@ -757,7 +757,7 @@ private fun AnimeSourceSheet(
         onOpenCodeEditor = js?.let {
             {
                 onDismiss()
-                navigator?.push(eu.kanade.tachiyomi.ui.codeeditor.SourceEditorScreen(it.info.key))
+                navigator?.push(eu.kanade.tachiyomi.ui.sourcelab.SourceLabScreen(it.info.key))
             }
         },
     )

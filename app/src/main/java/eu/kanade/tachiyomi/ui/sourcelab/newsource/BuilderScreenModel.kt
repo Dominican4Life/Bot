@@ -1,0 +1,278 @@
+package eu.kanade.tachiyomi.ui.sourcelab.newsource
+
+import android.app.Application
+import androidx.compose.runtime.Immutable
+import cafe.adriel.voyager.core.model.StateScreenModel
+import cafe.adriel.voyager.core.model.screenModelScope
+import eu.kanade.tachiyomi.jssource.arr
+import eu.kanade.tachiyomi.jssource.int
+import eu.kanade.tachiyomi.jssource.jsJson
+import eu.kanade.tachiyomi.jssource.lab.BuilderPick
+import eu.kanade.tachiyomi.jssource.lab.BuilderSelection
+import eu.kanade.tachiyomi.jssource.lab.Derive
+import eu.kanade.tachiyomi.jssource.lab.Detector
+import eu.kanade.tachiyomi.jssource.lab.Generator
+import eu.kanade.tachiyomi.jssource.lab.LabHandoff
+import eu.kanade.tachiyomi.jssource.lab.LabMeta
+import eu.kanade.tachiyomi.jssource.lab.Templates
+import eu.kanade.tachiyomi.jssource.obj
+import eu.kanade.tachiyomi.jssource.str
+import eu.kanade.tachiyomi.util.system.AppLog
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.update
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.core.common.util.lang.withIOContext
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
+
+/**
+ * KMK (r96, Source Lab): the state behind "Build by tapping" (D§2.4): the page in the WebView, the element just
+ * tapped and waiting for a label, the labelled picks, and what [Derive] made of them, re-derived after every
+ * pick so the reasons are shown live. Done → the generic-list template filled with the derived values, handed to
+ * Half A through LabHandoff with the picks in `LabMeta.picks`.
+ */
+internal class BuilderScreenModel(startUrl: String?, anime: Boolean) :
+    StateScreenModel<BuilderScreenModel.State>(State(url = startUrl.orEmpty(), anime = anime)) {
+
+    /** The three pages of the flow and the labels each offers */
+    enum class Step(val number: Int, val title: String, val labels: List<String>) {
+        ListPage(1, "home page", listOf("item", "title", "cover", "next")),
+        TitlePage(2, "title page", listOf("chapter", "date", "number")),
+        ChapterPage(3, "chapter page", listOf("image", "video")),
+    }
+
+    /** What the picker script sent for one tap, before a label is given */
+    @Immutable
+    data class RawPick(
+        val cssPath: String,
+        val likeSelector: String,
+        val tag: String,
+        val attrs: Map<String, String>,
+        val text: String,
+        val count: Int,
+        val sameParentCount: Int,
+        val hrefs: List<String>,
+        val attrsAllHttp: List<String>,
+        val pageUrl: String,
+    )
+
+    @Immutable
+    data class State(
+        val url: String,
+        val anime: Boolean,
+        val json: Boolean = false,
+        val step: Step = Step.ListPage,
+        val loadUrl: String? = null,             // what the WebView should show; loadTick changes on every request
+        val loadTick: Int = 0,
+        val pageUrl: String? = null,             // what it shows now
+        val pickerScript: String? = null,
+        val pending: RawPick? = null,
+        val picks: List<Derive.Picked> = emptyList(),
+        val selection: BuilderSelection? = null,
+        val keepSelector: String? = null,        // the selector to outline as kept, with its tick
+        val keepTick: Int = 0,
+        val busy: String? = null,
+        val error: String? = null,
+        val delivered: Boolean = false,
+    ) {
+        val site: String get() = (pageUrl ?: loadUrl ?: url).let { Detector.normalize(it) }
+        val host: String get() = site.removePrefix("https://").removePrefix("http://")
+        fun pick(label: String): Derive.Picked? = picks.lastOrNull { it.pick.label == label }
+        val labels: List<String> get() = if (step == Step.ChapterPage) listOf(if (anime) "video" else "image") else step.labels
+    }
+
+    private val context get() = Injekt.get<Application>()
+
+    init {
+        screenModelScope.launchIO {
+            val script = runCatching { context.assets.open("sourcelab/picker.js").bufferedReader().use { it.readText() } }
+                .onFailure { AppLog.add('E', "lab", "picker.js not read: ${it.message}") }
+                .getOrNull()
+            mutableState.update { it.copy(pickerScript = script) }
+        }
+        if (!startUrl.isNullOrBlank()) load(startUrl)
+    }
+
+    fun setUrl(url: String) = mutableState.update { it.copy(url = url, error = null) }
+
+    fun setJson(json: Boolean) = mutableState.update { it.copy(json = json) }
+
+    fun setAnime(anime: Boolean) {
+        mutableState.update { it.copy(anime = anime) }
+        rederive()
+    }
+
+    /** Loads a page in the WebView (the URL box's Go, "Next: open a title", "Next: open a chapter") */
+    fun load(url: String) {
+        val target = url.trim().let { if (it.startsWith("http://") || it.startsWith("https://")) it else "https://$it" }
+        mutableState.update { it.copy(url = target, loadUrl = target, loadTick = it.loadTick + 1, pending = null, error = null) }
+    }
+
+    /** From the WebView: the page finished loading */
+    fun onPageLoaded(url: String?) {
+        if (url != null) mutableState.update { it.copy(pageUrl = url) }
+    }
+
+    /** From the picker script (a WebView thread): one tap, as JSON */
+    fun onPick(json: String) {
+        val o = runCatching { jsJson.parseToJsonElement(json) as? JsonObject }.getOrNull() ?: return
+        val raw = RawPick(
+            cssPath = o.str("cssPath").orEmpty(),
+            likeSelector = o.str("likeSelector") ?: o.str("cssPath").orEmpty(),
+            tag = o.str("tag").orEmpty(),
+            attrs = o.obj("attrs")?.mapNotNull { (k, v) -> (v as? JsonPrimitive)?.content?.let { k to it } }?.toMap().orEmpty(),
+            text = o.str("text").orEmpty(),
+            count = o.int("count") ?: 1,
+            sameParentCount = o.int("sameParentCount") ?: 1,
+            hrefs = o.arr("hrefs")?.mapNotNull { (it as? JsonPrimitive)?.content }.orEmpty(),
+            attrsAllHttp = o.arr("attrsAllHttp")?.mapNotNull { (it as? JsonPrimitive)?.content }.orEmpty(),
+            pageUrl = o.str("pageUrl") ?: state.value.pageUrl.orEmpty(),
+        )
+        if (raw.cssPath.isBlank()) return
+        mutableState.update { it.copy(pending = raw) }
+    }
+
+    fun onPickerLog(text: String) = AppLog.add('D', "lab", "picker: $text")
+
+    /** Gives the pending tap a label; the same label picked again replaces the earlier pick */
+    fun label(label: String) {
+        val raw = state.value.pending ?: return
+        val picked = Derive.Picked(
+            pick = BuilderPick(
+                label = label,
+                cssPath = raw.cssPath,
+                tag = raw.tag,
+                attrs = raw.attrs,
+                text = raw.text,
+                count = raw.count,
+                sameParentCount = raw.sameParentCount,
+                pageUrl = raw.pageUrl,
+            ),
+            likeSelector = raw.likeSelector,
+            hrefs = raw.hrefs,
+            attrsAllHttp = raw.attrsAllHttp,
+        )
+        mutableState.update { s ->
+            s.copy(
+                picks = s.picks.filter { it.pick.label != label } + picked,
+                pending = null,
+                keepSelector = raw.likeSelector,
+                keepTick = s.keepTick + 1,
+            )
+        }
+        rederive()
+        AppLog.add('I', "lab", "Builder: $label = ${raw.likeSelector} (${raw.count} like it) on ${raw.pageUrl}")
+    }
+
+    fun dismissPending() = mutableState.update { it.copy(pending = null) }
+
+    fun removePick(label: String) {
+        mutableState.update { s -> s.copy(picks = s.picks.filter { it.pick.label != label }) }
+        rederive()
+    }
+
+    /** Undo: the last pick goes, or the pending tap */
+    fun undo() {
+        mutableState.update { s ->
+            if (s.pending != null) s.copy(pending = null) else s.copy(picks = s.picks.dropLast(1))
+        }
+        rederive()
+    }
+
+    /** "Next: open a title" / "Next: open a chapter": the first link of the pick that leads there */
+    fun nextStep() {
+        val s = state.value
+        when (s.step) {
+            Step.ListPage -> {
+                val href = (s.pick("title") ?: s.pick("item"))?.hrefs?.firstOrNull()
+                if (href == null) {
+                    mutableState.update { it.copy(error = "Tap a title link (or a card) first, so the Lab knows which title to open") }
+                    return
+                }
+                mutableState.update { it.copy(step = Step.TitlePage) }
+                load(href)
+            }
+            Step.TitlePage -> {
+                val href = s.pick("chapter")?.hrefs?.firstOrNull()
+                if (href == null) {
+                    mutableState.update { it.copy(error = "Tap a chapter link first, so the Lab knows which chapter to open") }
+                    return
+                }
+                mutableState.update { it.copy(step = Step.ChapterPage) }
+                load(href)
+            }
+            Step.ChapterPage -> write()
+        }
+    }
+
+    fun previousStep() {
+        val s = state.value
+        val previous = when (s.step) {
+            Step.ListPage -> return
+            Step.TitlePage -> Step.ListPage
+            Step.ChapterPage -> Step.TitlePage
+        }
+        mutableState.update { it.copy(step = previous, pending = null) }
+        val back = s.picks.lastOrNull { it.pick.label in previous.labels }?.pick?.pageUrl
+        if (back != null) load(back)
+    }
+
+    fun clearError() = mutableState.update { it.copy(error = null) }
+
+    private fun rederive() {
+        val s = state.value
+        val selection = runCatching { Derive.derive(s.site, s.anime, s.picks) }
+            .onFailure { AppLog.add('W', "lab", "Derive failed: ${it.message}") }
+            .getOrNull()
+        mutableState.update { it.copy(selection = selection) }
+    }
+
+    /** Done: the generic-list template filled with the derived values, handed to Half A */
+    fun write() {
+        val s = state.value
+        val selection = s.selection ?: Derive.derive(s.site, s.anime, s.picks)
+        mutableState.update { it.copy(busy = "Writing the source…", error = null) }
+        screenModelScope.launchIO {
+            try {
+                val generated = withIOContext {
+                    val template = Templates.get(if (s.json) "generic-list.json" else "generic-list")
+                        ?: throw IllegalStateException("The generic-list template is missing from the app")
+                    val host = s.host
+                    val values = LinkedHashMap<String, String>()
+                    values["name"] = host.removePrefix("www.").substringBefore('.').replaceFirstChar { it.uppercase() }
+                    values["lang"] = "en"
+                    values["baseUrl"] = s.site
+                    values["iconUrl"] = "https://www.google.com/s2/favicons?domain=$host&sz=128"
+                    values.putAll(selection.derived)
+                    val lab = LabMeta(
+                        engine = "generic-list",
+                        templateId = template.id,
+                        templateVersion = template.version,
+                        picks = jsJson.encodeToJsonElement(BuilderSelection.serializer(), selection),
+                        detectedAt = System.currentTimeMillis(),
+                        siteUrl = s.site,
+                    )
+                    val videoTodo = selection.derived["videoNote"]?.startsWith("TODO") == true
+                    Generator.generate(
+                        template = template,
+                        values = values,
+                        lab = lab,
+                        drop = setOf(if (s.anime) "getPageList" else "getVideoList"),
+                        notWritten = if (s.anime && videoTodo) setOf("getVideoList") else emptySet(),
+                        anime = s.anime,
+                    )
+                }
+                LabHandoff.deliver(generated)
+                AppLog.add('I', "lab", "Built by tapping on ${s.host}: ${s.picks.size} picks, ${selection.derived.size} values derived")
+                mutableState.update { it.copy(busy = null, delivered = true) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                AppLog.add('E', "lab", "Build by tapping failed: ${e.message}")
+                mutableState.update { it.copy(busy = null, error = e.message ?: e.toString()) }
+            }
+        }
+    }
+}

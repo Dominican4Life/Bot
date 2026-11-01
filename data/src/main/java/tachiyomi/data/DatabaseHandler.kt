@@ -43,6 +43,15 @@ interface DatabaseHandler {
 
     fun <T : Any> subscribeToList(block: Database.() -> Query<T>): Flow<List<T>>
 
+    // KMK -->
+    /**
+     * Like [subscribeToList], but a burst of table notifications runs the query once, [timeoutMillis]
+     * after the last one. The first run is not delayed. For the library flows only (r96): during a
+     * library update or while browsing, every write to mangas/chapters/history re-ran the library query.
+     */
+    fun <T : Any> subscribeToListDebounced(timeoutMillis: Long, block: Database.() -> Query<T>): Flow<List<T>>
+    // KMK <--
+
     fun <T : Any> subscribeToOne(block: Database.() -> Query<T>): Flow<T>
 
     fun <T : Any> subscribeToOneOrNull(block: Database.() -> Query<T>): Flow<T?>

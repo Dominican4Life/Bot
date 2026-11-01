@@ -2,9 +2,6 @@ package eu.kanade.tachiyomi.ui.library
 
 import tachiyomi.domain.library.model.LibraryManga
 import tachiyomi.domain.source.model.Source
-import tachiyomi.domain.source.service.SourceManager
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 
 internal const val LOCAL_SOURCE_ID_ALIAS = "local"
 
@@ -18,7 +15,8 @@ data class LibraryItem(
     val useLangIcon: Boolean = true,
     val source: Source? = null,
     // KMK <--
-    private val sourceManager: SourceManager = Injekt.get(),
+    // KMK: r96 dropped the injected `sourceManager` field; only the commented-out `matches` used it,
+    // and as a constructor property it took part in equals() of every item.
 ) {
     val id: Long = libraryManga.id
 

@@ -1,0 +1,15 @@
+{
+  "name": "MangaThemesia",
+  "kind": "manga",
+  "defaults": { "listPath": "manga", "coverAttr": "src" },
+  "parts": {
+    "headers": { "title": "Headers and constants", "text": "The site as Referer on every picture; LIST_PATH is the directory the home page linked to (/manga/, /series/ or /komik/), COVER_ATTR the image attribute that held a real address.", "ruleIds": ["referer-on-images", "lazy-cover-attrs"] },
+    "getPopular": { "title": "Popular", "text": "Loads /LIST_PATH/?page=N&order=popular and reads the .bsx cards: the card link, its title attribute or .tt, the cover image.", "ruleIds": [] },
+    "getLatest": { "title": "Latest", "text": "The same directory ordered by update.", "ruleIds": [] },
+    "search": { "title": "Search", "text": "/page/N/?s=words, the same .bsx cards.", "ruleIds": [] },
+    "getDetails": { "title": "Title page", "text": "h1.entry-title, the cover in .thumb img, the summary in .entry-content, author and status from the info rows, genres from .mgen a.", "optional": true, "ruleIds": ["status-default-filled"] },
+    "getChapterList": { "title": "Chapters", "text": "#chapterlist li rows on the title page: the link, .chapternum as title and number, .chapterdate as the date.", "ruleIds": ["stable-chapter-url", "date-format-known"] },
+    "getPageList": { "title": "Pages", "text": "Reads the picture list from the ts_reader.run({...}) script of the chapter page; falls back to the #readerarea images when the script is missing.", "ruleIds": ["relative-url-returned"] },
+    "helpers": { "title": "Helpers", "text": "One request with the site as Referer, the shared .bsx card parser, absolute addresses, the cover attribute chain and the first number of a chapter title.", "ruleIds": [] }
+  }
+}

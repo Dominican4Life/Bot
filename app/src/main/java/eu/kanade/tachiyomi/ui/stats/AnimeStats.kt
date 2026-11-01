@@ -41,7 +41,8 @@ object AnimeStats {
     ): AnimeStatsData = withIOContext {
         val library = repository.getFavorites().distinctBy { it.id }
         val ids = library.mapTo(HashSet()) { it.id }
-        val stats = repository.subscribeLibraryStats().first().filterKeys { it in ids }
+        // KMK (r96): favourites-only query; filterKeys keeps the seasons out as before
+        val stats = repository.subscribeFavoritesLibraryStats().first().filterKeys { it in ids }
 
         // Downloads: count the episode files in each anime's folder
         val downloaded = library.sumOf { anime ->

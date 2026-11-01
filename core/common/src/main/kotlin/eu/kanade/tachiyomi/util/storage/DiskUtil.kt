@@ -170,11 +170,12 @@ object DiskUtil {
      */
     fun truncateToLength(s: String, maxBytes: Int): String {
         val charset = Charsets.UTF_8
-        val decoder = charset.newDecoder()
         val sba = s.toByteArray(charset)
         if (sba.size <= maxBytes) {
             return s
         }
+        // KMK (r96): the decoder only once a name is really too long (this runs for every title's folder name)
+        val decoder = charset.newDecoder()
         // Ensure truncation by having byte buffer = maxBytes
         val bb = ByteBuffer.wrap(sba, 0, maxBytes)
         val cb = CharBuffer.allocate(maxBytes)

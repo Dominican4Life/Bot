@@ -1,0 +1,159 @@
+{
+  "version": 1,
+  "engines": [
+    {
+      "id": "madara",
+      "name": "Madara (WordPress)",
+      "kind": "manga",
+      "template": "madara",
+      "entryLink": ".page-item-detail .post-title a, .manga-item h3 a, .c-tabs-item__content .post-title a",
+      "markers": [
+        { "id": "theme-path", "weight": 3, "where": "html", "test": { "contains": "/wp-content/themes/madara" }, "evidence": "theme folder in the home page, the strongest Madara marker" },
+        { "id": "cards", "weight": 2, "where": "html", "test": { "selectorCount": ".page-item-detail, .manga-item", "min": 4 }, "evidence": "{count} title cards on the home page" },
+        { "id": "load-more", "weight": 1, "where": "script", "test": { "contains": "madara_load_more" }, "evidence": "admin-ajax.php with madara_load_more in a script" },
+        { "id": "chapter-rows", "weight": 2, "where": "title", "test": { "selectorCount": "li.wp-manga-chapter, .wp-manga-chapter", "min": 1 }, "evidence": "{count} li.wp-manga-chapter on the first title" },
+        { "id": "ajax-chapters", "weight": 1, "where": "request", "test": { "post": "ajax/chapters/", "status": 200, "bodyContains": "wp-manga-chapter" }, "evidence": "POST …/ajax/chapters/ answered 200 with chapter rows" }
+      ],
+      "fill": {
+        "postType": { "from": "regex", "where": "html", "pattern": "post_type%5D=([a-z-]+)|post_type\\]=([a-z-]+)", "default": "wp-manga" },
+        "coverAttr": { "from": "firstAttrWithHttp", "selector": ".page-item-detail img, .manga-item img", "attrs": ["data-src", "data-lazy-src", "data-original", "srcset", "src"], "default": "src" },
+        "chaptersVia": { "from": "probe", "candidates": ["ajax/chapters/", "admin-ajax.php"], "default": "ajax/chapters/" },
+        "imageReferer": { "from": "head", "selector": ".page-item-detail img, .manga-item img", "withoutReferer403": true, "default": "no" }
+      }
+    },
+    {
+      "id": "mangathemesia",
+      "name": "MangaThemesia",
+      "kind": "manga",
+      "template": "mangathemesia",
+      "entryLink": ".listupd .bs .bsx > a, .bsx > a, .utao .uta .imgu a",
+      "markers": [
+        { "id": "cards", "weight": 3, "where": "html", "test": { "selectorCount": ".listupd .bs .bsx, .bsx", "min": 4 }, "evidence": "{count} .bsx cards on the home page" },
+        { "id": "series-path", "weight": 2, "where": "html", "test": { "regex": "href=\"[^\"]*/(manga|series|komik|comics)/[^\"]+/\"" }, "evidence": "title links under /manga/ or /series/" },
+        { "id": "ts-breadcrumb", "weight": 1, "where": "html", "test": { "regex": "ts-breadcrumb|ts_|tsparser" }, "evidence": "ts- class prefix the theme uses" },
+        { "id": "chapter-list", "weight": 2, "where": "title", "test": { "selectorCount": "#chapterlist li, .eplister li", "min": 1 }, "evidence": "{count} rows in #chapterlist on the first title" },
+        { "id": "reader-script", "weight": 1, "where": "title", "test": { "contains": "ts_reader" }, "evidence": "ts_reader on the title or chapter page" }
+      ],
+      "fill": {
+        "coverAttr": { "from": "firstAttrWithHttp", "selector": ".bsx img", "attrs": ["data-src", "data-lazy-src", "src"], "default": "src" },
+        "listPath": { "from": "regex", "where": "html", "pattern": "href=\"[^\"]*/(manga|series|komik|comics)/\\?", "default": "manga" }
+      }
+    },
+    {
+      "id": "mangareader",
+      "name": "MangaReader (mangareader.to layout)",
+      "kind": "manga",
+      "template": "mangareader",
+      "entryLink": ".manga_list-sbs .manga-poster, .mls-wrap .manga-poster, .item .manga-poster",
+      "markers": [
+        { "id": "poster-cards", "weight": 3, "where": "html", "test": { "selectorCount": ".manga-poster", "min": 6 }, "evidence": "{count} .manga-poster cards on the home page" },
+        { "id": "list-path", "weight": 2, "where": "html", "test": { "regex": "href=\"/(most-viewed|latest-updated|filter)" }, "evidence": "/most-viewed or /latest-updated links" },
+        { "id": "ajax-chapters", "weight": 2, "where": "title", "test": { "selectorCount": "#list-chapter, .chapters-list-ul, .ep-item, .chapter-item", "min": 1 }, "evidence": "{count} chapter list blocks on the first title" },
+        { "id": "ajax-path", "weight": 1, "where": "script", "test": { "contains": "/ajax/" }, "evidence": "/ajax/ calls in a script" }
+      ],
+      "fill": {
+        "coverAttr": { "from": "firstAttrWithHttp", "selector": ".manga-poster img", "attrs": ["data-src", "src"], "default": "src" },
+        "imageReferer": { "from": "head", "selector": ".manga-poster img", "withoutReferer403": true, "default": "no" }
+      }
+    },
+    {
+      "id": "foolslide",
+      "name": "FoolSlide",
+      "kind": "manga",
+      "template": "foolslide",
+      "entryLink": ".group .title a, .list .group .title a",
+      "markers": [
+        { "id": "groups", "weight": 3, "where": "html", "test": { "selectorCount": ".list .group, .group .title", "min": 3 }, "evidence": "{count} .group blocks on the directory page" },
+        { "id": "series-path", "weight": 2, "where": "html", "test": { "regex": "/(series|read)/[^\"/]+/" }, "evidence": "/series/ and /read/ addresses" },
+        { "id": "directory-path", "weight": 1, "where": "html", "test": { "contains": "/directory/" }, "evidence": "/directory/ link in the page" },
+        { "id": "chapter-elements", "weight": 2, "where": "title", "test": { "selectorCount": ".list .element, .element .title a", "min": 1 }, "evidence": "{count} .element chapter rows on the first title" }
+      ],
+      "fill": {
+        "coverAttr": { "from": "firstAttrWithHttp", "selector": ".group img, .thumbnail img", "attrs": ["src", "data-src"], "default": "src" }
+      }
+    },
+    {
+      "id": "keyoapp",
+      "name": "Keyoapp",
+      "kind": "manga",
+      "template": "keyoapp",
+      "entryLink": "div.grid > div a[href*='/series/'], a[href*='/series/']",
+      "markers": [
+        { "id": "series-links", "weight": 3, "where": "html", "test": { "selectorCount": "a[href*='/series/']", "min": 4 }, "evidence": "{count} links to /series/ on the home page" },
+        { "id": "cdn", "weight": 2, "where": "html", "test": { "regex": "cdn\\.keyoapp\\.com|keyoapp" }, "evidence": "keyoapp CDN or script name" },
+        { "id": "bg-covers", "weight": 1, "where": "html", "test": { "regex": "background-image:\\s*url\\(" }, "evidence": "covers as CSS background images" },
+        { "id": "chapter-links", "weight": 2, "where": "title", "test": { "selectorCount": "#chapters a, a[href*='/chapter/']", "min": 1 }, "evidence": "{count} chapter links on the first title" }
+      ],
+      "fill": {
+        "imageReferer": { "from": "head", "selector": "img", "withoutReferer403": true, "default": "no" }
+      }
+    },
+    {
+      "id": "wordpress",
+      "name": "Generic WordPress",
+      "kind": "either",
+      "template": "wordpress",
+      "entryLink": "article h2 a, article .entry-title a, .post .entry-title a",
+      "markers": [
+        { "id": "wp-content", "weight": 3, "where": "html", "test": { "contains": "/wp-content/" }, "evidence": "/wp-content/ paths in the home page" },
+        { "id": "wp-json", "weight": 1, "where": "html", "test": { "contains": "/wp-json/" }, "evidence": "/wp-json/ REST link" },
+        { "id": "articles", "weight": 2, "where": "html", "test": { "selectorCount": "article", "min": 3 }, "evidence": "{count} <article> posts on the home page" },
+        { "id": "entry-content", "weight": 2, "where": "title", "test": { "selectorCount": ".entry-content", "min": 1 }, "evidence": ".entry-content on the first post" }
+      ],
+      "fill": {
+        "coverAttr": { "from": "firstAttrWithHttp", "selector": "article img", "attrs": ["data-src", "data-lazy-src", "srcset", "src"], "default": "src" },
+        "imageSelector": { "from": "regex", "where": "title", "pattern": "(wp-block-image|entry-content)", "default": "entry-content" }
+      }
+    },
+    {
+      "id": "json-api",
+      "name": "JSON API site",
+      "kind": "either",
+      "template": "json-api",
+      "entryLink": "a[href*='/comic/'], a[href*='/series/'], a[href*='/manga/'], a[href*='/anime/']",
+      "markers": [
+        { "id": "api-calls", "weight": 3, "where": "script", "test": { "regex": "[\"'](/api/|https?://api\\.)" }, "evidence": "/api/ addresses in the page's scripts" },
+        { "id": "wp-json-list", "weight": 2, "where": "html", "test": { "regex": "/wp-json/wp/v2/|/api/v\\d+/" }, "evidence": "a versioned API path" },
+        { "id": "api-reply", "weight": 2, "where": "request", "test": { "get": "/api/", "status": 200, "bodyContains": "[" }, "evidence": "GET /api/ answered 200 with a JSON list" },
+        { "id": "spa-root", "weight": 1, "where": "html", "test": { "selectorCount": "#app, #root, #__nuxt", "min": 1 }, "evidence": "an app root element (the page is filled by scripts)" }
+      ],
+      "fill": {
+        "apiPath": { "from": "regex", "where": "script", "pattern": "[\"'](/api/[a-z0-9_/-]+)", "default": "/api/" }
+      }
+    },
+    {
+      "id": "anime-player",
+      "name": "Anime player page",
+      "kind": "anime",
+      "template": "anime-player",
+      "entryLink": "a[href*='/anime/'], a[href*='/watch/'], a[href*='/episode/'], .film-poster a, .film_list-wrap a",
+      "markers": [
+        { "id": "episode-links", "weight": 3, "where": "html", "test": { "selectorCount": "a[href*='/episode'], a[href*='/watch/'], a[href*='-episode-']", "min": 3 }, "evidence": "{count} episode links on the home page" },
+        { "id": "player-frame", "weight": 2, "where": "title", "test": { "selectorCount": "iframe[src], video source, video[src]", "min": 1 }, "evidence": "{count} player frames or video tags on the first page" },
+        { "id": "player-script", "weight": 1, "where": "title", "test": { "regex": "jwplayer\\(|sources:\\s*\\[|Playerjs|videojs" }, "evidence": "a player script (jwplayer, sources:, videojs)" },
+        { "id": "anime-words", "weight": 1, "where": "html", "test": { "regex": "(?i)\\b(episode|episodes|sub|dub)\\b" }, "evidence": "episode / sub / dub words on the home page" }
+      ],
+      "fill": {
+        "coverAttr": { "from": "firstAttrWithHttp", "selector": ".film-poster img, .poster img, img", "attrs": ["data-src", "data-lazy-src", "src"], "default": "src" },
+        "frameSelector": { "from": "regex", "where": "title", "pattern": "<(iframe)[^>]+src=", "default": "iframe" }
+      }
+    },
+    {
+      "id": "nextjs",
+      "name": "Next.js",
+      "kind": "either",
+      "template": "nextjs",
+      "entryLink": "a[href*='/comic/'], a[href*='/series/'], a[href*='/manga/'], a[href*='/title/']",
+      "markers": [
+        { "id": "next-data", "weight": 3, "where": "html", "test": { "contains": "__NEXT_DATA__" }, "evidence": "the __NEXT_DATA__ script in the home page" },
+        { "id": "next-static", "weight": 2, "where": "html", "test": { "contains": "/_next/static/" }, "evidence": "/_next/static/ assets" },
+        { "id": "next-image", "weight": 1, "where": "html", "test": { "contains": "/_next/image?url=" }, "evidence": "covers through /_next/image" },
+        { "id": "title-next-data", "weight": 2, "where": "title", "test": { "contains": "__NEXT_DATA__" }, "evidence": "__NEXT_DATA__ on the first title too" }
+      ],
+      "fill": {
+        "buildId": { "from": "regex", "where": "html", "pattern": "\"buildId\":\"([^\"]+)\"", "default": "" },
+        "coverAttr": { "from": "firstAttrWithHttp", "selector": "img", "attrs": ["src", "data-src", "srcset"], "default": "src" }
+      }
+    }
+  ]
+}

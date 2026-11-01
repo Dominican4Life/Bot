@@ -46,6 +46,19 @@ class SyncChaptersWithSource(
     // KMK: the chapter writes below run in one transaction (not a constructor parameter, so DomainModule stays)
     private val handler: DatabaseHandler by injectLazy()
 
+    // KMK -->
+    /**
+     * KMK (r96): what a sync did. [chapters] is the title's chapter list as the database holds it after the sync,
+     * so callers (the index.json write) don't read it again; [changed] says whether any row was added, removed or
+     * updated.
+     */
+    class SyncResult(
+        val newChapters: List<Chapter>,
+        val chapters: List<Chapter>,
+        val changed: Boolean,
+    )
+    // KMK <--
+
     /**
      * Method to synchronize db chapters with source ones
      *
@@ -60,7 +73,16 @@ class SyncChaptersWithSource(
         source: Source,
         manualFetch: Boolean = false,
         fetchWindow: Pair<Long, Long> = Pair(0, 0),
-    ): List<Chapter> {
+    ): List<Chapter> = awaitResult(rawSourceChapters, manga, source, manualFetch, fetchWindow).newChapters
+
+    /** KMK (r96): [await], also returning the chapter list after the sync (see [SyncResult]) */
+    suspend fun awaitResult(
+        rawSourceChapters: List<SChapter>,
+        manga: Manga,
+        source: Source,
+        manualFetch: Boolean = false,
+        fetchWindow: Pair<Long, Long> = Pair(0, 0),
+    ): SyncResult {
         if (rawSourceChapters.isEmpty() && !source.isLocal()) {
             throw NoChaptersException()
         }
@@ -78,15 +100,18 @@ class SyncChaptersWithSource(
             }
 
         val dbChapters = getChaptersByMangaId.await(manga.id)
+        // KMK (r96): one map instead of a scan of the saved list per source chapter (urls are distinct above, and
+        // saved duplicates, if any, behave as `find` did: the first one wins)
+        val dbChaptersByUrl = HashMap<String, Chapter>(dbChapters.size * 2)
+        for (dbChapter in dbChapters) dbChaptersByUrl.putIfAbsent(dbChapter.url, dbChapter)
+        val sourceUrls = sourceChapters.mapTo(HashSet(sourceChapters.size * 2)) { it.url }
+        // KMK (r96): the source's SManga once, not once per chapter
+        val sManga = manga.toSManga()
 
         val newChapters = mutableListOf<Chapter>()
         val updatedChapters = mutableListOf<Chapter>()
         // KMK: mutable so chapters whose url changed can be taken out (see matchChangedUrls)
-        val removedChapters = dbChapters.filterNot { dbChapter ->
-            sourceChapters.any { sourceChapter ->
-                dbChapter.url == sourceChapter.url
-            }
-        }.toMutableList()
+        val removedChapters = dbChapters.filterNot { dbChapter -> dbChapter.url in sourceUrls }.toMutableList()
         // KMK: urls of added chapters that came without an upload date (they get a made-up one below)
         val undatedNewUrls = mutableSetOf<String>()
         // KMK: download folders to rename (old, new); done together with the database writes, so a cancelled
@@ -104,7 +129,7 @@ class SyncChaptersWithSource(
             if (source is HttpSource) {
                 val sChapter = chapter.toSChapter()
                 @Suppress("DEPRECATION")
-                source.prepareNewChapter(sChapter, manga.toSManga())
+                source.prepareNewChapter(sChapter, sManga)
                 chapter = chapter.copyFromSChapter(sChapter)
             }
 
@@ -116,7 +141,7 @@ class SyncChaptersWithSource(
             )
             chapter = chapter.copy(chapterNumber = chapterNumber)
 
-            val dbChapter = dbChapters.find { it.url == chapter.url }
+            val dbChapter = dbChaptersByUrl[chapter.url]
 
             if (dbChapter == null) {
                 if (chapter.dateUpload == 0L) undatedNewUrls.add(chapter.url)
@@ -203,13 +228,16 @@ class SyncChaptersWithSource(
         // Return if there's nothing to add, delete, or update to avoid unnecessary db transactions.
         if (newChapters.isEmpty() && removedChapters.isEmpty() && updatedChapters.isEmpty()) {
             if (manualFetch || manga.fetchInterval == 0 || manga.nextUpdate < fetchWindow.first) {
+                // KMK (r96): from the chapters read above, not another read with the scanlator join
                 updateManga.awaitUpdateFetchInterval(
                     manga,
+                    dbChapters,
+                    getExcludedScanlators.await(manga.id),
                     now,
                     fetchWindow,
                 )
             }
-            return emptyList()
+            return SyncResult(emptyList(), dbChapters, changed = false)
         }
 
         val changedOrDuplicateReadUrls = mutableSetOf<String>()
@@ -305,15 +333,36 @@ class SyncChaptersWithSource(
                 added
             }
         }
-        updateManga.awaitUpdateFetchInterval(manga, now, fetchWindow)
+        val excludedScanlators = getExcludedScanlators.await(manga.id).toHashSet()
+
+        // KMK (r96): the chapter list as it is in the database now, without reading it again: the saved rows minus
+        // the removed ones, with their updates, plus the added ones (with their new ids)
+        val removedIds = removedChapters.mapTo(HashSet()) { it.id }
+        val updatedById = updatedChapters.associateBy { it.id }
+        val chaptersNow = dbChapters.asSequence()
+            .filter { it.id !in removedIds }
+            .map { updatedById[it.id] ?: it }
+            .toList() + updatedToAdd
 
         // Set this manga as updated since chapters were changed
         // Note that last_update actually represents last time the chapter list changed at all
-        updateManga.awaitUpdateLastUpdate(manga.id)
+        // KMK (r96): the fetch interval (from the chapters above) and lastUpdate in one UPDATE, not two
+        updateManga.awaitUpdateFetchInterval(
+            manga,
+            chaptersNow,
+            excludedScanlators,
+            now,
+            fetchWindow,
+            touchLastUpdate = true,
+        )
 
-        val excludedScanlators = getExcludedScanlators.await(manga.id).toHashSet()
-
-        return updatedToAdd.filterNot { it.url in changedOrDuplicateReadUrls || it.scanlator in excludedScanlators }
+        return SyncResult(
+            newChapters = updatedToAdd.filterNot {
+                it.url in changedOrDuplicateReadUrls || it.scanlator in excludedScanlators
+            },
+            chapters = chaptersNow,
+            changed = true,
+        )
     }
 
     /**

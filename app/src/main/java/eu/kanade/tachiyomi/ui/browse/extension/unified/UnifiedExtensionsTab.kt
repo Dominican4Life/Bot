@@ -39,7 +39,7 @@ import eu.kanade.tachiyomi.ui.browse.extension.details.SourcePreferencesScreen
 import eu.kanade.tachiyomi.ui.browse.extension.unified.UnifiedSource
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreen
 import eu.kanade.tachiyomi.ui.browse.source.feed.SourceFeedScreen
-import eu.kanade.tachiyomi.ui.codeeditor.SourceEditorScreen
+import eu.kanade.tachiyomi.ui.sourcelab.SourceLabScreen
 import eu.kanade.tachiyomi.util.system.isPackageInstalled
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.launch
@@ -168,9 +168,9 @@ fun unifiedExtensionsTab(
                     }
                 },
                 // KMK --> JS sources
-                onJsEdit = { source -> source.js?.let { navigator.push(SourceEditorScreen(it.key)) } },
+                onJsEdit = { source -> source.js?.let { navigator.push(SourceLabScreen(it.key)) } },
                 onJsDelete = { deleteJs = it },
-                onJsNew = { navigator.push(SourceEditorScreen()) },
+                onJsNew = { navigator.push(SourceLabScreen()) },
                 // KMK <--
                 // KMK -->
                 onSourceSelect = screenModel::toggleSelection,

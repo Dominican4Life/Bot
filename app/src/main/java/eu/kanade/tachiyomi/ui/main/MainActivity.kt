@@ -53,7 +53,6 @@ import cafe.adriel.voyager.navigator.Navigator
 import cafe.adriel.voyager.navigator.NavigatorDisposeBehavior
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.domain.base.BasePreferences
-import eu.kanade.domain.connections.service.ConnectionsPreferences
 import eu.kanade.domain.source.interactor.GetIncognitoState
 import eu.kanade.domain.sync.SyncPreferences
 import eu.kanade.presentation.components.AppStateBanners
@@ -77,7 +76,6 @@ import eu.kanade.tachiyomi.data.SyncStatus
 import eu.kanade.tachiyomi.data.backup.create.BackupCreateJob
 import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.data.coil.MangaCoverMetadata
-import eu.kanade.tachiyomi.data.connections.discord.DiscordRPCService
 import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
 import eu.kanade.tachiyomi.data.notification.NotificationReceiver
@@ -162,10 +160,6 @@ class MainActivity : BaseActivity() {
     var ready = false
 
     private var navigator: Navigator? = null
-
-    // AM (CONNECTIONS) -->
-    private val connectionsPreferences: ConnectionsPreferences by injectLazy()
-    // <-- AM (CONNECTIONS)
 
     init {
         registerSecureActivity(this)
@@ -368,28 +362,6 @@ class MainActivity : BaseActivity() {
                             }
                         }
                         .launchIn(this)
-
-                    // AM (DISCORD) -->
-                    connectionsPreferences.enableDiscordRPC().changes()
-                        .drop(1)
-                        .onEach {
-                            if (it) {
-                                DiscordRPCService.start(this@MainActivity.applicationContext)
-                            } else {
-                                DiscordRPCService.stop(this@MainActivity.applicationContext, 0L)
-                            }
-                        }.launchIn(this)
-
-                    connectionsPreferences.discordRPCStatus().changes()
-                        .drop(1)
-                        .onEach {
-                            with(DiscordRPCService) {
-                                discordScope.launchIO {
-                                    restart(this@MainActivity.applicationContext)
-                                }
-                            }
-                        }.launchIn(this)
-                    // <-- AM (DISCORD)
                 }
 
                 HandleOnNewIntent(context = context, navigator = navigator)

@@ -466,7 +466,8 @@ class Downloader(
                 runCatching {
                     val chapters = Injekt.get<tachiyomi.domain.chapter.repository.ChapterRepository>()
                         .getChapterByMangaId(download.manga.id)
-                    MangaIndexFile.write(download.manga, chapters, download.source)
+                    // KMK (r96): the folder is known here; no lookup
+                    MangaIndexFile.write(download.manga, chapters, download.source, mangaDir)
                 }
             }
 

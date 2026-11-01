@@ -147,9 +147,18 @@ class JsSourceManager(private val context: Application) {
      * Saves [code] under [key] (new or existing): it is run once to read its name, language and so on, and what it
      * offers (filters, catalogs, settings). Throws with the source's own error when it can't run.
      */
-    suspend fun save(key: String, code: String, json: Boolean, animeHint: Boolean?, overrides: JsSourceInfo? = null): JsSourceInfo {
+    suspend fun save(
+        key: String,
+        code: String,
+        json: Boolean,
+        animeHint: Boolean?,
+        overrides: JsSourceInfo? = null,
+        // KMK (r96): the Source Lab's History note for this version ("Restored v3", …); "Saved" when null
+        note: String? = null,
+    ): JsSourceInfo {
         val existing = get(key)
-        val runtime = JsRuntime.create(context, key, JsSourceInfo.idFor(key), overrides?.name ?: "new source", code, json)
+        // KMK (r96): health = false: this run only reads the metadata; it isn't the source serving the app
+        val runtime = JsRuntime.create(context, key, JsSourceInfo.idFor(key), overrides?.name ?: "new source", code, json, health = false)
         val info = try {
             describe(runtime, key, json, animeHint, existing, overrides)
         } finally {
@@ -166,8 +175,41 @@ class JsSourceManager(private val context: Application) {
         JsIcons.prepare(context, listOf(info))
         _saved.value = (listOf(info) + _saved.value.filterNot { it.key == key }).sortedByDescending { it.updatedAt }
         AppLog.add('I', "js", "Saved ${if (info.anime) "anime" else "manga"} source ${info.name} (${if (json) "JSON" else "JS"})")
+        // KMK --> (r96) the Source Lab's history version and lint run; a failure there never fails the save
+        runCatching { eu.kanade.tachiyomi.jssource.lab.LabStore.onSaved(info, code, note) }
+            .onFailure { AppLog.add('W', "lab", "Couldn't record the save of ${info.name}: ${it.message}") }
+        // KMK <--
         return info
     }
+
+    // KMK --> (r96) Source Lab
+    /**
+     * Saves a copy of [key] under a new key with " copy" after its name. Any `id` line is removed first, so the
+     * copy never takes the original's (or an APK's) id. Returns null when [key] isn't a saved source.
+     */
+    suspend fun duplicate(key: String): JsSourceInfo? {
+        val info = get(key) ?: return null
+        val code = code(key) ?: return null
+        val stripped = eu.kanade.tachiyomi.jssource.lab.LabStore.stripIdLines(code, info.json)
+        val newKey = newKey()
+        val copy = save(
+            key = newKey,
+            code = stripped,
+            json = info.json,
+            animeHint = info.anime,
+            overrides = JsSourceInfo(
+                key = newKey,
+                name = info.name.trim() + " copy",
+                lang = info.lang,
+                iconUrl = info.iconUrl,
+                baseUrl = info.baseUrl,
+                lab = info.lab,
+            ),
+        )
+        AppLog.add('I', "lab", "Duplicated ${info.name} as ${copy.name}")
+        return copy
+    }
+    // KMK <--
 
     /** Reads what a running source says about itself */
     suspend fun describe(
@@ -210,6 +252,7 @@ class JsSourceManager(private val context: Application) {
             enabled = existing?.enabled ?: true,
             createdAt = existing?.createdAt ?: System.currentTimeMillis(),
             updatedAt = System.currentTimeMillis(),
+            lab = overrides?.lab ?: existing?.lab, // KMK (r96): the Source Lab's record of where the code came from
         )
     }
 
@@ -449,10 +492,10 @@ class JsSourceManager(private val context: Application) {
         }
     }
 
-    private companion object {
-        const val META = "meta.json"
+    companion object {
+        private const val META = "meta.json"
 
-        /** What a key may look like (new keys are 16 hex characters) */
+        /** What a key may look like (new keys are 16 hex characters); KMK (r96): the Source Lab checks keys with it too */
         val KEY_PATTERN = Regex("[A-Za-z0-9_-]{1,64}")
     }
 }

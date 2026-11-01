@@ -1,0 +1,15 @@
+{
+  "name": "Generic WordPress",
+  "kind": "either",
+  "defaults": { "coverAttr": "src", "imageSelector": "entry-content" },
+  "parts": {
+    "headers": { "title": "Headers and constants", "text": "The site as Referer on every picture; COVER_ATTR the image attribute that held a real address; IMAGE_BLOCK the class of the post body that holds the pictures.", "ruleIds": ["referer-on-images"] },
+    "getPopular": { "title": "Popular (post archive)", "text": "WordPress has no popularity order without a plugin, so Popular is the post archive by date through the REST API (/wp-json/wp/v2/posts) or the HTML /page/N/.", "ruleIds": [] },
+    "getLatest": { "title": "Latest", "text": "The same archive; newest first is WordPress's own order.", "ruleIds": [] },
+    "search": { "title": "Search", "text": "REST ?search=words, or the HTML /page/N/?s=words.", "ruleIds": [] },
+    "getDetails": { "title": "Title page", "text": "The post's h1, its featured image from og:image, the first paragraph as description, the author link, categories and tags as genres.", "optional": true, "ruleIds": [] },
+    "getChapterList": { "title": "Chapters", "text": "One chapter per post: the post itself, dated from <time datetime>.", "ruleIds": ["stable-chapter-url"] },
+    "getPageList": { "title": "Pages", "text": "The images inside the post body, full size (the -300x200 thumbnail suffix removed), each address once.", "ruleIds": ["relative-url-returned", "lazy-cover-attrs"] },
+    "helpers": { "title": "Helpers", "text": "One request with the site as Referer; the post lists through the REST API when it answers and through the HTML <article> cards otherwise.", "ruleIds": [] }
+  }
+}

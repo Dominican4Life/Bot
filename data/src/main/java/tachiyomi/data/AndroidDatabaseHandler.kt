@@ -12,6 +12,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
+import tachiyomi.core.common.util.lang.debounceAfterFirst
 
 class AndroidDatabaseHandler(
     val db: Database,
@@ -73,6 +74,15 @@ class AndroidDatabaseHandler(
     override fun <T : Any> subscribeToList(block: Database.() -> Query<T>): Flow<List<T>> {
         return block(db).asFlow().mapToList(queryDispatcher)
     }
+
+    // KMK -->
+    override fun <T : Any> subscribeToListDebounced(
+        timeoutMillis: Long,
+        block: Database.() -> Query<T>,
+    ): Flow<List<T>> {
+        return block(db).asFlow().debounceAfterFirst(timeoutMillis).mapToList(queryDispatcher)
+    }
+    // KMK <--
 
     override fun <T : Any> subscribeToOne(block: Database.() -> Query<T>): Flow<T> {
         return block(db).asFlow().mapToOne(queryDispatcher)

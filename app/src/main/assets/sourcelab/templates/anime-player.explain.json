@@ -1,0 +1,15 @@
+{
+  "name": "Anime player page",
+  "kind": "anime",
+  "defaults": { "coverAttr": "src", "frameSelector": "iframe" },
+  "parts": {
+    "headers": { "title": "Headers and constants", "text": "The site as Referer on covers; COVER_ATTR the image attribute that held a real address; FRAME the element that holds the player on an episode page; KNOWN_HOSTS the embed hosts the extractor expects.", "ruleIds": ["referer-on-videos"] },
+    "getPopular": { "title": "Popular", "text": "The home page's title links (/anime/… and poster cards), one page. A site with a /popular page can point this at it.", "ruleIds": [] },
+    "getLatest": { "title": "Latest", "text": "The home page's episode links folded back to their title, one page.", "ruleIds": [] },
+    "search": { "title": "Search", "text": "/search?keyword=words; some sites use /search?q= or /?s= instead, which is a one-line change.", "ruleIds": [] },
+    "getDetails": { "title": "Title page", "text": "The h1 or og:title, og:image as cover, the description block or og:description, genre links.", "optional": true, "ruleIds": [] },
+    "getChapterList": { "title": "Episodes", "text": "Every episode link of the title page, each address once, numbered from data-number, the text or the address, returned oldest first.", "ruleIds": ["stable-chapter-url"] },
+    "getVideoList": { "title": "Videos", "text": "The episode page's player frames: a plain <source> is a direct file; an embed is loaded in the hidden browser and the .m3u8 / .mp4 it asks for is the video, with the embed page as Referer and every video under its server's group. A master playlist is split into one entry per quality. An unknown host is named in the console.", "ruleIds": ["referer-on-videos", "render-no-useragent-cf"] },
+    "helpers": { "title": "Helpers", "text": "One request with the site as Referer, the title-card parser, the embed extractor through the hidden browser, absolute addresses and the first number of a text.", "ruleIds": [] }
+  }
+}

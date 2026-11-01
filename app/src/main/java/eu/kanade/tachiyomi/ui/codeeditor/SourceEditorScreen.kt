@@ -12,14 +12,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -32,58 +28,43 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.automirrored.outlined.PlaylistPlay
 import androidx.compose.material.icons.automirrored.outlined.ViewList
-import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ClearAll
 import androidx.compose.material.icons.outlined.ContentCopy
-import androidx.compose.material.icons.outlined.ContentPaste
-import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Favorite
 import androidx.compose.material.icons.outlined.FavoriteBorder
-import androidx.compose.material.icons.outlined.FileDownload
-import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.material.icons.outlined.FilterList
-import androidx.compose.material.icons.outlined.FolderOpen
-import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.NewReleases
 import androidx.compose.material.icons.outlined.PlayArrow
-import androidx.compose.material.icons.outlined.Save
-import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.SecondaryTabRow
 import androidx.compose.material3.SnackbarDuration
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
-import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -102,7 +83,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import coil3.compose.AsyncImage
@@ -110,6 +90,7 @@ import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.jssource.JsPreferences
 import eu.kanade.tachiyomi.ui.anime.source.AnimeSourceScreen
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreen
+import eu.kanade.tachiyomi.ui.sourcelab.SourceLabScreen
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
 import eu.kanade.tachiyomi.util.storage.getUriCompat
 import eu.kanade.tachiyomi.util.system.toShareIntent
@@ -119,500 +100,151 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import tachiyomi.domain.source.interactor.GetRemoteManga
-import tachiyomi.presentation.core.components.material.Scaffold
 import kotlin.math.roundToInt
 
 /**
- * KMK: The Code editor, opened from the code button in Browse. Write a source as JavaScript or as a
- * JSON declaration (tabs at the top), test it in the side panel (Details / Test / Console) and save it: it then
- * shows in Browse with the other sources. Existing .js / .json sources can be imported and exported.
+ * KMK: The Code editor. Since r96 it is the **Code** tab of the Source Lab ([SourceLabScreen]): this class only
+ * stays so older call sites compile, and replaces itself with the Lab. The composables below (the Code tab, the
+ * manual Test panel with the console, the editor's dialogs and the import / export / paste actions) are what the
+ * Lab's source screen puts together.
  */
 class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
 
     @Composable
     override fun Content() {
         val navigator = LocalNavigator.currentOrThrow
-        val context = LocalContext.current
-        val model = rememberScreenModel { SourceEditorScreenModel(sourceKey) }
-        val state by model.state.collectAsState()
-        val snackbar = remember { SnackbarHostState() }
-        val saveClipboard = LocalClipboardManager.current
-        var showMenu by remember { mutableStateOf(false) }
-        var showSaved by remember { mutableStateOf(false) }
-        var confirmDelete by remember { mutableStateOf(false) }
-        var query by rememberSaveable { mutableStateOf("") }
-        // KMK: leaving with unsaved changes asks first (back button and back arrow); Save there leaves once saved
-        var confirmLeave by remember { mutableStateOf(false) }
-        var leaveAfterSave by remember { mutableStateOf(false) }
-        val leave: () -> Unit = {
-            if (state.dirty) {
-                confirmLeave = true
-            } else {
-                navigator.pop()
-            }
-        }
-        BackHandler(enabled = state.dirty) { confirmLeave = true }
-        // KMK (r87): opening another source, starting a new one or importing with unsaved changes asks first too
-        // (Save / Discard / Cancel). The pair is (what replaces the code, the action); Save runs the action once saved
-        var confirmReplace by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
-        var replaceAfterSave by remember { mutableStateOf<(() -> Unit)?>(null) }
-        val askBeforeReplacing: (String, () -> Unit) -> Unit = { what, action ->
-            if (state.dirty) {
-                confirmReplace = what to action
-            } else {
-                action()
-            }
-        }
-        LaunchedEffect(state.saveError) {
-            if (state.saveError != null) {
-                leaveAfterSave = false
-                replaceAfterSave = null
-            }
-        }
-
-        LaunchedEffect(state.justSaved) {
-            val info = state.justSaved ?: return@LaunchedEffect
-            if (leaveAfterSave) {
-                leaveAfterSave = false
-                model.consumeSaved(info)
-                navigator.pop()
-                return@LaunchedEffect
-            }
-            replaceAfterSave?.let { action ->
-                replaceAfterSave = null
-                model.consumeSaved(info)
-                action()
-                return@LaunchedEffect
-            }
-            // KMK: consumed once the snackbar is done: consuming first changed this effect's key, which cancelled
-            // the snackbar straight away. Only this save's value is cleared, not a newer one
-            try {
-                val result = snackbar.showSnackbar(
-                    message = "Saved. ${info.name} is in Browse → Sources (${if (info.anime) "anime" else "manga"})",
-                    actionLabel = "Open",
-                    withDismissAction = true,
-                    duration = SnackbarDuration.Long,
-                )
-                if (result == SnackbarResult.ActionPerformed) {
-                    navigator.push(
-                        if (info.anime) {
-                            AnimeSourceScreen(info.id)
-                        } else {
-                            BrowseSourceScreen(info.id, GetRemoteManga.QUERY_POPULAR)
-                        },
-                    )
-                }
-            } finally {
-                model.consumeSaved(info)
-            }
-        }
-
-        LaunchedEffect(state.message) {
-            val message = state.message ?: return@LaunchedEffect
-            // KMK: consumed after it was shown (see justSaved above)
-            try {
-                snackbar.showSnackbar(message)
-            } finally {
-                model.consumeMessage(message)
-            }
-        }
-
-        val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-            uri ?: return@rememberLauncherForActivityResult
-            runCatching {
-                val text = context.contentResolver.openInputStream(uri)!!.bufferedReader().use { it.readText() }
-                val fileName = context.fileName(uri)
-                askBeforeReplacing("Importing ${fileName ?: "the file"}") { model.importCode(fileName, text) }
-            }.onFailure { context.toast("Couldn't read the file: ${it.message}") }
-        }
-        val exportLauncher = rememberLauncherForActivityResult(
-            ActivityResultContracts.CreateDocument(if (state.json) "application/json" else "text/javascript"),
-        ) { uri ->
-            uri ?: return@rememberLauncherForActivityResult
-            runCatching {
-                context.contentResolver.openOutputStream(uri)!!.bufferedWriter().use { it.write(state.code) }
-                context.toast("Exported")
-            }.onFailure { context.toast("Couldn't write the file: ${it.message}") }
-        }
-        val openInBrowser: () -> Unit = {
-            val url = state.baseUrl.trim()
-            if (url.startsWith("http")) {
-                navigator.push(WebViewScreen(url = url, initialTitle = state.name.ifBlank { url }, sourceId = null))
-            } else {
-                context.toast("Set the Base URL first")
-            }
-        }
-
-        var findOpen by remember { mutableStateOf(false) }
-        // KMK: the phone layout's tab (Code, Details, Test), kept here so "Search code" can show the code
-        var phoneTab by rememberSaveable { mutableIntStateOf(0) }
-        var pasteText by remember { mutableStateOf<String?>(null) }
-        pasteText?.let { text ->
-            val lines = text.count { it == '\n' } + 1
-            AlertDialog(
-                onDismissRequest = { pasteText = null },
-                title = { Text("Replace all code?") },
-                text = {
-                    Text(
-                        "Everything in the editor is replaced with what's on the clipboard " +
-                            "($lines ${if (lines == 1) "line" else "lines"}). It isn't saved until you tap Save.",
-                    )
-                },
-                confirmButton = {
-                    TextButton(
-                        onClick = {
-                            model.setCode(text)
-                            pasteText = null
-                        },
-                    ) { Text("Replace") }
-                },
-                dismissButton = {
-                    TextButton(onClick = { pasteText = null }) { Text("Cancel") }
-                },
-            )
-        }
-        Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { padding ->
-            BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(padding)) {
-                val wide = maxWidth >= 840.dp
-                Column(modifier = Modifier.fillMaxSize()) {
-                    // Top bar: back, title, the JS / JSON tabs, run, save and the menu
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
-                    ) {
-                        IconButton(onClick = leave) {
-                            Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = null)
-                        }
-                        Column(modifier = Modifier.padding(start = 4.dp, end = 12.dp).weight(if (wide) 0.35f else 1f)) {
-                            Text(
-                                text = if (state.saved) state.name.ifBlank { "Source" } else "Add source",
-                                style = MaterialTheme.typography.titleLarge,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                text = buildString {
-                                    append(if (state.anime) "Anime" else "Manga")
-                                    append(" · ")
-                                    append(if (state.json) "JSON" else "JavaScript")
-                                    if (state.dirty) append(" · not saved")
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        if (wide) {
-                            KindTabs(json = state.json, onJson = model::setJson, modifier = Modifier.width(380.dp))
-                            Spacer(Modifier.weight(0.65f))
-                        }
-                        IconButton(onClick = model::save) {
-                            Icon(Icons.Outlined.Save, contentDescription = "Save")
-                        }
-                        IconButton(onClick = { showSaved = true }) {
-                            Icon(Icons.Outlined.FolderOpen, contentDescription = "Created Sources")
-                        }
-                        Box {
-                            IconButton(onClick = { showMenu = true }) {
-                                Icon(Icons.Outlined.MoreVert, contentDescription = null)
-                            }
-                            DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-                                // KMK: copy the whole code, replace it with the clipboard's, find in it
-                                MenuItem("Copy code", Icons.Outlined.ContentCopy) {
-                                    showMenu = false
-                                    saveClipboard.setText(AnnotatedString(state.code))
-                                    context.toast("Code copied")
-                                }
-                                MenuItem("Paste code", Icons.Outlined.ContentPaste) {
-                                    showMenu = false
-                                    val text = saveClipboard.getText()?.text.orEmpty()
-                                    if (text.isBlank()) context.toast("The clipboard is empty") else pasteText = text
-                                }
-                                MenuItem("Search code", Icons.Outlined.Search) {
-                                    showMenu = false
-                                    phoneTab = 0
-                                    findOpen = true
-                                }
-                                HorizontalDivider()
-                                MenuItem("Import Source", Icons.Outlined.FileUpload) {
-                                    showMenu = false
-                                    importLauncher.launch("*/*")
-                                }
-                                MenuItem("Export Source", Icons.Outlined.FileDownload) {
-                                    showMenu = false
-                                    val base = state.name.ifBlank { "source" }.replace(Regex("[^A-Za-z0-9._-]+"), "_")
-                                    exportLauncher.launch(base + if (state.json) ".json" else ".js")
-                                }
-                                if (state.saved) {
-                                    MenuItem("Delete Source", Icons.Outlined.DeleteOutline) {
-                                        showMenu = false
-                                        confirmDelete = true
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if (!wide) {
-                        KindTabs(json = state.json, onJson = model::setJson, modifier = Modifier.fillMaxWidth())
-                    }
-                    if (state.running != null) {
-                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                    } else {
-                        HorizontalDivider()
-                    }
-
-                    val editor = @Composable { modifier: Modifier ->
-                        CodeEditor(
-                            code = state.code,
-                            onCodeChange = model::setCode,
-                            json = state.json,
-                            modifier = modifier,
-                            findOpen = findOpen,
-                            onOpenFind = { findOpen = true },
-                            onCloseFind = { findOpen = false },
-                        )
-                    }
-                    if (wide) {
-                        Row(modifier = Modifier.fillMaxSize()) {
-                            editor(Modifier.weight(1f).fillMaxHeight())
-                            VerticalDivider()
-                            SidePanel(
-                                state = state,
-                                model = model,
-                                query = query,
-                                onQuery = { query = it },
-                                onOpenInBrowser = openInBrowser,
-                                modifier = Modifier.width(420.dp).fillMaxHeight(),
-                            )
-                        }
-                    } else {
-                        SecondaryTabRow(selectedTabIndex = phoneTab) {
-                            listOf("Code", "Details", "Test").forEachIndexed { index, label ->
-                                Tab(
-                                    selected = phoneTab == index,
-                                    onClick = { phoneTab = index },
-                                    text = { Text(label) },
-                                )
-                            }
-                        }
-                        when (phoneTab) {
-                            0 -> editor(Modifier.fillMaxSize())
-                            else -> SidePanel(
-                                state = state,
-                                model = model,
-                                query = query,
-                                onQuery = { query = it },
-                                onOpenInBrowser = openInBrowser,
-                                fixedTab = phoneTab - 1,
-                                modifier = Modifier.fillMaxSize(),
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        if (showSaved) {
-            SavedSourcesDialog(
-                model = model,
-                onNew = { json ->
-                    showSaved = false
-                    askBeforeReplacing("Starting a new source") { model.newSource(json = json, anime = state.anime) }
-                },
-                onOpen = { key ->
-                    showSaved = false
-                    val name = model.savedName(key)
-                    askBeforeReplacing("Opening ${name ?: "another source"}") { model.open(key) }
-                },
-                onDismiss = { showSaved = false },
-            )
-        }
-        state.saveError?.let { error ->
-            AlertDialog(
-                onDismissRequest = model::dismissSaveError,
-                title = { Text("Couldn't save") },
-                text = {
-                    SelectionContainer {
-                        Text(
-                            "The source has to run to be saved, and it stopped with:\n\n$error",
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 12.sp,
-                        )
-                    }
-                },
-                confirmButton = { TextButton(onClick = model::dismissSaveError) { Text("OK") } },
-                dismissButton = {
-                    TextButton(
-                        onClick = {
-                            saveClipboard.setText(AnnotatedString(error))
-                            context.toast("Copied")
-                        },
-                    ) { Text("Copy") }
-                },
-            )
-        }
-        if (confirmLeave) {
-            AlertDialog(
-                onDismissRequest = { confirmLeave = false },
-                title = { Text("Leave without saving?") },
-                text = { Text("Your changes to ${state.name.ifBlank { "this source" }} aren't saved yet.") },
-                confirmButton = {
-                    TextButton(
-                        onClick = {
-                            confirmLeave = false
-                            leaveAfterSave = true
-                            model.save()
-                        },
-                    ) { Text("Save") }
-                },
-                dismissButton = {
-                    Row {
-                        TextButton(onClick = { confirmLeave = false }) { Text("Cancel") }
-                        TextButton(
-                            onClick = {
-                                confirmLeave = false
-                                navigator.pop()
-                            },
-                        ) { Text("Discard") }
-                    }
-                },
-            )
-        }
-        confirmReplace?.let { (what, action) ->
-            AlertDialog(
-                onDismissRequest = { confirmReplace = null },
-                title = { Text("Replace without saving?") },
-                text = {
-                    Text(
-                        "Your changes to ${state.name.ifBlank { "this source" }} aren't saved yet. " +
-                            "$what replaces them.",
-                    )
-                },
-                confirmButton = {
-                    TextButton(
-                        onClick = {
-                            confirmReplace = null
-                            replaceAfterSave = action
-                            model.save()
-                        },
-                    ) { Text("Save") }
-                },
-                dismissButton = {
-                    Row {
-                        TextButton(onClick = { confirmReplace = null }) { Text("Cancel") }
-                        TextButton(
-                            onClick = {
-                                confirmReplace = null
-                                action()
-                            },
-                        ) { Text("Discard") }
-                    }
-                },
-            )
-        }
-        if (confirmDelete) {
-            AlertDialog(
-                onDismissRequest = { confirmDelete = false },
-                title = { Text("Delete ${state.name}?") },
-                text = { Text("It is removed from Browse. Titles in your library from it stay, but can't be updated.") },
-                confirmButton = {
-                    TextButton(
-                        onClick = {
-                            confirmDelete = false
-                            if (model.delete()) navigator.pop()
-                        },
-                    ) { Text("Delete") }
-                },
-                dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
-            )
-        }
-        state.settings?.let { definitions ->
-            SourceSettingsDialog(
-                definitions = definitions,
-                // KMK: the test copy of the settings, which the editor's tests use (the saved source's settings
-                // screen still edits the real ones)
-                preferences = model.testPreferences(),
-                onDismiss = model::closeSettings,
-            )
-        }
+        LaunchedEffect(Unit) { navigator.replace(SourceLabScreen(sourceKey)) }
     }
 }
 
-@Composable
-private fun MenuItem(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) {
-    DropdownMenuItem(text = { Text(text) }, leadingIcon = { Icon(icon, contentDescription = null) }, onClick = onClick)
-}
+// KMK --> (r96) the Code tab
 
-/** "JS extension | JSON declarative", at the top */
+/**
+ * The Code tab: a collapsible Details strip (name, icon, language, address, Manga / Anime, JS / JSON) over the
+ * [CodeEditor]. [highlight] and [revealLine] come from the Explain pane (1-based lines).
+ */
 @Composable
-private fun KindTabs(json: Boolean, onJson: (Boolean) -> Unit, modifier: Modifier = Modifier) {
-    SecondaryTabRow(selectedTabIndex = if (json) 1 else 0, modifier = modifier) {
-        Tab(selected = !json, onClick = { onJson(false) }, text = { Text("JS extension") })
-        Tab(selected = json, onClick = { onJson(true) }, text = { Text("JSON declarative") })
-    }
-}
-
-@Composable
-private fun SidePanel(
-    state: SourceEditorScreenModel.State,
+internal fun CodeTab(
     model: SourceEditorScreenModel,
-    query: String,
-    onQuery: (String) -> Unit,
-    onOpenInBrowser: () -> Unit,
+    state: SourceEditorScreenModel.State,
+    findOpen: Boolean,
+    onFindOpenChange: (Boolean) -> Unit,
+    highlight: IntRange?,
+    revealLine: Int?,
     modifier: Modifier = Modifier,
-    fixedTab: Int? = null,
 ) {
-    var tab by rememberSaveable { mutableIntStateOf(1) }
-    val shown = fixedTab ?: tab
+    val navigator = LocalNavigator.currentOrThrow
+    val context = LocalContext.current
+    var detailsOpen by rememberSaveable { mutableStateOf(false) }
     Column(modifier = modifier) {
-        if (fixedTab == null) {
-            SecondaryTabRow(selectedTabIndex = tab) {
-                Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Details") })
-                Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Test") })
-            }
-        }
-        when (shown) {
-            0 -> DetailsPanel(state, model, onOpenInBrowser)
-            else -> TestPanel(state, model, query, onQuery)
-        }
-    }
-}
-
-@Composable
-private fun DetailsPanel(
-    state: SourceEditorScreenModel.State,
-    model: SourceEditorScreenModel,
-    onOpenInBrowser: () -> Unit,
-) {
-    Column(
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { detailsOpen = !detailsOpen }
+                .padding(start = 12.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+        ) {
             AsyncImage(
                 model = state.iconUrl.ifBlank { null },
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
-                    .size(48.dp)
-                    .clip(RoundedCornerShape(12.dp))
+                    .size(22.dp)
+                    .clip(RoundedCornerShape(6.dp))
                     .background(MaterialTheme.colorScheme.surfaceContainerHigh),
             )
-            Column(modifier = Modifier.padding(start = 12.dp)) {
-                Text(state.name.ifBlank { "Untitled source" }, style = MaterialTheme.typography.titleMedium)
-                Text(
-                    state.baseUrl.ifBlank { "No base URL yet" },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
+            Text(
+                text = buildString {
+                    append(state.name.ifBlank { "Untitled source" })
+                    append(" · ")
+                    append(if (state.anime) "Anime" else "Manga")
+                    append(" · ")
+                    append(if (state.json) "JSON" else "JS")
+                    append(" · ")
+                    append(state.lang.ifBlank { "en" })
+                    if (state.baseUrl.isNotBlank()) append(" · ").append(state.baseUrl.removePrefix("https://").removePrefix("http://"))
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 8.dp),
+            )
+            Icon(
+                if (detailsOpen) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                contentDescription = "Details",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp),
+            )
         }
+        if (detailsOpen) {
+            DetailsFields(
+                state = state,
+                model = model,
+                onOpenInBrowser = {
+                    val url = state.baseUrl.trim()
+                    if (url.startsWith("http")) {
+                        navigator.push(WebViewScreen(url = url, initialTitle = state.name.ifBlank { url }, sourceId = null))
+                    } else {
+                        context.toast("Set the Base URL first")
+                    }
+                },
+            )
+        }
+        HorizontalDivider()
+        CodeEditor(
+            code = state.code,
+            onCodeChange = model::setCode,
+            json = state.json,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            findOpen = findOpen,
+            onOpenFind = { onFindOpenChange(true) },
+            onCloseFind = { onFindOpenChange(false) },
+            highlight = highlight,
+            revealLine = revealLine,
+        )
+        HorizontalDivider()
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 3.dp),
+        ) {
+            Text(
+                text = buildString {
+                    val lines = state.code.count { it == '\n' } + 1
+                    append("$lines lines · ${state.code.length} chars")
+                    append(" · ").append(if (state.json) "JSON declarative" else "JS extension")
+                    if (state.dirty) append(" · not saved")
+                    state.running?.let { append(" · ").append(it) }
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/** The Details fields the editor had on its Details tab, as a strip the Code tab folds out */
+@Composable
+private fun DetailsFields(
+    state: SourceEditorScreenModel.State,
+    model: SourceEditorScreenModel,
+    onOpenInBrowser: () -> Unit,
+) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 360.dp)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    ) {
         Text(
             "Left empty, these come from the source's own name, lang, iconUrl and baseUrl.",
             style = MaterialTheme.typography.bodySmall,
@@ -621,12 +253,17 @@ private fun DetailsPanel(
         OutlinedTextField(state.name, model::setName, label = { Text("Name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(state.iconUrl, model::setIconUrl, label = { Text("Icon URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(state.lang, model::setLang, label = { Text("Language") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        Text("Content", style = MaterialTheme.typography.labelLarge)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(state.baseUrl, model::setBaseUrl, label = { Text("Base URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+        ) {
             FilterChip(selected = !state.anime, onClick = { model.setAnime(false) }, label = { Text("Manga") })
             FilterChip(selected = state.anime, onClick = { model.setAnime(true) }, label = { Text("Anime") })
+            Spacer(Modifier.width(8.dp))
+            FilterChip(selected = !state.json, onClick = { model.setJson(false) }, label = { Text("JS extension") })
+            FilterChip(selected = state.json, onClick = { model.setJson(true) }, label = { Text("JSON declarative") })
         }
-        OutlinedTextField(state.baseUrl, model::setBaseUrl, label = { Text("Base URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = onOpenInBrowser) {
                 Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -642,17 +279,323 @@ private fun DetailsPanel(
     }
 }
 
+/**
+ * The editor's actions behind the Lab's ⋮ menu and header, with the dialogs they need. Made once per screen with
+ * [rememberEditorActions]; [EditorDialogs] draws the dialogs and shows the saved / message snackbars.
+ */
+internal class EditorActions(
+    val copyCode: () -> Unit,
+    val pasteCode: () -> Unit,
+    val importFile: () -> Unit,
+    val exportFile: () -> Unit,
+    val deleteSource: () -> Unit,
+    /** Back: asks first when there are unsaved changes */
+    val leave: () -> Unit,
+    /** Runs [action] now, or after a Save / Discard / Cancel dialog when there are unsaved changes */
+    val askBeforeReplacing: (what: String, action: () -> Unit) -> Unit,
+    internal val pasteText: MutableState<String?>,
+    internal val confirmDelete: MutableState<Boolean>,
+    internal val confirmLeave: MutableState<Boolean>,
+    internal val leaveAfterSave: MutableState<Boolean>,
+    internal val confirmReplace: MutableState<Pair<String, () -> Unit>?>,
+    internal val replaceAfterSave: MutableState<(() -> Unit)?>,
+)
+
 @Composable
-private fun TestPanel(
+internal fun rememberEditorActions(
+    model: SourceEditorScreenModel,
+    state: SourceEditorScreenModel.State,
+    onLeave: () -> Unit,
+): EditorActions {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    val pasteText = remember { mutableStateOf<String?>(null) }
+    val confirmDelete = remember { mutableStateOf(false) }
+    val confirmLeave = remember { mutableStateOf(false) }
+    val leaveAfterSave = remember { mutableStateOf(false) }
+    val confirmReplace = remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
+    val replaceAfterSave = remember { mutableStateOf<(() -> Unit)?>(null) }
+    val askBeforeReplacing: (String, () -> Unit) -> Unit = { what, action ->
+        if (state.dirty) {
+            confirmReplace.value = what to action
+        } else {
+            action()
+        }
+    }
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        runCatching {
+            val text = context.contentResolver.openInputStream(uri)!!.bufferedReader().use { it.readText() }
+            val fileName = context.fileName(uri)
+            askBeforeReplacing("Importing ${fileName ?: "the file"}") { model.importCode(fileName, text) }
+        }.onFailure { context.toast("Couldn't read the file: ${it.message}") }
+    }
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(if (state.json) "application/json" else "text/javascript"),
+    ) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        runCatching {
+            context.contentResolver.openOutputStream(uri)!!.bufferedWriter().use { it.write(state.code) }
+            context.toast("Exported")
+        }.onFailure { context.toast("Couldn't write the file: ${it.message}") }
+    }
+    return EditorActions(
+        copyCode = {
+            clipboard.setText(AnnotatedString(state.code))
+            context.toast("Code copied")
+        },
+        pasteCode = {
+            val text = clipboard.getText()?.text.orEmpty()
+            if (text.isBlank()) context.toast("The clipboard is empty") else pasteText.value = text
+        },
+        importFile = { importLauncher.launch("*/*") },
+        exportFile = {
+            val base = state.name.ifBlank { "source" }.replace(Regex("[^A-Za-z0-9._-]+"), "_")
+            exportLauncher.launch(base + if (state.json) ".json" else ".js")
+        },
+        deleteSource = { confirmDelete.value = true },
+        leave = {
+            if (state.dirty) confirmLeave.value = true else onLeave()
+        },
+        askBeforeReplacing = askBeforeReplacing,
+        pasteText = pasteText,
+        confirmDelete = confirmDelete,
+        confirmLeave = confirmLeave,
+        leaveAfterSave = leaveAfterSave,
+        confirmReplace = confirmReplace,
+        replaceAfterSave = replaceAfterSave,
+    )
+}
+
+/**
+ * The editor's dialogs (paste, couldn't save, leave / replace without saving, delete, source settings) and the
+ * saved / message snackbars. [onLeave] pops the screen, [onDeleted] is called once a source was deleted.
+ */
+@Composable
+internal fun EditorDialogs(
+    model: SourceEditorScreenModel,
+    state: SourceEditorScreenModel.State,
+    actions: EditorActions,
+    snackbar: SnackbarHostState,
+    onLeave: () -> Unit,
+    onDeleted: () -> Unit,
+) {
+    val navigator = LocalNavigator.currentOrThrow
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    var pasteText by actions.pasteText
+    var confirmDelete by actions.confirmDelete
+    var confirmLeave by actions.confirmLeave
+    var leaveAfterSave by actions.leaveAfterSave
+    var confirmReplace by actions.confirmReplace
+    var replaceAfterSave by actions.replaceAfterSave
+
+    BackHandler(enabled = state.dirty) { confirmLeave = true }
+    LaunchedEffect(state.saveError) {
+        if (state.saveError != null) {
+            leaveAfterSave = false
+            replaceAfterSave = null
+        }
+    }
+    LaunchedEffect(state.justSaved) {
+        val info = state.justSaved ?: return@LaunchedEffect
+        if (leaveAfterSave) {
+            leaveAfterSave = false
+            model.consumeSaved(info)
+            onLeave()
+            return@LaunchedEffect
+        }
+        replaceAfterSave?.let { action ->
+            replaceAfterSave = null
+            model.consumeSaved(info)
+            action()
+            return@LaunchedEffect
+        }
+        // KMK: consumed once the snackbar is done: consuming first changed this effect's key, which cancelled
+        // the snackbar straight away. Only this save's value is cleared, not a newer one
+        try {
+            val result = snackbar.showSnackbar(
+                message = "Saved. ${info.name} is in Browse → Sources (${if (info.anime) "anime" else "manga"})",
+                actionLabel = "Open",
+                withDismissAction = true,
+                duration = SnackbarDuration.Long,
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                navigator.push(
+                    if (info.anime) {
+                        AnimeSourceScreen(info.id)
+                    } else {
+                        BrowseSourceScreen(info.id, GetRemoteManga.QUERY_POPULAR)
+                    },
+                )
+            }
+        } finally {
+            model.consumeSaved(info)
+        }
+    }
+    LaunchedEffect(state.message) {
+        val message = state.message ?: return@LaunchedEffect
+        try {
+            snackbar.showSnackbar(message)
+        } finally {
+            model.consumeMessage(message)
+        }
+    }
+
+    pasteText?.let { text ->
+        val lines = text.count { it == '\n' } + 1
+        AlertDialog(
+            onDismissRequest = { pasteText = null },
+            title = { Text("Replace all code?") },
+            text = {
+                Text(
+                    "Everything in the editor is replaced with what's on the clipboard " +
+                        "($lines ${if (lines == 1) "line" else "lines"}). It isn't saved until you tap Save.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        model.setCode(text)
+                        pasteText = null
+                    },
+                ) { Text("Replace") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pasteText = null }) { Text("Cancel") }
+            },
+        )
+    }
+    state.saveError?.let { error ->
+        AlertDialog(
+            onDismissRequest = model::dismissSaveError,
+            title = { Text("Couldn't save") },
+            text = {
+                SelectionContainer {
+                    Text(
+                        "The source has to run to be saved, and it stopped with:\n\n$error",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp,
+                    )
+                }
+            },
+            confirmButton = { TextButton(onClick = model::dismissSaveError) { Text("OK") } },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        clipboard.setText(AnnotatedString(error))
+                        context.toast("Copied")
+                    },
+                ) { Text("Copy") }
+            },
+        )
+    }
+    if (confirmLeave) {
+        AlertDialog(
+            onDismissRequest = { confirmLeave = false },
+            title = { Text("Leave without saving?") },
+            text = { Text("Your changes to ${state.name.ifBlank { "this source" }} aren't saved yet.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmLeave = false
+                        leaveAfterSave = true
+                        model.save()
+                    },
+                ) { Text("Save") }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = { confirmLeave = false }) { Text("Cancel") }
+                    TextButton(
+                        onClick = {
+                            confirmLeave = false
+                            onLeave()
+                        },
+                    ) { Text("Discard") }
+                }
+            },
+        )
+    }
+    confirmReplace?.let { (what, action) ->
+        AlertDialog(
+            onDismissRequest = { confirmReplace = null },
+            title = { Text("Replace without saving?") },
+            text = {
+                Text(
+                    "Your changes to ${state.name.ifBlank { "this source" }} aren't saved yet. " +
+                        "$what replaces them.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmReplace = null
+                        replaceAfterSave = action
+                        model.save()
+                    },
+                ) { Text("Save") }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = { confirmReplace = null }) { Text("Cancel") }
+                    TextButton(
+                        onClick = {
+                            confirmReplace = null
+                            action()
+                        },
+                    ) { Text("Discard") }
+                }
+            },
+        )
+    }
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete ${state.name}?") },
+            text = { Text("It is removed from Browse. Titles in your library from it stay, but can't be updated.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmDelete = false
+                        if (model.delete()) onDeleted()
+                    },
+                ) { Text("Delete") }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
+        )
+    }
+    state.settings?.let { definitions ->
+        SourceSettingsDialog(
+            definitions = definitions,
+            // KMK: the test copy of the settings, which the editor's tests use (the saved source's settings
+            // screen still edits the real ones)
+            preferences = model.testPreferences(),
+            onDismiss = model::closeSettings,
+        )
+    }
+}
+
+/** A ⋮ menu entry with an icon */
+@Composable
+internal fun MenuItem(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) {
+    DropdownMenuItem(text = { Text(text) }, leadingIcon = { Icon(icon, contentDescription = null) }, onClick = onClick)
+}
+// KMK <--
+
+/** KMK (r96): the editor's manual tests (buttons, result cards, console); the Lab's Test pane puts it under the Test Run */
+@Composable
+internal fun EditorTestPanel(
     state: SourceEditorScreenModel.State,
     model: SourceEditorScreenModel,
     query: String,
     onQuery: (String) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     var consoleOpen by rememberSaveable { mutableStateOf(true) }
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(modifier = modifier) {
         Column(
             verticalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
@@ -851,56 +794,6 @@ private fun ResultCard(result: SourceEditorScreenModel.Result, onOpen: (SourceEd
             }
         }
     }
-}
-
-@Composable
-private fun SavedSourcesDialog(
-    model: SourceEditorScreenModel,
-    onNew: (json: Boolean) -> Unit,
-    onOpen: (String) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val saved by model.savedSources.collectAsState()
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Created Sources") },
-        text = {
-            LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
-                if (saved.isEmpty()) {
-                    item { Text("Nothing saved yet. Sources you save show here and in Browse.") }
-                }
-                items(saved, key = { it.key }) { info ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { onOpen(info.key) }
-                            .padding(vertical = 8.dp, horizontal = 4.dp),
-                    ) {
-                        AsyncImage(
-                            model = info.iconUrl,
-                            contentDescription = null,
-                            modifier = Modifier
-                                .size(32.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-                        )
-                        Column(modifier = Modifier.padding(start = 12.dp)) {
-                            Text(info.name, style = MaterialTheme.typography.bodyLarge)
-                            Text(
-                                "${if (info.anime) "Anime" else "Manga"} · ${if (info.json) "JSON" else "JS"} · ${info.lang}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = { onNew(false) }) { Text("New JavaScript") } },
-        dismissButton = { TextButton(onClick = { onNew(true) }) { Text("New JSON definition") } },
-    )
 }
 
 /** The source's own settings (getSourcePreferences), saved where Browse's source settings read them */

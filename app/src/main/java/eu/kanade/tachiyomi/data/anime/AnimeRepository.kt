@@ -36,7 +36,11 @@ class AnimeRepository(
                     if (all.isEmpty()) return@launch
                     all.forEach { customInfo[it.animeId] = it }
                     // Read the anime again so open screens show the edits
-                    all.forEach { touchAnime(it.animeId) }
+                    // KMK (r96): one statement and one `animes` notification, not one transaction per anime
+                    // Chunked: SQLite binds at most 999 variables in one statement
+                    handler.await {
+                        all.map { it.animeId }.chunked(SQLITE_IN_CHUNK).forEach { animesQueries.touchMany(it) }
+                    }
                 } catch (e: Throwable) {
                     logcat(LogPriority.ERROR, e) { "Couldn't load anime Edit info" }
                 }
@@ -97,9 +101,31 @@ class AnimeRepository(
         )
     }
 
-    /** Number values for the anime library's filters, sorts and badges, per anime id */
+    /**
+     * Number values for the anime library's filters, sorts and badges, per anime id. Every anime in the database;
+     * the anime page needs it for the seasons of an anime that isn't in the library.
+     */
     fun subscribeLibraryStats(): Flow<Map<Long, AnimeLibraryStats>> =
         handler.subscribeToList { episodesQueries.animeLibraryStats() }.map { rows ->
+            rows.associate { row ->
+                row.animeId to AnimeLibraryStats(
+                    total = row.total,
+                    seen = (row.seenCount as Number?)?.toLong() ?: 0L,
+                    bookmarked = (row.bookmarkCount as Number?)?.toLong() ?: 0L,
+                    inProgress = (row.inProgressCount as Number?)?.toLong() ?: 0L,
+                    latestUpload = (row.latestUpload as Number?)?.toLong() ?: 0L,
+                    latestFetch = (row.latestFetch as Number?)?.toLong() ?: 0L,
+                    lastSeen = (row.lastSeen as Number?)?.toLong() ?: 0L,
+                )
+            }
+        }
+
+    /**
+     * KMK (r96): [subscribeLibraryStats] for library anime only (favourites and their seasons). The library,
+     * Stats and the library update use this one, so they don't aggregate every browsed anime's episodes.
+     */
+    fun subscribeFavoritesLibraryStats(): Flow<Map<Long, AnimeLibraryStats>> =
+        handler.subscribeToList { episodesQueries.animeLibraryStatsFavorites() }.map { rows ->
             rows.associate { row ->
                 row.animeId to AnimeLibraryStats(
                     total = row.total,
@@ -422,7 +448,18 @@ class AnimeRepository(
                         )
                         moveHistory(from.id, newId)
                     }
-                } else {
+                } else if (
+                    // KMK (r96): write the row only when the source changed something; an unchanged write still
+                    // notified every `episodes` subscription (library stats, anime page, Updates) per episode
+                    old.name != ep.name ||
+                    old.scanlator != ep.scanlator ||
+                    old.summary != ep.summary ||
+                    old.previewUrl != ep.preview_url ||
+                    old.fillermark != ep.fillermark ||
+                    old.episodeNumber != number ||
+                    old.sourceOrder != index.toLong() ||
+                    old.dateUpload != ep.date_upload
+                ) {
                     episodesQueries.updateFromSource(
                         name = ep.name,
                         scanlator = ep.scanlator,
@@ -981,3 +1018,6 @@ class AnimeRepository(
 }
 
 private fun FetchType.toLong(): Long = ordinal.toLong()
+
+/** KMK (r96): ids per `IN` list; SQLite allows 999 bound variables in one statement */
+private const val SQLITE_IN_CHUNK = 500

@@ -1,0 +1,12 @@
+{
+  "name": "Blank manga source",
+  "kind": "manga",
+  "parts": {
+    "headers": { "title": "Identity", "text": "Name, language, the site's address (also the Referer of its pictures) and an icon.", "ruleIds": [] },
+    "search": { "title": "Search", "text": "Not written yet: return a list of entries for the words and page. TODO", "ruleIds": [] },
+    "getPopular": { "title": "Popular", "text": "Not written yet: return a list of entries for one page. TODO", "ruleIds": [] },
+    "getLatest": { "title": "Latest", "text": "Not written yet: return a list of entries for one page. TODO", "ruleIds": [] },
+    "getChapterList": { "title": "Chapters", "text": "Not written yet: return url, title, number and dateUploaded per chapter. TODO", "ruleIds": ["stable-chapter-url"] },
+    "getPageList": { "title": "Pages", "text": "Not written yet: return index and an absolute imageUrl per page. TODO", "ruleIds": ["relative-url-returned"] }
+  }
+}

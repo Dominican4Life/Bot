@@ -99,6 +99,10 @@ UPDATE animes SET favorite = :favorite, date_added = :dateAdded WHERE _id = :id;
 touch:
 UPDATE animes SET episode_flags = episode_flags WHERE _id = :id;
 
+-- KMK (r96): one statement for every anime with Edit info at start-up, instead of one transaction each
+touchMany:
+UPDATE animes SET episode_flags = episode_flags WHERE _id IN :ids;
+
 setEpisodeFlags:
 UPDATE animes SET episode_flags = :flags WHERE _id = :id;
 

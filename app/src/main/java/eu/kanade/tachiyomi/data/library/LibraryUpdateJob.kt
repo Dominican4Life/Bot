@@ -75,6 +75,7 @@ import tachiyomi.domain.library.service.LibraryPreferences.Companion.MANGA_NON_C
 import tachiyomi.domain.library.service.LibraryPreferences.Companion.MANGA_NON_READ
 import tachiyomi.domain.library.service.LibraryPreferences.Companion.MANGA_OUTSIDE_RELEASE_PERIOD
 import tachiyomi.domain.libraryUpdateError.interactor.DeleteLibraryUpdateErrors
+import tachiyomi.domain.libraryUpdateError.interactor.GetLibraryUpdateErrors
 import tachiyomi.domain.libraryUpdateError.interactor.InsertLibraryUpdateErrors
 import tachiyomi.domain.libraryUpdateError.model.LibraryUpdateError
 import tachiyomi.domain.libraryUpdateErrorMessage.interactor.InsertLibraryUpdateErrorMessages
@@ -96,6 +97,7 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.time.Instant
 import java.time.ZonedDateTime
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.atomics.AtomicBoolean
@@ -133,6 +135,7 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
     // KMK -->
     private val libraryUpdateStatus: LibraryUpdateStatus = Injekt.get()
     private val deleteLibraryUpdateErrors: DeleteLibraryUpdateErrors = Injekt.get()
+    private val getLibraryUpdateErrors: GetLibraryUpdateErrors = Injekt.get()
     private val insertLibraryUpdateErrors: InsertLibraryUpdateErrors = Injekt.get()
     private val insertLibraryUpdateErrorMessages: InsertLibraryUpdateErrorMessages = Injekt.get()
     // KMK <--
@@ -408,6 +411,11 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
         // KMK -->
         val pauseEnabled = libraryPreferences.updatePauseEnabled().get()
         val pauseRange = libraryPreferences.updatePause().get()
+        // KMK (r96): titles with a saved update error, read once, so a successful title only clears its error
+        // when it has one (the DELETE ran, and notified the errors screen, for every title before)
+        val erroredMangaIds: MutableSet<Long> = ConcurrentHashMap.newKeySet<Long>().apply {
+            addAll(getLibraryUpdateErrors.await().map { it.mangaId })
+        }
         // KMK <--
 
         coroutineScope {
@@ -481,7 +489,7 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
                                             // Convert to the manga that contains new chapters
                                             newUpdates.add(manga to newChapters.toTypedArray())
                                         }
-                                        clearErrorFromDB(mangaId = manga.id)
+                                        if (erroredMangaIds.remove(manga.id)) clearErrorFromDB(mangaId = manga.id)
                                     } catch (e: Throwable) {
                                         val errorMessage = when (e) {
                                             is NoChaptersException ->

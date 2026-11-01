@@ -113,7 +113,8 @@ class JsTags(
 
     private suspend fun fetch(info: JsSourceInfo): Map<String, List<String>> {
         val code = codeOf(info.key) ?: throw IllegalStateException("The code of ${info.name} is missing")
-        val runtime = JsRuntime.create(context, info.key, info.id, info.name, code, info.json)
+        // KMK (r96): health = false: a tag suggestion failing isn't the source failing
+        val runtime = JsRuntime.create(context, info.key, info.id, info.name, code, info.json, health = false)
         val result = try {
             runtime.metadata()
             runtime.call("getTags")
