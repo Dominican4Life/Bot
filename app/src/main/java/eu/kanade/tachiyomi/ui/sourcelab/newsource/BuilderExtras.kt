@@ -41,6 +41,12 @@ import kotlin.random.Random
  * heading and its entries, sub-headings as their own groups); each group's card makes its own filter, learns its
  * entries' addresses, or fetches its index page's full list, which becomes a Dropdown or a Text box with
  * suggestions (`type: "autocomplete"`, generic-list v6).
+ *
+ * r104 (the owner's 123av Browse sheet showed only "Trending" of his 5 filters, and Trending searched /en/search?sort=):
+ * a filter without a usable address is never dropped silently ([BuilderExtrasLogic.filterProblem]: the editor shows
+ * it in red, the write logs it); a param filter made from links keeps the links' own address ([ExtrasFilter.linkPath],
+ * `/en/trending?sort={value}&page={page}`) and is written as a path filter when that page isn't the search page
+ * ([BuilderExtrasLogic.filtersJson] with the search path); filters can be moved up / down ([BuilderExtrasModel.moveFilter]).
  */
 
 @Immutable
@@ -64,6 +70,17 @@ internal data class ExtrasFilter(
     val path: String = "",
     /** r101: made without an address parameter (by hand, or from entries without links): the editor asks for it */
     val askParam: Boolean = false,
+    /**
+     * r104: a param filter made from links: the links' own address with `{value}` for the parameter
+     * (`/en/trending?sort={value}&page={page}`); written as a path filter when it isn't the search page. "" = none
+     */
+    val linkPath: String = "",
+    /**
+     * r104 fix: restored from a build saved before r104 (no `linkPath` saved) and made from a menu's links (a param
+     * filter with its options): its links' own page is unknown, so it may search the wrong page (the owner's
+     * Trending → /en/search?sort=today). The editor says to make it again from the menu ([BuilderExtrasLogic.OLD_LINKS])
+     */
+    val noLinkAddress: Boolean = false,
 )
 
 /**
@@ -575,7 +592,11 @@ internal object BuilderExtrasLogic {
                         val v = l.url.queryParameter(param).orEmpty()
                         ExtrasOption(l.text.ifEmpty { v.ifEmpty { "Any" } }, v)
                     }
-                    filter = makeFilter(options, "param", param, "", param, heading, maxOptions)
+                    // r104: the links' own page with {value} for the parameter (Trending → /en/trending?sort={value})
+                    val marked = first.url.newBuilder().setQueryParameter(param, LINK_MARK).build()
+                    val linkRaw = marked.encodedPath + (marked.encodedQuery?.let { "?$it" } ?: "")
+                    val linkPath = withPage(linkRaw.replace(LINK_MARK, "{value}"), rule).path
+                    filter = makeFilter(options, "param", param, "", param, heading, maxOptions).copy(linkPath = linkPath)
                     total = optionCount(options, "param")
                     how = "param $param"
                 } else {
@@ -863,6 +884,48 @@ internal object BuilderExtrasLogic {
         )
     }
 
+    private const val LINK_MARK = "labvalue0link"
+
+    /** r104: what the editor says (in red) about a filter the source can't use yet; null = usable */
+    const val NOT_READY = "Not in the source yet — Learn addresses or type the address name"
+
+    /** r104 fix: the note on a filter made from links before r104 ([ExtrasFilter.noLinkAddress]) */
+    const val OLD_LINKS = "Made before r104 without its links' address: it may search the wrong page. " +
+        "Pick this menu again on the site and press Make filter to read its own page"
+
+    /**
+     * r104: why [f] can't go into the source (no parameter and no address: a dropdown of buttons not learned yet, a
+     * filter added by hand), or null when it can. Such filters stay in the editor and are left out of `filtersList`
+     * with a log line, never silently.
+     */
+    fun filterProblem(f: ExtrasFilter): String? {
+        val param = f.param.trim().ifEmpty { if (f.askParam) "" else f.key.trim() }
+        return when {
+            f.mode == "path" && "{value}" !in f.path -> NOT_READY
+            f.mode != "path" && param.isEmpty() && "{value}" !in f.linkPath -> NOT_READY
+            else -> null
+        }
+    }
+
+    /** r104: the path part of a list / search address (no query, no trailing slash, lowercase) for comparing pages */
+    fun pagePathOf(path: String?): String? {
+        val p = path?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val pathOnly = p.toHttpUrlOrNull()?.encodedPath ?: p.substringBefore('#').substringBefore('?')
+        return pathOnly.trimEnd('/').lowercase().ifEmpty { "/" }
+    }
+
+    /**
+     * r104: [f] opens its own links' page instead of adding a parameter to the search address: a param filter made
+     * from links whose page isn't the search page ([searchPath]). r104 fix: no search known (none recorded, none in
+     * the source's code) = a parameter filter as before (not every link-made filter as another page)
+     */
+    fun usesLinkPage(f: ExtrasFilter, searchPath: String?): Boolean {
+        if (f.mode == "path" || "{value}" !in f.linkPath) return false
+        val own = pagePathOf(f.linkPath) ?: return false
+        val search = pagePathOf(searchPath) ?: return false
+        return own != search
+    }
+
     /** r101: [b] is a new pick of [a]'s list (same type, key, mode and path / parameter): it replaces [a] */
     fun sameFilter(a: ExtrasFilter, b: ExtrasFilter): Boolean =
         a.type == b.type && a.key.isNotEmpty() && a.key == b.key && a.mode == b.mode &&
@@ -1041,18 +1104,28 @@ internal object BuilderExtrasLogic {
      * JsFilters Sort group in the template. A param filter without a parameter, or a path filter without `{value}`,
      * is left out. r100 filters (no mode) are param filters named by their key.
      */
-    fun filtersJson(filters: List<ExtrasFilter>): String {
+    fun filtersJson(filters: List<ExtrasFilter>, searchPath: String? = null): String {
         val keys = HashSet<String>()
         return JsonArray(
             filters.mapNotNull { f ->
-                val mode = if (f.mode == "path") "path" else "param"
+                // r104: not usable yet: left out here; the editor shows it in red and templateValues logs it
+                if (filterProblem(f) != null) return@mapNotNull null
+                // r104: a filter made from links of another page than the search page opens that page
+                val linkPage = usesLinkPage(f, searchPath)
+                val mode = if (f.mode == "path" || linkPage) "path" else "param"
                 val param = f.param.trim().ifEmpty { if (f.askParam) "" else f.key.trim() }
-                val path = f.path.trim()
+                val path = if (linkPage) f.linkPath.trim() else f.path.trim()
                 if (mode == "param" && param.isEmpty()) return@mapNotNull null
                 if (mode == "path" && "{value}" !in path) return@mapNotNull null
                 val key = uniqueKey(f.key.trim().ifEmpty { param.ifEmpty { "filter" } }, keys)
                 keys += key
-                val options = f.options
+                // r104 fix: the app's Dropdown / Sort always sends an option (the first when nothing was picked): a
+                // filter that opens its own page gets an empty "Any" first, so it opens that page only when picked
+                val options = if (mode == "path" && (f.type == "select" || f.type == "sort") && f.options.isNotEmpty()) {
+                    withAny(f.options)
+                } else {
+                    f.options
+                }
                 val type = when (f.type) {
                     "checkbox" -> "checkbox"
                     "select" -> if (options.isEmpty()) "text" else "select"
@@ -1333,16 +1406,30 @@ internal class BuilderExtrasModel {
      * The template placeholders: the paths only when set (they override Derive's guesses), the tab names, and the
      * lists as JSON text ("[]" when empty)
      */
-    fun templateValues(site: String): Map<String, String> {
+    fun templateValues(site: String, codeSearchPath: String? = null): Map<String, String> {
         val s = mutable.value
         val out = LinkedHashMap<String, String>()
+        // r104 fix: the search page the filters are compared with: the recorded one, else the edited source's own
+        // (no search known: link-made filters stay parameter filters)
+        val searchPath = s.searchPath?.trim()?.ifEmpty { null } ?: codeSearchPath?.trim()?.ifEmpty { null }
         s.popularPath?.trim()?.takeIf { it.isNotEmpty() }?.let { out["popularPath"] = BuilderExtrasLogic.forSite(it, site) }
         s.latestPath?.trim()?.takeIf { it.isNotEmpty() }?.let { out["latestPath"] = BuilderExtrasLogic.forSite(it, site) }
         s.searchPath?.trim()?.takeIf { it.isNotEmpty() }?.let { out["searchPath"] = BuilderExtrasLogic.forSite(it, site) }
         out["tabPopularName"] = s.popularName.trim()
         out["tabLatestName"] = s.latestName.trim()
         out["tabsList"] = BuilderExtrasLogic.tabsJson(s.tabs, site)
-        out["filtersList"] = BuilderExtrasLogic.filtersJson(s.filters)
+        out["filtersList"] = BuilderExtrasLogic.filtersJson(s.filters, searchPath)
+        // r104: never left out silently
+        s.filters.forEachIndexed { i, f ->
+            if (BuilderExtrasLogic.filterProblem(f) != null) {
+                AppLog.add('W', "lab", "extras filter ${i + 1} \"${f.name}\" left out: no address parameter or path yet (Learn addresses or type it)")
+            } else if (BuilderExtrasLogic.usesLinkPage(f, searchPath)) {
+                AppLog.add('I', "lab", "extras filter ${i + 1} \"${f.name}\" opens its own page ${f.linkPath} (not the search page)")
+            }
+            if (f.noLinkAddress) {
+                AppLog.add('W', "lab", "extras filter ${i + 1} \"${f.name}\" was made from links before r104: its own page is unknown (?${f.param}= on the search page)")
+            }
+        }
         out["settingsList"] = BuilderExtrasLogic.settingsJson(s)
         AppLog.add(
             'D',
@@ -1682,10 +1769,12 @@ internal class BuilderExtrasModel {
             val filters = if (f == null) {
                 s.filters
             } else {
+                // r104 fix: a filter made again (the same list) keeps its place in the order the owner set
+                val at = s.filters.indexOfFirst { sameFilter(it, f) || replaces(it) }
                 val others = s.filters.filterNot { sameFilter(it, f) || replaces(it) }
                 val made = if (f.key.isEmpty()) f else f.copy(key = BuilderExtrasLogic.uniqueKey(f.key, others.map { it.key }))
                 added = made
-                others + made
+                if (at < 0) others + made else others.toMutableList().also { it.add(at.coerceAtMost(it.size), made) }
             }
             s.copy(
                 filters = filters,
@@ -2066,6 +2155,8 @@ internal class BuilderExtrasModel {
                                 "param" to JsonPrimitive(f.param),
                                 "path" to JsonPrimitive(f.path),
                                 "askParam" to JsonPrimitive(f.askParam),
+                                "linkPath" to JsonPrimitive(f.linkPath),
+                                "noLinkAddress" to JsonPrimitive(f.noLinkAddress),
                             ),
                         )
                     },
@@ -2109,17 +2200,27 @@ internal class BuilderExtrasModel {
                 ExtrasOption(op.str("label").orEmpty(), op.str("value").orEmpty())
             }.orEmpty()
             val key = f.str("key").orEmpty()
+            val mode = f.str("mode") ?: "param"
+            val askParam = f.bool("askParam") == true
+            val type = f.str("type") ?: "select"
+            // r104 fix: saved before r104 (no linkPath key) from a menu's links: a param filter with its options
+            val oldLinks = f.bool("noLinkAddress") == true || (
+                "linkPath" !in f && mode == "param" && !askParam && (type == "select" || type == "sort") &&
+                    options.count { it.value.isNotEmpty() } >= 2 && !f.str("param").isNullOrBlank()
+                )
             ExtrasFilter(
                 key = key,
                 name = f.str("name").orEmpty(),
-                type = f.str("type") ?: "select",
+                type = type,
                 options = options,
                 onValue = f.str("onValue") ?: "1",
                 optionsText = f.str("optionsText") ?: BuilderExtrasLogic.formatOptions(options),
-                mode = f.str("mode") ?: "param",
+                mode = mode,
                 param = f.str("param") ?: key,
                 path = f.str("path").orEmpty(),
-                askParam = f.bool("askParam") == true,
+                askParam = askParam,
+                linkPath = f.str("linkPath").orEmpty(),
+                noLinkAddress = oldLinks,
             )
         }.orEmpty()
         val custom = o.arr("custom")?.mapNotNull { e ->
@@ -2289,6 +2390,22 @@ internal class BuilderExtrasModel {
         updateFilter(index) { it.copy(optionsText = text, options = BuilderExtrasLogic.parseOptions(text)) }
 
     fun setFilterOnValue(index: Int, value: String) = updateFilter(index) { it.copy(onValue = value) }
+
+    /** r104: the filter card's ▲ / ▼: the order is the source's (filtersList, the Browse sheet) */
+    fun moveFilter(index: Int, delta: Int) {
+        var moved = false
+        mutable.update { s ->
+            moved = false
+            val to = index + delta
+            if (index !in s.filters.indices || to !in s.filters.indices) return@update s
+            moved = true
+            val list = s.filters.toMutableList()
+            val f = list.removeAt(index)
+            list.add(to, f)
+            s.copy(filters = list, rev = s.rev + 1)
+        }
+        if (moved) AppLog.add('D', "lab", "extras filter ${index + 1} moved ${if (delta < 0) "up" else "down"}")
+    }
 
     fun removeFilter(index: Int) = mutable.update { s ->
         if (index !in s.filters.indices) s else s.copy(filters = s.filters.filterIndexed { i, _ -> i != index }, rev = s.rev + 1)

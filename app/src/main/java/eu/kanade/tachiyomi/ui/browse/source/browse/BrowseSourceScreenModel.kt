@@ -49,6 +49,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -59,6 +60,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import logcat.LogPriority
@@ -135,7 +137,15 @@ open class BrowseSourceScreenModel(
 
     var displayMode by sourcePreferences.sourceDisplayMode().asState(screenModelScope)
 
-    var source = sourceManager.getOrStub(sourceId)
+    // KMK (r104): a Compose state, so the screen shows the real source when it's resolved late (see [awaitRealSource])
+    var source by mutableStateOf(sourceManager.getOrStub(sourceId))
+
+    /**
+     * KMK (r104): true while [source] is a stub only because the extensions are still loading (a cold start or a
+     * process-death restore); the screen shows loading instead of "source not installed" meanwhile
+     */
+    var waitingForSource by mutableStateOf(source is StubSource && !sourceManager.isInitialized.value)
+        private set
 
     // SY -->
     val ehentaiBrowseDisplayMode by exhPreferences.enhancedEHentaiView().asState(screenModelScope)
@@ -150,9 +160,36 @@ open class BrowseSourceScreenModel(
     // KMK <--
 
     init {
+        // KMK (r104): moved into [setUpListing], which runs again once a late source is resolved
+        setUpListing(listingQuery, filtersJson, savedSearch)
+
+        // SY -->
+        getExhSavedSearch.subscribe(source.id) { source.getFilterList() }
+            .map { it.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER, EXHSavedSearch::name)) }
+            .onEach { savedSearches ->
+                mutableState.update { it.copy(savedSearches = savedSearches.toImmutableList()) }
+            }
+            .launchIn(screenModelScope)
+        // SY <--
+
+        // KMK-->
+        getIncognitoState.subscribe(sourceId)
+            .onEach {
+                if (!it) sourcePreferences.lastUsedSource().set(source.id)
+                incognitoMode.value = it
+            }
+            .launchIn(screenModelScope)
+        // KMK <--
+    }
+
+    /**
+     * Sets the listing up from what the screen was opened with: the starting tab, a saved search or JSON filters,
+     * or a JS source's home tab. KMK (r104): also run again by [awaitRealSource] once a late source is resolved.
+     */
+    private fun setUpListing(listingQuery: String?, filtersJson: String?, savedSearch: Long?) {
         mutableState.update {
             var query: String? = null
-            var listing = it.listing
+            var listing = Listing.valueOf(listingQuery)
 
             if (listing is Listing.Search) {
                 query = listing.query
@@ -198,23 +235,6 @@ open class BrowseSourceScreenModel(
         ) {
             showHomeTab()
         }
-
-        getExhSavedSearch.subscribe(source.id, source::getFilterList)
-            .map { it.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER, EXHSavedSearch::name)) }
-            .onEach { savedSearches ->
-                mutableState.update { it.copy(savedSearches = savedSearches.toImmutableList()) }
-            }
-            .launchIn(screenModelScope)
-        // SY <--
-
-        // KMK-->
-        getIncognitoState.subscribe(sourceId)
-            .onEach {
-                if (!it) sourcePreferences.lastUsedSource().set(source.id)
-                incognitoMode.value = it
-            }
-            .launchIn(screenModelScope)
-        // KMK <--
     }
 
     // KMK -->
@@ -870,4 +890,54 @@ open class BrowseSourceScreenModel(
         }
     }
     // EXH <--
+
+    // KMK (r104) -->
+    // Last in the class, so every property is set before the wait below can (when the sources just became ready)
+    // run straight through on the main thread while the model is still being made
+    init {
+        awaitRealSource(sourceManager, listingQuery, filtersJson, savedSearch)
+    }
+
+    /**
+     * After a cold start or a process-death restore this model can be made before the extensions finished loading
+     * (they load in the background), so [source] is a stub. Waits for the sources (30 s), then takes the real source
+     * and sets the listing up again with its filters; the lists made meanwhile (from the stub) are dropped.
+     */
+    private fun awaitRealSource(
+        sourceManager: SourceManager,
+        listingQuery: String?,
+        filtersJson: String?,
+        savedSearch: Long?,
+    ) {
+        if (source !is StubSource || sourceManager.isInitialized.value) {
+            waitingForSource = false
+            return
+        }
+        screenModelScope.launch {
+            try {
+                withTimeoutOrNull(SOURCE_WAIT_MS) { sourceManager.isInitialized.first { it } }
+                val resolved = sourceManager.getOrStub(sourceId)
+                if (resolved is StubSource) return@launch
+                logcat(LogPriority.INFO) { "Browse: source $sourceId resolved after the extensions loaded" }
+                // The stub's lists and Filter tab are of no use for the real source
+                tabCacheKey(Listing.Popular)?.let { BrowseTabCache.drop(it) }
+                tabCacheKey(Listing.Latest)?.let { BrowseTabCache.drop(it) }
+                tabCacheKey()?.let { BrowseTabCache.drop(it) }
+                state.value.filterListing?.let { listing -> tabCacheKey(listing)?.let { BrowseTabCache.drop(it) } }
+                BrowseTabCache.filterTabs.remove(filterTabKey())
+                source = resolved
+                mutableState.update { it.copy(filterListing = null, toolbarQuery = null) }
+                setUpListing(listingQuery, filtersJson, savedSearch)
+                reloadSavedSearches()
+                // loads the (new) listing again even when it equals the one the stub had
+                mutableState.update { it.copy(reloadToken = it.reloadToken + 1) }
+            } finally {
+                waitingForSource = false
+            }
+        }
+    }
+    // KMK <--
 }
+
+// KMK (r104): how long a model made before the extensions loaded waits for them
+private const val SOURCE_WAIT_MS = 30_000L

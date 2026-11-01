@@ -77,10 +77,17 @@ class AndroidSourceManager(
 
     init {
         scope.launch {
+            // KMK (r104): manga extensions load in the background; until they're loaded the installed list is empty.
+            // The built-in sources (local, merged, E-Hentai family, device files, JS sources) are published at once;
+            // the extensions' sources join when the load finished, and only then is [isInitialized] set (a map built
+            // from the empty list must not count as "ready": callers would take every title's source as not
+            // installed). The extensions are read from [ExtensionManager.installedNow] (the real map), not from the
+            // derived flow's value, which can lag a moment behind
             extensionManager.installedExtensionsFlow
+                .combine(extensionManager.isInitialized) { _, extensionsLoaded -> extensionsLoaded }
                 // SY -->
-                .combine(exhPreferences.enableExhentai().changes()) { extensions, enableExhentai ->
-                    extensions to enableExhentai
+                .combine(exhPreferences.enableExhentai().changes()) { extensionsLoaded, enableExhentai ->
+                    extensionsLoaded to enableExhentai
                 }
                 // KMK -->
                 .combine(
@@ -93,7 +100,8 @@ class AndroidSourceManager(
                 // KMK <--
                 // SY <--
                 .collectLatest { (triple, jsSources, apkOff) ->
-                    val (extensions, enableExhentai/* KMK --> */, isHentaiEnabled/* KMK <-- */) = triple
+                    val (extensionsLoaded, enableExhentai/* KMK --> */, isHentaiEnabled/* KMK <-- */) = triple
+                    val extensions = if (extensionsLoaded) extensionManager.installedNow() else emptyList()
                     val mutableMap = ConcurrentHashMap<Long, Source>(
                         mapOf(
                             LocalSource.ID to LocalSource(
@@ -146,7 +154,8 @@ class AndroidSourceManager(
                     }
                     // KMK <--
                     sourcesMapFlow.value = mutableMap
-                    _isInitialized.value = true
+                    // KMK (r104): ready only with the extensions' sources in the map
+                    if (extensionsLoaded) _isInitialized.value = true
                 }
         }
 

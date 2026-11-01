@@ -177,6 +177,11 @@ data class BrowseSourceScreen(
         // KMK -->
         screenModel.source.let {
             // KMK <--
+            // KMK (r104): made before the extensions loaded: wait for the real source instead of "not installed"
+            if (it is StubSource && screenModel.waitingForSource) {
+                LoadingScreen()
+                return
+            }
             if (it is StubSource) {
                 MissingSourceScreen(
                     source = it,

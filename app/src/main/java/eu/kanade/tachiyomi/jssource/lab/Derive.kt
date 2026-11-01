@@ -27,6 +27,10 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
  * JSON text list `[{"name":"Cast","selector":"…","target":"tags"}]` the template's TAG_GROUPS parses; with groups,
  * `tagsSelector` is "" (r101's single selector stays for sources without groups). [Picked] is serializable: the
  * builder keeps its own state in `LabMeta.picks` for "Edit by tapping".
+ *
+ * r104: [SuggestionGroup]s (the Suggestions label: a title page's "You may like" / "Related videos" sections) are
+ * written as `suggestionGroups` (JSON text, "[]" when none), which generic-list v7's getRelated reads; [needsSplit]
+ * finds a restored Tags group that reads whole Details rows or their labels (the owner's r103 "Tags 2" / "Tags").
  */
 internal object Derive {
 
@@ -46,6 +50,60 @@ internal object Derive {
         /** r103: an unlabelled row's exact place (picker.js rowExact): used when two rows share one look; "" = none */
         val exact: String = "",
     )
+
+    /**
+     * r104: one Suggestions group: a section of the title page ([name] = its heading) whose repeated cards are other
+     * titles. [item] = the section's card (a Jsoup selector scoped under the section), [link] / [title] / [cover] inside
+     * the card ("" = the card itself is the link / the link's text is the name / the card's first picture), [coverAttr]
+     * the picture's attribute. [count], [order] (the section's place on the page) and [values] are for the card only.
+     */
+    @Serializable
+    data class SuggestionGroup(
+        val name: String,
+        val item: String,
+        val link: String = "",
+        val title: String = "",
+        val cover: String = "",
+        val coverAttr: String = "src",
+        val count: Int = 0,
+        val order: Int = -1,
+        val values: List<String> = emptyList(),
+    )
+
+    /** r104: the `suggestionGroups` placeholder (name, item, link, title, cover, coverAttr of each group) */
+    fun suggestionGroupsJson(groups: List<SuggestionGroup>): String = JsonArray(
+        groups.filter { it.item.isNotBlank() }.map { g ->
+            JsonObject(
+                mapOf(
+                    "name" to JsonPrimitive(g.name.ifBlank { "Suggestions" }),
+                    "item" to JsonPrimitive(g.item),
+                    "link" to JsonPrimitive(g.link),
+                    "title" to JsonPrimitive(g.title),
+                    "cover" to JsonPrimitive(g.cover),
+                    "coverAttr" to JsonPrimitive(g.coverAttr.ifBlank { "src" }),
+                ),
+            )
+        },
+    ).toString()
+
+    // No braces (ICU): a selector's last element: after the last " > ", "+", "~" or space
+    private val LAST_SEGMENT = Regex("""[^\s>+~]+$""")
+    // r104 fix: the word as a whole class part (`.row`, `.info-row`, `.watch__info-row`), never inside another word
+    // (`.arrow`, `.browse-list`); no braces (ICU)
+    private val ROW_CLASS = Regex("""(?i)(^|[ .#_-])(row|field|meta-item|info-item|detail-item)([ .:#_\[-]|$)""")
+
+    /**
+     * r104: a Tags group that reads whole Details rows (`dl.info > div.info-row`, `tr`) or the rows' labels (`… > dt`,
+     * `th`): its values are "Code FC2-PPV…" or "Code, Type…", never the values alone. A label-anchored group
+     * (`:matches(`) never needs it. The Tags card offers "Split into rows" for these.
+     */
+    fun needsSplit(g: TagGroup): Boolean {
+        val sel = g.selector.trim()
+        if (sel.isEmpty() || ":matches(" in sel || ":containsOwn(" in sel) return false
+        val last = LAST_SEGMENT.find(sel.substringAfterLast(',').trim())?.value.orEmpty()
+        val tag = last.substringBefore('.').substringBefore(':').substringBefore('[').lowercase()
+        return tag in setOf("dt", "th", "tr", "dl", "table") || ROW_CLASS.containsMatchIn(last)
+    }
 
     /** r102: the `tagGroups` placeholder: name, selector, target of each group (values stay in the builder) */
     fun tagGroupsJson(groups: List<TagGroup>): String = JsonArray(
@@ -85,6 +143,7 @@ internal object Derive {
         picks: List<Picked>,
         singleEpisode: Boolean = false,
         tagGroups: List<TagGroup> = emptyList(),
+        suggestionGroups: List<SuggestionGroup> = emptyList(),
     ): BuilderSelection {
         val derived = LinkedHashMap<String, String>()
         val reasons = LinkedHashMap<String, String>()
@@ -305,6 +364,21 @@ internal object Derive {
                 "tagsSelector",
                 clean(sel).first,
                 if (one) "the tag you tapped and the ${tags.pick.count} like it on the title page" else "the links inside the tag box you tapped",
+            )
+        }
+        // r104: the title page's "You may like" / "Related" sections tapped as Suggestions, one group each
+        val related = suggestionGroups.filter { it.item.isNotBlank() }
+        if (related.isNotEmpty()) {
+            put(
+                "suggestionGroups",
+                suggestionGroupsJson(related),
+                "${related.size} ${if (related.size == 1) "section" else "sections"} you tapped as Suggestions: " +
+                    related.joinToString(", ") { "${it.name} (${it.count} cards)" } +
+                    if (anime) {
+                        ". The title screen shows all their titles together in its one Suggestions row (getRelated)"
+                    } else {
+                        ". The title screen shows their titles under these names (getRelated)"
+                    },
             )
         }
         if (author != null) {

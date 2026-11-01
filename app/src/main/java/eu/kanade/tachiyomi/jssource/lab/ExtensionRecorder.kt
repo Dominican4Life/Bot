@@ -95,6 +95,15 @@ internal object ExtensionRecorder {
     private const val REQUEST_BODY_BYTES = 8 * 1024L
     private const val MAX_REQUESTS_PER_STEP = 40
 
+    /**
+     * r104: the requests counted for a step only because it was the one running (untagged, made off its thread, to a
+     * host not seen yet, with no Referer / Origin to tell whose they are; see [Capture.stepFor]) have budgets of their
+     * own, so app traffic made meanwhile can't push out the extension's own requests and bodies
+     */
+    private const val MAX_FALLBACK_REQUESTS_PER_STEP = 20
+    private const val FALLBACK_STEP_BODY_BYTES = 2L * 1024 * 1024
+    private const val FALLBACK_RECORDING_BODY_BYTES = 6L * 1024 * 1024
+
     /** After a step's time limit: how long the next step waits for the cancelled one to stop */
     private const val CANCEL_GRACE_MS = 2_000L
 
@@ -260,7 +269,7 @@ internal object ExtensionRecorder {
         val filtersStatus = if (filtersNote == null) StepStatus.Green else StepStatus.Amber
         show(StepProgress("filters", "Filters", filtersStatus, note = filtersNote ?: "${countFilters(filters)} filters"))
 
-        val capture = Capture(row.sourceId, row.baseUrl)
+        val capture = Capture(row.sourceId, row.baseUrl, appHosts())
         val installed = capture.install()
         val steps = ArrayList<RecordedStep>()
         var stepNumber = 0
@@ -301,8 +310,19 @@ internal object ExtensionRecorder {
                 } finally {
                     if (!deferred.isCompleted) deferred.cancel()
                 }
+                val offThread = capture.offThreadCount(number)
+                val fallback = capture.fallbackCount(number)
                 val requests = capture.end(number)
                 val ms = System.currentTimeMillis() - started
+                // r104: how many requests the step kept, how many of them started off the step's own thread, and how
+                // many of those were counted only because the step was running (no host or Referer to tell)
+                AppLog.add(
+                    'D',
+                    "lab",
+                    "Recording $id: ${requests.size} request${if (requests.size == 1) "" else "s"}" +
+                        (if (offThread > 0) " ($offThread started on other threads)" else "") +
+                        (if (fallback > 0) " ($fallback counted only because the step was running)" else ""),
+                )
                 val status = when {
                     error != null -> StepStatus.Red
                     items.isEmpty() -> StepStatus.Amber
@@ -887,16 +907,26 @@ internal object ExtensionRecorder {
      * r98 fix: only the recorded source's requests are kept, each for the step it started in:
      * - a request tagged with a [SourceTag] counts only when the tag is this source's id;
      * - an untagged one (APK extensions never tag theirs) counts when it is made on a thread that runs the step's
-     *   own code ([stepContext]: a blocking `execute()`), or when its host is the site's, one the extension's own
-     *   code already called, or one named in a reply kept so far (an `enqueue`d call runs on OkHttp's threads, where
-     *   only the host can tell). Anything else the app does meanwhile is left out;
+     *   own code ([stepContext]: a blocking `execute()`), or when its host is the site's or one the extension's own
+     *   code already called; r104 fix: any other untagged request (an `enqueue`d call runs on OkHttp's threads,
+     *   where the step's thread-local is not set) belongs to the one step running now, unless its Referer / Origin
+     *   names a site this recording has never seen (see [Capture.stepFor]); r104 fix-pass: one with no Referer /
+     *   Origin to a host not seen yet is counted on a budget of its own, never teaches a host, and is never one of
+     *   the app's own hosts (GitHub, the extension repos, trackers: see [APP_HOSTS]);
      * - a request belongs to the step it started in; once that step has ended (done, or timed out and given
-     *   [CANCEL_GRACE_MS] to stop) its late requests are dropped, never counted for the next step.
+     *   [CANCEL_GRACE_MS] to stop) its late requests are dropped, never counted for the next step (r104: an
+     *   untagged request that a step left behind STARTS on another thread after the next step began can't be told
+     *   apart, and counts for that step; the converter only uses replies that hold the step's returned values).
      *
      * The hooks sit in the app's network interceptor, outside the extension's own interceptors: a request is seen
      * before they add to it (signed headers, tokens) and a reply after they changed it (decrypted, rewritten).
      */
-    private class Capture(private val sourceId: Long, baseUrl: String) : NetworkHooks.Listener {
+    private class Capture(
+        private val sourceId: Long,
+        baseUrl: String,
+        /** r104: hosts the app itself calls (GitHub, the extension repos, trackers): never counted by elimination */
+        private val appHosts: Set<String>,
+    ) : NetworkHooks.Listener {
 
         private var delegate: NetworkHooks.Listener? = null
         private val baseHost = baseUrl.toHttpUrlOrNull()?.host?.removePrefix("www.")
@@ -915,6 +945,18 @@ internal object ExtensionRecorder {
         private var totalBytes = 0L
         private val hosts = HashSet<String>()
         private val kept = ArrayList<String>()
+
+        /**
+         * r104: the requests on their way that were counted only because their step was running (see [stepFor]),
+         * and per step how many of those were recorded and how many body bytes they took (their own budgets)
+         */
+        private val fallbackRequests = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Request, Boolean>())
+        private val fallbackRecorded = HashMap<Int, Int>()
+        private val fallbackBytes = HashMap<Int, Long>()
+        private var fallbackTotalBytes = 0L
+
+        /** What [stepFor] found: the step, and whether it was only because that step was running */
+        private class Attribution(val number: Int, val fallback: Boolean)
 
         private class BodyHead(val text: String?, val truncated: Boolean, val contentType: String?, val server: String?)
 
@@ -936,12 +978,19 @@ internal object ExtensionRecorder {
                 startedIn.clear()
                 pending.clear()
                 kept.clear()
+                offThread.clear()
+                fallbackRequests.clear()
+                fallbackRecorded.clear()
+                fallbackBytes.clear()
             }
         }
 
         fun begin(number: Int) = synchronized(lock) {
             sinks[number] = ArrayList()
             stepBytes[number] = 0L
+            offThread[number] = 0
+            fallbackRecorded[number] = 0
+            fallbackBytes[number] = 0L
             current = number
         }
 
@@ -949,12 +998,43 @@ internal object ExtensionRecorder {
             if (current == number) current = 0
             // Requests of this step still on their way are dropped when they finish
             val late = startedIn.entries.filter { it.value == number }.map { it.key }
-            late.forEach { startedIn.remove(it); pending.remove(it) }
+            late.forEach { startedIn.remove(it); pending.remove(it); fallbackRequests.remove(it) }
             sinks.remove(number)?.toList().orEmpty()
         }
 
-        /** The step [request] belongs to, or null when it isn't this recording's */
-        private fun stepFor(tag: SourceTag?, request: Request): Int? {
+        /**
+         * r104: untagged requests that started on another thread, per step (counted when they are attributed; one
+         * that ends after its step is still dropped)
+         */
+        private val offThread = HashMap<Int, Int>()
+
+        fun offThreadCount(number: Int): Int = synchronized(lock) { offThread[number] ?: 0 }
+
+        /** r104: requests recorded for the step only because it was running (see [stepFor]) */
+        fun fallbackCount(number: Int): Int = synchronized(lock) { fallbackRecorded[number] ?: 0 }
+
+        /**
+         * The step [request] belongs to, or null when it isn't this recording's.
+         *
+         * r104 fix: an untagged request made off the step's thread (`await()` = OkHttp `enqueue`, whose interceptors
+         * run on OkHttp's dispatcher threads; an Rx `subscribeOn`; the extension's own dispatcher) used to count only
+         * when its host was the site's or one seen so far, so an extension whose data comes from an API host
+         * (AllManga: the site is mkissa.to, the data comes from its API host) recorded "0 requests" in every step.
+         * Steps run one at a time, so such a request now belongs to the step running now, unless it plainly comes
+         * from somewhere else: another source's tag (above), or a Referer / Origin naming a site this recording has
+         * never seen (another APK source's request made meanwhile).
+         *
+         * r104 fix-pass: the app's own traffic during a step (repo index refresh, update checks, trackers, other
+         * extensions' library updates or downloads) often has no Referer / Origin either, and used to fill the step's
+         * 40 requests and body budget and teach its hosts. Now:
+         * - the site's host, a host the recording already knows, or a Referer / Origin naming one of those: the
+         *   extension's (its host is learned);
+         * - a Referer / Origin naming another site: not the recording's;
+         * - otherwise (no Referer / Origin, or one only named inside a reply kept so far): counted for the running step
+         *   by elimination ("fallback") on budgets of its own, never one of the app's own hosts ([appHosts]), and
+         *   its host and reply never teach the recording anything.
+         */
+        private fun stepFor(tag: SourceTag?, request: Request): Attribution? {
             if (request.tag(NoNetLog::class.java) != null) return null
             val onThread = running.get()
             val number = onThread ?: current
@@ -962,27 +1042,62 @@ internal object ExtensionRecorder {
             val host = request.url.host.removePrefix("www.")
             return synchronized(lock) {
                 if (!sinks.containsKey(number)) return@synchronized null
-                val ours = when {
-                    tag != null -> tag.id == sourceId
-                    onThread != null -> true
-                    else -> host == baseHost || host in hosts || kept.any { host in it }
+                val fallback = when {
+                    tag != null -> if (tag.id == sourceId) false else return@synchronized null
+                    onThread != null -> false
+                    host == baseHost || host in hosts -> false
+                    else -> when (referrerOf(request)) {
+                        Referrer.KNOWN -> false
+                        Referrer.FOREIGN -> return@synchronized null
+                        Referrer.KEPT, Referrer.NONE -> {
+                            if (isAppHost(host, appHosts)) return@synchronized null
+                            // its own budget is full: nothing more is counted by elimination for this step
+                            if ((fallbackRecorded[number] ?: 0) >= MAX_FALLBACK_REQUESTS_PER_STEP) return@synchronized null
+                            true
+                        }
+                    }
                 }
-                if (!ours) return@synchronized null
-                hosts.add(host)
-                number
+                if (tag == null && onThread == null) offThread[number] = (offThread[number] ?: 0) + 1
+                if (!fallback) hosts.add(host)
+                Attribution(number, fallback)
             }
+        }
+
+        /** r104: what a request's Referer / Origin says about whose it is */
+        private enum class Referrer { KNOWN, KEPT, FOREIGN, NONE }
+
+        /**
+         * The first readable Referer / Origin: the site's or a host this recording learned ([Referrer.KNOWN]), one
+         * named only inside a reply kept so far ([Referrer.KEPT]), another site ([Referrer.FOREIGN]); none, or an
+         * unreadable one, is [Referrer.NONE]. Called under [lock].
+         */
+        private fun referrerOf(request: Request): Referrer {
+            for (name in REFERRER_HEADERS) {
+                val value = request.header(name)?.takeIf { it.isNotBlank() } ?: continue
+                val host = value.toHttpUrlOrNull()?.host?.removePrefix("www.") ?: continue
+                return when {
+                    host == baseHost || host in hosts -> Referrer.KNOWN
+                    kept.any { host in it } -> Referrer.KEPT
+                    else -> Referrer.FOREIGN
+                }
+            }
+            return Referrer.NONE
         }
 
         override fun onCall(tag: SourceTag?, request: Request, response: Response?, error: Throwable?, ms: Long) {
             delegate?.let { d -> guard { d.onCall(tag, request, response, error, ms) } }
             guard {
+                var number: Int? = null
+                var fallback = false
                 val (list, head) = synchronized(lock) {
-                    val number = startedIn.remove(request)
+                    number = startedIn.remove(request)
+                    fallback = fallbackRequests.remove(request)
                     val bodyHead = pending.remove(request)
                     val sink = number?.let { sinks[it] }
-                    if (sink == null || sink.size >= MAX_REQUESTS_PER_STEP) null to null else sink to bodyHead
+                    if (sink == null || !hasRoom(number!!, sink, fallback)) null to null else sink to bodyHead
                 }
-                if (list == null) return@guard
+                val step = number
+                if (list == null || step == null) return@guard
                 val contentType = head?.contentType ?: response?.header("Content-Type")
                 val image = contentType?.startsWith("image/", true) == true
                 val body = head?.text
@@ -1007,7 +1122,25 @@ internal object ExtensionRecorder {
                     botCheck = check,
                     infrastructure = isInfrastructure(request.url.toString()),
                 )
-                synchronized(lock) { if (list.size < MAX_REQUESTS_PER_STEP) list.add(recorded) }
+                synchronized(lock) {
+                    if (hasRoom(step, list, fallback)) {
+                        list.add(recorded)
+                        if (fallback) fallbackRecorded[step] = (fallbackRecorded[step] ?: 0) + 1
+                    }
+                }
+            }
+        }
+
+        /**
+         * r104: whether [sink] (step [number]'s list) has room for one more request of its kind: the requests counted
+         * by elimination and the others each have their own count (called under [lock])
+         */
+        private fun hasRoom(number: Int, sink: List<RecordedRequest>, fallback: Boolean): Boolean {
+            val byElimination = fallbackRecorded[number] ?: 0
+            return if (fallback) {
+                byElimination < MAX_FALLBACK_REQUESTS_PER_STEP
+            } else {
+                sink.size - byElimination < MAX_REQUESTS_PER_STEP
             }
         }
 
@@ -1019,15 +1152,22 @@ internal object ExtensionRecorder {
         override fun beforeProceed(tag: SourceTag?, request: Request) {
             delegate?.let { d -> guard { d.beforeProceed(tag, request) } }
             guard {
-                val number = stepFor(tag, request) ?: return@guard
-                synchronized(lock) { startedIn[request] = number }
+                val attribution = stepFor(tag, request) ?: return@guard
+                synchronized(lock) {
+                    startedIn[request] = attribution.number
+                    if (attribution.fallback) fallbackRequests.add(request)
+                }
             }
         }
 
         override fun afterResponse(tag: SourceTag?, request: Request, response: Response): Response {
             val r = delegate?.let { d -> guard(response) { d.afterResponse(tag, request, response) } } ?: response
             guard {
-                val number = synchronized(lock) { startedIn[request] } ?: return@guard
+                var fallback = false
+                val number = synchronized(lock) {
+                    fallback = request in fallbackRequests
+                    startedIn[request]
+                } ?: return@guard
                 val type = r.header("Content-Type")
                 val server = r.header("Server")
                 // No Content-Type is not text: nothing is read ahead for it
@@ -1036,7 +1176,16 @@ internal object ExtensionRecorder {
                     return@guard
                 }
                 val allowance = synchronized(lock) {
-                    minOf(BODY_PARSE_BYTES, STEP_BODY_BYTES - (stepBytes[number] ?: 0L), RECORDING_BODY_BYTES - totalBytes)
+                    // r104: a request counted by elimination reads on the budgets of its own
+                    if (fallback) {
+                        minOf(
+                            BODY_PARSE_BYTES,
+                            FALLBACK_STEP_BODY_BYTES - (fallbackBytes[number] ?: 0L),
+                            FALLBACK_RECORDING_BODY_BYTES - fallbackTotalBytes,
+                        )
+                    } else {
+                        minOf(BODY_PARSE_BYTES, STEP_BODY_BYTES - (stepBytes[number] ?: 0L), RECORDING_BODY_BYTES - totalBytes)
+                    }
                 }
                 if (allowance <= 0L) {
                     synchronized(lock) { pending[request] = BodyHead(null, true, type, server) }
@@ -1048,9 +1197,15 @@ internal object ExtensionRecorder {
                 val charset = peeked.contentType()?.charset() ?: Charsets.UTF_8
                 val text = String(bytes, charset)
                 synchronized(lock) {
-                    stepBytes[number] = (stepBytes[number] ?: 0L) + bytes.size
-                    totalBytes += bytes.size
-                    kept.add(text)
+                    if (fallback) {
+                        // r104: its reply never teaches the recording a host (see [referrerOf])
+                        fallbackBytes[number] = (fallbackBytes[number] ?: 0L) + bytes.size
+                        fallbackTotalBytes += bytes.size
+                    } else {
+                        stepBytes[number] = (stepBytes[number] ?: 0L) + bytes.size
+                        totalBytes += bytes.size
+                        kept.add(text)
+                    }
                     pending[request] = BodyHead(text, bytes.size.toLong() >= allowance, type, server)
                 }
             }
@@ -1108,6 +1263,37 @@ internal object ExtensionRecorder {
     }
 
     private val CHECK_STATUSES = setOf(403, 429, 503)
+
+    /** r104: the request headers that tell whose page a request was made for */
+    private val REFERRER_HEADERS = listOf("Referer", "Origin")
+
+    /**
+     * r104: hosts the app itself calls while a step runs (repo indexes and update checks on GitHub, trackers): a
+     * request to one of them (or a subdomain) is never counted for a step by elimination. The extension repos the
+     * owner added join them (see [appHosts])
+     */
+    private val APP_HOSTS = setOf(
+        "github.com", "githubusercontent.com", "github.io",
+        "anilist.co", "myanimelist.net", "kitsu.app", "kitsu.io", "mangaupdates.com",
+        "shikimori.one", "shikimori.me", "shikimori.io", "bgm.tv", "bangumi.tv", "simkl.com", "simkl.in",
+    )
+
+    /** r104: [APP_HOSTS] and the hosts of the extension repos (their index and extension list addresses) */
+    private suspend fun appHosts(): Set<String> {
+        val repos = runCatching {
+            Injekt.get<mihon.domain.extension.repository.ExtensionStoreRepository>().getAll()
+                .flatMap { listOfNotNull(it.indexUrl, it.extensionListUrl) }
+                .mapNotNull { it.toHttpUrlOrNull()?.host?.removePrefix("www.") }
+        }.getOrElse {
+            AppLog.add('W', "lab", "Recording: the extension repos couldn't be read (${it.javaClass.simpleName}); only the built-in app hosts are left out")
+            emptyList()
+        }
+        return APP_HOSTS + repos
+    }
+
+    /** r104: [host] is one of [appHosts] or a subdomain of one */
+    private fun isAppHost(host: String, appHosts: Set<String>): Boolean =
+        appHosts.any { host == it || host.endsWith(".$it") }
 
     /** The bot check's own requests (scripts, beacons): never data */
     fun isInfrastructure(url: String): Boolean {

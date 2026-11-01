@@ -19,8 +19,10 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withTimeoutOrNull
 import logcat.LogPriority
 import mihon.domain.source.interactor.UpdateMangaFromRemote
 import tachiyomi.core.common.util.lang.withIOContext
@@ -51,6 +53,8 @@ class MetadataUpdateJob(private val context: Context, workerParams: WorkerParame
     override suspend fun doWork(): Result {
         setForegroundSafely()
 
+        // KMK (r104): manga extensions load in the background; titles whose source isn't loaded yet would be skipped
+        withTimeoutOrNull(60_000L) { sourceManager.isInitialized.first { it } }
         addMangaToQueue()
 
         return withIOContext {

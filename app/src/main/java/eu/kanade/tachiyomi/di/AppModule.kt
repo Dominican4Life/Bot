@@ -227,21 +227,54 @@ class AppModule(val app: Application) : InjektModule {
         // <-- AM (CONNECTIONS)
 
         // Asynchronously init expensive components for a faster cold start
+        // KMK (r104): this ran on the main looper (after App.onCreate), so it wasn't asynchronous at all. Only the
+        // network client is still built there (its cookie jar opens WebView's CookieManager); the rest is built on a
+        // background thread. Injekt's singletons are created once under a lock, so a screen that asks for one
+        // meanwhile waits for it instead of building a second
         ContextCompat.getMainExecutor(app).execute {
+            val mainStart = android.os.SystemClock.elapsedRealtime()
             get<NetworkHelper>()
+            val mainMs = android.os.SystemClock.elapsedRealtime() - mainStart
 
-            get<SourceManager>()
+            Thread(
+                {
+                    val start = android.os.SystemClock.elapsedRealtime()
+                    val timings = mutableListOf<String>()
+                    fun step(name: String, build: () -> Unit) {
+                        val stepStart = android.os.SystemClock.elapsedRealtime()
+                        runCatching { build() }.onFailure {
+                            eu.kanade.tachiyomi.util.system.AppLog.add(
+                                'E',
+                                "app",
+                                "Start: building $name failed: ${it.message}",
+                            )
+                        }
+                        timings += "$name ${android.os.SystemClock.elapsedRealtime() - stepStart} ms"
+                    }
 
-            // KMK: anime extensions
-            get<eu.kanade.tachiyomi.animeextension.AnimeSourceManager>()
+                    step("sources") { get<SourceManager>() }
 
-            get<Database>()
+                    // KMK: anime extensions
+                    step("anime sources") { get<eu.kanade.tachiyomi.animeextension.AnimeSourceManager>() }
 
-            get<DownloadManager>()
+                    step("database") { get<Database>() }
 
-            // SY -->
-            get<GetCustomMangaInfo>()
-            // SY <--
+                    step("downloads") { get<DownloadManager>() }
+
+                    // SY -->
+                    step("custom info") { get<GetCustomMangaInfo>() }
+                    // SY <--
+
+                    eu.kanade.tachiyomi.util.system.AppLog.add(
+                        'I',
+                        "app",
+                        "Start: warm-up off the main thread " +
+                            "${android.os.SystemClock.elapsedRealtime() - start} ms (was on it): " +
+                            "${timings.joinToString()}; on the main thread: network client $mainMs ms",
+                    )
+                },
+                "app-warmup",
+            ).start()
         }
 
         addSingletonFactory { GoogleDriveService(app) }

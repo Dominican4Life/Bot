@@ -120,6 +120,8 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
 
     @SuppressLint("LaunchActivityFromNotification")
     override fun onCreate() {
+        // KMK (r104): how long App.onCreate keeps the main thread, logged at the end
+        val onCreateStart = android.os.SystemClock.elapsedRealtime()
         super<Application>.onCreate()
         patchInjekt()
         // KMK: memory use in Logs every few minutes
@@ -266,6 +268,15 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
         }
 
         initializeMigrator()
+
+        // KMK (r104): compare with earlier runs; the logs folder lookup, the extension loading and the warm-up of
+        // sources, database and downloads run off the main thread now and log their own "Start:" lines
+        eu.kanade.tachiyomi.util.system.AppLog.add(
+            'I',
+            "app",
+            "Start: main-thread work ${android.os.SystemClock.elapsedRealtime() - onCreateStart} ms in App.onCreate " +
+                "(process start to onCreate ${onCreateStart - android.os.Process.getStartElapsedRealtime()} ms)",
+        )
     }
 
     private fun initializeMigrator() {
@@ -437,27 +448,47 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
             eu.kanade.tachiyomi.util.system.AppLog.XLogPrinter(),
         )
 
-        val logFolder = Injekt.get<StorageManager>().getLogsDirectory()
-
-        if (logFolder != null) {
-            val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
-
-            printers += EnhancedFilePrinter
-                .Builder(logFolder) {
-                    fileNameGenerator = object : DateFileNameGenerator() {
-                        override fun generateFileName(logLevel: Int, timestamp: Long): String {
-                            return super.generateFileName(
-                                logLevel,
-                                timestamp,
-                            ) + "-${BuildConfig.BUILD_TYPE}.txt"
-                        }
-                    }
-                    flattener { timeMillis, level, tag, message ->
-                        "${dateFormat.format(timeMillis)} ${LogLevel.getShortLevelName(level)}/$tag: $message"
-                    }
-                    backupStrategy = NeverBackupStrategy()
+        // KMK (r104): the logs folder is a storage (SAF) lookup that ran on the main thread at every start (it also
+        // built StorageManager, which checks the app folder): now looked up on a background thread. XLog's file printer
+        // is attached when it's found; lines printed before that are kept and written then
+        val filePrinter = LateFilePrinter()
+        printers += filePrinter
+        Thread(
+            {
+                val start = android.os.SystemClock.elapsedRealtime()
+                val logFolder = runCatching { Injekt.get<StorageManager>().getLogsDirectory() }.getOrNull()
+                val printer = logFolder?.let { folder ->
+                    val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
+                    runCatching {
+                        EnhancedFilePrinter
+                            .Builder(folder) {
+                                fileNameGenerator = object : DateFileNameGenerator() {
+                                    override fun generateFileName(logLevel: Int, timestamp: Long): String {
+                                        return super.generateFileName(
+                                            logLevel,
+                                            timestamp,
+                                        ) + "-${BuildConfig.BUILD_TYPE}.txt"
+                                    }
+                                }
+                                flattener { timeMillis, level, tag, message ->
+                                    val time = dateFormat.format(timeMillis)
+                                    "$time ${LogLevel.getShortLevelName(level)}/$tag: $message"
+                                }
+                                backupStrategy = NeverBackupStrategy()
+                            }
+                    }.getOrNull()
                 }
-        }
+                filePrinter.attach(printer)
+                val none = if (printer == null) "; no logs folder (app folder not set or not reachable)" else ""
+                eu.kanade.tachiyomi.util.system.AppLog.add(
+                    'I',
+                    "app",
+                    "Start: logs folder looked up off the main thread in " +
+                        "${android.os.SystemClock.elapsedRealtime() - start} ms (was on it)$none",
+                )
+            },
+            "logs-folder",
+        ).start()
 
         // Install Crashlytics in prod
         if (telemetryIncluded) {
@@ -504,6 +535,40 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
 }
 
 private const val ACTION_DISABLE_INCOGNITO_MODE = "tachi.action.DISABLE_INCOGNITO_MODE"
+
+/**
+ * KMK (r104): XLog's file printer, attached once the logs folder was looked up off the main thread. Lines printed
+ * before that (XLog keeps only W/E by default) are held, up to [MAX_EARLY_XLOG_LINES], and written when it's attached;
+ * with no logs folder they're dropped, as before.
+ */
+private class LateFilePrinter : Printer {
+    private val lock = Any()
+    private var attached = false
+    private var target: Printer? = null
+    private val early = ArrayList<Triple<Int, String, String>>()
+
+    override fun println(logLevel: Int, tag: String, msg: String) {
+        synchronized(lock) {
+            if (attached) {
+                // EnhancedFilePrinter only queues the line for its own writer thread
+                target?.println(logLevel, tag, msg)
+            } else if (early.size < MAX_EARLY_XLOG_LINES) {
+                early += Triple(logLevel, tag, msg)
+            }
+        }
+    }
+
+    fun attach(printer: Printer?) {
+        synchronized(lock) {
+            target = printer
+            attached = true
+            if (printer != null) early.forEach { (level, tag, msg) -> printer.println(level, tag, msg) }
+            early.clear()
+        }
+    }
+}
+
+private const val MAX_EARLY_XLOG_LINES = 500
 
 /** KMK (r103): ceiling of Coil's image disk cache (was Coil's default, 250 MB) */
 private const val IMAGE_DISK_CACHE_MAX_BYTES = 1024L * 1024 * 1024

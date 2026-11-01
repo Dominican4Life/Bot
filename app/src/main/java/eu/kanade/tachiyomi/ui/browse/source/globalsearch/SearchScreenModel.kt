@@ -20,10 +20,12 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import mihon.domain.manga.model.toDomainManga
 import tachiyomi.core.common.preference.toggle
 import tachiyomi.core.common.util.QuerySanitizer.sanitize
@@ -106,10 +108,49 @@ abstract class SearchScreenModel(
     // KMK -->
     fun hasPinnedSources(): Boolean = getEnabledSources().any { "${it.id}" in pinnedSources }
 
+    /**
+     * KMK (r104): with no pinned source among the enabled ones, Pinned only becomes All. At a cold start (a deep
+     * link, shared text) the sources load in the background, so it waits for them first: the empty list of a cold
+     * start has no pinned source either, and would have switched the saved choice to All for good. Nothing is saved
+     * when the sources didn't load in time or the list is empty
+     */
     fun shouldPinnedSourcesHidden() {
-        if (!hasPinnedSources()) {
+        pinnedCheckJob = screenModelScope.launch {
+            if (!awaitSources() || sourceManager.getVisibleSources().isEmpty()) return@launch
+            if (hasPinnedSources()) return@launch
             preferences.globalSearchPinnedState().set(SourceFilter.All)
+            // the saved choice reaches the state through a collector; a search that already ran with Pinned only
+            // (no source) runs again with All
+            mutableState.update { it.copy(sourceFilter = SourceFilter.All) }
+            search()
         }
+    }
+
+    /**
+     * KMK (r104): the check of [shouldPinnedSourcesHidden]. A search waiting for the sources also waits for it, so
+     * it doesn't first run "Pinned only" with no pinned source (results flashing empty) and then again with All
+     */
+    private var pinnedCheckJob: Job? = null
+
+    /** KMK (r104): a search asked for before the sources loaded runs once they did (see [search]) */
+    private var sourcesWaitJob: Job? = null
+    private var sourcesWaited = false
+
+    /**
+     * KMK (r104): waits (at most 30 s) until the sources loaded; false when they didn't in time (then what is loaded
+     * is used)
+     */
+    protected suspend fun awaitSources(): Boolean {
+        if (sourceManager.isInitialized.value) return true
+        val ready = withTimeoutOrNull(SOURCES_WAIT_MS) { sourceManager.isInitialized.first { it } } != null
+        if (!ready) {
+            AppLog.add(
+                'W',
+                "BrowseSearch",
+                "${javaClass.simpleName}: sources not loaded after ${SOURCES_WAIT_MS / 1000} s; using the ones loaded",
+            )
+        }
+        return ready
     }
     // KMK <--
 
@@ -169,6 +210,22 @@ abstract class SearchScreenModel(
         val sourceFilter = state.value.sourceFilter
 
         if (query.isNullOrBlank()) return
+
+        // KMK (r104): at a cold start the sources load in the background: searching now would search none (or only
+        // the built-in ones). It searches once they loaded (at most 30 s later); the words may change meanwhile
+        if (!sourcesWaited && !sourceManager.isInitialized.value) {
+            if (sourcesWaitJob?.isActive != true) {
+                sourcesWaitJob = screenModelScope.launch {
+                    awaitSources()
+                    // the pinned check (started after this wait in the screens' init) may switch Pinned only to All;
+                    // its own search() returns early meanwhile (this job is still active), so one search runs
+                    pinnedCheckJob?.join()
+                    sourcesWaited = true
+                    search()
+                }
+            }
+            return
+        }
 
         val sameQuery = this.lastQuery == query
         if (sameQuery && this.lastSourceFilter == sourceFilter) return
@@ -288,6 +345,9 @@ abstract class SearchScreenModel(
         data class Migrate(val target: Manga, val current: Manga) : Dialog
     }
 }
+
+/** KMK (r104): how long a search waits for the sources at a cold start */
+private const val SOURCES_WAIT_MS = 30_000L
 
 /** KMK: Global search's finished results per search words and source, kept while the app is open */
 private val resultCache = java.util.concurrent.ConcurrentHashMap<String, MutableMap<Long, SearchItemResult>>()

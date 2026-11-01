@@ -25,7 +25,6 @@ import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asFlow
@@ -43,6 +42,7 @@ import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.withTimeoutOrNull
 import logcat.LogPriority
 import mihon.core.archive.CbzCrypto
 import mihon.core.archive.ZipWriter
@@ -127,10 +127,52 @@ class Downloader(
     @Volatile
     var isPaused: Boolean = false
 
+    /**
+     * KMK (r104): true once the saved queue was restored (it waits for the sources, which load in the background).
+     * [start] and the download job wait for it, so a start at launch doesn't find an empty queue
+     */
+    private val _queueRestored = MutableStateFlow(false)
+    val queueRestored = _queueRestored.asStateFlow()
+
     init {
         launchNow {
-            val chapters = async { store.restore() }
-            addAllToQueue(chapters.await())
+            try {
+                // KMK (r104): manga extensions load in the background now; the saved queue keeps only chapters whose
+                // source is loaded (and is then cleared), so it waits for the sources instead of dropping every download
+                sourceManager.isInitialized.first { it }
+                val chapters = withIOContext { store.restore() }
+                addRestoredToQueue(chapters)
+            } finally {
+                _queueRestored.value = true
+            }
+        }
+    }
+
+    /**
+     * KMK (r104): waits (at most [timeoutMs]) until the saved queue was restored; false when it timed out
+     */
+    suspend fun awaitQueueRestored(timeoutMs: Long = QUEUE_RESTORE_WAIT_MS): Boolean {
+        if (_queueRestored.value) return true
+        val restored = withTimeoutOrNull(timeoutMs) { queueRestored.first { it } } != null
+        if (!restored) {
+            logcat(LogPriority.WARN) { "Download queue not restored after ${timeoutMs / 1000} s; starting without it" }
+        }
+        return restored
+    }
+
+    /**
+     * KMK (r104): the restored queue joins what's queued already: chapters queued meanwhile (the restore waits for
+     * the sources) aren't added twice, and since the restore cleared the store, the whole queue is saved again
+     */
+    private fun addRestoredToQueue(restored: List<Download>) {
+        _queueState.update { queue ->
+            val queuedIds = queue.mapTo(HashSet()) { it.chapter.id }
+            val fresh = restored
+                .distinctBy { it.chapter.id }
+                .filter { it.chapter.id !in queuedIds }
+            fresh.forEach { it.status = Download.State.QUEUE }
+            store.addAll(queue + fresh)
+            queue + fresh
         }
     }
 
@@ -141,6 +183,16 @@ class Downloader(
      * @return true if the downloader is started, false otherwise.
      */
     fun start(): Boolean {
+        // KMK (r104): asked to start before the saved queue was restored (at launch): start again once it is
+        // (at most [QUEUE_RESTORE_WAIT_MS] later), through the download job like DownloadManager.startDownloads, so
+        // the restored chapters download too
+        if (!_queueRestored.value) {
+            scope.launch {
+                awaitQueueRestored()
+                if (isRunning || isPaused || queueState.value.isEmpty()) return@launch
+                if (DownloadJob.isRunning(context)) start() else DownloadJob.start(context)
+            }
+        }
         if (isRunning || queueState.value.isEmpty()) {
             return false
         }
@@ -831,6 +883,9 @@ class Downloader(
         const val WARNING_NOTIF_TIMEOUT_MS = 30_000L
         const val CHAPTERS_PER_SOURCE_QUEUE_WARNING_THRESHOLD = 15
         private const val DOWNLOADS_QUEUED_WARNING_THRESHOLD = 30
+
+        /** KMK (r104): how long a start waits for the saved queue to be restored */
+        const val QUEUE_RESTORE_WAIT_MS = 60_000L
     }
 }
 

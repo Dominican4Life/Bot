@@ -203,6 +203,8 @@ class BackupCreator(
     }
 
     suspend fun backupMangas(mangas: List<Manga>, options: BackupOptions): List<BackupManga> {
+        // KMK (r104): also without library entries, for the source settings written after this (backup and sync)
+        mangaBackupCreator.awaitSources()
         if (!options.libraryEntries) return emptyList()
 
         return mangaBackupCreator(mangas, options)

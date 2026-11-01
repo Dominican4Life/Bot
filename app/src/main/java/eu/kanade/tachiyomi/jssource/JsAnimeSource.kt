@@ -17,9 +17,11 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import logcat.LogPriority
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import rx.Observable
+import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
@@ -41,6 +43,43 @@ class JsAnimeSource(
     // Related titles by searching each word of the title would fire a search per word at the site at once,
     // which sites answer with 429 (too many requests) and which blocks this source's other calls meanwhile
     override val disableRelatedAnimesBySearch: Boolean = true
+
+    // KMK (r104): a source with getRelated(url) gives its own related titles (generic-list v7's Suggestions: the title
+    // page's "You may like" / "Related videos" sections), like JsMangaSource; the title searches stay off (above)
+    override val supportsRelatedAnimes: Boolean get() = info.hasRelated
+
+    override suspend fun fetchRelatedAnimeList(anime: SAnime): List<SAnime> =
+        relatedGroups(anime).flatMap { it.second }
+
+    /**
+     * r104: getRelated may give one list, or named groups `{ "You may like": [...], "Related videos": [...] }`: each
+     * group is pushed under its name, in the source's order (the anime screen merges them into its Suggestions row)
+     */
+    override suspend fun getRelatedAnimeListByExtension(
+        anime: SAnime,
+        pushResults: suspend (relatedAnime: Pair<String, List<SAnime>>, completed: Boolean) -> Unit,
+    ) {
+        runCatching { relatedGroups(anime) }
+            .onSuccess { groups ->
+                groups.filter { it.second.isNotEmpty() }.forEach { pushResults(it, false) }
+            }
+            .onFailure { e -> logcat(LogPriority.ERROR, e) { "${info.name}: getRelated failed" } }
+    }
+
+    private suspend fun relatedGroups(anime: SAnime): List<Pair<String, List<SAnime>>> {
+        if (!info.hasRelated) return emptyList()
+        val result = runtime().call("getRelated", anime.url)
+        fun entries(element: JsonElement): List<SAnime> {
+            val list = JsMapping.list(element)
+            webUrls.remember(list)
+            return list.mapNotNull { JsMapping.toSAnime(it) }.filter { it.url != anime.url }
+        }
+        return if (result is JsonObject) {
+            result.map { (name, value) -> name to entries(value) }
+        } else {
+            listOf("" to entries(result))
+        }
+    }
 
     val baseUrl: String = info.baseUrl.trimEnd('/')
 

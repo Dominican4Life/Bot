@@ -31,9 +31,11 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import logcat.LogPriority
 import mihon.data.extension.service.ExtensionStoreUrls
 import mihon.domain.extension.model.ExtensionStore
@@ -91,8 +93,59 @@ class ExtensionManager(
     private val untrustedExtensionMapFlow = MutableStateFlow(emptyMap<String, Extension.Untrusted>())
     val untrustedExtensionsFlow = untrustedExtensionMapFlow.mapExtensions(scope)
 
+    /** KMK (r104): the installed extensions now (the flow above can lag a moment behind [isInitialized]) */
+    fun installedNow(): List<Extension.Installed> = installedExtensionMapFlow.value.values.toList()
+
+    /** KMK (r104): what the background load is doing now, for the "still loading after 30 s" log */
+    @Volatile
+    private var loadStep = "syncing the Sideloaded folder"
+
+    /**
+     * KMK (r104): install / uninstall events received while the installed extensions load, in arrival order. They're
+     * applied by the load itself, one at a time, before [isInitialized] turns true (guarded by [deferredLock];
+     * [eventsLive] = the load finished, events apply at once)
+     */
+    private val deferredLock = Any()
+    private val deferredEvents = ArrayList<() -> Unit>()
+    private var eventsLive = false
+
+    private fun runOrDefer(block: () -> Unit) {
+        synchronized(deferredLock) {
+            if (!eventsLive) {
+                deferredEvents += block
+                return
+            }
+        }
+        block()
+    }
+
+    private fun applyDeferredEvents() {
+        while (true) {
+            val batch = synchronized(deferredLock) {
+                if (deferredEvents.isEmpty()) {
+                    // nothing left: from now on events apply at once (an event arriving meanwhile was queued and is
+                    // in this batch loop, so the order holds)
+                    eventsLive = true
+                    null
+                } else {
+                    deferredEvents.toList().also { deferredEvents.clear() }
+                }
+            } ?: break
+            batch.forEach { event ->
+                try {
+                    event()
+                } catch (e: Exception) {
+                    logcat(LogPriority.ERROR, e) { "An extension event received while loading failed" }
+                }
+            }
+        }
+    }
+
     init {
-        // KMK: the Sideloaded folder and the app made to agree (an APK put back after a reinstall, one deleted)
+        // KMK (r104): loaded off the main thread, like the anime manager: the Sideloaded folder and the app made to
+        // agree first (an APK put back after a reinstall, one deleted), so what it put back loads now. Until
+        // [isInitialized] is true the installed list is empty: callers that read it at start wait for that (the
+        // source manager, downloads, backups, library updates), so an empty list is never taken as "none installed"
         scope.launch(Dispatchers.IO) {
             runCatching {
                 eu.kanade.tachiyomi.extension.util.SideloadFolder.sync(
@@ -100,8 +153,24 @@ class ExtensionManager(
                     eu.kanade.tachiyomi.extension.util.SideloadFolder.Kind.MANGA,
                 )
             }
+            initExtensions()
         }
-        initExtensions()
+        // KMK (r104): a stuck extension shows in Logs (the load runs in the background, nothing else would tell)
+        scope.launch {
+            if (withTimeoutOrNull(STILL_LOADING_LOG_MS) { isInitialized.first { it } } == null) {
+                val step = loadStep
+                val what = if (step == STEP_LOADING) {
+                    ExtensionLoader.loadingNow().ifEmpty { "reading the installed packages" }
+                } else {
+                    step
+                }
+                eu.kanade.tachiyomi.util.system.AppLog.add(
+                    'E',
+                    "app",
+                    "Extensions still loading after ${STILL_LOADING_LOG_MS / 1000} s: $what",
+                )
+            }
+        }
         ExtensionInstallReceiver(InstallationListener()).register(context)
     }
 
@@ -161,21 +230,70 @@ class ExtensionManager(
     /**
      * Loads and registers the installed extensions.
      */
-    private fun initExtensions() {
-        val extensions = ExtensionLoader.loadExtensions(context)
+    private suspend fun initExtensions() {
+        // KMK (r104): timed, so the owner can compare with the start-up time it used to take on the main thread
+        val started = android.os.SystemClock.elapsedRealtime()
+        loadStep = STEP_LOADING
+        // KMK (r104): a failure here must not leave [isInitialized] false for ever (everything waiting on it would hang)
+        val extensions = try {
+            ExtensionLoader.loadExtensions(context)
+        } catch (e: Exception) {
+            logcat(LogPriority.ERROR, e) { "Loading the installed extensions failed" }
+            eu.kanade.tachiyomi.util.system.AppLog.add('E', "app", "Loading the manga extensions failed: ${e.message}")
+            emptyList()
+        }
+        loadStep = "publishing the installed list"
 
-        installedExtensionMapFlow.value = extensions
+        val installed = extensions
             .filterIsInstance<LoadResult.Success>()
             .associate { it.extension.pkgName to it.extension }
+        installedExtensionMapFlow.value = installed
 
-        untrustedExtensionMapFlow.value = extensions
+        val untrusted = extensions
             .filterIsInstance<LoadResult.Untrusted>()
             .associate { it.extension.pkgName to it.extension }
             // SY -->
             .filterNotBlacklisted()
         // SY <--
+        untrustedExtensionMapFlow.value = untrusted
+
+        // KMK (r104): the public lists are derived flows; callers wait for [isInitialized] and then read
+        // `installedExtensionsFlow.value`, so it is published first (nothing else writes the maps before that: install
+        // events wait for the load, see InstallationListener). Never set [isInitialized] while they still show the
+        // old (empty) lists: after 5 s it logs a warning and keeps waiting until they publish
+        suspend fun awaitPublished() {
+            installedExtensionsFlow.first { it.size == installed.size }
+            untrustedExtensionsFlow.first { it.size == untrusted.size }
+        }
+        val published = withTimeoutOrNull(PUBLISH_WAIT_MS) { awaitPublished() } != null
+        if (!published) {
+            eu.kanade.tachiyomi.util.system.AppLog.add(
+                'W',
+                "extensions",
+                "The installed manga extension list took over ${PUBLISH_WAIT_MS / 1000} s to publish; still waiting",
+            )
+            awaitPublished()
+            eu.kanade.tachiyomi.util.system.AppLog.add(
+                'W',
+                "extensions",
+                "The installed manga extension list published after " +
+                    "${android.os.SystemClock.elapsedRealtime() - started} ms",
+            )
+        }
+
+        // KMK (r104): install / uninstall events that came during the load, one at a time in arrival order
+        loadStep = "applying the install events received while loading"
+        applyDeferredEvents()
 
         _isInitialized.value = true
+        loadStep = STEP_DONE
+        eu.kanade.tachiyomi.util.system.AppLog.add(
+            'I',
+            "app",
+            "Start: manga extensions loaded off the main thread in " +
+                "${android.os.SystemClock.elapsedRealtime() - started} ms (was on it): " +
+                "${installed.size} installed, ${untrusted.size} untrusted",
+        )
     }
 
     // EXH -->
@@ -295,6 +413,9 @@ class ExtensionManager(
         // KMK: one entry per package, signature and repo: two repos with the same (or no) signing key offering the
         // same package used to overwrite each other, so one of them showed fewer packages
         availableExtensionMapFlow.value = extensions.associateBy { availableKey(it) }
+        // KMK (r104): the installed extensions load in the background; their update flags are set once they're there
+        // (marking an empty list would set nothing, and the load would then publish them without update flags)
+        isInitialized.first { it }
         updatedInstalledExtensionsStatuses(extensions)
         setupAvailableExtensionsSourcesDataMap(extensions)
     }
@@ -523,17 +644,25 @@ class ExtensionManager(
      */
     private inner class InstallationListener : ExtensionInstallReceiver.Listener {
 
-        override fun onExtensionInstalled(extension: Extension.Installed) {
+        /**
+         * KMK (r104): an event that arrives while the installed extensions are still loading (the Sideloaded folder
+         * sync's removals, an install finishing during start-up) is applied after the load, so the load's result
+         * can't overwrite it, nor it the load's. Queued events apply one at a time in arrival order (see
+         * [runOrDefer])
+         */
+        private fun afterLoad(block: () -> Unit) = runOrDefer(block)
+
+        override fun onExtensionInstalled(extension: Extension.Installed) = afterLoad {
             registerNewExtension(extension.withUpdateCheck())
             updatePendingUpdatesCount()
         }
 
-        override fun onExtensionUpdated(extension: Extension.Installed) {
+        override fun onExtensionUpdated(extension: Extension.Installed) = afterLoad {
             registerUpdatedExtension(extension.withUpdateCheck())
             updatePendingUpdatesCount()
         }
 
-        override fun onExtensionUntrusted(extension: Extension.Untrusted) {
+        override fun onExtensionUntrusted(extension: Extension.Untrusted) = afterLoad {
             installedExtensionMapFlow.value -= extension.pkgName
             untrustedExtensionMapFlow.value += extension
             updatePendingUpdatesCount()
@@ -541,8 +670,10 @@ class ExtensionManager(
 
         override fun onPackageUninstalled(pkgName: String) {
             ExtensionLoader.uninstallPrivateExtension(context, pkgName)
-            unregisterExtension(pkgName)
-            updatePendingUpdatesCount()
+            afterLoad {
+                unregisterExtension(pkgName)
+                updatePendingUpdatesCount()
+            }
         }
     }
 
@@ -578,7 +709,8 @@ class ExtensionManager(
     private operator fun <T : Extension> Map<String, T>.plus(extension: T) = plus(extension.pkgName to extension)
 
     private fun <T : Extension> StateFlow<Map<String, T>>.mapExtensions(scope: CoroutineScope): StateFlow<List<T>> {
-        return map { it.values.toList() }.stateIn(scope, SharingStarted.Lazily, value.values.toList())
+        // KMK (r104): Eagerly, so the lists follow the maps from the start (the load waits for them to publish)
+        return map { it.values.toList() }.stateIn(scope, SharingStarted.Eagerly, value.values.toList())
     }
 }
 
@@ -619,3 +751,12 @@ fun Collection<Extension.Available>.copyFor(
 
 /** KMK (r95): a non-forced read of the extension repos is skipped while the last one is younger than this */
 internal const val INDEX_TTL_MS = 15 * 60_000L
+
+/** KMK (r104): how long the load waits for the public installed/untrusted lists to show what it found */
+private const val PUBLISH_WAIT_MS = 5_000L
+
+/** KMK (r104): after this long still loading, the package(s) being loaded are logged as an error */
+private const val STILL_LOADING_LOG_MS = 30_000L
+
+private const val STEP_LOADING = "loading"
+private const val STEP_DONE = "done"

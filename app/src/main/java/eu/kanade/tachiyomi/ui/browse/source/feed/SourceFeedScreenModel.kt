@@ -6,6 +6,7 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.setValue
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
 import dev.icerock.moko.resources.StringResource
@@ -34,11 +35,14 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import logcat.LogPriority
 import kotlinx.serialization.json.Json
 import mihon.domain.manga.model.toDomainManga
 import tachiyomi.core.common.util.QuerySanitizer.sanitize
@@ -46,6 +50,7 @@ import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.launchNonCancellable
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.lang.withUIContext
+import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.interactor.NetworkToLocalManga
 import tachiyomi.domain.source.interactor.CountFeedSavedSearchBySourceId
@@ -89,7 +94,15 @@ open class SourceFeedScreenModel(
     // KMK <--
 ) : StateScreenModel<SourceFeedState>(SourceFeedState()) {
 
-    var source = sourceManager.getOrStub(sourceId)
+    // KMK (r104): a Compose state, so the screen shows the real source when it's resolved late (see the last init)
+    var source by mutableStateOf(sourceManager.getOrStub(sourceId))
+
+    /**
+     * KMK (r104): true while [source] is a stub only because the extensions are still loading (a cold start or a
+     * process-death restore); the screen shows loading instead of "source not installed" meanwhile
+     */
+    var waitingForSource by mutableStateOf(source is StubSource && !sourceManager.isInitialized.value)
+        private set
 
     val sourceIsMangaDex = sourceId in mangaDexSourceIds
 
@@ -114,18 +127,7 @@ open class SourceFeedScreenModel(
             }
             .launchIn(screenModelScope)
         // KMK <--
-
-        getFeedSavedSearchBySourceId.subscribe(source.id)
-            .onEach {
-                val items = getSourcesToGetFeed(it)
-                mutableState.update { state ->
-                    state.copy(
-                        items = items,
-                    )
-                }
-                getFeed(items)
-            }
-            .launchIn(screenModelScope)
+        // KMK (r104): the feed itself starts in the last init block, after the source is known
     }
 
     // KMK-->
@@ -421,7 +423,50 @@ open class SourceFeedScreenModel(
         super.onDispose()
         coroutineDispatcher.close()
     }
+
+    // KMK (r104) -->
+    // Last in the class, so every property is set before the feed starts. After a cold start or a process-death
+    // restore this model can be made before the extensions finished loading (they load in the background), so
+    // [source] is a stub: then it waits for the sources (30 s), takes the real source and loads the feed with it
+    init {
+        if (!waitingForSource) {
+            subscribeFeed(getFeedSavedSearchBySourceId)
+        } else {
+            screenModelScope.launch {
+                try {
+                    withTimeoutOrNull(SOURCE_WAIT_MS) { sourceManager.isInitialized.first { it } }
+                    val resolved = sourceManager.getOrStub(sourceId)
+                    if (resolved !is StubSource) {
+                        logcat(LogPriority.INFO) { "Source feed: source $sourceId resolved after the extensions loaded" }
+                        source = resolved
+                        resetFilters()
+                    }
+                } finally {
+                    waitingForSource = false
+                }
+                subscribeFeed(getFeedSavedSearchBySourceId)
+            }
+        }
+    }
+
+    private fun subscribeFeed(getFeedSavedSearchBySourceId: GetFeedSavedSearchBySourceId) {
+        getFeedSavedSearchBySourceId.subscribe(source.id)
+            .onEach {
+                val items = getSourcesToGetFeed(it)
+                mutableState.update { state ->
+                    state.copy(
+                        items = items,
+                    )
+                }
+                getFeed(items)
+            }
+            .launchIn(screenModelScope)
+    }
+    // KMK <--
 }
+
+// KMK (r104): how long a model made before the extensions loaded waits for them
+private const val SOURCE_WAIT_MS = 30_000L
 
 @Immutable
 data class SourceFeedState(

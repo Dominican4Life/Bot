@@ -423,6 +423,8 @@ object PairSyncData {
         // KMK (r91): the sideloaded extensions as they were before the other device's repos were merged (null = now)
         sideloadedBefore: List<Triple<String, String, Boolean>>? = null,
     ): SyncExport {
+        // KMK (r104): "installed" below is the empty list until the extensions loaded (background, at start)
+        awaitInstalled()
         val own = selection.normalized()
         val sources = if (own.syncsSources) {
             Injekt.get<JsSourceManager>().exportSources(own.sourceKeys).map { (info, code) -> SyncSource(info, code) }
@@ -499,6 +501,8 @@ object PairSyncData {
     private suspend fun ensureAvailable() {
         val manga = Injekt.get<ExtensionManager>()
         val anime = Injekt.get<AnimeExtensionManager>()
+        // KMK (r104): the installed lists are empty until the extensions loaded (in the background, at start)
+        awaitInstalled(manga, anime)
         if (manga.availableNow().isEmpty()) runCatching { manga.findAvailableExtensions() }
         if (anime.availableNow().isEmpty()) runCatching { anime.findAvailableExtensions() }
         // KMK (r91): tried (also when offline): the APK count no longer waits for them
@@ -519,6 +523,22 @@ object PairSyncData {
 
     /** KMK (r91): reads the repos' lists when they weren't read yet this run (network; the caller limits the wait) */
     internal suspend fun loadRepoLists() = ensureAvailable()
+
+    /**
+     * KMK (r104): waits (at most 30 s) until both kinds of installed extensions are loaded, so [installedPackages]
+     * isn't the empty list of a cold start (the "have" list sent, the received-APK check)
+     */
+    internal suspend fun awaitInstalled() {
+        awaitInstalled(Injekt.get<ExtensionManager>(), Injekt.get<AnimeExtensionManager>())
+    }
+
+    /** KMK (r104): waits (at most 30 s) until both kinds of installed extensions are loaded */
+    private suspend fun awaitInstalled(manga: ExtensionManager, anime: AnimeExtensionManager) {
+        withTimeoutOrNull(30_000L) {
+            manga.isInitialized.first { it }
+            anime.isInitialized.first { it }
+        }
+    }
 
     /**
      * KMK (r91): whether the repos' lists are read (or there's no repo of that kind), so "sideloaded" is right: before
@@ -1321,6 +1341,7 @@ object PairSyncData {
         if (theirs.isEmpty()) return emptyList<ExtensionOffer>() to emptyList()
         val mangaManager = Injekt.get<ExtensionManager>()
         val animeManager = Injekt.get<AnimeExtensionManager>()
+        awaitInstalled(mangaManager, animeManager)
         // The repos' lists may not have been read yet this run (an added repo already read them again)
         if (mangaManager.availableNow().isEmpty() && !mangaReposChanged) {
             runCatching { mangaManager.findAvailableExtensions() }

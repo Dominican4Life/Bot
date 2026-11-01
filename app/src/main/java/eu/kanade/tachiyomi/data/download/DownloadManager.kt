@@ -63,6 +63,9 @@ class DownloadManager(
 
     // For use by DownloadService only
     fun downloaderStart() = downloader.start()
+
+    /** KMK (r104): waits (at most 60 s) until the downloader restored the saved queue (it waits for the sources) */
+    suspend fun awaitQueueRestored() = downloader.awaitQueueRestored()
     fun downloaderStop(reason: String? = null) = downloader.stop(reason)
 
     val isDownloaderRunning

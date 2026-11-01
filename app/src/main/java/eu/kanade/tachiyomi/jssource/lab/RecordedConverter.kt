@@ -1043,7 +1043,7 @@ internal object RecordedConverter {
         }
         val scored = candidates.map { i -> i to holdScore(step.requests[i], samples, key) }.filter { it.second > 0 }
         val top = scored.maxWithOrNull(compareBy<Pair<Int, Int>> { it.second }.thenBy { it.first })?.first
-            ?: return todoPart(method, "none of the recorded replies holds the returned ${if (key == "title") "titles" else "values"} as text", step, returnFor(method))
+            ?: return todoPart(method, notHeldReason(step, "the returned ${if (key == "title") "titles" else "values"}"), step, returnFor(method))
         // Of several pages of the same address, the first one (the others are its page 2, 3, …)
         val best = scored.filter { shapeOf(step.requests[it.first].url) == shapeOf(step.requests[top].url) }.minOf { it.first }
         val plan = planFor(rec, step)
@@ -1082,6 +1082,10 @@ internal object RecordedConverter {
         }
 
         val json = plan.json(best)
+        // r104: a JSON reply cut at the size limit can't be read as JSON (the HTML path below would only miss)
+        if (json == null && request.isJson) {
+            return todoPart(method, "the JSON reply of ${shortUrl(request.url)} holds the values, but it can't be read whole" + (if (request.truncated) " (cut at the recording's size limit)" else ""), step, returnFor(method))
+        }
         // The address first: its chain values (a session read from an earlier reply) can appear in the item fields
         val address = urlExpr(plan, request.url, best, pageMap, 0) + optionsExpr(plan, request, best, 0, pageMap)?.let { ", $it" }.orEmpty()
         val body = ArrayList<String>()
@@ -1180,7 +1184,12 @@ internal object RecordedConverter {
     private fun holdScore(r: RecordedRequest, samples: List<Map<String, String>>, key: String): Int {
         val body = r.body ?: return 0
         if (r.isJson) {
-            val json = runCatching { Json.parseToJsonElement(body) }.getOrNull() ?: return 0
+            // r104: a JSON reply that doesn't parse (cut at the size limit) is searched as text, its escapes read
+            val json = runCatching { Json.parseToJsonElement(body) }.getOrNull()
+                ?: return samples.count { s ->
+                    val target = s[key] ?: return@count false
+                    target.length >= 2 && (target in body || jsonEscaped(target).any { it in body })
+                }
             val values = HashSet<String>()
             val out = ArrayList<Pair<List<Any>, String>>()
             leaves(json, emptyList(), out, 0, maxDepth = 10)
@@ -1687,10 +1696,13 @@ internal object RecordedConverter {
         }
         val scored = candidates.map { i -> i to fields.count { f -> holdScore(step.requests[i], listOf(item), f) > 0 } }.filter { it.second > 0 }
         val best = scored.maxWithOrNull(compareBy<Pair<Int, Int>> { it.second }.thenBy { it.first })?.first
-            ?: return todoPart(method, "none of the recorded replies holds the title page's values", step, returnFor(method))
+            ?: return todoPart(method, notHeldReason(step, "the title page's values"), step, returnFor(method))
         val plan = planFor(rec, step)
         val request = step.requests[best]
         val json = plan.json(best)
+        if (json == null && request.isJson) {
+            return todoPart(method, "the JSON reply of ${shortUrl(request.url)} holds the values, but it can't be read whole" + (if (request.truncated) " (cut at the recording's size limit)" else ""), step, returnFor(method))
+        }
         val address = urlExpr(plan, request.url, best, emptyMap(), 0) + optionsExpr(plan, request, best, 0)?.let { ", $it" }.orEmpty()
         val body = ArrayList<String>()
         val words = ArrayList<String>()
@@ -2151,6 +2163,38 @@ internal object RecordedConverter {
         return "{ ${parts.joinToString(", ")} }"
     }
 
+    /**
+     * r104: why no reply of [step] holds [what]: no request recorded at all, or replies that hold nothing readable
+     * (a JSON reply whose data is one long encoded string the extension decodes in its own code)
+     */
+    private fun notHeldReason(step: RecordedStep, what: String): String {
+        if (step.dataRequests.isEmpty()) {
+            return if (step.requests.isEmpty()) {
+                "no request was recorded in this step, so there is nothing to convert from"
+            } else {
+                "no data request was recorded in this step (only images, bot-check parts or failed requests)"
+            }
+        }
+        val encoded = step.dataRequests.firstNotNullOfOrNull { r ->
+            if (!r.isJson) return@firstNotNullOfOrNull null
+            val json = runCatching { Json.parseToJsonElement(r.body.orEmpty()) }.getOrNull() ?: return@firstNotNullOfOrNull null
+            val out = ArrayList<Pair<List<Any>, String>>()
+            leaves(json, emptyList(), out, 0, maxDepth = 6)
+            out.firstOrNull { (_, v) -> v.length >= 200 && ENCODED.matches(v) }?.let { (p, _) -> r to p }
+        }
+        if (encoded != null) {
+            return "none of the recorded replies holds $what as text; the JSON reply of ${shortUrl(encoded.first.url)} " +
+                "carries one long encoded string at ${pathWords(encoded.second)}, which the extension decodes in its own code"
+        }
+        return "none of the recorded replies holds $what as text"
+    }
+
+    /** [s] as it can appear inside a JSON string: quotes and backslashes escaped, slashes as they are or as `\/` */
+    private fun jsonEscaped(s: String): List<String> {
+        val plain = JsonPrimitive(s).toString().let { it.substring(1, it.length - 1) }
+        return listOf(plain, plain.replace("/", "\\/"))
+    }
+
     // ---------- TODO parts ----------
 
     private fun todoPart(method: String, reason: String, step: RecordedStep?, last: String, extra: List<String> = emptyList()): PartCode {
@@ -2246,6 +2290,9 @@ internal object RecordedConverter {
     private fun norm(s: String): String = htmlUnescape(s).replace(WS, " ").trim()
 
     private val WS = Regex("""\s+""")
+
+    /** r104: base64 / base64url / hex text without spaces (an encoded or encrypted payload) */
+    private val ENCODED = Regex("""[A-Za-z0-9+/=_-]+""")
 
     private fun htmlUnescape(s: String): String =
         if ('&' !in s) s else s.replace("&amp;", "&").replace("&quot;", "\"").replace("&#39;", "'").replace("&#039;", "'").replace("&lt;", "<").replace("&gt;", ">").replace("&nbsp;", " ")

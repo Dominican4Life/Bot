@@ -12,6 +12,8 @@ import eu.kanade.tachiyomi.source.online.MetadataSource
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import exh.source.MERGED_SOURCE_ID
 import exh.source.getMainSource
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import tachiyomi.data.DatabaseHandler
 import tachiyomi.data.MemoColumnAdapter
 import tachiyomi.domain.category.interactor.GetCategories
@@ -35,7 +37,17 @@ class MangaBackupCreator(
     // SY <--
 ) {
 
+    /**
+     * KMK (r104): manga extensions load in the background; a backup made right at start (the automatic one, a sync on
+     * app start) waits for them, or titles of sources not loaded yet lose their metadata here, and the source
+     * settings ([PreferenceBackupCreator.createSource], written after this) would miss those sources
+     */
+    suspend fun awaitSources() {
+        withTimeoutOrNull(60_000L) { sourceManager.isInitialized.first { it } }
+    }
+
     suspend operator fun invoke(mangas: List<Manga>, options: BackupOptions): List<BackupManga> {
+        awaitSources()
         return mangas.map {
             backupManga(it, options)
         }

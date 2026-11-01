@@ -5,6 +5,7 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.lang.toLong
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.data.DatabaseHandler
+import tachiyomi.data.logFirstQuery
 import tachiyomi.domain.history.model.History
 import tachiyomi.domain.history.model.HistoryUpdate
 import tachiyomi.domain.history.model.HistoryWithRelations
@@ -24,7 +25,8 @@ class HistoryRepositoryImpl(
         // KMK <--
     ): Flow<List<HistoryWithRelations>> {
         return handler.subscribeToList {
-            historyViewQueries.history(
+            // KMK (r104): `historyScoped` counts only the chapters of titles with history (same rows as `history`)
+            historyViewQueries.historyScoped(
                 // KMK -->
                 Manga.CHAPTER_SHOW_NOT_BOOKMARKED,
                 Manga.CHAPTER_SHOW_BOOKMARKED,
@@ -36,11 +38,14 @@ class HistoryRepositoryImpl(
                 HistoryMapper::mapHistoryWithRelations,
             )
         }
+            // KMK (r104)
+            .logFirstQuery("History")
     }
 
     override suspend fun getLastHistory(): HistoryWithRelations? {
         return handler.awaitOneOrNull {
-            historyViewQueries.getLatestHistory(
+            // KMK (r104): same row as `getLatestHistory`, counting only the chapters of titles with history
+            historyViewQueries.getLatestHistoryScoped(
                 Manga.CHAPTER_SHOW_NOT_BOOKMARKED,
                 Manga.CHAPTER_SHOW_BOOKMARKED,
                 HistoryMapper::mapHistoryWithRelations,

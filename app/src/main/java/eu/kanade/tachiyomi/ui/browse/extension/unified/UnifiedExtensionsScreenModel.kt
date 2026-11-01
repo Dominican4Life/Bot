@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.update
@@ -123,6 +124,10 @@ class UnifiedExtensionsScreenModel(
         }
 
         screenModelScope.launchIO {
+            // KMK (r104): both kinds of extensions load in the background; until then their installed lists are empty
+            // and every installed package would show as not installed (the screen shows loading meanwhile)
+            mangaManager.isInitialized.first { it }
+            animeManager.isInitialized.first { it }
             combine(mangaFlow, animeFlow, prefsFlow, steps, ExtensionStoreStatus.entries) { manga, anime, prefs, steps, status ->
                 // KMK: a failed rebuild is logged and skipped, so later changes (like a switch) still show
                 runCatching { build(manga, anime, prefs, steps, status) }

@@ -87,3 +87,167 @@ FROM updatesView
 WHERE read = :read
 AND dateUpload > :after
 LIMIT :limit;
+
+-- KMK -->
+-- Updates screen and widget (r104). The same columns, filters and limit as getRecentUpdatesWithFilters /
+-- getUpdatesByReadStatus above, so mapUpdatesWithRelations maps them, read from a copy of updatesView's SELECT
+-- with three differences:
+--   * UNION ALL instead of UNION: the branches are disjoint (source <> 6969 / source = 6969, and the row's
+--     mangaId is that manga), so UNION's sort over all 16 columns to drop duplicates did nothing;
+--   * the order is spelled out. updatesView sorts by datefetch DESC, and UNION's merge then orders rows with
+--     the same datefetch by the remaining columns ascending (mangaId, then chapterId; the title follows the
+--     id). The same order is written here, so the list doesn't reshuffle;
+--   * `chapters CROSS JOIN mangas` (SQLite keeps CROSS JOIN's table order; the join condition is in WHERE,
+--     not `CROSS JOIN … ON`, which SQLDelight's grammar may not accept) in the first branch: SQLite walks
+--     chapters newest-fetched first and stops at the limit, instead of reading every chapter of every
+--     favourite and sorting them (left to itself the planner picks the favourites index and sorts).
+--     updatesByReadStatus with read = 0 (the widget) walks kmk_chapters_unread_date_fetch_index (unread
+--     chapters only), so it stays fast when few are unread. updatesWithFilters walks
+--     kmk_chapters_date_fetch_index (all chapters): with a filter that matches few chapters it would read them all, so UpdatesRepositoryImpl
+--     uses it only without the unread / started / bookmarked filters and keeps getRecentUpdatesWithFilters
+--     for those. The merged-titles branch keeps its old plan (merged titles, then their members' chapters by
+--     manga_id): `CROSS JOIN chapters` keeps chapters inside (else SQLite may walk the new index there,
+--     through every chapter when there are no merged titles), and `date_fetch - date_added > 0` (the same
+--     test as date_fetch > date_added; both columns are NOT NULL) isn't a range SQLite can look up on the
+--     date_fetch indexes (else it reads every chapter fetched since the title was added, per merged title).
+-- Not a view change; the indexes are in chapters.sq / episodes.sq and 58.sqm.
+updatesWithFilters:
+SELECT *
+FROM (
+    SELECT
+        mangas._id AS mangaId,
+        mangas.title AS mangaTitle,
+        chapters._id AS chapterId,
+        chapters.name AS chapterName,
+        chapters.scanlator,
+        chapters.url AS chapterUrl,
+        chapters.read,
+        chapters.bookmark,
+        chapters.last_page_read,
+        mangas.source,
+        mangas.favorite,
+        mangas.thumbnail_url AS thumbnailUrl,
+        mangas.cover_last_modified AS coverLastModified,
+        chapters.date_upload AS dateUpload,
+        chapters.date_fetch AS datefetch,
+        excluded_scanlators.scanlator AS excludedScanlator
+    FROM chapters CROSS JOIN mangas
+    LEFT JOIN excluded_scanlators
+    ON mangas._id = excluded_scanlators.manga_id
+    AND chapters.scanlator = excluded_scanlators.scanlator
+    WHERE mangas._id = chapters.manga_id
+    AND favorite = 1 AND source <> 6969
+    AND date_fetch > date_added
+    UNION ALL
+    SELECT
+        mangas._id AS mangaId,
+        mangas.title AS mangaTitle,
+        chapters._id AS chapterId,
+        chapters.name AS chapterName,
+        chapters.scanlator,
+        chapters.url AS chapterUrl,
+        chapters.read,
+        chapters.bookmark,
+        chapters.last_page_read,
+        mangas.source,
+        mangas.favorite,
+        mangas.thumbnail_url AS thumbnailUrl,
+        mangas.cover_last_modified AS coverLastModified,
+        chapters.date_upload AS dateUpload,
+        chapters.date_fetch AS datefetch,
+        excluded_scanlators.scanlator AS excludedScanlator
+    FROM mangas
+    LEFT JOIN (
+        SELECT merged.manga_id,merged.merge_id
+        FROM merged
+        GROUP BY merged.merge_id
+    ) AS ME
+    ON ME.merge_id = mangas._id
+    CROSS JOIN chapters
+    LEFT JOIN excluded_scanlators
+    ON mangas._id = excluded_scanlators.manga_id
+    AND chapters.scanlator = excluded_scanlators.scanlator
+    WHERE ME.manga_id = chapters.manga_id
+    AND favorite = 1 AND source = 6969
+    AND chapters.date_fetch - mangas.date_added > 0
+) AS U
+WHERE dateUpload > :after
+AND (:read IS NULL OR read = :read)
+-- Started means some progress but not finished, Read means finished chapter, thus:
+AND (
+    :started IS NULL
+    OR (:started = 1 AND last_page_read > 0 AND read = 0)
+    OR (:started = 0 AND last_page_read = 0 AND read = 0)
+)
+AND (:bookmarked IS NULL OR bookmark = :bookmarked)
+AND (
+    (excludedScanlator IS NULL OR :hideExcludedScanlators = 0)
+)
+ORDER BY datefetch DESC, mangaId, chapterId
+LIMIT :limit;
+
+updatesByReadStatus:
+SELECT *
+FROM (
+    SELECT
+        mangas._id AS mangaId,
+        mangas.title AS mangaTitle,
+        chapters._id AS chapterId,
+        chapters.name AS chapterName,
+        chapters.scanlator,
+        chapters.url AS chapterUrl,
+        chapters.read,
+        chapters.bookmark,
+        chapters.last_page_read,
+        mangas.source,
+        mangas.favorite,
+        mangas.thumbnail_url AS thumbnailUrl,
+        mangas.cover_last_modified AS coverLastModified,
+        chapters.date_upload AS dateUpload,
+        chapters.date_fetch AS datefetch,
+        excluded_scanlators.scanlator AS excludedScanlator
+    FROM chapters CROSS JOIN mangas
+    LEFT JOIN excluded_scanlators
+    ON mangas._id = excluded_scanlators.manga_id
+    AND chapters.scanlator = excluded_scanlators.scanlator
+    WHERE mangas._id = chapters.manga_id
+    AND favorite = 1 AND source <> 6969
+    AND date_fetch > date_added
+    UNION ALL
+    SELECT
+        mangas._id AS mangaId,
+        mangas.title AS mangaTitle,
+        chapters._id AS chapterId,
+        chapters.name AS chapterName,
+        chapters.scanlator,
+        chapters.url AS chapterUrl,
+        chapters.read,
+        chapters.bookmark,
+        chapters.last_page_read,
+        mangas.source,
+        mangas.favorite,
+        mangas.thumbnail_url AS thumbnailUrl,
+        mangas.cover_last_modified AS coverLastModified,
+        chapters.date_upload AS dateUpload,
+        chapters.date_fetch AS datefetch,
+        excluded_scanlators.scanlator AS excludedScanlator
+    FROM mangas
+    LEFT JOIN (
+        SELECT merged.manga_id,merged.merge_id
+        FROM merged
+        GROUP BY merged.merge_id
+    ) AS ME
+    ON ME.merge_id = mangas._id
+    CROSS JOIN chapters
+    LEFT JOIN excluded_scanlators
+    ON mangas._id = excluded_scanlators.manga_id
+    AND chapters.scanlator = excluded_scanlators.scanlator
+    WHERE ME.manga_id = chapters.manga_id
+    AND favorite = 1 AND source = 6969
+    AND chapters.date_fetch - mangas.date_added > 0
+) AS U
+WHERE read = :read
+AND dateUpload > :after
+ORDER BY datefetch DESC, mangaId, chapterId
+LIMIT :limit;
+-- KMK <--

@@ -80,6 +80,13 @@ import java.util.Locale
  * `__labPicker.menuMode`. Tags: every tapped row adds its own group (identified by its selector; unlabelled rows are
  * "Tags", "Tags 2"… by their exact row), kept in the page's order (picker.js `docIndex`); a tap in the site's menus
  * makes its group with a helper Warn (r103 fix; a [State.notice] when the helper is off). Title-page fields in a labelled row keep that row's selector ([Derive.fieldSelector]).
+ *
+ * r104 (the owner's 123av Tags were whole rows "Code FC2-PPV…" and the labels "Code, Type…"): a Tags tap in a details
+ * block brings every row of it ([RawPick.rows]): one group per row (missing rows only on a re-tap; Undo removes that
+ * tap's rows). A restored group that reads whole rows or labels ([Derive.needsSplit]) gets "Split into rows"
+ * ([splitTagGroup]: picker.js `rowsFor`, answered as a pick with via "split"). The **Suggestions** label stays armed
+ * like Tags: each tapped card's section ("You may like", "Related videos") is a [Derive.SuggestionGroup]
+ * ([State.suggestionGroups], Derive writes `suggestionGroups` for generic-list v7's getRelated).
  */
 internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean, private val editKey: String? = null) :
     StateScreenModel<BuilderScreenModel.State>(State(url = startUrl.orEmpty(), anime = anime, editKey = editKey)) {
@@ -136,6 +143,10 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
         val inMenu: Boolean = false,
         /** r103 fix: every row of this look on the page (picker.js `likeRows`): a restored group finds its own row */
         val likeRows: List<LikeRow> = emptyList(),
+        /** r104: a Tags tap in a details block: every row of the block (picker.js `rows`), [] when in none */
+        val rows: List<DetailRow> = emptyList(),
+        /** r104: a Suggestions tap: the section's group (picker.js `suggest`), null when no section was found */
+        val suggest: Derive.SuggestionGroup? = null,
     ) {
         fun info(): PickInfo = PickInfo(
             tag = tag,
@@ -160,8 +171,24 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
             rowValues = rowValues,
             rowChips = rowChips,
             inMenu = inMenu,
+            detailRows = rows.map { it.label },
+            suggestName = suggest?.name.orEmpty(),
+            suggestCount = suggest?.count ?: 0,
         )
     }
+
+    /** r104: one row of a details block (picker.js `detailRows`): its label, label-anchored selector, target, values */
+    @Immutable
+    @Serializable
+    data class DetailRow(
+        val label: String,
+        val selector: String,
+        val target: String = "tags",
+        val values: List<String> = emptyList(),
+        val chips: Int = 0,
+        val order: Int = -1,
+        val kind: String = "",
+    )
 
     /** r103 fix: one row of a Tags pick's look on the page: its exact selector, its place, its first texts */
     @Immutable
@@ -236,6 +263,16 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
         val bannerDismissed: Boolean = false,
         /** r103: a short note over the page (a Tags tap in the site's menu, kept), null = none */
         val notice: String? = null,
+        /** r104: the selectors of the groups the last Tags tap added (a details block adds several; Undo removes them) */
+        val lastTagTap: List<String> = emptyList(),
+        /**
+         * r104 fix: the Tags groups (and their tap order) exactly as they were before the last details-block tap or
+         * "Split into rows", which also drop the groups that read whole rows or labels; Undo puts them back. null = none
+         */
+        val tagsBefore: List<Derive.TagGroup>? = null,
+        val tagOrderBefore: List<String> = emptyList(),
+        /** r104: the title page's sections tapped as Suggestions, one group each, in the order tapped */
+        val suggestionGroups: List<Derive.SuggestionGroup> = emptyList(),
     ) {
         val site: String get() = (pageUrl ?: loadUrl ?: url).let { Detector.normalize(it) }
         val host: String get() = site.removePrefix("https://").removePrefix("http://")
@@ -246,7 +283,8 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
         val allLabels: List<String> get() = Step.ListPage.labels + Step.TitlePage.labels + listOf(if (anime) "video" else "image")
 
         /** r102: [label] has a value: picked, or (Edit by tapping, older source) read from the code */
-        fun done(label: String): Boolean = pick(label) != null || fromCodeOnly(label) || (label == "tags" && tagGroups.isNotEmpty())
+        fun done(label: String): Boolean = pick(label) != null || fromCodeOnly(label) || (label == "tags" && tagGroups.isNotEmpty()) ||
+            (label == "suggestions" && suggestionGroups.isNotEmpty())
 
         /** r102: [label] is taken from the code (not tapped again) */
         fun fromCodeOnly(label: String): Boolean = pick(label) == null && codeKeys(label).any { fromCode[it]?.isNotBlank() == true }
@@ -500,7 +538,14 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
                     LikeRow(exact, row.int("order") ?: -1, row.arr("values")?.mapNotNull { (it as? JsonPrimitive)?.content }.orEmpty())
                 }
             }.orEmpty().take(30),
+            rows = o.arr("rows")?.let { detailRowsOf(it) }.orEmpty(),
+            suggest = o.obj("suggest")?.let { suggestionOf(it) },
         )
+        // r104: picker.js `rowsFor`'s answer ("Split into rows")
+        if (raw.via == "split") {
+            onSplit(o.str("split").orEmpty(), raw.rows)
+            return
+        }
         // r100: the helper's suggestion is shown by its card, never taken as a tap waiting for a label
         if (raw.via == "suggest") {
             onSuggestion(raw, o.str("forLabel").orEmpty(), o.bool("none") == true)
@@ -524,7 +569,7 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
         // r102: "Tapping for…": the tap was for an armed label; the page has disarmed itself (Tags stays armed)
         val armedFor = o.str("armed")?.takeIf { it.isNotBlank() && raw.via == "tap" }
         if (armedFor != null && armedFor in state.value.allLabels) {
-            if (armedFor != "tags") mutableState.update { it.copy(armed = null) }
+            if (armedFor !in STICKY_LABELS) mutableState.update { it.copy(armed = null) }
             AppLog.add('D', "lab", "Builder: tap for $armedFor${if (raw.rowLabel.isNotBlank()) " · row \"${raw.rowLabel}\"" else ""}")
             applyLabel(armedFor, raw)
             return
@@ -592,6 +637,18 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
      * the label most likely means (`suggest`).
      */
     private fun applyLabel(label: String, raw: RawPick) {
+        // r104: a Suggestions tap outside a section with a heading makes nothing (the note says what to tap)
+        val suggestion = if (label == "suggestions") raw.suggest?.takeIf { it.item.isNotBlank() } else null
+        if (label == "suggestions" && suggestion == null) {
+            AppLog.add('W', "lab", "Builder: Suggestions tap outside a section with a heading and repeated cards (${raw.likeSelector})")
+            mutableState.update {
+                it.copy(
+                    pending = null,
+                    notice = "No “You may like” / “Related” section around that tap: tap one card (its picture or title) inside such a section.",
+                )
+            }
+            return
+        }
         // r103 fix: a Tags tap (or a long press named Tags) in the site's own menus makes its group like any other;
         // the helper warns ("This looks like the site's menu…": Keep mine / Not this). r103 refused it, and the
         // owner's WordPress tags (footer.entry-footer) and other normal title layouts were refused with it
@@ -621,21 +678,60 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
             attrsAllHttp = raw.attrsAllHttp,
             rowSelector = rowSelector,
         )
-        // r102: Tags is a group per Details row (Cast, Maker…). r103: every tap adds a group (an unlabelled row too)
-        val tagged = if (label == "tags") tagGroupOf(raw, state.value.tagGroups) else null
+        // r102: Tags is a group per Details row (Cast, Maker…). r103: every tap adds a group (an unlabelled row too).
+        // r104: a tap in a details block adds every row of it (the rows not there yet)
+        // r104 fix: the groups that read whole rows or labels (a restored "Tags 2" = "Code FC2…", "Tags" = "Code, Type…")
+        // go first, so the site's own rows keep their names ("Tags", not "Tags 3"); Undo brings them back
+        val replaced = if (label == "tags" && raw.rows.isNotEmpty()) state.value.tagGroups.filter { Derive.needsSplit(it) } else emptyList()
+        val rowsTap = if (label == "tags" && raw.rows.isNotEmpty()) {
+            withRows(state.value.tagGroups.filterNot { Derive.needsSplit(it) }, raw.rows)
+        } else {
+            null
+        }
+        val tagged = if (label == "tags" && rowsTap == null) tagGroupOf(raw, state.value.tagGroups) else null
         val group = tagged?.first
         mutableState.update { s ->
             s.copy(
                 picks = s.picks.filter { it.pick.label != label } + picked,
                 raws = s.raws + (label to raw),
-                tagGroups = if (tagged != null) inPageOrder(withGroup(tagged.second, tagged.first)) else s.tagGroups,
+                tagGroups = when {
+                    rowsTap != null -> inPageOrder(rowsTap.first)
+                    tagged != null -> inPageOrder(withGroup(tagged.second, tagged.first))
+                    else -> s.tagGroups
+                },
+                lastTagTap = when {
+                    // a re-tap that added no row leaves the last tap's rows for Undo
+                    rowsTap != null -> rowsTap.second.ifEmpty { s.lastTagTap }
+                    tagged != null -> emptyList()
+                    else -> s.lastTagTap
+                },
+                // r104 fix: a block tap that changed the groups can be undone exactly; another Tags tap can't
+                tagsBefore = when {
+                    rowsTap != null && (rowsTap.second.isNotEmpty() || replaced.isNotEmpty()) -> s.tagGroups
+                    rowsTap != null -> s.tagsBefore
+                    label == "tags" -> null
+                    else -> s.tagsBefore
+                },
+                tagOrderBefore = when {
+                    rowsTap != null && (rowsTap.second.isNotEmpty() || replaced.isNotEmpty()) -> s.tagTapOrder
+                    rowsTap != null -> s.tagOrderBefore
+                    label == "tags" -> emptyList()
+                    else -> s.tagOrderBefore
+                },
+                suggestionGroups = if (suggestion != null) withSuggestion(s.suggestionGroups, suggestion) else s.suggestionGroups,
                 // the helper card warns; with "Check each pick" off a notice says it instead
                 notice = if (menuTags && !s.helper) {
                     "This looks like the site's menu, not this title's tags — kept. Undo removes it."
+                } else if (replaced.isNotEmpty()) {
+                    replacedNotice(replaced)
                 } else {
                     null
                 },
-                tagTapOrder = if (group != null) s.tagTapOrder.filter { it != group.selector } + group.selector else s.tagTapOrder,
+                tagTapOrder = when {
+                    group != null -> s.tagTapOrder.filter { it != group.selector } + group.selector
+                    rowsTap != null -> s.tagTapOrder.filter { it !in rowsTap.second } + rowsTap.second
+                    else -> s.tagTapOrder
+                },
                 fromCode = s.fromCode - codeKeys(label),
                 pending = null,
                 helperFor = if (s.helper) label else null,
@@ -649,6 +745,25 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
         AppLog.add('I', "lab", "Builder: $label = ${raw.likeSelector} (${raw.count} like it) on ${raw.pageUrl}")
         if (group != null) {
             AppLog.add('I', "lab", "Builder: tags group \"${group.name}\" = ${group.selector} (${group.target}; ${group.values.take(3).joinToString(", ")})")
+        }
+        if (replaced.isNotEmpty()) {
+            AppLog.add(
+                'I',
+                "lab",
+                "Builder: tags groups ${replaced.joinToString(", ") { "\"${it.name}\"" }} (whole rows / labels) replaced by the details block's rows",
+            )
+        }
+        if (rowsTap != null) {
+            val added = state.value.tagGroups.filter { it.selector in rowsTap.second }
+            AppLog.add(
+                'I',
+                "lab",
+                "Builder: tags from a details block: ${raw.rows.size} rows, ${added.size} new " +
+                    "(${added.joinToString(", ") { "${it.name} → ${it.target}" }})",
+            )
+        }
+        if (suggestion != null) {
+            AppLog.add('I', "lab", "Builder: suggestions group \"${suggestion.name}\" = ${suggestion.item} (${suggestion.count} cards)")
         }
         // r101: the Next link's address tells the extras how this site numbers its pages (page=2, /page/2 …)
         if (label == "next") {
@@ -774,6 +889,138 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
         return group to list
     }
 
+    /**
+     * r104: [groups] with a group for each of [rows] whose selector no group has yet (named by its label, distinct;
+     * target tags when the row holds links / chips, else description), and the selectors added
+     */
+    private fun withRows(groups: List<Derive.TagGroup>, rows: List<DetailRow>): Pair<List<Derive.TagGroup>, List<String>> {
+        var list = groups
+        val added = ArrayList<String>()
+        rows.forEach { r ->
+            if (r.selector.isBlank() || list.any { it.selector == r.selector }) return@forEach
+            list = list + Derive.TagGroup(
+                name = distinctName(r.label.replace(":", "").trim().take(30).ifBlank { "Tags" }, list),
+                selector = r.selector,
+                target = if (r.target == "description") "description" else "tags",
+                values = r.values,
+                order = r.order,
+            )
+            added += r.selector
+        }
+        return list to added
+    }
+
+    private fun detailRowsOf(array: JsonArray): List<DetailRow> = array.mapNotNull { element ->
+        val row = element as? JsonObject ?: return@mapNotNull null
+        val selector = row.str("selector")?.trim().orEmpty()
+        val label = row.str("label")?.trim().orEmpty()
+        if (selector.isEmpty() || label.isEmpty()) {
+            null
+        } else {
+            DetailRow(
+                label = label,
+                selector = selector,
+                target = row.str("target") ?: "tags",
+                values = row.arr("values")?.mapNotNull { (it as? JsonPrimitive)?.content }.orEmpty().take(8),
+                chips = row.int("chips") ?: 0,
+                order = row.int("order") ?: -1,
+                kind = row.str("kind").orEmpty(),
+            )
+        }
+    }.take(40)
+
+    private fun suggestionOf(o: JsonObject): Derive.SuggestionGroup? {
+        val item = o.str("item")?.trim().orEmpty()
+        if (item.isEmpty()) return null
+        return Derive.SuggestionGroup(
+            name = o.str("name")?.trim().orEmpty().replace(":", "").take(60).ifBlank { "Suggestions" },
+            item = item,
+            link = o.str("link")?.trim().orEmpty(),
+            title = o.str("title")?.trim().orEmpty(),
+            cover = o.str("cover")?.trim().orEmpty(),
+            coverAttr = o.str("coverAttr")?.trim().orEmpty().ifBlank { "src" },
+            count = o.int("count") ?: 0,
+            order = o.int("order") ?: -1,
+            values = o.arr("samples")?.mapNotNull { (it as? JsonPrimitive)?.content }.orEmpty().take(3),
+        )
+    }
+
+    /** r104: the same section again (same item selector or name) replaces its group, keeping its name; else it is added */
+    private fun withSuggestion(groups: List<Derive.SuggestionGroup>, group: Derive.SuggestionGroup): List<Derive.SuggestionGroup> {
+        val i = groups.indexOfFirst { it.item == group.item || it.name.equals(group.name, ignoreCase = true) }
+        if (i < 0) return groups + group
+        return groups.toMutableList().also { it[i] = group.copy(name = groups[i].name) }
+    }
+
+    /** r104: the Suggestions card's remove (the last one gone = no Suggestions pick) */
+    fun removeSuggestionGroup(index: Int) {
+        val s = state.value
+        val gone = s.suggestionGroups.getOrNull(index) ?: return
+        val left = s.suggestionGroups.filterIndexed { i, _ -> i != index }
+        AppLog.add('D', "lab", "Builder: suggestions group \"${gone.name}\" removed")
+        if (left.isEmpty()) {
+            removePick("suggestions")
+        } else {
+            mutableState.update { it.copy(suggestionGroups = left) }
+            rederive()
+        }
+    }
+
+    /**
+     * r104: the Tags card's "Split into rows" on a restored group that reads whole rows or labels ([Derive.needsSplit]):
+     * the page finds its details block (picker.js `rowsFor`) and answers with every row ([onSplit])
+     */
+    fun splitTagGroup(index: Int) {
+        val g = state.value.tagGroups.getOrNull(index) ?: return
+        val exact = g.exact.trim().removeSuffix(" a").trim()
+        val also = JsonArray(listOfNotNull(exact.takeIf { it.isNotEmpty() && it != g.selector }).map { JsonPrimitive(it) })
+        AppLog.add('D', "lab", "Builder: split tags group \"${g.name}\" (${g.selector}) into rows")
+        mutableState.update { it.copy(notice = "Splitting “${g.name}” into rows… (it needs a title page open)") }
+        page("if (window.__labPicker.rowsFor) window.__labPicker.rowsFor(${JsonPrimitive(g.selector)}, $also);")
+    }
+
+    /** r104: picker.js `rowsFor`'s answer: the group of [selector] is replaced by its block's rows (missing rows only) */
+    private fun onSplit(selector: String, rows: List<DetailRow>) {
+        val s = state.value
+        val g = s.tagGroups.firstOrNull { it.selector == selector } ?: return
+        if (rows.isEmpty()) {
+            AppLog.add('W', "lab", "Builder: split \"${g.name}\": no details rows for $selector on ${s.pageUrl.orEmpty()}")
+            mutableState.update {
+                it.copy(notice = "“${g.name}” isn't on this page: open a title page, then Split into rows again (or tap the details with Tags armed).")
+            }
+            return
+        }
+        // r104 fix: every group that reads whole rows or labels goes (the owner's "Tags 2" rows and "Tags" labels are
+        // one block: the site's "Tags" row keeps its name); Undo puts the groups back exactly as they were
+        val replaced = s.tagGroups.filter { it === g || Derive.needsSplit(it) }
+        val (list, added) = withRows(s.tagGroups.filter { it !== g && !Derive.needsSplit(it) }, rows)
+        val gone = replaced.map { it.selector }.toSet()
+        mutableState.update {
+            it.copy(
+                tagGroups = inPageOrder(list),
+                tagTapOrder = it.tagTapOrder.filter { sel -> sel !in gone } + added,
+                lastTagTap = added,
+                tagsBefore = it.tagGroups,
+                tagOrderBefore = it.tagTapOrder,
+                // the split is the last Tags action: Undo undoes it (not another label's pick)
+                picks = it.picks.filter { p -> p.pick.label != "tags" } + it.picks.filter { p -> p.pick.label == "tags" },
+                notice = if (replaced.size > 1) replacedNotice(replaced) else null,
+            )
+        }
+        AppLog.add(
+            'I',
+            "lab",
+            "Builder: tags group \"${g.name}\" split into ${rows.size} rows (${added.size} new: ${rows.joinToString(", ") { it.label }})" +
+                if (replaced.size > 1) "; also replaced ${replaced.filter { it !== g }.joinToString(", ") { "\"${it.name}\"" }}" else "",
+        )
+        rederive()
+    }
+
+    /** r104 fix: the note when groups that read whole rows or labels were replaced by the block's rows */
+    private fun replacedNotice(replaced: List<Derive.TagGroup>): String =
+        "Replaced ${replaced.joinToString(", ") { "\u201c${it.name}\u201d" }} (whole rows or labels) by the site's " +
+            "rows. Undo brings ${if (replaced.size == 1) "it" else "them"} back."
+
     /** r103 fix: the row (of this tap's look) whose texts best match a restored group's saved values; null if none */
     private fun restoredRowOf(owner: Derive.TagGroup, rows: List<Pair<String, LikeRow>>): Pair<String, LikeRow>? {
         val saved = owner.values.map { it.trim().lowercase(Locale.ROOT) }.filter { it.isNotEmpty() }.toSet()
@@ -836,7 +1083,7 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
         if (left.isEmpty() && (s.raws["tags"] != null || s.pick("tags") != null)) {
             removePick("tags")
         } else {
-            mutableState.update { it.copy(tagGroups = left) }
+            mutableState.update { it.copy(tagGroups = left, tagsBefore = null, tagOrderBefore = emptyList()) }
             rederive()
         }
     }
@@ -859,6 +1106,10 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
                 picks = s.picks.filter { it.pick.label != label },
                 raws = s.raws - label,
                 tagGroups = if (label == "tags") emptyList() else s.tagGroups,
+                lastTagTap = if (label == "tags") emptyList() else s.lastTagTap,
+                tagsBefore = if (label == "tags") null else s.tagsBefore,
+                tagOrderBefore = if (label == "tags") emptyList() else s.tagOrderBefore,
+                suggestionGroups = if (label == "suggestions") emptyList() else s.suggestionGroups,
                 fromCode = s.fromCode - codeKeys(label),
                 helperFor = s.helperFor?.takeIf { it != label },
                 suggestion = if (s.helperFor == label) null else s.suggestion,
@@ -873,7 +1124,48 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
         mutableState.update { s ->
             if (s.pending != null) {
                 s.copy(pending = null)
-            } else if (s.picks.lastOrNull()?.pick?.label == "tags" && s.tagGroups.size > 1) {
+            } else if (s.tagsBefore != null &&
+                (s.picks.lastOrNull()?.pick?.label == "tags" || s.picks.none { it.pick.label == "tags" })
+            ) {
+                // r104 fix: the last details-block tap or Split into rows: the groups exactly as they were before
+                val back = s.tagsBefore.orEmpty()
+                if (back.isEmpty()) {
+                    s.copy(
+                        picks = s.picks.filter { it.pick.label != "tags" },
+                        raws = s.raws - "tags",
+                        tagGroups = emptyList(),
+                        tagTapOrder = emptyList(),
+                        lastTagTap = emptyList(),
+                        tagsBefore = null,
+                        tagOrderBefore = emptyList(),
+                        notice = null,
+                    )
+                } else {
+                    s.copy(
+                        tagGroups = back,
+                        tagTapOrder = s.tagOrderBefore,
+                        lastTagTap = emptyList(),
+                        tagsBefore = null,
+                        tagOrderBefore = emptyList(),
+                        notice = null,
+                    )
+                }
+            } else if (s.picks.lastOrNull()?.pick?.label == "tags" && s.lastTagTap.isNotEmpty() &&
+                s.tagGroups.any { it.selector !in s.lastTagTap }
+            ) {
+                // r104: a details block's tap added several rows: they all go (when they were all the groups, the
+                // last branch below removes the Tags pick itself)
+                s.copy(
+                    tagGroups = s.tagGroups.filter { it.selector !in s.lastTagTap },
+                    tagTapOrder = s.tagTapOrder.filter { it !in s.lastTagTap },
+                    lastTagTap = emptyList(),
+                )
+            } else if (s.picks.lastOrNull()?.pick?.label == "suggestions" && s.suggestionGroups.size > 1) {
+                // r104: Suggestions: the last section tapped goes, the others stay
+                s.copy(suggestionGroups = s.suggestionGroups.dropLast(1))
+            } else if (s.picks.lastOrNull()?.pick?.label == "tags" && s.tagGroups.size > 1 &&
+                !(s.lastTagTap.isNotEmpty() && s.tagGroups.all { it.selector in s.lastTagTap })
+            ) {
                 // r102: Tags: the last group goes, the others stay. r102 fix: the last-tapped one (a re-tapped row
                 // keeps its place in the list), else the last in the list
                 val lastTapped = s.tagTapOrder.lastOrNull { sel -> s.tagGroups.any { it.selector == sel } }
@@ -887,6 +1179,9 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
                     picks = picks,
                     raws = s.raws.filterKeys { it in kept },
                     tagGroups = if ("tags" in kept) s.tagGroups else emptyList(),
+                    lastTagTap = if ("tags" in kept) s.lastTagTap else emptyList(),
+                    tagsBefore = if ("tags" in kept) s.tagsBefore else null,
+                    suggestionGroups = if ("suggestions" in kept) s.suggestionGroups else emptyList(),
                     helperFor = s.helperFor?.takeIf { it in kept },
                     suggestion = if (s.helperFor?.let { it in kept } == true) s.suggestion else null,
                 )
@@ -930,8 +1225,43 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
         val s = state.value
         val label = s.helperFor ?: return
         val selector = s.raws[label]?.likeSelector
-        // r103 fix: Tags with other groups: only the group this tap made goes (a menu tap's "Not this")
-        if (label == "tags" && s.tagGroups.size > 1) {
+        // r104: Suggestions with other groups: only the last section tapped goes
+        if (label == "suggestions" && s.suggestionGroups.size > 1) {
+            AppLog.add('D', "lab", "helper suggestions: group \"${s.suggestionGroups.last().name}\" removed (Not this)")
+            mutableState.update {
+                it.copy(
+                    suggestionGroups = it.suggestionGroups.dropLast(1),
+                    raws = it.raws - "suggestions",
+                    helperFor = null,
+                    suggestion = null,
+                    relabel = null,
+                )
+            }
+            rederive()
+            page("if (window.__labPicker.drop) window.__labPicker.drop(${JsonPrimitive(selector.orEmpty())});")
+            return
+        }
+        // r104: a details block's tap: all the rows it added go
+        if (label == "tags" && s.lastTagTap.isNotEmpty() && s.tagGroups.any { it.selector !in s.lastTagTap }) {
+            AppLog.add('D', "lab", "helper tags: ${s.lastTagTap.size} rows removed (Not this)")
+            mutableState.update {
+                it.copy(
+                    tagGroups = it.tagGroups.filter { g -> g.selector !in it.lastTagTap },
+                    tagTapOrder = it.tagTapOrder.filter { sel -> sel !in it.lastTagTap },
+                    lastTagTap = emptyList(),
+                    raws = it.raws - "tags",
+                    helperFor = null,
+                    suggestion = null,
+                    relabel = null,
+                )
+            }
+            rederive()
+            page("if (window.__labPicker.drop) window.__labPicker.drop(${JsonPrimitive(selector.orEmpty())});")
+            return
+        }
+        // r103 fix: Tags with other groups: only the group this tap made goes (a menu tap's "Not this"). r104: a
+        // details block's tap that made every group: the Tags pick goes (below)
+        if (label == "tags" && s.tagGroups.size > 1 && !(s.lastTagTap.isNotEmpty() && s.tagGroups.all { it.selector in s.lastTagTap })) {
             val lastTapped = s.tagTapOrder.lastOrNull { sel -> s.tagGroups.any { it.selector == sel } }
             val at = lastTapped?.let { sel -> s.tagGroups.indexOfLast { it.selector == sel } } ?: -1
             if (at >= 0) {
@@ -1092,6 +1422,10 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
         builder["anime"] = JsonPrimitive(s.anime)
         builder["json"] = JsonPrimitive(s.json)
         builder["tagGroups"] = JsonArray(s.tagGroups.map { jsJson.encodeToJsonElement(Derive.TagGroup.serializer(), it) })
+        // r104: the Suggestions sections
+        builder["suggestionGroups"] = JsonArray(
+            s.suggestionGroups.map { jsJson.encodeToJsonElement(Derive.SuggestionGroup.serializer(), it) },
+        )
         if (extrasSnapshot != null) builder["extras"] = extrasSnapshot
         if (s.fromCode.isNotEmpty()) builder["fromCode"] = JsonObject(s.fromCode.mapValues { JsonPrimitive(it.value) })
         return JsonObject(
@@ -1131,6 +1465,9 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
                 runCatching { jsJson.decodeFromJsonElement(Derive.TagGroup.serializer(), el) }.getOrNull()
             }.orEmpty()
             val fromCode = builder.obj("fromCode")?.mapNotNull { (k, v) -> (v as? JsonPrimitive)?.content?.let { k to it } }?.toMap().orEmpty()
+            val related = builder.arr("suggestionGroups")?.mapNotNull { el ->
+                runCatching { jsJson.decodeFromJsonElement(Derive.SuggestionGroup.serializer(), el) }.getOrNull()
+            }.orEmpty()
             builder["extras"]?.let { snapshot ->
                 runCatching { extras.restore(snapshot) }
                     .onFailure { AppLog.add('W', "lab", "Builder: lists and options not restored: ${it.message}") }
@@ -1140,6 +1477,7 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
                     raws = raws,
                     picks = picks,
                     tagGroups = groups,
+                    suggestionGroups = related,
                     fromCode = fromCode,
                     singleEpisode = builder.bool("singleEpisode") ?: false,
                     anime = builder.bool("anime") ?: info.anime,
@@ -1155,7 +1493,12 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
                 "Editing ${info.name}: your ${picks.size} picks${if (groups.isNotEmpty()) ", ${groups.size} tag groups" else ""} " +
                     "and lists are back. Change what's wrong, then Save to this source."
             }
-            AppLog.add('I', "lab", "Builder: edit ${info.name} ($key): builder state restored (${picks.size} picks, ${groups.size} tag groups)")
+            AppLog.add(
+                'I',
+                "lab",
+                "Builder: edit ${info.name} ($key): builder state restored (${picks.size} picks, ${groups.size} tag groups, " +
+                    "${related.size} suggestion groups; ${groups.count { Derive.needsSplit(it) }} tag groups to split into rows)",
+            )
         } else {
             val selection = (obj?.get("selection") ?: stored)?.let { el ->
                 runCatching { jsJson.decodeFromJsonElement(BuilderSelection.serializer(), el) }.getOrNull()
@@ -1281,7 +1624,11 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
             "FILTERS" to "filtersList",
             "SETTINGS" to "settingsList",
             "TAG_GROUPS" to "tagGroups",
+            "SUGGESTION_GROUPS" to "suggestionGroups",
         )
+
+        /** r104: labels that stay armed after a tap (each tap adds a group) */
+        val STICKY_LABELS = setOf("tags", "suggestions")
 
         /** r102: values that are lists / names (not a label's): kept when the extras recorded nothing for them */
         val LIST_KEYS = setOf("tabPopularName", "tabLatestName", "tabsList", "filtersList", "settingsList")
@@ -1302,6 +1649,7 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
             "tags" to listOf("tagsSelector", "tagGroups"),
             "author" to listOf("authorSelector"),
             "status" to listOf("statusSelector"),
+            "suggestions" to listOf("suggestionGroups"),
         )
 
         fun codeKey(label: String): String? = LABEL_KEYS[label]?.firstOrNull()
@@ -1404,7 +1752,9 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
 
     private fun rederive() {
         val s = state.value
-        val selection = runCatching { withCode(Derive.derive(s.site, s.anime, s.picks, s.singleEpisode, s.tagGroups), s) }
+        val selection = runCatching {
+            withCode(Derive.derive(s.site, s.anime, s.picks, s.singleEpisode, s.tagGroups, s.suggestionGroups), s)
+        }
             .onFailure { AppLog.add('W', "lab", "Derive failed: ${it.message}") }
             .getOrNull()
         mutableState.update { it.copy(selection = selection) }
@@ -1419,7 +1769,8 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
         val kept = s.fromCode.filter { (key, value) ->
             value.isNotBlank() && key !in LIST_KEYS && key != "singleEpisode" &&
                 (labelOfKey(key)?.let { s.pick(it) == null } ?: !listTapped) &&
-                !(s.tagGroups.isNotEmpty() && (key == "tagsSelector" || key == "tagGroups"))
+                !(s.tagGroups.isNotEmpty() && (key == "tagsSelector" || key == "tagGroups")) &&
+                !(s.suggestionGroups.isNotEmpty() && key == "suggestionGroups")
         }
         if (kept.isEmpty()) return selection
         return selection.copy(
@@ -1444,7 +1795,7 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
     /** Done: the generic-list template filled with the derived values, handed to Half A */
     fun write() {
         val s = state.value
-        val selection = s.selection ?: withCode(Derive.derive(s.site, s.anime, s.picks, s.singleEpisode, s.tagGroups), s)
+        val selection = s.selection ?: withCode(Derive.derive(s.site, s.anime, s.picks, s.singleEpisode, s.tagGroups, s.suggestionGroups), s)
         // r99: the JSON format has no way to say "the title page is the one episode": written as JS then
         // r99 fix: nor "no chapter link was picked" (its empty CHAPTER selector would fail without saying why): JS too,
         // whose getChapterList throws the clear error
@@ -1452,7 +1803,7 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
         // r100 (W3): tabs, filters, settings and a recorded search exist only in the JS template
         val extrasUsed = runCatching { extras.used }.getOrDefault(false)
         // r101: the title page's own fields (Cover, Description, Tags, Author, Status) are read only by the JS template
-        val detailsPicked = s.picks.any { it.pick.label in optionalLabels } || s.tagGroups.isNotEmpty() ||
+        val detailsPicked = s.picks.any { it.pick.label in optionalLabels } || s.tagGroups.isNotEmpty() || s.suggestionGroups.isNotEmpty() ||
             s.fromCode.any { (k, v) -> v.isNotBlank() && labelOfKey(k)?.let { l -> l in optionalLabels } == true }
         val json = s.json && !s.singleEpisode && !noChapter && !extrasUsed && !detailsPicked
         if (s.json && detailsPicked) AppLog.add('I', "lab", "Builder: title page fields picked: written as JS (the JSON format reads only og:image / the meta description)")
@@ -1479,7 +1830,8 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
                     values.putAll(selection.derived)
                     // r100 (W3): recorded search / tab paths override Derive's guesses; tabs, filters, settings
                     // r102: an older source's own lists / names stay when nothing was recorded for them here
-                    val extraValues = extras.templateValues(s.site)
+                    // r104 fix: the edited source's own search path tells link-made filters which page is the search's
+                    val extraValues = extras.templateValues(s.site, s.fromCode["searchPath"])
                     extraValues.forEach { (k, v) ->
                         val code = s.fromCode[k]
                         if ((v.isBlank() || v == "[]") && !code.isNullOrBlank()) values[k] = code else values[k] = v

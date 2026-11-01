@@ -7,7 +7,9 @@ import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.online.ResolvableSource
 import eu.kanade.tachiyomi.source.online.UriType
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.withTimeoutOrNull
 import mihon.domain.manga.model.toDomainManga
 import mihon.domain.source.interactor.UpdateMangaFromRemote
 import tachiyomi.core.common.util.lang.launchIO
@@ -29,6 +31,18 @@ class DeepLinkScreenModel(
 
     init {
         screenModelScope.launchIO {
+            // KMK (r104): opened from a link at a cold start, the sources are still loading (in the background): the
+            // link's source wouldn't be found and it'd show "no results". Waits for them (at most 30 s)
+            if (!sourceManager.isInitialized.value) {
+                val ready = withTimeoutOrNull(SOURCES_WAIT_MS) { sourceManager.isInitialized.first { it } } != null
+                if (!ready) {
+                    eu.kanade.tachiyomi.util.system.AppLog.add(
+                        'W',
+                        "DeepLink",
+                        "Sources not loaded after ${SOURCES_WAIT_MS / 1000} s; resolving the link with the ones loaded",
+                    )
+                }
+            }
             val source = sourceManager.getAll()
                 .filterIsInstance<ResolvableSource>()
                 .firstOrNull { it.getUriType(query) != UriType.Unknown }
@@ -78,3 +92,6 @@ class DeepLinkScreenModel(
         data class Result(val manga: Manga, val chapterId: Long? = null) : State
     }
 }
+
+/** KMK (r104): how long a link waits for the sources at a cold start */
+private const val SOURCES_WAIT_MS = 30_000L

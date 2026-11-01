@@ -26,11 +26,13 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withTimeoutOrNull
 import logcat.LogPriority
 import mihon.domain.manga.model.toDomainManga
 import mihon.domain.migration.usecases.MigrateMangaUseCase
@@ -138,6 +140,17 @@ class MigrationListScreenModel(
 
     init {
         scope.launchIO {
+            // KMK (r104): at a cold start the sources load in the background: the titles' source names and the
+            // sources searched would be stubs / none (every title "not found"). Waits for them (at most 30 s)
+            if (!sourceManager.isInitialized.value &&
+                withTimeoutOrNull(30_000L) { sourceManager.isInitialized.first { it } } == null
+            ) {
+                eu.kanade.tachiyomi.util.system.AppLog.add(
+                    'W',
+                    "Migration",
+                    "Sources not loaded after 30 s; migrating with the ones loaded",
+                )
+            }
             val manga = mangaIds
                 .map {
                     async {
@@ -425,7 +438,8 @@ class MigrationListScreenModel(
             val result = migratingManga.migrationScope.async {
                 val manga = getManga.await(target) ?: return@async null
                 try {
-                    val source = sourceManager.get(manga.source)!!
+                    // KMK (r104): null-safe (a source not loaded / not installed: not found, no exception)
+                    val source = sourceManager.get(manga.source) ?: return@async null
                     updateMangaFromRemote(
                         source = source,
                         manga = manga,

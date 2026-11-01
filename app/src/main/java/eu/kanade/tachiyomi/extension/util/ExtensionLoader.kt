@@ -186,18 +186,33 @@ internal object ExtensionLoader {
             // KMK <--
             val deferred = extPkgs.map {
                 async {
-                    loadExtension(
-                        context,
-                        it,
-                        // KMK -->
-                        extStores,
-                        // KMK <--
-                    )
+                    // KMK (r104): tracked, so a stuck package can be named in Logs
+                    val pkgName = it.packageInfo.packageName
+                    loadingPackages += pkgName
+                    try {
+                        loadExtension(
+                            context,
+                            it,
+                            // KMK -->
+                            extStores,
+                            // KMK <--
+                        )
+                    } finally {
+                        loadingPackages -= pkgName
+                    }
                 }
             }
             deferred.awaitAll()
         }
     }
+
+    // KMK -->
+    /** KMK (r104): the packages [loadExtensions] is loading now */
+    private val loadingPackages: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    /** KMK (r104): the packages being loaded now, joined ("" when none) */
+    fun loadingNow(): String = loadingPackages.sorted().joinToString()
+    // KMK <--
 
     /**
      * Attempts to load an extension from the given package name. It checks if the extension

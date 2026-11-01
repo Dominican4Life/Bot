@@ -480,7 +480,7 @@ internal object TestRuns {
                 }
                 val verdict = when {
                     urls == null -> FAILED + outcome.error.orEmpty()
-                    urls.isEmpty() -> "0 titles"
+                    urls.isEmpty() -> "0 titles · check this filter's address (made from a menu: pick it again and press Make filter)"
                     against == null -> "${urls.size} titles · $NOTHING_TO_COMPARE"
                     urls != against -> "${urls.size} titles · $WORKS"
                     else -> "${urls.size} titles · $SAME"

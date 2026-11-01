@@ -127,6 +127,9 @@ import java.util.UUID
  * bar over the page says "Tapping for: X · Stop" (also for "Pick a menu on the site"); the edit banner's ✕ closes it
  * for the session; the one-line hint under the address bar shows only until the first pick. The bridge's `menu`
  * (console `LABMENU:<token>:`) is a menu group pick.
+ *
+ * r104: the Tags card shows "Split into rows" on a restored group that reads whole rows or labels; a Suggestions card
+ * (like Tags) lists the sections tapped as Suggestions ("You may like", "Related videos") with remove.
  */
 internal class BuilderScreen(
     private val startUrl: String? = null,
@@ -335,11 +338,18 @@ internal class BuilderScreen(
                                 .padding(horizontal = 16.dp),
                         ) {
                             TagsCard(state, model)
+                            SuggestionsCard(state, model)
                             LabelsPane(state, model)
                             Spacer(Modifier.height(12.dp))
                             HelperSwitch(state, model)
                             Spacer(Modifier.height(12.dp))
-                            BuilderExtrasPane(extras = model.extras, pageUrl = state.pageUrl, siteUrl = state.site, onAskOptions = askOptions)
+                            BuilderExtrasPane(
+                                extras = model.extras,
+                                pageUrl = state.pageUrl,
+                                siteUrl = state.site,
+                                onAskOptions = askOptions,
+                                codeSearchPath = state.fromCode["searchPath"],
+                            )
                             Spacer(Modifier.height(12.dp))
                             DerivedCard(state)
                         }
@@ -360,11 +370,18 @@ internal class BuilderScreen(
                         }
                         Column(modifier = Modifier.padding(16.dp)) {
                             TagsCard(state, model)
+                            SuggestionsCard(state, model)
                             LabelsPane(state, model)
                             Spacer(Modifier.height(12.dp))
                             HelperSwitch(state, model)
                             Spacer(Modifier.height(12.dp))
-                            BuilderExtrasPane(extras = model.extras, pageUrl = state.pageUrl, siteUrl = state.site, onAskOptions = askOptions)
+                            BuilderExtrasPane(
+                                extras = model.extras,
+                                pageUrl = state.pageUrl,
+                                siteUrl = state.site,
+                                onAskOptions = askOptions,
+                                codeSearchPath = state.fromCode["searchPath"],
+                            )
                             Spacer(Modifier.height(12.dp))
                             DerivedCard(state)
                         }
@@ -419,7 +436,8 @@ internal class BuilderScreen(
         val extrasState by model.extras.state.collectAsState()
         val armed = state.armed
         val what = when {
-            armed == "tags" -> "Tags (each row you tap is a group)"
+            armed == "tags" -> "Tags (a tap on the details makes a group per row)"
+            armed == "suggestions" -> "Suggestions (each section you tap is a group)"
             armed != null -> PickCheck.labelName(armed, state.anime)
             extrasState.groupMode -> "a menu on the site (a heading, a dropdown's button or an entry)"
             else -> null
@@ -734,6 +752,9 @@ internal class BuilderScreen(
                                 label == "tags" && state.tagGroups.isNotEmpty() ->
                                     "${state.tagGroups.size} ${if (state.tagGroups.size == 1) "group" else "groups"}: " +
                                         state.tagGroups.joinToString(", ") { it.name }
+                                label == "suggestions" && state.suggestionGroups.isNotEmpty() ->
+                                    "${state.suggestionGroups.size} ${if (state.suggestionGroups.size == 1) "section" else "sections"}: " +
+                                        state.suggestionGroups.joinToString(", ") { it.name }
                                 pick != null -> pick.likeSelector.substringAfterLast(" > ") + " · ${pick.pick.count}"
                                 state.fromCodeOnly(label) -> "from the code"
                                 state.singleEpisode && label == "chapter" -> "not needed: this page is the episode"
@@ -751,7 +772,9 @@ internal class BuilderScreen(
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f),
                         )
-                        if (pick != null || (label == "tags" && state.tagGroups.isNotEmpty())) {
+                        if (pick != null || (label == "tags" && state.tagGroups.isNotEmpty()) ||
+                            (label == "suggestions" && state.suggestionGroups.isNotEmpty())
+                        ) {
                             IconButton(onClick = { model.removePick(label) }, modifier = Modifier.size(28.dp)) {
                                 Icon(Icons.Outlined.Close, contentDescription = "Remove", modifier = Modifier.size(16.dp))
                             }
@@ -890,8 +913,9 @@ internal class BuilderScreen(
                     }
                 }
                 Text(
-                    "Each row you tap is a group named by its own label (Cast, Maker\u2026); rename it with \u22ee. A group's values " +
-                        "show as tags (\u201cCast: Reina Ohara\u201d), in the description, or both. Tapping the same row again replaces it.",
+                    "A tap on the details (a row, its label or its value) makes one group per row, named by its label " +
+                        "(Cast, Maker\u2026); rename it with \u22ee. Rows with links show as tags (\u201cCast: Reina Ohara\u201d), " +
+                        "plain rows (Code, Duration\u2026) go to the description; change it per row. Tapping again adds missing rows only.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 8.dp),
@@ -917,6 +941,68 @@ internal class BuilderScreen(
                 },
                 dismissButton = { TextButton(onClick = { renaming = null }) { Text("Cancel") } },
             )
+        }
+    }
+
+    /** r104: the Suggestions card: one row per section tapped as Suggestions (its name, cards, first titles, remove) */
+    @Composable
+    private fun SuggestionsCard(state: BuilderScreenModel.State, model: BuilderScreenModel) {
+        if (state.suggestionGroups.isEmpty() && state.armed != "suggestions") return
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surfaceContainer,
+            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Suggestions", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                    Text(
+                        when {
+                            state.suggestionGroups.isEmpty() -> "tap a card in a \u201cYou may like\u201d section"
+                            state.armed == "suggestions" -> "${state.suggestionGroups.size} \u00b7 tap another section to add"
+                            else -> "${state.suggestionGroups.size} ${if (state.suggestionGroups.size == 1) "section" else "sections"}"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                state.suggestionGroups.forEachIndexed { index, group ->
+                    key(index, group.item) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                            Text("\u2713", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, modifier = Modifier.width(22.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "${group.name} \u00b7 ${group.count} cards",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    group.values.joinToString(", ").ifBlank { group.item },
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            IconButton(onClick = { model.removeSuggestionGroup(index) }, modifier = Modifier.size(32.dp)) {
+                                Icon(Icons.Outlined.Close, contentDescription = "Remove", modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+                }
+                // r104 fix: the anime title screen merges the groups into its one Suggestions row
+                Text(
+                    "Each section you tap (one of its cards) is a group named by its heading; " + if (state.anime) {
+                        "the title screen shows all their titles together in its one Suggestions row."
+                    } else {
+                        "the title screen lists its titles under that name."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
         }
     }
 
@@ -968,6 +1054,18 @@ internal class BuilderScreen(
                         onClick = { model.setTagGroupTarget(index, target) },
                         label = { Text(name) },
                     )
+                }
+            }
+            // r104: a restored group that reads whole rows ("Code FC2-PPV…") or the rows' labels ("Code, Type…")
+            if (Derive.needsSplit(group)) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 22.dp, top = 4.dp)) {
+                    Text(
+                        "Reads whole rows or their labels",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.weight(1f),
+                    )
+                    OutlinedButton(onClick = { model.splitTagGroup(index) }) { Text("Split into rows") }
                 }
             }
         }
@@ -1274,7 +1372,8 @@ internal class BuilderScreen(
         "video" -> "the player"
         "bigCover" -> "the title's picture"
         "description" -> "the description"
-        "tags" -> "a genre / tag"
+        "tags" -> "the details (a row, its label or value)"
+        "suggestions" -> "a card in a \u201cYou may like\u201d section"
         "author" -> "the author's name"
         "status" -> "the status"
         else -> "it on the page"
@@ -1357,6 +1456,8 @@ internal class BuilderScreen(
         "tags" -> "Tags"
         "author" -> "Author"
         "status" -> "Status"
+        // r104: a title page's "You may like" / "Related" sections
+        "suggestions" -> "Suggestions"
         else -> label
     }
 }

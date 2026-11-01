@@ -1,4 +1,4 @@
-// @version 6
+// @version 7
 // Generic list template of the Source Lab, written for {{name}} ({{baseUrl}}) from what was tapped in Build by
 // tapping (or filled by hand). Lists are pages of ITEM cards, chapters / episodes are the links of CHAPTER on a
 // title page, pages are the IMAGE pictures of a chapter page, videos the VIDEO_FRAME of an episode page.
@@ -12,6 +12,10 @@
 // Tapping a grouped tag searches it in the source (a filter with that name and option when there is one).
 // r103 (v6): filters made from the site's menus (one per menu group); a long list can be a text box with suggestions
 // ("autocomplete" filters: the names typed are matched to the list's entries).
+// r104 (v7): the title page's "You may like" / "Related" sections tapped as Suggestions become named groups of other
+// titles on the title screen (getRelated); filters that open their own page (Trending → /en/trending?sort={value})
+// combine with the other filters of that page; an only-episode title's episode gets the title's picture; the title
+// page's small readers log what failed instead of hiding it.
 
 /*@part id="headers"*/
 // Headers and constants: the site as Referer on every picture; the selectors the builder derived (each with
@@ -44,6 +48,9 @@ var STATUS = "{{statusSelector}}";
 // r102: the title page's rows tapped as Tags groups: [{ name, selector, target }], target "tags" (genres "name: value"),
 // "description" (a "name: value, value" line under the description) or "both"; "[]" when none were tapped
 var TAG_GROUPS = JSON.parse("{{tagGroups}}" || "[]");
+// r104: the title page's sections tapped as Suggestions: [{ name, item, link, title, cover, coverAttr }] ("[]" = none);
+// getRelated (part "extras") lists each section's cards under its name
+var SUGGESTION_GROUPS = JSON.parse("{{suggestionGroups}}" || "[]");
 // r100: "Lists and options" of Build by tapping: the names of the Popular / Latest buttons (empty = the app's own),
 // extra tabs [{ name, path }], search filters [{ key, name, type, mode, param, path, options, on }] and settings (the
 // getSourcePreferences format). Lists are JSON text; "[]" when nothing was recorded. (Not POPULAR_NAME / LATEST_NAME:
@@ -94,6 +101,12 @@ var extension = {
   // to an option by its label or value (any case), a name not in the list is sent as a slug ("Big Tits" → big-tits),
   // names starting with "-" are left out; a path filter uses the first name, a param filter joins them with ",".
   // A grouped tag whose group is an autocomplete filter searches that name even when the list doesn't have it.
+  // r104 (v7): a path filter whose {value} sits in the address's query (?sort={value}) is a parameter of that page: the
+  // other path filters of the same page add their parameter to it instead of being left out; a value going into the
+  // address is encoded. A filter with no parameter and no path is left out with a log line (never silently).
+  // Empty values ("Any") are no filter; another page than the search page is used only when one of its filters has
+  // a value, and each filter goes only into its own page's address: with filters of two pages set, the page of the
+  // first one picked (changed from its first option) in the filter order is used, the others are logged.
   search: async function (query, page, filters) {
     var list = typeof FILTERS !== "undefined" && Array.isArray(FILTERS) ? FILTERS : [];
     var groups = typeof TAG_GROUPS !== "undefined" && Array.isArray(TAG_GROUPS) ? TAG_GROUPS : [];
@@ -160,31 +173,88 @@ var extension = {
         }
       }
     }
+    // r104 (v7): {value} in a path filter's query: "?sort={value}" → the page and the parameter name
+    function queryParamOf(path) {
+      var at = path.indexOf("?");
+      if (at < 0 || path.indexOf("{value}") < at) return null;
+      var m = /[?&]([^=&?]+)=\{value\}/.exec(path);
+      return m ? { page: path.slice(0, at), name: decodeURIComponent(m[1]) } : null;
+    }
+    // r104 fix: the page a filter belongs to: "" = the search page (a param filter, or a path filter of the search
+    // page's own path), else its path without the query ("/en/trending", "/en/genres/{value}")
+    var searchPage = String(SEARCH_PATH).split("?")[0].replace(/\/+$/, "").toLowerCase();
+    function pageOf(f) {
+      if (f.mode !== "path") return "";
+      var p = String(f.path).split("?")[0];
+      return p.replace(/\/+$/, "").toLowerCase() === searchPage && queryParamOf(String(f.path)) ? "" : p;
+    }
+    // r104 fix: a dropdown / sort left at its first option (the app always sends one) is the default, not a pick
+    function atDefault(f, raw, v) {
+      if (f.type !== "select" && f.type !== "sort") return false;
+      if (raw && typeof raw === "object" && typeof raw.index === "number") return raw.index === 0;
+      var first = (f.options || [])[0];
+      return !!first && String(first.value === undefined || first.value === null ? "" : first.value).trim() === v;
+    }
     var chosen = [];
     for (var i = 0; i < list.length; i++) {
       var f = list[i];
       var raw = filters ? filters[f.key] : undefined;
+      // an empty value (the "Any" first option, a blank box) is no filter
       var v = f.type === "autocomplete" ? suggested(f, raw) : valueOf(f, raw);
-      if (v) chosen.push({ f: f, v: v });
+      if (!v) continue;
+      if (f.mode === "path" ? String(f.path || "").indexOf("{value}") < 0 : !(f.param || f.key)) {
+        console.log("Filter " + (f.name || f.key) + " left out: it has no address parameter or path");
+        continue;
+      }
+      chosen.push({ f: f, v: v, page: pageOf(f), picked: !atDefault(f, raw, v) });
     }
-    var paths = chosen.filter(function (c) { return c.f.mode === "path" && c.f.path; });
+    // r104 fix: the list's page. Words typed: the search page. Else the page of the first filter picked (changed
+    // from its first option) in the filter order, else of the first one with a value; another page is used only
+    // when one of its filters has a value. Each filter goes only into its own page's address; the others are logged.
+    var lead = q ? null : (chosen.filter(function (c) { return c.picked; })[0] || chosen[0] || null);
+    var listPage = lead ? lead.page : "";
     var url = null;
-    if (!q && paths.length) {
-      var use = paths.filter(function (c) { return c.f.type !== "sort"; })[0] || paths[0];
-      url = pathFor(String(use.f.path).split("{value}").join(use.v), page, "");
-      paths.forEach(function (c) {
-        if (c !== use) console.log("Filter " + (c.f.name || c.f.key) + " left out: " + (use.f.name || use.f.key) + " already picks the list's address");
-      });
+    var segmentDone = false;
+    var applied = listPage ? 1 : 0;
+    function name(c) { return c.f.name || c.f.key; }
+    if (listPage) {
+      url = pathFor(String(lead.f.path).split("{value}").join(encodeURIComponent(lead.v)), page, "");
+      segmentDone = !queryParamOf(String(lead.f.path));
     } else {
       url = pathFor(SEARCH_PATH, page, q);
-      paths.forEach(function (c) {
-        console.log("Filter " + (c.f.name || c.f.key) + " changes the list's address: left out while searching for words");
-      });
     }
     chosen.forEach(function (c) {
-      if (c.f.mode !== "path") url = withParam(url, c.f.param || c.f.key, c.v);
+      if (c === lead && listPage) return;
+      if (c.page !== listPage) {
+        if (q && c.page) console.log("Filter " + name(c) + " changes the list's address: left out while searching for words");
+        else console.log("Filter " + name(c) + " left out: it belongs to " + (c.page || "the search page") + ", and " +
+          name(lead) + " (chosen first) opens " + (listPage || "the search page"));
+        return;
+      }
+      if (c.f.mode !== "path") {
+        url = withParam(url, c.f.param || c.f.key, c.v);
+        applied++;
+        return;
+      }
+      var qp = queryParamOf(String(c.f.path));
+      if (qp) {
+        url = withParam(url, qp.name, c.v);
+        applied++;
+      } else if (!segmentDone && listPage) {
+        segmentDone = true;
+        url = pathFor(String(c.f.path).split("{value}").join(encodeURIComponent(c.v)), page, "");
+        applied++;
+      } else {
+        console.log("Filter " + name(c) + " left out: " + name(lead || c) + " already picks this page's address");
+      }
     });
-    return cards(await get(url));
+    var found = await cards(await get(url));
+    // r104 fix: a filter search with no titles says which address was tried (Test Run's console shows it)
+    if (!found.length && applied) {
+      console.log("Filters gave 0 titles at " + url + ": check the filters' addresses (a filter made from a menu's " +
+        "links: pick the menu again on the site and press Make filter to read its own page)");
+    }
+    return found;
   },
 /*@end*/
 
@@ -214,12 +284,24 @@ var extension = {
       var full = abs(u);
       return /^https?:\/\//i.test(full || "") && !/\.svg(\?|#|$)|favicon|\/logo[^\/]*$/i.test(full) ? full : null;
     }
+    // r104 (v7): a selector that fails is logged (it reads "" so the other fields still come)
     async function textOf(css) {
       if (!css) return "";
-      try { var el = await doc.selectOne(css); return el ? clean(el.text) : ""; } catch (e) { return ""; }
+      try {
+        var el = await doc.selectOne(css);
+        return el ? clean(el.text) : "";
+      } catch (e) {
+        console.log("Title page: " + css + " wasn't read: " + (e && e.message));
+        return "";
+      }
     }
     async function meta(css, name) {
-      try { return clean(await doc.attr(css, name)); } catch (e) { return ""; }
+      try {
+        return clean(await doc.attr(css, name));
+      } catch (e) {
+        console.log("Title page: " + name + " of " + css + " wasn't read: " + (e && e.message));
+        return "";
+      }
     }
     var out = { url: url, webUrl: url };
     out.title = (await doc.text("h1") || await doc.attr("meta[property='og:title']", "content") || "").trim();
@@ -331,18 +413,35 @@ var extension = {
   // Chapters / episodes: the CHAPTER links of the title page, each address once, the number from the text, the
   // date from CHAPTER_DATE inside or next to the link when one was picked. With SINGLE_EPISODE the title page is
   // the one episode: its own address, the h1 as title, number 1 (or EPISODE_NUMBER's), the date from CHAPTER_DATE.
+  // r104 (v7): the only episode's thumbnail is the title's picture (the Cover tapped on the title page, else og:image,
+  // a video poster or twitter:image).
   getChapterList: async function (url) {
     var doc = await host.parse(await get(url));
     if (SINGLE_EPISODE) {
       var when = CHAPTER_DATE ? (await doc.select(CHAPTER_DATE))[0] : null;
       var numberEl = EPISODE_NUMBER ? (await doc.select(EPISODE_NUMBER))[0] : null;
       var name = (await doc.text("h1") || await doc.attr("meta[property='og:title']", "content") || "Episode 1").trim();
-      return [{
+      var episode = {
         url: url,
         title: name,
         number: (numberEl ? numberOf(numberEl.text) : null) || 1,
         dateUploaded: require("date").parse(when ? (when.attr("datetime") || when.attr("title") || when.text) : ""),
-      }];
+      };
+      var thumb = "";
+      try {
+        var pickedCover = typeof DETAILS_COVER !== "undefined" ? DETAILS_COVER : "";
+        var coverEl = pickedCover ? await doc.selectOne(pickedCover) : null;
+        if (coverEl && coverEl.tag !== "img") coverEl = (await coverEl.selectOne("img")) || coverEl;
+        var attr = typeof DETAILS_COVER_ATTR !== "undefined" && DETAILS_COVER_ATTR ? DETAILS_COVER_ATTR : "src";
+        if (coverEl) thumb = coverEl.attr(attr) || coverEl.attr("data-src") || coverEl.attr("src") || coverEl.attr("poster") || "";
+        thumb = thumb || await doc.attr("meta[property='og:image']", "content") || await doc.attr("video[poster]", "poster") ||
+          await doc.attr("meta[name='twitter:image']", "content") || "";
+      } catch (e) {
+        console.log("Episode thumbnail wasn't read: " + (e && e.message));
+      }
+      thumb = String(thumb || "").trim().split(/[\s,]+/)[0];
+      if (thumb && !/^data:/i.test(thumb)) episode.thumbnailUrl = abs(thumb);
+      return [episode];
     }
     if (!CHAPTER) throw new Error("No chapter link was picked in Build by tapping: open a title and tap a chapter link, or say the title page is the only episode");
     var links = await doc.select(CHAPTER);
@@ -415,6 +514,9 @@ var extension = {
 // getCatalog: the tab's path with {page} filled, the same cards), FILTERS the filter sheet (search adds their
 // values), SETTINGS the source's settings (the code reads them with host.preference.get("key")).
 // r103 (v6): an "autocomplete" filter is a text box with its options as suggestions (no "-" exclusions).
+// r104 (v7): SUGGESTION_GROUPS give getRelated: each section's cards on the title page, as named groups
+// { "You may like": [...], "Related videos": [...] } (a manga title screen shows each under its name; an anime title
+// screen merges them into one Suggestions row).
 if (TABS.length) {
   extension.getCatalogs = function () {
     return TABS.map(function (t) { return { id: t.path, name: t.name || t.path, tab: true }; });
@@ -440,6 +542,44 @@ if (FILTERS.length) {
 if (SETTINGS.length) {
   extension.getSourcePreferences = function () {
     return SETTINGS;
+  };
+}
+if (typeof SUGGESTION_GROUPS !== "undefined" && Array.isArray(SUGGESTION_GROUPS) && SUGGESTION_GROUPS.length) {
+  extension.getRelated = async function (url) {
+    var doc = await host.parse(await get(url));
+    var out = {};
+    for (var gi = 0; gi < SUGGESTION_GROUPS.length; gi++) {
+      var g = SUGGESTION_GROUPS[gi] || {};
+      var name = String(g.name || "").trim() || "Suggestions";
+      var list = out[name] || [];
+      var seen = {};
+      list.forEach(function (x) { seen[x.url] = true; });
+      try {
+        var els = g.item ? await doc.select(g.item) : [];
+        for (var i = 0; i < els.length; i++) {
+          var card = els[i];
+          var a = card.tag === "a" ? card : (g.link ? await card.selectOne(g.link) : null) || (await card.selectOne("a[href]"));
+          if (a && a.tag !== "a") a = await a.selectOne("a[href]");
+          if (!a || !a.attr("href")) continue;
+          var href = abs(a.attr("href"));
+          if (!href || seen[href] || href === url) continue;
+          var nameEl = g.title ? await card.selectOne(g.title) : null;
+          var img = g.cover ? await card.selectOne(g.cover) : await card.selectOne("img");
+          var src = img ? (img.attr(g.coverAttr || "src") || img.attr("data-src") || img.attr("data-lazy-src") || img.attr("src") || "") : "";
+          src = String(src).trim().split(/[\s,]+/)[0];
+          var title = (nameEl ? nameEl.text : "") || a.attr("title") || a.text || (img ? img.attr("alt") : "") || "";
+          title = String(title).replace(/\s+/g, " ").trim();
+          if (!title) continue;
+          seen[href] = true;
+          list.push({ url: href, title: title, coverUrl: src && !/^data:/i.test(src) ? abs(src) : null });
+        }
+      } catch (e) {
+        console.log("Suggestions " + name + " weren't read: " + (e && e.message));
+      }
+      if (list.length) out[name] = list;
+      else console.log("Suggestions " + name + ": no card found on " + url);
+    }
+    return out;
   };
 }
 /*@end*/

@@ -29,7 +29,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Check
-import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.FiberManualRecord
@@ -290,11 +289,9 @@ private fun MainColumn(
             item(key = "start-from") {
                 StartFromCard(
                     templates = state.templates,
-                    savedNames = state.savedSources.map { it.second },
                     onTemplate = { model.openPicker(NewSourceScreenModel.Picker.Template) },
                     onBuild = { navigator.push(BuilderScreen(state.url.trim().ifBlank { null }, state.kindHint == true)) },
                     onImport = { pickFile("*/*") },
-                    onDuplicate = { model.openPicker(NewSourceScreenModel.Picker.Duplicate) },
                     onExtension = { model.openPicker(NewSourceScreenModel.Picker.Extension) },
                 )
             }
@@ -397,11 +394,9 @@ private fun EntryCard(state: NewSourceScreenModel.State, model: NewSourceScreenM
 @Composable
 private fun StartFromCard(
     templates: List<LabTemplate>,
-    savedNames: List<String>,
     onTemplate: () -> Unit,
     onBuild: () -> Unit,
     onImport: () -> Unit,
-    onDuplicate: () -> Unit,
     onExtension: () -> Unit,
 ) {
     val engineNames = templates.filter { !it.id.startsWith("blank-") && !it.id.startsWith("generic") && !it.id.startsWith("recorded-") }
@@ -414,10 +409,7 @@ private fun StartFromCard(
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             StartTile(Icons.Outlined.FileUpload, "Import a file", ".js or .json", onImport, Modifier.weight(1f))
-            StartTile(Icons.Outlined.ContentCopy, "Duplicate a source", savedNames.take(2).joinToString(", ").ifBlank { "a saved source" }, onDuplicate, Modifier.weight(1f))
-        }
-        Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            // KMK (r104): "Duplicate a source" removed from here (owner); Import from extension takes its place
             StartTile(Icons.Outlined.Extension, "Import from extension", "an installed manga or anime APK", onExtension, Modifier.weight(1f))
         }
     }

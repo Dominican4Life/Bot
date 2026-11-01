@@ -52,10 +52,12 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withTimeoutOrNull
 import logcat.LogPriority
 import mihon.domain.chapter.interactor.FilterChaptersForDownload
 import mihon.domain.source.interactor.UpdateMangaFromRemote
@@ -187,6 +189,9 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
         val group = inputData.getInt(KEY_GROUP, LibraryGroup.BY_DEFAULT)
         val groupExtra = inputData.getString(KEY_GROUP_EXTRA)
         // SY <--
+        // KMK (r104): manga extensions load in the background; a run that starts the app (a scheduled update) waits
+        // for them, so titles aren't checked against stub sources ("source not installed")
+        withTimeoutOrNull(SOURCES_WAIT_MS) { sourceManager.isInitialized.first { it } }
         addMangaToQueue(categoryId, group, groupExtra)
 
         return withIOContext {
@@ -806,6 +811,9 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
 
         /** False when only manga should be updated (the anime library is not checked along) */
         private const val KEY_WITH_ANIME = "with_anime"
+
+        /** KMK (r104): how long a run waits for the manga extensions to load before it starts */
+        private const val SOURCES_WAIT_MS = 60_000L
         // KMK <--
 
         fun setupTask(

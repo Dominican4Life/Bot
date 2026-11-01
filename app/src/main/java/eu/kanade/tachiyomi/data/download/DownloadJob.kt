@@ -58,11 +58,16 @@ class DownloadJob(private val context: Context, workerParams: WorkerParameters) 
     }
 
     override suspend fun doWork(): Result {
+        // KMK (r104): at a cold start the saved queue is restored once the sources loaded (in the background);
+        // starting before that would find an empty queue and end the job
+        downloadManager.awaitQueueRestored()
         var networkCheck = checkNetworkState(
             applicationContext.activeNetworkState(),
             downloadPreferences.downloadOnlyOverWifi().get(),
         )
-        var active = networkCheck && downloadManager.downloaderStart()
+        // KMK (r104): the downloader may have been started directly while this job waited for the restore (see
+        // Downloader.start): then start() says false, but the job must still run (foreground service) while it does
+        var active = networkCheck && (downloadManager.downloaderStart() || downloadManager.isRunning)
 
         if (!active) {
             return Result.failure()

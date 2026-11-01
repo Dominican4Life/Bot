@@ -3,6 +3,7 @@ package tachiyomi.data.updates
 import kotlinx.coroutines.flow.Flow
 import tachiyomi.core.common.util.lang.toLong
 import tachiyomi.data.DatabaseHandler
+import tachiyomi.data.logFirstQuery
 import tachiyomi.domain.manga.model.MangaCover
 import tachiyomi.domain.updates.model.UpdatesWithRelations
 import tachiyomi.domain.updates.repository.UpdatesRepository
@@ -17,7 +18,8 @@ class UpdatesRepositoryImpl(
         limit: Long,
     ): List<UpdatesWithRelations> {
         return databaseHandler.awaitList {
-            updatesViewQueries.getUpdatesByReadStatus(
+            // KMK (r104): same rows and order as getUpdatesByReadStatus, newest-fetched first on the date_fetch index
+            updatesViewQueries.updatesByReadStatus(
                 read = read,
                 after = after,
                 limit = limit,
@@ -34,18 +36,37 @@ class UpdatesRepositoryImpl(
         bookmarked: Boolean?,
         hideExcludedScanlators: Boolean,
     ): Flow<List<UpdatesWithRelations>> {
+        // KMK (r104): `updatesWithFilters` (same rows and order) walks all chapters newest-fetched first and stops
+        // at the limit, which is fast while plenty of chapters match. The unread, started and bookmarked filters
+        // can match few, and then the walk reads every chapter, so those keep the old query (favourites first,
+        // then a sort).
+        val narrowFilter = unread != null || started != null || bookmarked != null
         return databaseHandler.subscribeToList {
-            updatesViewQueries.getRecentUpdatesWithFilters(
-                after = after,
-                limit = limit,
-                // invert because unread in Kotlin -> read column in SQL
-                read = unread?.let { !it },
-                started = started?.toLong(),
-                bookmarked = bookmarked,
-                hideExcludedScanlators = hideExcludedScanlators.toLong(),
-                mapper = ::mapUpdatesWithRelations,
-            )
+            if (narrowFilter) {
+                updatesViewQueries.getRecentUpdatesWithFilters(
+                    after = after,
+                    limit = limit,
+                    // invert because unread in Kotlin -> read column in SQL
+                    read = unread?.let { !it },
+                    started = started?.toLong(),
+                    bookmarked = bookmarked,
+                    hideExcludedScanlators = hideExcludedScanlators.toLong(),
+                    mapper = ::mapUpdatesWithRelations,
+                )
+            } else {
+                updatesViewQueries.updatesWithFilters(
+                    after = after,
+                    limit = limit,
+                    read = null,
+                    started = null,
+                    bookmarked = null,
+                    hideExcludedScanlators = hideExcludedScanlators.toLong(),
+                    mapper = ::mapUpdatesWithRelations,
+                )
+            }
         }
+            // KMK (r104)
+            .logFirstQuery("Updates")
     }
 
     override fun subscribeWithRead(
@@ -54,7 +75,8 @@ class UpdatesRepositoryImpl(
         limit: Long,
     ): Flow<List<UpdatesWithRelations>> {
         return databaseHandler.subscribeToList {
-            updatesViewQueries.getUpdatesByReadStatus(
+            // KMK (r104): same rows and order as getUpdatesByReadStatus, newest-fetched first on the date_fetch index
+            updatesViewQueries.updatesByReadStatus(
                 read = read,
                 after = after,
                 limit = limit,

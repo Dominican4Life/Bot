@@ -1,0 +1,7 @@
+-- KMK (r104): the Updates screen and widget read manga chapters (all, or only unread) and anime episodes
+-- newest-fetched first, with a limit; these indexes let SQLite walk them in that order and stop at the
+-- limit instead of sorting every favourite's chapters. Same indexes as chapters.sq / episodes.sq.
+-- IF NOT EXISTS: a re-run is harmless.
+CREATE INDEX IF NOT EXISTS kmk_chapters_date_fetch_index ON chapters(date_fetch);
+CREATE INDEX IF NOT EXISTS kmk_chapters_unread_date_fetch_index ON chapters(date_fetch) WHERE read = 0;
+CREATE INDEX IF NOT EXISTS kmk_episodes_date_fetch_index ON episodes(date_fetch);

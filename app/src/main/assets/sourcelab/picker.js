@@ -79,6 +79,16 @@
 // Tags group finds its row); a dropdown whose menu is added only when it opens sends groups [] + hint; a heading's
 // short note line ("Browse 120 categories") is skipped before its list; a menu pick outlines only a single group's
 // own entries (the app outlines a group after Make filter / Learn addresses); Description redirects links / chips only.
+//
+// r104 (the owner's 123av run: his Tags groups were whole Details rows "Code FC2-PPV…" and the rows' labels "Code,
+// Type…"): (1) a Tags tap inside a details block (a dl, a table of label / value rows, or a box of label / value rows),
+// on a row, its label or its value, sends `rows`: one entry per row of the block, in page order { kind, label,
+// selector (anchored on the label: `dt:matches(^\s*Cast…$) + dd a.chip`), target (tags when the row holds links /
+// chips, else description), values (the value elements only, never the label), chips, order }. .rowsFor(css) does the
+// same for the first element of [css] (the app's "Split into rows" of a restored whole-row group), answered as a pick
+// with via "split". (2) "suggestions" stays armed like Tags: a tap on a card inside a "You may like" / "Related"
+// section sends `suggest` { name (the section's heading), section, item (the section's repeated card, scoped under
+// the section), title, cover, coverAttr, count, order, samples }.
 (function () {
   var TOKEN = "";
   try {
@@ -169,9 +179,12 @@
   if (ARMED_GIVEN) {
     armed = ARMED_INIT ? String(ARMED_INIT) : null;
     mode = armed ? "pick" : "browse";
-    sticky = armed === "tags";
+    sticky = stickyLabel(armed);
   }
   applyModeClass(mode);
+
+  // r104: Tags and Suggestions stay armed (each tap adds a group) until the app disarms them
+  function stickyLabel(label) { return label === "tags" || label === "suggestions"; }
 
   var GENERATED = /^(css|sc|jss|emotion)-[a-z0-9]{4,}$|^[A-Za-z]+_[A-Za-z0-9]{5,}$|^_[a-z0-9]{5,}$/;
 
@@ -611,6 +624,324 @@
     return null;
   }
 
+  // ---------- r104: a details block's rows (Tags = the site's rows) ----------
+
+  // A box of label / value rows: its first child a label (labelLike, ≤ 30 characters), the next one a value with text
+  // or links; no picture in it (a card with a title and a picture is no row)
+  function rowPairOf(row) {
+    if (!row || row.nodeType !== 1 || row.id === "__lab-badge") return null;
+    var kids = row.children;
+    if (kids.length < 2 || kids.length > 6) return null;
+    var lab = kids[0];
+    if (!labelLike(lab)) return null;
+    var label = cleanRowLabel(textOf(lab));
+    if (!label) return null;
+    var value = kids[1];
+    if (!textOf(value)) return null;
+    try { if (row.querySelector("img, picture, video, iframe")) return null; } catch (e) { return null; }
+    return { labelEl: lab, valueEl: value, label: label };
+  }
+
+  function boxRows(box) {
+    var out = [];
+    var labels = {};
+    var counted = 0;
+    for (var i = 0; i < box.children.length; i++) {
+      var c = box.children[i];
+      if (/^(script|style|template|noscript)$/i.test(c.tagName)) continue;
+      counted++;
+      var p = rowPairOf(c);
+      if (!p || labels[p.label.toLowerCase()]) continue;
+      labels[p.label.toLowerCase()] = true;
+      out.push(p);
+    }
+    return out.length >= 2 && out.length * 2 >= counted ? out : [];
+  }
+
+  // A dl's rows: each dt (also inside div wrappers of the dl) and the dd after it
+  function dlRows(dl) {
+    var out = [];
+    var dts = dl.querySelectorAll("dt");
+    for (var i = 0; i < dts.length; i++) {
+      if (dts[i].closest("dl") !== dl) continue;
+      var dd = dts[i].nextElementSibling;
+      while (dd && !/^(dd|dt)$/i.test(dd.tagName)) dd = dd.nextElementSibling;
+      if (!dd || !/^dd$/i.test(dd.tagName)) continue;
+      var label = cleanRowLabel(textOf(dts[i]));
+      if (label) out.push({ labelEl: dts[i], valueEl: dd, label: label });
+    }
+    return out;
+  }
+
+  // A table's rows: the first cell (th, or a short td) is the label, the next cell the value
+  function tableRows(table) {
+    var out = [];
+    var trs = table.querySelectorAll("tr");
+    for (var i = 0; i < trs.length; i++) {
+      if (trs[i].closest("table") !== table) continue;
+      var cells = Array.prototype.filter.call(trs[i].children, function (c) { return /^(th|td)$/i.test(c.tagName); });
+      if (cells.length < 2) continue;
+      var label = cleanRowLabel(textOf(cells[0]));
+      if (label && textOf(cells[1])) out.push({ labelEl: cells[0], valueEl: cells[1], label: label });
+    }
+    return out;
+  }
+
+  // The details block [el] sits in (or is): a dl, a table or a box of ≥ 2 label / value rows, up to 8 levels up
+  function detailBlock(el) {
+    var node = el;
+    for (var up = 0; node && node.nodeType === 1 && up < 8 && !/^(body|html)$/i.test(node.tagName); up++, node = node.parentElement) {
+      var tag = node.tagName.toLowerCase();
+      if (tag === "dl") { if (dlRows(node).length >= 2) return { box: node, pairs: dlRows(node) }; continue; }
+      if (tag === "table") { if (tableRows(node).length >= 2) return { box: node, pairs: tableRows(node) }; continue; }
+      var rows = boxRows(node);
+      if (rows.length >= 2) return { box: node, pairs: rows };
+    }
+    return null;
+  }
+
+  // Every row of the block around [el], in page order: the r102 row (label-anchored selector, values without the
+  // label, tags / description target) of each row's value element; [] when [el] is in no details block
+  function detailRows(el) {
+    var block = detailBlock(el);
+    if (!block) return [];
+    var out = [];
+    var seen = {};
+    for (var i = 0; i < block.pairs.length && out.length < 40; i++) {
+      var p = block.pairs[i];
+      var r = null;
+      try { r = rowInfo(p.valueEl); } catch (e) { r = null; }
+      if (!r || !r.selector || seen[r.selector]) continue;
+      seen[r.selector] = true;
+      out.push({
+        kind: r.kind,
+        label: r.label || p.label,
+        selector: r.selector,
+        target: r.target,
+        values: r.values,
+        chips: r.chips,
+        order: docIndex(p.labelEl),
+      });
+    }
+    out.sort(function (a, b) { return a.order - b.order; });
+    return out;
+  }
+
+  // ---------- r104: Suggestions (a "You may like" / "Related videos" section's cards) ----------
+
+  var HEADING_CLASS = /(^|[\s_-])(title|heading|header|head|caption)([\s_-]|$)/i;
+
+  function hrefsIn(el) {
+    var set = {};
+    var n = 0;
+    var links = [];
+    if (el.tagName && el.tagName.toLowerCase() === "a" && el.hasAttribute("href")) links.push(el);
+    try { links = links.concat(Array.prototype.slice.call(el.querySelectorAll("a[href]"))); } catch (e) { /* nothing */ }
+    for (var i = 0; i < links.length; i++) {
+      var h = String(links[i].href || "").split("#")[0];
+      if (h && !/^javascript:/i.test(h) && !set[h]) { set[h] = true; n++; }
+    }
+    return n;
+  }
+
+  // A segment for a selector shared by every card: no id (an id is one element only), no position
+  function shareSegment(n) {
+    var seg = likeSelector(segment(n));
+    return seg.charAt(0) === "#" ? n.tagName.toLowerCase() : seg;
+  }
+
+  // [el] under [root] as "a > b > c" (root itself excluded); "" when el is root
+  function relPath(root, el) {
+    var parts = [];
+    for (var n = el; n && n !== root && n.nodeType === 1; n = n.parentElement) parts.unshift(shareSegment(n));
+    return parts.join(" > ");
+  }
+
+  // The card the tap is in: the biggest box around it that opens one title (one address) and repeats on the page
+  function cardAt(el) {
+    var best = null;
+    var firstRepeated = null;
+    var node = el;
+    for (var up = 0; node && node.nodeType === 1 && up < 8 && !/^(body|html)$/i.test(node.tagName); up++, node = node.parentElement) {
+      var links = hrefsIn(node);
+      if (links > 1) break;
+      if (links === 1 && queryAll(likeSelector(pathOf(node))).length >= 2) {
+        if (!firstRepeated) firstRepeated = node;
+        best = node;
+      }
+    }
+    return best || firstRepeated;
+  }
+
+  function headingText(h) {
+    var t = textOf(h);
+    var links = h.querySelectorAll ? h.querySelectorAll("a[href]") : [];
+    var own = t;
+    for (var i = 0; i < links.length; i++) own = own.replace(textOf(links[i]), " ");
+    own = own.replace(/\s+/g, " ").trim();
+    return (own || t).replace(/\s*[:：]\s*$/, "").trim();
+  }
+
+  function headingLike(h) {
+    if (!h || h.nodeType !== 1 || h.id === "__lab-badge") return false;
+    var t = headingText(h);
+    if (t.length < 2 || t.length > 60) return false;
+    return /^h[1-6]$/i.test(h.tagName) || HEADING_CLASS.test(String(h.getAttribute("class") || ""));
+  }
+
+  // A heading inside [box] before [card], not inside any card like it
+  function headingIn(box, card, cardSeg) {
+    var cands = box.querySelectorAll("h1, h2, h3, h4, h5, h6, [class*=title], [class*=heading], [class*=head], [class*=caption]");
+    for (var i = 0; i < cands.length && i < 300; i++) {
+      var h = cands[i];
+      if (!headingLike(h) || h.contains(card) || card.contains(h)) continue;
+      try { if (h.closest(cardSeg) && box.contains(h.closest(cardSeg))) continue; } catch (e) { /* a selector the browser can't read */ }
+      // before the card in the page
+      if (h.compareDocumentPosition(card) & 4) return h;
+    }
+    return null;
+  }
+
+  // The section around [card]: the smallest box holding ≥ 2 cards like it with a heading in it, or right before it
+  function sectionOf(card) {
+    var cardSeg = shareSegment(card);
+    var node = card.parentElement;
+    for (var up = 0; node && up < 8 && !/^(body|html)$/i.test(node.tagName); up++, node = node.parentElement) {
+      var rel = relPath(node, card);
+      var count = 0;
+      try { count = node.querySelectorAll(":scope > " + rel).length; } catch (e) { count = 0; }
+      if (count < 2) continue;
+      var h = headingIn(node, card, cardSeg);
+      if (h) return { box: node, heading: h, inside: true, rel: rel, count: count };
+      var prev = node.previousElementSibling;
+      for (var hop = 0; prev && hop < 2; hop++, prev = prev.previousElementSibling) {
+        if (headingLike(prev)) return { box: node, heading: prev, inside: false, adjacent: hop === 0, rel: rel, count: count };
+        var inner = null;
+        try { inner = prev.querySelector("h1, h2, h3, h4, h5, h6"); } catch (e2) { inner = null; }
+        if (inner && headingLike(inner) && !prev.querySelector("a[href] img")) {
+          return { box: node, heading: prev, inside: false, adjacent: hop === 0, rel: rel, count: count, name: headingText(inner) };
+        }
+      }
+    }
+    return null;
+  }
+
+  var COVER_NAMES = ["data-src", "data-lazy-src", "data-original", "srcset", "src"];
+
+  // r104 fix: an element's own text (its text nodes, not its children's), as Jsoup's ownText() / :matchesOwn read it
+  function ownText(el) {
+    var t = "";
+    var kids = el && el.childNodes ? el.childNodes : [];
+    for (var i = 0; i < kids.length; i++) if (kids[i].nodeType === 3) t += " " + kids[i].nodeValue;
+    return t.replace(/\s+/g, " ").trim();
+  }
+
+  // r104 fix: the element of heading [h] (itself or inside it) whose own text is the section's name: "Related videos"
+  // in <h2>Related videos <a>See all</a></h2> (the link's text is not its own); null when the name is split up
+  function nameHolder(h, re) {
+    var rx = null;
+    try { rx = new RegExp(re); } catch (e) { return null; }
+    if (rx.test(ownText(h))) return h;
+    var all = h.querySelectorAll ? h.querySelectorAll("*") : [];
+    for (var i = 0; i < all.length && i < 200; i++) if (rx.test(ownText(all[i]))) return all[i];
+    return null;
+  }
+
+  // r104 fix: [selector] as Jsoup reads it (the template's getRelated): its :matchesOwn(re) / :matches(re) are
+  // checked here (own text / whole text) and swapped for a temporary attribute, the rest is the browser's own.
+  // null when the browser can't read it (an old WebView without :has)
+  function jsoupAll(selector) {
+    var marks = [];
+    var k = 0;
+    var css = String(selector).replace(/([^\s>+~(),]*):(matchesOwn|matches)\(([^()]*)\)/g, function (m, seg, kind, re) {
+      var attr = "data-lab-m" + (k++);
+      var rx = null;
+      try { rx = new RegExp(re); } catch (e) { rx = null; }
+      queryAll(seg || "*").forEach(function (n) {
+        if (rx && rx.test(kind === "matchesOwn" ? ownText(n) : textOf(n))) { n.setAttribute(attr, ""); marks.push([n, attr]); }
+      });
+      return seg + "[" + attr + "]";
+    });
+    var out = null;
+    try { out = Array.prototype.slice.call(document.querySelectorAll(css)); } catch (e) { out = null; }
+    marks.forEach(function (x) { x[0].removeAttribute(x[1]); });
+    return out;
+  }
+
+  // The group a Suggestions tap makes, or null (no repeated card, or no section with a heading around it)
+  function suggestionOf(el) {
+    var card = cardAt(el);
+    if (!card) return null;
+    var sec = sectionOf(card);
+    if (!sec) return null;
+    var name = (sec.name || headingText(sec.heading)).slice(0, 60) || "Suggestions";
+    var re = labelRegex(name);
+    var section;
+    var boxPath = likeSelector(pathOf(sec.box));
+    // r104 fix: the heading by its own text (:matchesOwn), so a link in it ("Related videos See all") doesn't stop
+    // the match; a name split over several elements keeps :matches on the whole heading
+    var holder = nameHolder(sec.heading, re);
+    var own = holder ? ":matchesOwn(" + re + ")" : ":matches(" + re + ")";
+    if (segment(sec.box).charAt(0) === "#") {
+      section = segment(sec.box);
+    } else if (queryAll(boxPath).length === 1) {
+      section = boxPath;
+    } else if (sec.inside) {
+      section = boxPath + ":has(" + shareSegment(holder || sec.heading) + own + ")";
+    } else {
+      var headSel = likeSelector(pathOf(sec.heading));
+      headSel += !holder || holder === sec.heading ? own : ":has(" + relPath(sec.heading, holder) + own + ")";
+      section = headSel + (sec.adjacent ? " + " : " ~ ") + shareSegment(sec.box);
+    }
+    var link = card.tagName.toLowerCase() === "a" ? card :
+      (card.querySelector("h1 a[href], h2 a[href], h3 a[href], h4 a[href], h5 a[href], h6 a[href]") ||
+        Array.prototype.filter.call(card.querySelectorAll("a[href]"), function (a) { return !!textOf(a); })[0] ||
+        card.querySelector("a[href]"));
+    var nameEl = card.querySelector("h1, h2, h3, h4, h5, h6, [class*=title], [class*=name]");
+    if (nameEl && !textOf(nameEl)) nameEl = null;
+    var img = card.querySelector("img");
+    var attr = "";
+    if (img) {
+      for (var i = 0; i < COVER_NAMES.length && !attr; i++) {
+        var v = String(img.getAttribute(COVER_NAMES[i]) || "").trim();
+        if (v && !/^data:/i.test(v)) attr = COVER_NAMES[i];
+      }
+    }
+    var samples = [];
+    var cards = [];
+    var item = section + " > " + sec.rel;
+    // r104 fix: the cards the template will read (the same selector, read like Jsoup), so the count can't disagree
+    var read = jsoupAll(item);
+    if (read === null) {
+      send("log", "suggestions: this browser can't check " + item + ": counted by the section's own cards");
+      try { cards = Array.prototype.slice.call(sec.box.querySelectorAll(":scope > " + sec.rel)); } catch (e) { cards = [card]; }
+    } else {
+      cards = read;
+      if (!cards.length) {
+        send("log", "suggestions \"" + name + "\": " + item + " finds no card: not added");
+        return null;
+      }
+    }
+    var nameRel = nameEl ? relPath(card, nameEl) : "";
+    for (var k = 0; k < cards.length && samples.length < 3; k++) {
+      var ne = nameRel ? cards[k].querySelector(nameRel) : null;
+      var t = ne ? textOf(ne) : snippetOf(cards[k]);
+      if (t) samples.push(t.slice(0, 60));
+    }
+    return {
+      name: name,
+      section: section,
+      item: item,
+      link: link && link !== card ? relPath(card, link) : "",
+      title: nameRel,
+      cover: img ? relPath(card, img) : "",
+      coverAttr: attr || "src",
+      count: cards.length,
+      order: docIndex(sec.box),
+      samples: samples,
+    };
+  }
+
   // ---------- r103: document order, unlabelled rows, the site's menus ----------
 
   // The element's place among all elements of the document (-1 when unknown): rows tapped as Tags are kept in it
@@ -825,6 +1156,23 @@
       // r99 fix: a pick that only a skipped element gave says so in its text (the hint shows the snippet)
       if (note) d.snippet = ("[" + note + "] " + d.snippet).trim().slice(0, 100);
       if (forLabel) d.armed = forLabel;
+      // r104: a Tags tap in a details block: every row of the block, one group each (a long press too: the app may
+      // name it Tags or Suggestions after)
+      if (forLabel === "tags" || via === "hold") {
+        var rows = [];
+        try { rows = detailRows(el); } catch (eRows) { send("log", "rows not read: " + eRows.message); rows = []; }
+        if (rows.length) {
+          d.rows = rows;
+          send("log", "tags: " + rows.length + " rows (" + rows.map(function (r) { return r.label; }).join(", ").slice(0, 120) + ")");
+        }
+      }
+      // r104: a Suggestions tap: the section around the card
+      if (forLabel === "suggestions" || via === "hold") {
+        var sg = null;
+        try { sg = suggestionOf(el); } catch (eSg) { send("log", "suggestions not read: " + eSg.message); sg = null; }
+        d.suggest = sg;
+        if (forLabel === "suggestions" || sg) send("log", sg ? "suggestions \"" + sg.name + "\": " + sg.count + " cards · " + sg.item : "suggestions: no section with a heading and repeated cards around the tap");
+      }
       send("pick", JSON.stringify(d));
     } catch (e) {
       send("log", "pick failed: " + e.message);
@@ -915,7 +1263,7 @@
   // r102: arms [label] (taps pick, nothing navigates) or nothing (null: the page is a normal browser + long press)
   function setArmed(label) {
     armed = label ? String(label) : null;
-    sticky = armed === "tags";
+    sticky = stickyLabel(armed);
     mode = armed ? "pick" : "browse";
     if (window.__labPicker) {
       window.__labPicker.mode = mode;
@@ -2108,6 +2456,21 @@
       }
       send("log", "menu mode " + (menuOn ? "on" : "off"));
       return menuOn;
+    },
+    // r104: "Split into rows" of a restored Tags group (a whole-row or a label list selector): the rows of the details
+    // block of the first element of [css] (each of a list tried in turn), sent as a pick { via: "split", split, rows }
+    rowsFor: function (css, alsoTry) {
+      var tries = [String(css || "")].concat(Array.isArray(alsoTry) ? alsoTry.map(String) : []);
+      var el = null;
+      for (var i = 0; i < tries.length && !el; i++) {
+        if (!tries[i]) continue;
+        try { el = document.querySelector(tries[i]); } catch (e) { el = null; }
+      }
+      var rows = [];
+      if (el) { try { rows = detailRows(el); } catch (e2) { rows = []; } }
+      send("pick", JSON.stringify({ via: "split", split: String(css || ""), rows: rows, pageUrl: location.href }));
+      send("log", "split " + String(css || "").slice(0, 80) + ": " + rows.length + " rows" + (el ? "" : " (nothing matches on this page)"));
+      return rows.length;
     },
     // r103: dashed green on these entries only (one menu group's, by their exact paths)
     outlineItems: function (paths) {

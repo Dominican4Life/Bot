@@ -65,6 +65,9 @@ import kotlin.math.roundToLong
  * r103: Filters → **Pick a menu on the site** (replaces "List for a filter" / "Pick a list on the site"): the next tap
  * on the site picks a menu group; a card per group (one per sub-heading) with Make filter / Learn addresses / Fetch
  * the full list; a fetched list becomes a Dropdown or a Text box with suggestions.
+ *
+ * r104: each filter card has ▲ / ▼ (the order the source and the Browse sheet use); a filter the source can't use yet
+ * says so in red ("Not in the source yet — …"); a filter made from another page's links says it opens that page.
  */
 @Composable
 internal fun BuilderExtrasPane(
@@ -72,6 +75,8 @@ internal fun BuilderExtrasPane(
     pageUrl: String?,
     siteUrl: String,
     onAskOptions: (String) -> Unit,
+    /** r104 fix: the edited source's own search path (no search recorded here): which page is the search's */
+    codeSearchPath: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val s by extras.state.collectAsState()
@@ -131,7 +136,7 @@ internal fun BuilderExtrasPane(
                 HorizontalDivider()
                 SectionHeader("Filters", filtersStatus(s), open == "filters") { toggle("filters") }
                 if (open == "filters") {
-                    FiltersSection(s, extras, pageUrl, onAskOptions) { url, name ->
+                    FiltersSection(s, extras, pageUrl, onAskOptions, codeSearchPath) { url, name ->
                         readName = name
                         readUrl = url
                     }
@@ -179,8 +184,11 @@ private fun filtersStatus(s: BuilderExtras): String {
         1 -> "1 filter"
         else -> "$n filters"
     }
+    // r104: filters the source can't use yet are counted, never hidden
+    val notReady = s.filters.count { BuilderExtrasLogic.filterProblem(it) != null }
+    val withReady = if (notReady > 0) "$base · $notReady not in the source yet" else base
     val offers = s.offers.size
-    return if (offers > 0) "$base · $offers offered" else base
+    return if (offers > 0) "$withReady · $offers offered" else withReady
 }
 
 private fun settingsStatus(s: BuilderExtras): String {
@@ -367,6 +375,7 @@ private fun FiltersSection(
     extras: BuilderExtrasModel,
     pageUrl: String?,
     onAskOptions: (String) -> Unit,
+    codeSearchPath: String?,
     onReadList: (String, String?) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 12.dp)) {
@@ -457,7 +466,7 @@ private fun FiltersSection(
             }
         }
         s.filters.forEachIndexed { index, filter ->
-            FilterEditor(s.rev, index, filter, extras, onAskOptions)
+            FilterEditor(s.rev, index, s.filters.size, filter, s.searchPath ?: codeSearchPath, extras, onAskOptions)
             HorizontalDivider()
         }
         TextButton(onClick = extras::addFilter) {
@@ -469,12 +478,30 @@ private fun FiltersSection(
 }
 
 @Composable
-private fun FilterEditor(rev: Int, index: Int, filter: ExtrasFilter, extras: BuilderExtrasModel, onAskOptions: (String) -> Unit) {
+private fun FilterEditor(
+    rev: Int,
+    index: Int,
+    count: Int,
+    filter: ExtrasFilter,
+    searchPath: String?,
+    extras: BuilderExtrasModel,
+    onAskOptions: (String) -> Unit,
+) {
     val isPath = filter.mode == "path"
     val param = filter.param.ifBlank { if (filter.askParam) "" else filter.key }
+    // r104: not usable yet (shown in red, left out of the source); opens its links' own page (not the search page)
+    val problem = BuilderExtrasLogic.filterProblem(filter)
+    val linkPage = problem == null && BuilderExtrasLogic.usesLinkPage(filter, searchPath)
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Filter ${index + 1}", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+            // r104: the order the source's filter sheet shows
+            IconButton(onClick = { extras.moveFilter(index, -1) }, enabled = index > 0, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Outlined.KeyboardArrowUp, contentDescription = "Move up", modifier = Modifier.size(18.dp))
+            }
+            IconButton(onClick = { extras.moveFilter(index, 1) }, enabled = index < count - 1, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = "Move down", modifier = Modifier.size(18.dp))
+            }
             IconButton(onClick = { extras.removeFilter(index) }, modifier = Modifier.size(32.dp)) {
                 Icon(Icons.Outlined.Delete, contentDescription = "Remove", modifier = Modifier.size(18.dp))
             }
@@ -516,9 +543,15 @@ private fun FilterEditor(rev: Int, index: Int, filter: ExtrasFilter, extras: Bui
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         "${filter.options.size} options · " + when (filter.type) {
-                            "sort" -> "the first is picked at first"
                             "autocomplete" -> "suggested while typing; an empty box is no filter"
-                            else -> "the first is used when nothing is picked"
+                            // r104 fix: filtersJson puts an empty "Any" first for a filter that opens its own page
+                            else -> if ((isPath || linkPage) && filter.options.none { it.value.isEmpty() }) {
+                                "the source adds an empty \u201cAny\u201d first: its page opens only when one is picked"
+                            } else if (filter.type == "sort") {
+                                "the first is picked at first"
+                            } else {
+                                "the first is used when nothing is picked"
+                            }
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -539,8 +572,16 @@ private fun FilterEditor(rev: Int, index: Int, filter: ExtrasFilter, extras: Bui
             )
             else -> Unit
         }
+        if (problem != null) {
+            Text(problem, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        }
+        // r104 fix: made from links before r104 (the owner's Trending): its own page wasn't saved
+        if (problem == null && filter.noLinkAddress && !linkPage) {
+            Text(BuilderExtrasLogic.OLD_LINKS, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        }
         Text(
             when {
+                linkPage -> "Picks open ${filter.linkPath} (its own page, not the search page; left out while searching for words)"
                 isPath && filter.type == "autocomplete" ->
                     "The first name typed changes the address to ${filter.path.ifBlank { "…" }} (without a search word)"
                 isPath -> "Picks change the address to ${filter.path.ifBlank { "…" }} (without a search word)"

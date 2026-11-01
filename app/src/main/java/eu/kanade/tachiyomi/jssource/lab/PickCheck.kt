@@ -44,6 +44,11 @@ internal data class PickInfo(
     val rowChips: Int = 0,
     /** r103 fix: picker.js says it sits in the site's menus (nav, a sidebar…): Tags warns instead of refusing */
     val inMenu: Boolean = false,
+    /** r104: a Tags tap in a details block: the labels of its rows (one group each), [] when it is in none */
+    val detailRows: List<String> = emptyList(),
+    /** r104: a Suggestions tap: the section's heading and how many cards it has ("" = no section was found) */
+    val suggestName: String = "",
+    val suggestCount: Int = 0,
 )
 
 /**
@@ -91,11 +96,12 @@ internal object PickCheck {
         "tags" -> "Tags"
         "author" -> "Author"
         "status" -> "Status"
+        "suggestions" -> "Suggestions"
         else -> label.replaceFirstChar { it.uppercase() }
     }
 
     /** r101: the title page's own fields, picked on the title page (none is needed: each has a fallback) */
-    val TITLE_FIELDS = listOf("bigCover", "description", "tags", "author", "status")
+    val TITLE_FIELDS = listOf("bigCover", "description", "tags", "author", "status", "suggestions")
 
     private val PLAYER_TAGS = setOf("iframe", "video", "source", "embed", "object")
 
@@ -297,7 +303,15 @@ internal object PickCheck {
                 warnBody = youTapped + "Description is the paragraph about the title."
             }
             "tags" -> {
-                if (pick.rowLabel.isNotBlank()) {
+                if (pick.detailRows.isNotEmpty()) {
+                    // r104: a details block: one group per row, named by its label
+                    val n = pick.detailRows.size
+                    add(true, "$n ${if (n == 1) "row" else "rows"}", "")
+                    okBody = "One group per row: ${pick.detailRows.take(8).joinToString(", ")}" +
+                        (if (n > 8) " …" else "") + ". Rows with links show as tags, plain rows go to the description; " +
+                        "change each row's target in the Tags card."
+                    warnBody = youTapped + "The details rows were read."
+                } else if (pick.rowLabel.isNotBlank()) {
                     // r102: a row of the Details block: one group, named by its label
                     val values = pick.rowValues.filter { it.isNotBlank() }
                     add(true, "row “${pick.rowLabel}”", "")
@@ -329,6 +343,17 @@ internal object PickCheck {
                     warnBody = youTapped + "It sits in the site's menus (navigation, a sidebar…). Keep mine keeps the group; " +
                         "Not this removes it."
                 }
+            }
+            // r104: a card of a "You may like" / "Related" section
+            "suggestions" -> {
+                add(pick.suggestName.isNotBlank(), "section “${pick.suggestName}”", "no section with a heading around it")
+                if (pick.suggestName.isNotBlank()) add(pick.suggestCount >= 2, "${pick.suggestCount} cards", "only ${pick.suggestCount} card")
+                add(pick.linkCount >= 1 || pick.tag == "a", "links to a title", "no link")
+                // r104 fix: the anime title screen merges the groups into its one Suggestions row
+                okBody = "Group “${pick.suggestName}”: its ${pick.suggestCount} cards " + (
+                    if (anime) "join the title screen's Suggestions row (one row for all sections)" else "are listed under that name on the title screen"
+                    ) + ". Tap a card of another section to add it."
+                warnBody = youTapped + "Tap one card (picture or title) inside a section like “You may like” or “Related videos”."
             }
             "author", "status" -> {
                 val t = pick.text.ifBlank { pick.snippet }.trim()

@@ -1754,6 +1754,8 @@ object PairSync {
                         null
                     }
                     if (p2pWhy != null) log("Not using Wi-Fi Direct: $p2pWhy")
+                    // KMK (r104): the installed list is empty until the extensions loaded (at a cold start)
+                    PairSyncData.awaitInstalled()
                     bt.sendJson(
                         buildJsonObject {
                             put("t", "sync")
@@ -2286,7 +2288,7 @@ object PairSync {
             runCatching { parse(frame).string("t") }.getOrNull() == "wait"
 
     /** KMK (r93): with [stage], the payload and the backup are written there (see [readPayload]) */
-    private fun receivePayload(link: Link, stage: Stage? = null): ReceivedPayload {
+    private suspend fun receivePayload(link: Link, stage: Stage? = null): ReceivedPayload {
         // KMK (r90): the bar ignores the tiny keep-alive frames (they'd show a full bar while nothing moves)
         val progress = progress(sending = false, minTotal = 1024L)
         var frame = link.receive(progress)
@@ -2300,7 +2302,7 @@ object PairSync {
      * so its own tiles don't filter what comes. KMK (r93): with [stage], the payload and the backup are staged there
      * (the backup isn't kept in memory then).
      */
-    private fun readPayload(link: Link, payload: ByteArray, stage: Stage? = null): ReceivedPayload {
+    private suspend fun readPayload(link: Link, payload: ByteArray, stage: Stage? = null): ReceivedPayload {
         val received = PairSyncData.decode(payload)
         stage?.payloadFile?.writeBytes(payload)
         val announced = received.payload
@@ -2314,6 +2316,8 @@ object PairSync {
             }
         }
         if (announced.apkFiles.isNotEmpty()) {
+            // KMK (r104): the installed list is empty until the extensions loaded (at a cold start)
+            PairSyncData.awaitInstalled()
             val have = PairSyncData.installedPackages().toSet()
             var total = 0L
             val saved = mutableListOf<ReceivedApk>()

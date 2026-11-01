@@ -23,6 +23,8 @@ CREATE TABLE episodes(
 );
 
 CREATE INDEX kmk_episodes_anime_id_index ON episodes(anime_id);
+-- KMK (r104): anime Updates sorts by date_fetch (migration 58)
+CREATE INDEX kmk_episodes_date_fetch_index ON episodes(date_fetch);
 
 getByAnimeId:
 SELECT * FROM episodes WHERE anime_id = :animeId ORDER BY source_order;
@@ -70,6 +72,9 @@ UPDATE episodes SET
     total_seconds = coalesce(:totalSeconds, total_seconds)
 WHERE _id = :id;
 
+-- KMK (r104): CROSS JOIN keeps episodes as the outer table, so SQLite walks kmk_episodes_date_fetch_index
+-- (migration 58) newest first, down to :after, and stops at the limit, instead of reading every favourite's
+-- episodes and sorting them. The ids after date_fetch spell out the order the old plan gave equal dates.
 getUpdates:
 SELECT
     an._id AS animeId,
@@ -85,9 +90,9 @@ SELECT
     ep.total_seconds,
     ep.date_fetch
 FROM episodes ep
-JOIN animes an ON ep.anime_id = an._id
-WHERE an.favorite = 1 AND ep.date_fetch > an.date_added AND ep.date_fetch > :after
-ORDER BY ep.date_fetch DESC
+CROSS JOIN animes an
+WHERE ep.anime_id = an._id AND an.favorite = 1 AND ep.date_fetch > an.date_added AND ep.date_fetch > :after
+ORDER BY ep.date_fetch DESC, an._id, ep._id
 LIMIT :limit;
 
 getByUrl:

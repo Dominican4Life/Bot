@@ -29,12 +29,13 @@
     "tagsSelector": "",
     "authorSelector": "",
     "statusSelector": "",
-    "tagGroups": ""
+    "tagGroups": "",
+    "suggestionGroups": "[]"
   },
   "parts": {
     "headers": {
       "title": "Headers and constants",
-      "text": "The site as Referer on every picture, and the selectors and list paths the builder derived (each has its reason in the builder's card); the title page's own fields tapped in Build by tapping (Cover, Description, Tags, Author, Status; empty when not tapped); the rows tapped as Tags groups (TAG_GROUPS: name, selector, target; empty list when none); the Popular / Latest button names, tabs, filters and settings from \"Lists and options\" (empty lists when none were recorded).",
+      "text": "The site as Referer on every picture, and the selectors and list paths the builder derived (each has its reason in the builder's card); the title page's own fields tapped in Build by tapping (Cover, Description, Tags, Author, Status; empty when not tapped); the rows tapped as Tags groups (TAG_GROUPS: name, selector, target; empty list when none); the sections tapped as Suggestions (SUGGESTION_GROUPS: name, card, link, title, cover; empty list when none); the Popular / Latest button names, tabs, filters and settings from \"Lists and options\" (empty lists when none were recorded).",
       "ruleIds": [
         "referer-on-images",
         "selector-generated-class"
@@ -54,18 +55,18 @@
     },
     "search": {
       "title": "Search",
-      "text": "The search path with the words and page filled (the address recorded from a real search on the site, or its search box, when there is one), the same cards. Each filter adds its value: a \"param\" filter as param=value, a \"path\" filter (a genre or sort list of the site, /genres/{value}) by opening that list's address instead when no words are typed (left out while searching for words); a sort filter sends its picked option's value; empty ones are left out. A grouped tag tapped on a title page arrives as \"Group: tag\": a filter named like the group with an option labelled like the tag picks that option; else only the tag's words are searched. A text box with suggestions (\"autocomplete\") sends the names typed: each is matched to its list's entry by label (any case), a name not in the list goes as a slug; a path filter uses the first, a param filter joins them with commas.",
+      "text": "The search path with the words and page filled (the address recorded from a real search on the site, or its search box, when there is one), the same cards. Each filter adds its value: a \"param\" filter as param=value, a \"path\" filter (a genre or sort list of the site, /genres/{value}) by opening that list's address instead when no words are typed (left out while searching for words); a sort filter sends its picked option's value; empty ones are left out. A grouped tag tapped on a title page arrives as \"Group: tag\": a filter named like the group with an option labelled like the tag picks that option; else only the tag's words are searched. A text box with suggestions (\"autocomplete\") sends the names typed: each is matched to its list's entry by label (any case), a name not in the list goes as a slug; a path filter uses the first, a param filter joins them with commas. Filters that open their own page (Trending → /en/trending?sort={value}) start with an empty \"Any\" and open that page only when one of its filters has a value; each filter goes only into its own page's address (the search page's filters into the search address), and with filters of two pages set the first one picked in the filter order wins (the others are logged). Values are encoded in the address. A filter with no parameter and no path is left out with a log line; a filter search with 0 titles logs the address it tried.",
       "ruleIds": []
     },
     "getDetails": {
       "title": "Title page",
-      "text": "The Cover, Description, Tags, Author and Status tapped on the title page first. Rows tapped as Tags groups (Cast, Maker, Genres…) give tags \"Group: value\" that the app shows grouped (the other tags are then \"Tags: value\"), and rows set to Description a \"Group: a, b\" line under the description. Else og:image, a video poster or the player's poster as cover, and no cover at all when the page has none, so the list's cover stays; og:description unless it is the site's own slogan (the home page's description, read once); genre / tag links outside the site's menus (nav, header, footer, aside, menus), without words like \"Genres\" or \"Tags\". Author and status only when tapped.",
+      "text": "The Cover, Description, Tags, Author and Status tapped on the title page first. Rows tapped as Tags groups (Cast, Maker, Genres…) give tags \"Group: value\" that the app shows grouped (the other tags are then \"Tags: value\"), and rows set to Description a \"Group: a, b\" line under the description. Else og:image, a video poster or the player's poster as cover, and no cover at all when the page has none, so the list's cover stays; og:description unless it is the site's own slogan (the home page's description, read once); genre / tag links outside the site's menus (nav, header, footer, aside, menus), without words like \"Genres\" or \"Tags\". Author and status only when tapped. A field whose selector fails is logged (Logs) and read as empty, so the others still come.",
       "optional": true,
       "ruleIds": []
     },
     "getChapterList": {
       "title": "Chapters / episodes",
-      "text": "The CHAPTER links of the title page, each address once, the last number in the text as the number, the picked date element when there is one. When the title page is the only episode (SINGLE_EPISODE), that page is episode 1 with the picked date / number read on it. With no chapter link picked the part is not written, and a JSON build is written as JS (the JSON format can't say why there are no chapters; the JS one throws \"No chapter link was picked…\").",
+      "text": "The CHAPTER links of the title page, each address once, the last number in the text as the number, the picked date element when there is one. When the title page is the only episode (SINGLE_EPISODE), that page is episode 1 with the picked date / number read on it. With no chapter link picked the part is not written, and a JSON build is written as JS (the JSON format can't say why there are no chapters; the JS one throws \"No chapter link was picked…\"). The only episode gets the title's picture as its thumbnail (the Cover tapped on the title page, else og:image, a video poster or twitter:image).",
       "ruleIds": [
         "stable-chapter-url",
         "date-format-known"
@@ -87,7 +88,7 @@
     },
     "extras": {
       "title": "Tabs, filters and settings",
-      "text": "Added only when \"Lists and options\" recorded some: tabs become buttons at the top of Browse (getCatalogs / getCatalog with the same cards), filters the filter sheet (dropdowns, sort lists, checkboxes, text, text boxes with suggestions; search adds their values or opens their list's address), settings the source's settings (read with host.preference.get(\"key\")).",
+      "text": "Added only when \"Lists and options\" recorded some: tabs become buttons at the top of Browse (getCatalogs / getCatalog with the same cards), filters the filter sheet (dropdowns, sort lists, checkboxes, text, text boxes with suggestions; search adds their values or opens their list's address), settings the source's settings (read with host.preference.get(\"key\")). Sections tapped as Suggestions add getRelated: each section's cards on the title page (link, name, picture), returned as named groups: a manga title screen shows each under the section's name, an anime title screen merges them into one Suggestions row.",
       "optional": true,
       "ruleIds": []
     },
@@ -123,6 +124,15 @@
         "extras"
       ],
       "note": "Filters made from the site's menus: one per group; long lists can be a text box with suggestions."
+    },
+    "7": {
+      "parts": [
+        "getDetails",
+        "getChapterList",
+        "search",
+        "extras"
+      ],
+      "note": "Suggestions from the title page's sections (You may like, Related); filters that open their own page (Trending) are used only when one is picked (an empty “Any” first), each filter goes only into its own page's address; the only episode gets the title's picture; the title page's readers log their errors."
     }
   }
 }
