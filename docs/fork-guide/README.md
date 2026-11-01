@@ -610,7 +610,7 @@ Commit b7c7722b. The owner's JS source "Mitaku" lost its downloads in r98 while 
 
 ## Changes in r100 (1 November 2026)
 
-Commit TBD. The owner's r99 run on a video site: the episode's player `iframe` had no `src` in the plain HTML (the site's script fills it in, `:src="currentEpisode?.url"`), so `getVideoList` threw "player host not recognised" in 183 ms; his Item tap landed on a heading bar and nothing told him; the guessed search address 404'd. Written by four writers in parallel from `scratchpad/r100/CONTRACT.md`, then an independent compile review, a behaviour test and a fix pass.
+Commit abaa39c2. The owner's r99 run on a video site: the episode's player `iframe` had no `src` in the plain HTML (the site's script fills it in, `:src="currentEpisode?.url"`), so `getVideoList` threw "player host not recognised" in 183 ms; his Item tap landed on a heading bar and nothing told him; the guessed search address 404'd. Written by four writers in parallel from `scratchpad/r100/CONTRACT.md`, then an independent compile review, a behaviour test and a fix pass.
 
 ### Shared video finder (`host.findVideo`)
 
