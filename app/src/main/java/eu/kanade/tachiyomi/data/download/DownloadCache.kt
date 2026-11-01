@@ -84,6 +84,8 @@ class DownloadCache(
     /**
      * The interval after which this cache should be invalidated. 1 hour shouldn't cause major
      * issues, as the cache is only used for UI feedback.
+     * KMK (r103): the setting's default is 12 hours: the app updates the index itself on every download, delete
+     * and rename, and Settings › Advanced › "Reindex downloads" forces a walk.
      */
     private val renewInterval // = 1.hours.inWholeMilliseconds
         // KMK -->
@@ -519,21 +521,38 @@ class DownloadCache(
                 return@run
             }
 
+            // KMK (r103): downloads/Manga is resolved and listed once per re-scan, for the linking and the index
+            // (r99 listed it twice). Listed when first needed, after the linking has waited for the sources
+            val started = System.nanoTime()
+            val rootDir = storageManager.getMangaDownloadsDirectory()
+            var rootChildren: List<UniFile>? = null
+            var rootListed = 0
+            val listRoot: () -> List<UniFile>? = {
+                if (rootDir == null) {
+                    null
+                } else {
+                    rootChildren ?: rootDir.listFiles().orEmpty().toList().also {
+                        rootChildren = it
+                        rootListed++
+                    }
+                }
+            }
+
             // KMK: a folder belongs to a source by name whatever its tag, (EN), (JS), (ALL), and numbered copies too
             val matches = sources.map { it.id to provider.sourceMatch(it) }
 
             // KMK (r99): folders are linked to source ids (a renamed source keeps its folder). Older names are
             // recovered once per source, and every folder today's rules give a source is linked to it
-            if (favorites != null) linkFolders(sources, matches)
+            if (favorites != null) linkFolders(sources, matches, listRoot)
             val linkKind = SourceFolderLinks.Kind.MANGA
             val linkedOwners = SourceFolderLinks.owners(linkKind)
             val sourceIds = sources.mapTo(HashSet()) { it.id }
 
             rootDownloadsDirMutex.withLock {
-                val updatedRootDir = RootDirectory(storageManager.getMangaDownloadsDirectory())
+                val updatedRootDir = RootDirectory(rootDir)
 
                 val bySource = HashMap<Long, MutableList<Pair<UniFile, Int>>>()
-                updatedRootDir.dir?.listFiles().orEmpty()
+                listRoot().orEmpty()
                     .filter { it.isDirectory && !it.name.isNullOrBlank() }
                     .forEach { dir ->
                         // KMK (r99): a folder linked to a source's id is that source's, before any name rule
@@ -595,6 +614,14 @@ class DownloadCache(
 
                 rootDownloadsDir = updatedRootDir
                 isIndexLoaded = true
+
+                eu.kanade.tachiyomi.util.system.AppLog.add(
+                    'D',
+                    "download",
+                    "Download index re-scan: ${updatedRootDir.sourceDirs.values.sumOf { it.mangaDirs.size }} " +
+                        "titles in ${updatedRootDir.sourceDirs.size} sources, downloads/Manga listed $rootListed×, " +
+                        "${(System.nanoTime() - started) / 1_000_000} ms",
+                )
             }
 
             _isInitializing.emit(false)
@@ -615,12 +642,14 @@ class DownloadCache(
     private suspend fun linkFolders(
         sources: List<Source>,
         matches: List<Pair<Long, SourceFolders.Match>>,
+        // KMK (r103): renew's one listing of downloads/Manga (null result: no such folder); null = list it here
+        rootListing: (() -> List<UniFile>?)? = null,
     ): Int {
         if (sources.isEmpty()) return 0
         return linkMutex.withLock {
             try {
                 val known = SourceFolderLinks.knownSources(SourceFolderLinks.Kind.MANGA) ?: return@withLock 0
-                linkFoldersLocked(sources, matches, known)
+                linkFoldersLocked(sources, matches, known, rootListing)
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 eu.kanade.tachiyomi.util.system.AppLog.add(
@@ -637,8 +666,14 @@ class DownloadCache(
         sources: List<Source>,
         matches: List<Pair<Long, SourceFolders.Match>>,
         known: List<SourceFolderLinks.Owner>,
+        rootListing: (() -> List<UniFile>?)?,
     ): Int {
-        val root = storageManager.getMangaDownloadsDirectory() ?: return 0
+        val children = if (rootListing != null) {
+            rootListing() ?: return 0
+        } else {
+            val root = storageManager.getMangaDownloadsDirectory() ?: return 0
+            root.listFiles().orEmpty().toList()
+        }
         val matchById = matches.toMap()
         val candidates = sources.mapNotNull { source ->
             val match = matchById[source.id] ?: return@mapNotNull null
@@ -653,7 +688,7 @@ class DownloadCache(
         }
         return SourceFolderLinks.recoverAndSeed(
             SourceFolderLinks.Kind.MANGA,
-            root.listFiles().orEmpty().toList(),
+            children,
             candidates,
             known,
         )

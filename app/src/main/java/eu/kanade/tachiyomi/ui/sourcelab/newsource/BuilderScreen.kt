@@ -121,6 +121,12 @@ import java.util.UUID
  * site works as a browser and a long press picks. The Tags card (mockup 2) lists the tag groups. learn.js (W2) is put
  * on every page after picker.js; the address bar shows the WebView's own address. [editKey]: Edit by tapping (the
  * source's builder state comes back; the main button is "Save to this source", into the same key).
+ *
+ * r103 (the owner's r102 video: the "Tapping for…" rows, banner and hint ate the page): the rows are gone; a label is
+ * armed by tapping its row in the Labels card (highlighted, "tap again to stop"); while something is armed one slim
+ * bar over the page says "Tapping for: X · Stop" (also for "Pick a menu on the site"); the edit banner's ✕ closes it
+ * for the session; the one-line hint under the address bar shows only until the first pick. The bridge's `menu`
+ * (console `LABMENU:<token>:`) is a menu group pick.
  */
 internal class BuilderScreen(
     private val startUrl: String? = null,
@@ -169,6 +175,12 @@ internal class BuilderScreen(
         @JavascriptInterface
         fun group(json: String) {
             model.onGroupPicked(json)
+        }
+
+        /** r103: a menu group pick ("Pick a menu on the site"); console fallback `LABMENU:` */
+        @JavascriptInterface
+        fun menu(json: String) {
+            model.onMenuPicked(json)
         }
     }
 
@@ -267,29 +279,24 @@ internal class BuilderScreen(
                 if (state.busy != null) LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp))
                 // r102: Edit by tapping says what came back (or what was read from the code)
                 EditBanner(state, model)
-                Text(
-                    text = when (state.armed) {
-                        null -> "Nothing chosen: the site works as usual (open menus, follow links). Choose what you're tapping " +
-                            "for below, then tap it on the page; or long-press anything on the page and name it after."
-                        "tags" -> "Tapping for Tags: tap each row of the title's details (Cast, Maker, Genres…); every row becomes a " +
-                            "group. Nothing opens. Tap Tags ＋ again when done."
-                        else -> "Tapping for ${PickCheck.labelName(state.armed.orEmpty(), state.anime)}: tap it on the page " +
-                            "(nothing opens). Tap the chip again to cancel."
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-                )
                 UrlRow(state, model, holder)
-                // r102: "Tapping for…": every label of every page, grouped; a chip arms it
-                TappingFor(state, model, tablet)
+                // r103: one line, only until the first pick (the "Tapping for…" rows are gone: the page gets the room)
+                if (state.picks.isEmpty() && state.raws.isEmpty() && state.pending == null && state.armed == null) {
+                    Text(
+                        "Tap a label in Labels${if (tablet) " (right)" else " (below the page)"}, then tap it on the page; or " +
+                            "long-press anything on the page and name it after.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
+                    )
+                }
                 // r99: Up / Down move the pick on the page; picker.js sends the new element back as a pick
                 PickHint(state, model) { direction ->
                     holder[0]?.evaluateJavascript("window.__labPicker && window.__labPicker.$direction()", null)
                     Unit
                 }
-                // r101: "Pick a list on the site" waits for a tap: said next to the page, wherever the pane is scrolled
-                GroupModeBar(model)
                 // r100 (W3): a filter's choices are read from the page (a <select>, or links carrying the parameter)
                 val askOptions: (String) -> Unit = { param ->
                     holder[0]?.evaluateJavascript(
@@ -308,6 +315,8 @@ internal class BuilderScreen(
                             onCreated = { webGeneration++ },
                             modifier = Modifier.weight(1f).fillMaxHeight().padding(start = 16.dp, bottom = 16.dp),
                         ) {
+                            // r103: "Tapping for: X · Stop" (and a refused Tags tap's note) over the top of the page
+                            TopBars(state, model)
                             // Over the bottom of the page, as in the mockups
                             if (showHelper) {
                                 HelperCard(
@@ -342,7 +351,9 @@ internal class BuilderScreen(
                             holder,
                             onCreated = { webGeneration++ },
                             modifier = Modifier.fillMaxWidth().height(420.dp).padding(horizontal = 16.dp),
-                        )
+                        ) {
+                            TopBars(state, model)
+                        }
                         // On a phone the page is small: the helper goes under it instead of over it
                         if (showHelper) {
                             HelperCard(state, model, wide = false, modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 10.dp))
@@ -399,33 +410,64 @@ internal class BuilderScreen(
         }
     }
 
-    /** r101: "Pick a list on the site" is on: the page waits for a tap (Cancel turns it off) */
+    /**
+     * r103: over the top of the page: one slim "Tapping for: <Label> · Stop" bar while a label (or "Pick a menu on the
+     * site") is armed, and a short note (a Tags tap in the site's menu, kept while the helper is off) with its OK
+     */
     @Composable
-    private fun GroupModeBar(model: BuilderScreenModel) {
+    private fun BoxScope.TopBars(state: BuilderScreenModel.State, model: BuilderScreenModel) {
         val extrasState by model.extras.state.collectAsState()
-        if (!extrasState.groupMode) return
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.tertiaryContainer,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+        val armed = state.armed
+        val what = when {
+            armed == "tags" -> "Tags (each row you tap is a group)"
+            armed != null -> PickCheck.labelName(armed, state.anime)
+            extrasState.groupMode -> "a menu on the site (a heading, a dropdown's button or an entry)"
+            else -> null
+        }
+        val notice = state.notice
+        if (what == null && notice == null) return
+        Column(
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().padding(8.dp),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 12.dp)) {
-                Icon(
-                    Icons.Outlined.TouchApp,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onTertiaryContainer,
-                    modifier = Modifier.size(16.dp),
+            if (what != null) {
+                SlimBar(
+                    text = "Tapping for: $what",
+                    action = "Stop",
+                    container = MaterialTheme.colorScheme.primary,
+                    content = MaterialTheme.colorScheme.onPrimary,
+                ) {
+                    if (armed != null) model.arm(null) else model.extras.setGroupMode(false)
+                }
+            }
+            if (notice != null) {
+                SlimBar(
+                    text = notice,
+                    action = "OK",
+                    container = MaterialTheme.colorScheme.tertiaryContainer,
+                    content = MaterialTheme.colorScheme.onTertiaryContainer,
+                    onAction = model::dismissNotice,
                 )
+            }
+        }
+    }
+
+    @Composable
+    private fun SlimBar(text: String, action: String, container: Color, content: Color, onAction: () -> Unit) {
+        Surface(shape = RoundedCornerShape(10.dp), color = container, shadowElevation = 4.dp, modifier = Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 12.dp)) {
+                Icon(Icons.Outlined.TouchApp, contentDescription = null, tint = content, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    "Waiting for your tap on the site: one entry of the list",
+                    text,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    fontWeight = FontWeight.SemiBold,
+                    color = content,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
-                TextButton(onClick = { model.extras.setGroupMode(false) }) { Text("Cancel") }
+                TextButton(onClick = onAction) { Text(action, color = content) }
             }
         }
     }
@@ -513,9 +555,10 @@ internal class BuilderScreen(
         view.evaluateJavascript(armScript(state.armed), null)
         // r102 (W2): learn.js after picker.js, its own evaluation (an error in one doesn't stop the other)
         state.learnScript?.let { learn -> view.evaluateJavascript(learn, null) }
-        // r101: a group pick still waiting for its tap survives a page load (the new page's picker starts off)
+        // r101: a group pick still waiting for its tap survives a page load (the new page's picker starts off).
+        // r103: it is "Pick a menu on the site" (menuMode)
         if (runCatching { model.extras.state.value.groupMode }.getOrDefault(false)) {
-            view.evaluateJavascript("window.__labPicker && window.__labPicker.groupMode && window.__labPicker.groupMode(true)", null)
+            view.evaluateJavascript("window.__labPicker && window.__labPicker.menuMode && window.__labPicker.menuMode(true)", null)
         }
     }
 
@@ -558,6 +601,7 @@ internal class BuilderScreen(
                                     val options = "$OPTS_PREFIX$labToken:"
                                     val form = "$FORM_PREFIX$labToken:"
                                     val group = "$GROUP_PREFIX$labToken:"
+                                    val menu = "$MENU_PREFIX$labToken:"
                                     return when {
                                         text.startsWith(pick) -> {
                                             model.onPick(text.removePrefix(pick), viaConsole = true)
@@ -573,6 +617,10 @@ internal class BuilderScreen(
                                         }
                                         text.startsWith(group) -> {
                                             model.onGroupPicked(text.removePrefix(group))
+                                            true
+                                        }
+                                        text.startsWith(menu) -> {
+                                            model.onMenuPicked(text.removePrefix(menu))
                                             true
                                         }
                                         text.startsWith(log) -> {
@@ -629,7 +677,8 @@ internal class BuilderScreen(
                     Text(
                         when {
                             state.pending != null -> "now tap a label"
-                            state.picks.isEmpty() -> "0 picked · tap the page, then a label"
+                            state.armed != null -> "tap the page · tap the row again to stop"
+                            state.picks.isEmpty() -> "tap a label, then tap it on the page"
                             else -> labelsSummary(state)
                         },
                         style = MaterialTheme.typography.bodySmall,
@@ -681,19 +730,19 @@ internal class BuilderScreen(
                         Text(
                             text = when {
                                 choosable -> "tap here: it is the ${labelName(label).lowercase()}"
-                                armedHere -> "tapping for this now: tap ${whatToTap(label)}"
+                                armedHere -> "tapping for this now: tap ${whatToTap(label)} · tap again to stop"
                                 label == "tags" && state.tagGroups.isNotEmpty() ->
                                     "${state.tagGroups.size} ${if (state.tagGroups.size == 1) "group" else "groups"}: " +
                                         state.tagGroups.joinToString(", ") { it.name }
                                 pick != null -> pick.likeSelector.substringAfterLast(" > ") + " · ${pick.pick.count}"
                                 state.fromCodeOnly(label) -> "from the code"
                                 state.singleEpisode && label == "chapter" -> "not needed: this page is the episode"
-                                here && state.nextLabel == label -> "next: tap ${whatToTap(label)}"
-                                here && label in BuilderScreenModel.optionalLabels -> "optional: tap ${whatToTap(label)}"
-                                here -> "tap it on the page"
-                                label in BuilderScreenModel.Step.TitlePage.labels -> "on a title page: choose it, then tap"
-                                label in BuilderScreenModel.Step.ListPage.labels -> "on the list page: choose it, then tap"
-                                else -> "on an episode page: choose it, then tap"
+                                here && state.nextLabel == label -> "next: tap here, then ${whatToTap(label)}"
+                                here && label in BuilderScreenModel.optionalLabels -> "optional: tap here, then ${whatToTap(label)}"
+                                here -> "tap here, then tap it on the page"
+                                label in BuilderScreenModel.Step.TitlePage.labels -> "on a title page: tap here, then tap it"
+                                label in BuilderScreenModel.Step.ListPage.labels -> "on the list page: tap here, then tap it"
+                                else -> "on an episode page: tap here, then tap it"
                             },
                             fontFamily = FontFamily.Monospace,
                             fontSize = 12.sp,
@@ -770,108 +819,6 @@ internal class BuilderScreen(
                 } else if (state.step != BuilderScreenModel.Step.ChapterPage) {
                     TextButton(onClick = model::write, enabled = state.picks.isNotEmpty() && state.busy == null, modifier = Modifier.padding(top = 4.dp)) {
                         Text("Write the source with what is picked so far")
-                    }
-                }
-            }
-        }
-    }
-
-    /**
-     * r102: "Tapping for…" (mockup 1): every label grouped by the page it is on (List page · Title page · Episode
-     * page) and "List for a filter". ✓ = has a value; the armed one is highlighted; a chip arms its label, tapping it
-     * again disarms. Tablet: a row per group; phone: one horizontally scrolling row.
-     */
-    @Composable
-    private fun TappingFor(state: BuilderScreenModel.State, model: BuilderScreenModel, tablet: Boolean) {
-        // Remembered unconditionally (Compose rule): one scroll state per row, used or not
-        val scrollList = rememberScrollState()
-        val scrollTitle = rememberScrollState()
-        val scrollEpisode = rememberScrollState()
-        val scrollPhone = rememberScrollState()
-        val extrasState by model.extras.state.collectAsState()
-        val media = if (state.anime) "video" else "image"
-        val groups = listOf(
-            "List page" to BuilderScreenModel.Step.ListPage.labels,
-            "Title page" to BuilderScreenModel.Step.TitlePage.labels,
-            (if (state.anime) "Episode page" else "Chapter page") to listOf(media),
-        )
-        val chip: @Composable (String) -> Unit = { label ->
-            val armed = state.armed == label
-            FilterChip(
-                selected = armed,
-                onClick = { model.arm(if (armed) null else label) },
-                label = { Text(PickCheck.labelName(label, state.anime) + if (label == "tags") " \uFF0B" else "") },
-                leadingIcon = if (state.done(label)) {
-                    { Icon(Icons.Outlined.Check, contentDescription = "done", modifier = Modifier.size(16.dp)) }
-                } else {
-                    null
-                },
-            )
-        }
-        val filterChip: @Composable () -> Unit = {
-            FilterChip(
-                selected = extrasState.groupMode,
-                onClick = model::toggleListForFilter,
-                label = { Text("List for a filter") },
-                leadingIcon = if (extrasState.filters.isNotEmpty()) {
-                    { Icon(Icons.Outlined.Check, contentDescription = "done", modifier = Modifier.size(16.dp)) }
-                } else {
-                    null
-                },
-            )
-        }
-        val caption: @Composable (String) -> Unit = { text ->
-            Text(
-                text,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = if (tablet) Modifier.width(92.dp) else Modifier,
-            )
-        }
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.surfaceContainer,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-        ) {
-            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Tapping for\u2026", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                    Text(
-                        "choose a label, then tap the page \u00b7 or long-press first and name it after",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                if (tablet) {
-                    val scrolls = listOf(scrollList, scrollTitle, scrollEpisode)
-                    groups.forEachIndexed { i, (name, labels) ->
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp).horizontalScroll(scrolls[i]),
-                        ) {
-                            caption(name)
-                            labels.forEach { chip(it) }
-                            if (i == groups.lastIndex) {
-                                Spacer(Modifier.width(12.dp))
-                                filterChip()
-                            }
-                        }
-                    }
-                } else {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp).horizontalScroll(scrollPhone),
-                    ) {
-                        groups.forEach { (name, labels) ->
-                            caption(name)
-                            labels.forEach { chip(it) }
-                            Spacer(Modifier.width(6.dp))
-                        }
-                        filterChip()
                     }
                 }
             }
@@ -1387,6 +1334,7 @@ internal class BuilderScreen(
         const val OPTS_PREFIX = "LABOPTS:"
         const val FORM_PREFIX = "LABFORM:"
         const val GROUP_PREFIX = "LABGROUP:"
+        const val MENU_PREFIX = "LABMENU:"
     }
 
     /** r99: the step's page; the video step of an only-episode title is that title page */

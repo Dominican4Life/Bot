@@ -63,6 +63,22 @@
 // the nearest preceding / ancestor-sibling element with aria-haspopup / aria-expanded / a select|dropdown|toggle
 // class) and `tappedOpener` (the tapped entry is itself a menu's button). (4) Video: ad-network iframes (pnonolet,
 // exoclick, …) are never the Video pick or suggestion: the real player under or near the tap is used.
+//
+// r103 (the owner's r102 video: "Tapping for…" ate the screen; with Tags armed he tapped the side menu's headings and
+// got one lumped group): (1) .menuMode(true): the next tap picks a **menu group** (a heading / toggle and the list it
+// controls, hidden entries included; a dropdown button and its menu; or the list around a tapped entry), sent as
+// { pageUrl, tapped, groups: [{ heading, headingPath, opener, href, index, items: [{ text, href, value, path }],
+// subgroups: [...] }] } through LabPicker.menu / console "LABMENU:"; a list of sub-headings (Collections → Genres /
+// Actresses…) gives one subgroup each. .outlineItems(paths) outlines one group's entries. (2) Every pick carries
+// docIndex (its place in the document; a row's label's for rows: Tags groups follow the page's order), rowExact (the
+// exact row of an unlabelled tag list) and inMenu (it sits in the site's menus: never a title's tags). (3) Description
+// armed and the tap lands on a chip / link / short text: the description block near it is picked instead. (4) arm()
+// shows no badge: the app shows "Tapping for: X · Stop" over the page.
+// r103 fix pass (tester): inMenu only warns in the app, and tag links (rel=tag, .tags-links, .cat-links, [itemprop])
+// and a title box's own header / footer are never the menu; picks carry likeRows (every row of the look: a restored
+// Tags group finds its row); a dropdown whose menu is added only when it opens sends groups [] + hint; a heading's
+// short note line ("Browse 120 categories") is skipped before its list; a menu pick outlines only a single group's
+// own entries (the app outlines a group after Make filter / Learn addresses); Description redirects links / chips only.
 (function () {
   var TOKEN = "";
   try {
@@ -91,8 +107,9 @@
   // r100: "options" (optionsFor's answer) goes to LabPicker.options, console "LABOPTS:<token>:<json>"
   // r101: "form" (the site's search box) → LabPicker.form / "LABFORM:", "group" (a group pick) → LabPicker.group /
   // "LABGROUP:"
-  var METHODS = { pick: "pick", options: "options", form: "form", group: "group", log: "log" };
-  var PREFIXES = { pick: "LABPICK:", options: "LABOPTS:", form: "LABFORM:", group: "LABGROUP:", log: "LABLOG:" };
+  // r103: "menu" (a menu group pick) → LabPicker.menu / "LABMENU:"
+  var METHODS = { pick: "pick", options: "options", form: "form", group: "group", menu: "menu", log: "log" };
+  var PREFIXES = { pick: "LABPICK:", options: "LABOPTS:", form: "LABFORM:", group: "LABGROUP:", menu: "LABMENU:", log: "LABLOG:" };
   function send(kind, text) {
     var method = METHODS[kind] || "log";
     if (bridgeHas(method)) {
@@ -384,7 +401,19 @@
     var r = el.getBoundingClientRect();
     var row = null;
     try { row = rowInfo(el); } catch (eRow) { row = null; }
+    var exact = "";
+    try { exact = rowExactOf(el); } catch (eEx) { exact = ""; }
+    var likeRows = [];
+    try { likeRows = rowsOfLikes(likes); } catch (eRows) { likeRows = []; }
     return {
+      // r103: where it sits in the document (Tags groups are kept in the page's order), the exact row of an
+      // unlabelled tag list, and whether it is in the site's menus (never a title's tags)
+      docIndex: rowBoxIndex(el),
+      rowExact: exact,
+      // r103 fix: every row of this look on the page (its exact place, its place in the document, its first
+      // texts): a Tags group saved before rows had places finds its own row again (the app reads it once)
+      likeRows: likeRows,
+      inMenu: inSiteMenu(el) && !(row && (row.kind === "dl" || row.kind === "table")),
       // r102: the row the element sits in (Details "Cast  [Reina Ohara]") and its own label; "" / null when none
       rowLabel: row ? row.label : "",
       row: row,
@@ -520,6 +549,8 @@
     return {
       kind: kind,
       label: label,
+      // r103: the row's place in the document (its label's), for the Tags groups' order
+      order: docIndex(labelEl),
       selector: selector,
       target: chips.length ? "tags" : "description",
       values: values,
@@ -578,6 +609,98 @@
       }
     }
     return null;
+  }
+
+  // ---------- r103: document order, unlabelled rows, the site's menus ----------
+
+  // The element's place among all elements of the document (-1 when unknown): rows tapped as Tags are kept in it
+  function docIndex(el) {
+    try { return Array.prototype.indexOf.call(document.getElementsByTagName("*"), el); } catch (e) { return -1; }
+  }
+
+  // An unlabelled tag list's exact place: the chips' own box (with positions) and the chips' look, so two such
+  // lists are two groups ("div.tags:nth-of-type(2) > a.chip")
+  function rowExactOf(el) {
+    var chip = el.closest ? (el.closest("a[href]") || el) : el;
+    var chipLike = chip.tagName.toLowerCase() === "a" || CHIP_CLASS.test(String(chip.getAttribute("class") || ""));
+    if (chipLike && chip.parentElement && !/^(body|html)$/i.test(chip.parentElement.tagName)) {
+      var seg = likeSelector(segment(chip));
+      if (seg.charAt(0) === "#") seg = chip.tagName.toLowerCase();
+      return exactPath(chip.parentElement) + " > " + seg;
+    }
+    return exactPath(el) + " a";
+  }
+
+  // r103 fix: the rows [likes] fall in: [{ exact, order, values }] (up to 30 rows, 300 look-alikes, 5 texts each)
+  function rowsOfLikes(likes) {
+    var rows = [];
+    var byExact = {};
+    for (var i = 0; i < likes.length && i < 300 && rows.length <= 30; i++) {
+      var ex = "";
+      try { ex = rowExactOf(likes[i]); } catch (e) { ex = ""; }
+      if (!ex) continue;
+      var row = byExact[ex];
+      if (!row) {
+        if (rows.length >= 30) break;
+        row = { exact: ex, order: rowBoxIndex(likes[i]), values: [] };
+        byExact[ex] = row;
+        rows.push(row);
+      }
+      var t = snippetOf(likes[i]);
+      if (t && row.values.length < 5) row.values.push(t);
+    }
+    return rows;
+  }
+
+  // The place of the tag list a chip sits in (its box), else of the element: chips of one row share it
+  function rowBoxIndex(el) {
+    var chip = el.closest ? (el.closest("a[href]") || el) : el;
+    var chipLike = chip.tagName.toLowerCase() === "a" || CHIP_CLASS.test(String(chip.getAttribute("class") || ""));
+    return docIndex(chipLike && chip.parentElement ? chip.parentElement : el);
+  }
+
+  // In the site's own menus (nav, header, footer, aside, a menu / sidebar / drawer box): not a title's details.
+  // r103 fix: the app only warns now (a title's tags in a WordPress `footer.entry-footer` were refused). A tag link
+  // (rel=tag, .tags-links / .cat-links, schema.org [itemprop]) is never the menu; inside the title's own box
+  // (article, main, [itemprop], .entry, .post) its header / footer / aside are the title's, and only a <nav>, a
+  // role=navigation or a sidebar / navbar / drawer box counts ("nav nav-pills" tag lists are Bootstrap's look)
+  var MENU_WORD = /^(nav|navbar|menu|menus|sidebar|side-bar|drawer|navigation|offcanvas)$/i;
+  var MENU_STRONG = /^(navbar|sidebar|side-bar|drawer|offcanvas)$/i;
+  var MENU_PART = /^(menu|menus|sidebar|navbar|drawer|navigation|offcanvas)$/i;
+  var TAG_LINKS = "[rel~=tag], .tags-links, .tag-links, .cat-links, [itemprop]";
+  var TITLE_BOX = "article, main, [role=main], [itemprop], .entry, .post";
+  function menuClass(value, inTitle) {
+    var words = String(value || "").split(/\s+/);
+    for (var i = 0; i < words.length; i++) {
+      var w = words[i];
+      if (!w) continue;
+      if (inTitle) {
+        if (MENU_STRONG.test(w)) return true;
+        continue;
+      }
+      if (MENU_WORD.test(w)) return true;
+      // main-menu, sub-menu, menu-item, site-navigation, sidebar-left, site-nav (never nav-pills / nav-link)
+      var parts = w.split(/[_-]+/);
+      if (parts.length > 1) {
+        for (var p = 0; p < parts.length; p++) if (MENU_PART.test(parts[p])) return true;
+        if (/^nav$/i.test(parts[parts.length - 1])) return true;
+      }
+    }
+    return false;
+  }
+  function inSiteMenu(el) {
+    if (!el || !el.closest) return false;
+    try { if (el.closest(TAG_LINKS)) return false; } catch (eTag) { /* an old WebView: no closest() with these */ }
+    var titleBox = null;
+    try { titleBox = el.closest(TITLE_BOX); } catch (eBox) { titleBox = null; }
+    for (var n = el; n && n.nodeType === 1 && !/^(body|html)$/i.test(n.tagName); n = n.parentElement) {
+      var inTitle = !!titleBox && n !== titleBox && titleBox.contains(n);
+      if (titleBox && n === titleBox) break; // the title's own box: what is around it is the page's layout
+      if (/^nav$/i.test(n.tagName) || n.getAttribute("role") === "navigation") return true;
+      if (!inTitle && /^(header|footer|aside)$/i.test(n.tagName)) return true;
+      if (menuClass(n.getAttribute("class"), inTitle) || menuClass(n.id, inTitle)) return true;
+    }
+    return false;
   }
 
   // src / href as the browser resolves them (an absolute address even when the attribute is relative)
@@ -742,6 +865,13 @@
       note = "everything here was skipped; using " + found.fallback;
       send("log", "tap: " + note);
     }
+    // r103: "Pick a menu on the site": this tap picks a menu group (a heading and its list)
+    if (menuOn) {
+      menuOn = false;
+      applyModeClass(mode);
+      try { menuPick(el); } catch (eMenu) { send("log", "menu pick failed: " + eMenu.message); }
+      return;
+    }
     // r101: the app asked for a whole list (groupMode): this tap picks the list, not one element
     if (groupOn) {
       groupOn = false;
@@ -757,6 +887,15 @@
       else if (link && String(el.textContent || "").trim().length > 0 && String(el.textContent || "").trim() === String(link.textContent || "").trim()) el = link;
     }
     var forLabel = via === "hold" ? null : armed;
+    // r103: Description armed and the tap landed on a chip / link / short text: the description block near it
+    if (forLabel === "description" && notDescription(el)) {
+      var better = null;
+      try { better = descriptionNear(el); } catch (eDesc) { better = null; }
+      if (better && better !== el) {
+        send("log", "tap: " + shortName(pathOf(el)) + " is not a description; using " + shortName(pathOf(better)));
+        el = better;
+      }
+    }
     // r102: an ad network's frame over the player is not the Video
     if (forLabel === "video" && adHost(el)) {
       var real = realPlayerAt(x, y, el);
@@ -782,7 +921,7 @@
       window.__labPicker.mode = mode;
       window.__labPicker.armed = armed;
     }
-    applyModeClass(groupOn ? "pick" : mode);
+    applyModeClass(groupOn || menuOn ? "pick" : mode);
     cancelHold();
   }
 
@@ -1116,6 +1255,35 @@
     return best;
   }
 
+  // r103: a chip or a link is not a description. r103 fix: a short plain text stays as picked (a short synopsis is
+  // a description too; the helper's PickCheck warns about its length), and only a chip-like class counts
+  // (chip / tag / badge / pill, not CHIP_CLASS's genre / cast / model…: a "summary" box can say "genre")
+  var DESC_CHIP = /(^|[\s_-])(chips?|tags?|badges?|pills?)([\s_-]|$)/i;
+  function notDescription(el) {
+    if (!el || !el.closest) return false;
+    if (el.closest("a[href]")) return true;
+    return DESC_CHIP.test(String(el.getAttribute("class") || ""));
+  }
+
+  // r103: the description block nearest the tap: the longest own text (≥ 80 characters, few links, not in the menus)
+  // in the tap's boxes, 6 levels up; else the page's
+  function descriptionNear(el) {
+    var node = el.parentElement;
+    for (var level = 0; node && level < 6 && !/^(body|html)$/i.test(node.tagName); level++, node = node.parentElement) {
+      var best = null;
+      var longest = 79;
+      var blocks = node.querySelectorAll("p, div, section, article, span, dd");
+      for (var i = 0; i < blocks.length && i < 2000; i++) {
+        var b = blocks[i];
+        if (!shown(b) || inChrome(b)) continue;
+        var len = ownText(b).length;
+        if (len > longest && b.querySelectorAll("a[href]").length <= 3) { longest = len; best = b; }
+      }
+      if (best) return best;
+    }
+    return findDescription();
+  }
+
   // Tags: a group of ≥ 2 links with short texts (≤ 30 characters) that open genre / tag / category pages
   var TAG_HREF = /genre|tag|categor|keyword/i;
   function findTags() {
@@ -1391,6 +1559,247 @@
     send("log", "group pick " + shortName(path) + " ×" + items.length + (isSelect ? " (select)" : "") + " · \"" + tapped.text.slice(0, 40) + "\"");
   }
 
+  // ---------- r103: "Pick a menu on the site" (one filter per menu group) ----------
+
+  var menuOn = false;
+  var MENU_ENTRY = "a[href], button, [role=menuitem], [role=option], [role=tab], [role=radio], [data-value], summary, option";
+  // Entries that name list pages (an index of all genres, all actresses…), not one list's options
+  var INDEX_WORDS = /^(all\s+)?(genres?|tags?|categor(y|ies)|actress(es)?|actors?|makers?|studios?|series|labels?|directors?|models?|channels?|collections?|publishers?|authors?|artists?|groups?|parod(y|ies)|characters?|languages?|countries|stars?|pornstars?|performers?|casts?|keywords?|brands?|networks?|years?)$/i;
+
+  function isEntry(el) {
+    try { return !!el && el.nodeType === 1 && el.id !== "__lab-badge" && el.matches(MENU_ENTRY); } catch (e) { return false; }
+  }
+
+  // The entries inside [box] (hidden ones too), innermost only (an <a> inside an <li data-value> is the <a>)
+  function entriesIn(box) {
+    if (!box || !box.querySelectorAll) return [];
+    var all = Array.prototype.slice.call(box.querySelectorAll(MENU_ENTRY), 0, 1000);
+    return all.filter(function (e) {
+      if (e.id === "__lab-badge") return false;
+      for (var i = 0; i < all.length; i++) if (all[i] !== e && e.contains(all[i])) return false;
+      return true;
+    });
+  }
+
+  function entryCount(el) { return entriesIn(el).length + (isEntry(el) ? 1 : 0); }
+
+  // The list [h] opens: aria-controls, else one of its next two siblings holding two or more entries
+  function controlledList(h) {
+    if (!h || h.nodeType !== 1) return null;
+    var ids = String(h.getAttribute("aria-controls") || "").split(/\s+/);
+    for (var i = 0; i < ids.length; i++) {
+      if (!ids[i]) continue;
+      var t = document.getElementById(ids[i]);
+      if (t && !t.contains(h) && entriesIn(t).length >= 2) return t;
+    }
+    var n = h.nextElementSibling;
+    // r103 fix: up to two short text-only lines between the heading and its list are skipped (a WordPress
+    // widget's "Browse 120 categories" under its "Categories" heading)
+    var notes = 0;
+    for (var hop = 0; n && hop < 4; hop++, n = n.nextElementSibling) {
+      if (n.id === "__lab-badge" || n.contains(h)) continue;
+      // Two items of one list (li by li, or boxes of the same look) are not a heading and its list
+      var twins = (/^(li|dt|dd|tr)$/i.test(h.tagName) && h.tagName === n.tagName) ||
+        (h.tagName === n.tagName && String(h.getAttribute("class") || "") === String(n.getAttribute("class") || ""));
+      var inside = entriesIn(n).length;
+      if (!twins && inside >= 2) return n;
+      if (twins || isEntry(n) || inside > 0) break; // another heading's list or an entry first: not this one's list
+      var t = textOf(n);
+      if (!t) { if (hop >= 1 + notes) break; continue; } // an empty box (an icon, a spacer)
+      if (notes < 2 && t.length <= 80 && !/^h[1-6]$/i.test(n.tagName)) { notes++; continue; }
+      break; // another heading first
+    }
+    return null;
+  }
+
+  // The tapped heading / toggle (up to 4 levels, never a box that already holds two entries) and its list
+  function headingAt(el) {
+    var node = el;
+    for (var up = 0; node && up < 4 && !/^(body|html)$/i.test(node.tagName); up++, node = node.parentElement) {
+      if (entryCount(node) >= 2) break;
+      var list = controlledList(node);
+      if (list && textOf(node).length <= 60) return { heading: node, list: list };
+    }
+    return null;
+  }
+
+  function headingTextOf(el) {
+    if (!el) return "";
+    var t = textOf(el) || el.getAttribute("aria-label") || el.getAttribute("title") || "";
+    // a toggle's arrow is no part of the name ("Trending ▸")
+    return String(t).replace(/\s+/g, " ").trim().replace(/[\s▾▴▼▲⌄⌃∨∧˅˄›»⏷⏶▸▹►▶]+$/, "").slice(0, 80);
+  }
+
+  function linkHref(el) {
+    var a = el && el.tagName && el.tagName.toLowerCase() === "a" ? el : null;
+    if (!a) return "";
+    var raw = a.getAttribute("href") || "";
+    if (!raw || /^(javascript:|#)/i.test(raw)) return "";
+    try { return new URL(raw, location.href).href; } catch (e) { return ""; }
+  }
+
+  // One group: [headingEl]'s text (or [headingName]), its own entries, and a subgroup per sub-heading inside [list]
+  // (an entry that opens its own list, or, when most entries name list pages, each of those links)
+  function buildGroup(headingEl, headingName, list, path, depth, members) {
+    var heading = headingEl ? headingTextOf(headingEl) : String(headingName || "");
+    var here = path.concat(heading ? [heading] : []);
+    var entries = list && list.tagName && list.tagName.toLowerCase() === "select" ?
+      Array.prototype.slice.call(list.options) : entriesIn(list);
+    var subs = [];
+    if (depth < 3 && list.querySelectorAll && list.tagName.toLowerCase() !== "select") {
+      // Sub-headings: an entry or a short heading-like element inside the list that opens a list of its own
+      var cands = Array.prototype.slice.call(list.querySelectorAll("*"), 0, 1500);
+      for (var i = 0; i < cands.length; i++) {
+        var c = cands[i];
+        if (c.id === "__lab-badge" || /^(svg|path|i|img|ul|ol)$/i.test(c.tagName)) continue;
+        var inner = false;
+        for (var k = 0; k < subs.length && !inner; k++) if (subs[k].list.contains(c) || subs[k].el.contains(c)) inner = true;
+        if (inner || entryCount(c) > 1) continue;
+        var t = textOf(c);
+        if (!t || t.length > 40) continue;
+        var sl = controlledList(c);
+        if (sl && list.contains(sl) && !sl.contains(c)) subs.push({ el: c, list: sl });
+      }
+    }
+    var own = entries.filter(function (e) {
+      for (var k = 0; k < subs.length; k++) if (subs[k].el === e || subs[k].list.contains(e)) return false;
+      return true;
+    });
+    var subgroups = subs.map(function (s) { return buildGroup(s.el, "", s.list, here, depth + 1, members); });
+    // Index links: most entries name list pages ("Genres", "Actresses", "Makers", "Series"): each is a subgroup
+    if (!subs.length && own.length >= 2) {
+      var links = own.filter(function (e) { return !!linkHref(e); });
+      var named = links.filter(function (e) { return INDEX_WORDS.test(headingTextOf(e)); });
+      if (links.length === own.length && named.length * 2 >= own.length) {
+        own.forEach(function (e) {
+          members.push(e);
+          subgroups.push({
+            heading: headingTextOf(e), headingPath: here.concat([headingTextOf(e)]), opener: "", openerText: "",
+            href: linkHref(e), index: true, items: [], subgroups: [],
+          });
+        });
+        own = [];
+      }
+    }
+    var items = [];
+    var seen = {};
+    for (var j = 0; j < own.length && items.length < 400; j++) {
+      var it = itemOf(own[j]);
+      var key = (it.href || "") + "|" + (it.value === undefined ? "" : it.value) + "|" + it.text;
+      if (seen[key] || (!it.text && !it.href && it.value === undefined)) continue;
+      seen[key] = true;
+      try { if (own[j].tagName.toLowerCase() !== "option") it.path = exactPath(own[j]); } catch (eP) { /* nothing */ }
+      items.push(it);
+      members.push(own[j]);
+    }
+    var href = headingEl ? linkHref(headingEl) : "";
+    return {
+      heading: heading,
+      headingPath: here,
+      opener: headingEl ? exactPath(headingEl) : "",
+      openerText: headingEl ? snippetOf(headingEl) : "",
+      href: href,
+      index: !!href && INDEX_WORDS.test(heading),
+      items: items,
+      subgroups: subgroups,
+    };
+  }
+
+  function countGroups(g) {
+    var n = g.items.length >= 2 || g.href ? 1 : 0;
+    for (var i = 0; i < g.subgroups.length; i++) n += countGroups(g.subgroups[i]);
+    return n;
+  }
+
+  // r103 fix: a dropdown whose menu the site adds only when it opens (a portal: aria-controls naming a missing id,
+  // aria-haspopup / aria-expanded / .dropdown-toggle on the tapped element or up to 3 parents, no list found)
+  var LAZY_MENU_HINT = "This menu isn't on the page until it opens: tap Stop, open it on the site, then Pick a menu and tap one entry";
+  function lazyToggle(el) {
+    var node = el;
+    for (var up = 0; node && node.nodeType === 1 && up < 4 && !/^(body|html)$/i.test(node.tagName); up++, node = node.parentElement) {
+      if (entryCount(node) >= 2) return null; // a box holding a list: not one button
+      var ids = String(node.getAttribute("aria-controls") || "").split(/\s+/).filter(function (x) { return !!x; });
+      var present = ids.filter(function (id) { return !!document.getElementById(id); });
+      if (ids.length && !present.length) return node; // it opens something that isn't in the page yet
+      if (present.length) continue; // it opens something that is here (an accordion's panel): not a lazy menu
+      var popup = String(node.getAttribute("aria-haspopup") || "").toLowerCase();
+      if ((popup && popup !== "false") || node.hasAttribute("aria-expanded") ||
+        /(^|\s)dropdown-toggle(\s|$)/i.test(String(node.getAttribute("class") || ""))) return node;
+    }
+    return null;
+  }
+
+  function menuPick(el) {
+    clearMarks();
+    var members = [];
+    var group = null;
+    var how = "";
+    var select = el.closest ? el.closest("select") : null;
+    var found = select ? null : headingAt(el);
+    if (select) {
+      var name = select.getAttribute("aria-label") || select.getAttribute("name") || headingOf(select);
+      group = buildGroup(null, name, select, [], 0, members);
+      group.param = select.getAttribute("name") || "";
+      how = "a dropdown";
+    } else if (found) {
+      group = buildGroup(found.heading, "", found.list, [], 0, members);
+      how = "the heading's list";
+    } else {
+      var lazy = null;
+      try { lazy = lazyToggle(el); } catch (eLazy) { lazy = null; }
+      if (lazy) {
+        send("log", "menu pick: \"" + headingTextOf(lazy).slice(0, 40) + "\" opens a menu that isn't in the page yet");
+        send("menu", JSON.stringify({
+          pageUrl: location.href,
+          tapped: { text: headingTextOf(lazy), href: "" },
+          groups: [],
+          hint: LAZY_MENU_HINT,
+        }));
+        showBadge("This menu isn't on the page until it opens \u2014 see the app");
+        return;
+      }
+      // An entry of a list: the nearest box holding two or more entries, named by the heading before it
+      var inEntry = el.closest ? el.closest(MENU_ENTRY) : null;
+      var entry = inEntry || el;
+      var box = entry.parentElement;
+      for (var level = 0; box && level < 5 && !/^(body|html)$/i.test(box.tagName); level++, box = box.parentElement) {
+        if (entriesIn(box).length >= 2) break;
+      }
+      if (!box || /^(body|html)$/i.test(box.tagName)) {
+        send("log", "menu pick: no list around \"" + headingTextOf(el).slice(0, 40) + "\"");
+        send("menu", JSON.stringify({ pageUrl: location.href, tapped: { text: headingTextOf(el), href: linkHref(entry) }, groups: [] }));
+        showBadge("No menu here: tap a menu's heading, a dropdown's button or one of its entries");
+        return;
+      }
+      var opener = null;
+      try { opener = openerOf(entry, box); } catch (eO) { opener = null; }
+      // r103 fix: a tapped heading (not an entry) names its group
+      var ownName = inEntry ? "" : headingTextOf(el);
+      if (ownName.length > 60) ownName = "";
+      group = buildGroup(null, ownName || headingOf(entry) || (opener ? headingTextOf(opener) : ""), box, [], 0, members);
+      if (opener) {
+        group.opener = exactPath(opener);
+        group.openerText = snippetOf(opener);
+      }
+      how = "the list around the tapped entry";
+    }
+    // r103 fix: nothing is outlined for a menu with subgroups (the app outlines one group after Make filter /
+    // Learn addresses); a single group's own entries are
+    var painted = 0;
+    if (!group.subgroups.length) {
+      for (var p = 0; p < group.items.length; p++) {
+        if (!group.items[p].path) continue;
+        var own = queryAll(group.items[p].path);
+        for (var q = 0; q < own.length; q++) { paintSuggestion(own[q]); painted++; }
+      }
+    }
+    var out = { pageUrl: location.href, tapped: { text: headingTextOf(el), href: linkHref(el.closest ? (el.closest("a[href]") || el) : el) }, groups: [group] };
+    showBadge("Menu picked: " + (group.heading || "a list") + (painted ? " (dashed green)" : "") + " \u2014 see the app");
+    send("menu", JSON.stringify(out));
+    send("log", "menu pick \"" + (group.heading || "").slice(0, 40) + "\" (" + how + "): " + group.items.length + " entries, " +
+      group.subgroups.length + " subgroups, " + countGroups(group) + " groups");
+  }
+
   // ---------- pick mode: the site never sees the tap ----------
 
   var INTERACTIVE = "button, select, option, textarea, input, label, summary, [role=button], [role=option], [role=menuitem], [aria-haspopup]";
@@ -1402,7 +1811,7 @@
     return t && t.nodeType === 3 ? t.parentElement : t;
   }
   // r101: taps are the picker's in Pick mode, and in Browse mode too while a group pick waits for its tap
-  function taking() { return mode === "pick" || groupOn; }
+  function taking() { return mode === "pick" || groupOn || menuOn; }
 
   // touchstart on an interactive target is prevented (no focus, no menu, no click), so it is picked on touchend
   var touch = null;            // { x, y, target, interactive, moved }
@@ -1566,12 +1975,9 @@
       var was = armed;
       setArmed(label || null);
       if (was === armed) return armed || "none"; // the same again (re-injection, the app's echo): nothing to redo
-      if (armed) {
-        clearSuggestion();
-        showBadge("Tapping for " + armed + (sticky ? ": tap each row, then tap Tags again in the app to stop" : ": tap it on the page"));
-      } else if (was) {
-        showBadge(null);
-      }
+      // r103: no badge (the app shows "Tapping for: X · Stop" over the page)
+      if (armed) clearSuggestion();
+      if (armed || was) showBadge(null);
       send("log", "armed " + (armed || "nothing") + " on " + location.href);
       return armed || "none";
     },
@@ -1687,6 +2093,30 @@
       }
       send("log", "group mode " + (groupOn ? "on" : "off"));
       return groupOn;
+    },
+    // r103: on = the next tap picks a menu group (see menuPick) and never navigates
+    menuMode: function (on) {
+      var was = menuOn;
+      menuOn = !!on;
+      if (menuOn) groupOn = false;
+      applyModeClass(menuOn || groupOn ? "pick" : mode);
+      if (menuOn) {
+        clearMarks();
+        showBadge("Tap a menu's heading, a dropdown's button, or one entry of a list");
+      } else if (was) {
+        showBadge(null);
+      }
+      send("log", "menu mode " + (menuOn ? "on" : "off"));
+      return menuOn;
+    },
+    // r103: dashed green on these entries only (one menu group's, by their exact paths)
+    outlineItems: function (paths) {
+      clearMarks();
+      var n = 0;
+      (paths || []).forEach(function (p) {
+        queryAll(String(p || "")).forEach(function (el) { paintSuggestion(el); n++; });
+      });
+      return n;
     },
     // r100: the app used the suggestion: it becomes the current element (Up / Down move from it)
     adopt: function () {

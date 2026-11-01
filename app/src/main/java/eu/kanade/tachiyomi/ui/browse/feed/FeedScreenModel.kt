@@ -13,14 +13,17 @@ import eu.kanade.presentation.browse.FeedItemUI
 import eu.kanade.tachiyomi.jssource.JsTabs
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.FilterList
+import eu.kanade.tachiyomi.util.system.AppLog
 import eu.kanade.tachiyomi.util.system.LocaleHelper
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
@@ -271,10 +274,31 @@ open class FeedScreenModel(
     private val hideInLibraryFeedItems = sourcePreferences.hideInLibraryFeedItems()
     // KMK <--
 
+    // KMK r103: a load waiting for the Feed tab to be shown; a newer one replaces it (only the latest rows count)
+    private var waitingFeed: Job? = null
+
     /**
      * Initiates get manga per feed.
+     *
+     * KMK r103: only while the Feed tab is shown ([FeedShown]). Opening Browse on Sources used to load every Feed
+     * row (a page from each feed's source) at once; now they load when the Feed tab is first shown.
      */
+    @Synchronized
     private fun getFeed(feedSavedSearch: List<FeedItemUI>) {
+        waitingFeed?.cancel()
+        waitingFeed = null
+        if (FeedShown.isShown) {
+            loadFeed(feedSavedSearch)
+            return
+        }
+        waitingFeed = screenModelScope.launch {
+            FeedShown.await()
+            AppLog.add('D', "BrowseFeed", "Feed tab shown: loading ${feedSavedSearch.size} feed rows now")
+            loadFeed(feedSavedSearch)
+        }
+    }
+
+    private fun loadFeed(feedSavedSearch: List<FeedItemUI>) {
         screenModelScope.launch {
             feedSavedSearch.map { itemUI ->
                 async {
@@ -401,6 +425,25 @@ open class FeedScreenModel(
     sealed class Event {
         data object FailedFetchingSources : Event()
         data object TooManyFeeds : Event()
+    }
+}
+
+/**
+ * KMK r103: whether Browse's Feed tab is the page on screen (set by BrowseTab). The Feed's manga, anime and tag mix
+ * rows wait for it before they load, so opening Browse on Sources doesn't fetch every Feed row.
+ */
+object FeedShown {
+    private val shown = MutableStateFlow(false)
+
+    val isShown: Boolean get() = shown.value
+
+    fun set(value: Boolean) {
+        shown.value = value
+    }
+
+    /** Returns at once while the Feed tab is shown, otherwise when it is next shown */
+    suspend fun await() {
+        shown.first { it }
     }
 }
 

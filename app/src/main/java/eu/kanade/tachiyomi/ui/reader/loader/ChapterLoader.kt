@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.ui.reader.loader
 
 import android.content.Context
+import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.Source
@@ -8,6 +9,7 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.source.online.all.MergedSource
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+import eu.kanade.tachiyomi.util.system.AppLog
 import mihon.core.archive.archiveReader
 import mihon.core.archive.epubReader
 import tachiyomi.core.common.i18n.stringResource
@@ -103,18 +105,39 @@ class ChapterLoader(
     }
     // KMK <--
 
+    /**
+     * KMK (r103): the downloaded chapter's folder or CBZ, found once; null when it isn't downloaded. It goes on to
+     * [DownloadPageLoader] (r102 looked it up three times per open: here, for the page list and for the videos).
+     * Same lookup as `isChapterDownloaded(skipCache = true)` was.
+     */
+    private fun findDownloaded(chapter: ReaderChapter, chapterManga: Manga): UniFile? {
+        val dbChapter = chapter.chapter
+        val started = System.nanoTime()
+        val listedBefore = downloadProvider.rootListings
+        val dir = downloadProvider.findChapterDir(
+            dbChapter.name,
+            dbChapter.scanlator,
+            dbChapter.url,
+            // SY -->
+            chapterManga.ogTitle,
+            // SY <--
+            sourceManager.getOrStub(chapterManga.source),
+        )
+        if (dir != null) {
+            AppLog.add(
+                'D',
+                "download",
+                "Downloaded chapter lookup: 1 lookup, downloads/Manga listed " +
+                    "${downloadProvider.rootListings - listedBefore}×, ${(System.nanoTime() - started) / 1_000_000} ms",
+            )
+        }
+        return dir
+    }
+
     private fun getPageLoader(chapter: ReaderChapter): PageLoader {
         val dbChapter = chapter.chapter
-        val isDownloaded = downloadManager.isChapterDownloaded(
-            chapterName = dbChapter.name,
-            chapterScanlator = dbChapter.scanlator,
-            chapterUrl = dbChapter.url,
-            // SY -->
-            mangaTitle = manga.ogTitle,
-            // SY <--
-            sourceId = manga.source,
-            skipCache = true,
-        )
+        // KMK (r103): looked up only where it is used (not for a merged entry or a file on the device)
+        val downloadedDir by lazy(LazyThreadSafetyMode.NONE) { findDownloaded(chapter, manga) }
         return when {
             // SY -->
             source is MergedSource -> {
@@ -124,21 +147,15 @@ class ChapterLoader(
                 val source = sourceManager.get(mangaReference.mangaSourceId)
                     ?: error("Source ${mangaReference.mangaSourceId} was null")
                 val manga = mergedManga?.get(chapter.chapter.manga_id) ?: error("Manga for merged chapter was null")
-                val isMergedMangaDownloaded = downloadManager.isChapterDownloaded(
-                    chapterName = chapter.chapter.name,
-                    chapterScanlator = chapter.chapter.scanlator,
-                    chapterUrl = chapter.chapter.url,
-                    mangaTitle = manga.ogTitle,
-                    sourceId = manga.source,
-                    skipCache = true,
-                )
+                val mergedDir = findDownloaded(chapter, manga)
                 when {
-                    isMergedMangaDownloaded -> DownloadPageLoader(
+                    mergedDir != null -> DownloadPageLoader(
                         chapter = chapter,
                         manga = manga,
                         source = source,
                         downloadManager = downloadManager,
                         downloadProvider = downloadProvider,
+                        chapterDir = mergedDir,
                     )
                     source is HttpSource -> HttpPageLoader(chapter, source)
                     source is LocalSource -> source.getFormat(chapter.chapter).let { format ->
@@ -155,12 +172,13 @@ class ChapterLoader(
             // KMK --> a comic archive or a folder of pictures on the device
             source is eu.kanade.tachiyomi.devicefiles.DeviceFilesMangaSource -> deviceFilesLoader(dbChapter.url)
             // KMK <--
-            isDownloaded -> DownloadPageLoader(
+            downloadedDir != null -> DownloadPageLoader(
                 chapter,
                 manga,
                 source,
                 downloadManager,
                 downloadProvider,
+                downloadedDir,
             )
             source is LocalSource -> source.getFormat(chapter.chapter).let { format ->
                 when (format) {

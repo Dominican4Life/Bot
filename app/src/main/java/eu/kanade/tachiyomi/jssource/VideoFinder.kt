@@ -87,6 +87,61 @@ internal object VideoFinder {
         )
     }
 
+    // ---------- r103: what a find caught, kept per (page, frame, referer) ----------
+    private const val MEMO_TTL_MS = 10 * 60 * 1000L
+    private const val MEMO_MAX = 30
+
+    private class Kept(val result: Result, val at: Long, val url: String, val sourceKey: String?)
+
+    /**
+     * r103: the last [MEMO_MAX] finds that caught videos, by source + page address + frame selector + Referer, for
+     * [MEMO_TTL_MS]. A quality switch, a second hoster load or an anime download of the same episode within 10
+     * minutes reuses them instead of loading and playing the page in a hidden WebView again (up to 45 s, under the
+     * source's JS lock). Finds that caught nothing aren't kept (a retry tries again). The player's self-healing
+     * ([forget]) and a failed anime download ([forgetPage]) get fresh links; tests (`fresh`) never use them.
+     */
+    private val memo = object : LinkedHashMap<String, Kept>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Kept>?): Boolean = size > MEMO_MAX
+    }
+
+    /** r103: drops every kept result (the player's self-healing: the links it had failed) */
+    fun forget(why: String) {
+        val dropped = synchronized(memo) { memo.size.also { memo.clear() } }
+        if (dropped > 0) AppLog.add('D', "video", "find: dropped $dropped kept results ($why)")
+    }
+
+    /**
+     * r103 fix pass: drops the kept results of one page (every frame / Referer) of [sourceKey] (any source when null).
+     * [pageUrl] may be a source's relative episode link ("/watch/12"): it then matches a kept address ending with
+     * it. When none matched and [sourceKey] is given, that source's kept results all go (its code may have found the
+     * video on another address than the episode's, an embed page say). Returns how many were dropped.
+     */
+    fun forgetPage(pageUrl: String, sourceKey: String?, why: String): Int {
+        val page = pageUrl.trim().substringBefore('#').trimEnd('/')
+        if (page.isEmpty()) return 0
+        val absolute = page.startsWith("http://") || page.startsWith("https://")
+        fun samePage(kept: String): Boolean {
+            val k = kept.substringBefore('#').trimEnd('/')
+            return k == page || (!absolute && k.endsWith(if (page.startsWith("/")) page else "/$page"))
+        }
+        var wholeSource = false
+        val dropped = synchronized(memo) {
+            val ofSource = memo.entries.filter { sourceKey == null || it.value.sourceKey == sourceKey }
+            var hits = ofSource.filter { samePage(it.value.url) }
+            if (hits.isEmpty() && sourceKey != null) {
+                hits = ofSource
+                wholeSource = true
+            }
+            hits.forEach { memo.remove(it.key) }
+            hits.size
+        }
+        if (dropped > 0) {
+            val what = if (wholeSource) "every kept result of the source" else "kept results of $page"
+            AppLog.add('D', "video", "find: dropped $dropped $what ($why)")
+        }
+        return dropped
+    }
+
     private const val DEFAULT_TIMEOUT_MS = 45_000L
     private const val MIN_TIMEOUT_MS = 5_000L
     private const val MAX_TIMEOUT_MS = 120_000L
@@ -285,6 +340,10 @@ internal object VideoFinder {
         frame: String?,
         referer: String?,
         timeoutMs: Long = DEFAULT_TIMEOUT_MS,
+        // r103 fix pass: the JS source that asked (its key), so two sources never share a kept result
+        sourceKey: String? = null,
+        // r103 fix pass: true for the Source Lab / builder tests: always a real find (and its result isn't kept)
+        fresh: Boolean = false,
     ): Result {
         val started = System.currentTimeMillis()
         val steps = ArrayList<String>()
@@ -309,11 +368,34 @@ internal object VideoFinder {
         val timeout = timeoutMs.coerceIn(MIN_TIMEOUT_MS, MAX_TIMEOUT_MS)
         val frameSelector = frame?.trim()?.takeIf { it.isNotEmpty() }
         val pageReferer = referer?.trim()?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+
+        // r103: the same page (and frame, Referer) of the same source found less than 10 minutes ago
+        val memoKey = sourceKey.orEmpty() + "\n" + url + "\n" + frameSelector.orEmpty() + "\n" + pageReferer.orEmpty()
+        val kept = if (fresh) {
+            null
+        } else {
+            synchronized(memo) {
+                memo[memoKey]?.takeIf { started - it.at < MEMO_TTL_MS } ?: run {
+                    memo.remove(memoKey)
+                    null
+                }
+            }
+        }
+        if (fresh) step("a test: a fresh find (kept results not used)")
+        if (kept != null) {
+            frames.addAll(kept.result.frames)
+            step(
+                "reused the ${kept.result.videos.size} videos found ${seconds(started - kept.at)} s ago " +
+                    "(kept 10 min; no hidden browser this time)",
+            )
+            return done(kept.result.videos, kept.result.reason)
+        }
+
         val userAgent = Injekt.get<NetworkHelper>().defaultUserAgentProvider()
         val capture = Capture()
         val pageHost = url.toHttpUrlOrNull()?.host.orEmpty()
 
-        return withContext(Dispatchers.Main) {
+        val result = withContext(Dispatchers.Main) {
             // ---------- pass 1: the episode page ----------
             val first = pass(
                 context = context,
@@ -418,6 +500,10 @@ internal object VideoFinder {
             }
             done(emptyList(), reason)
         }
+        if (result.videos.isNotEmpty() && !fresh) {
+            synchronized(memo) { memo[memoKey] = Kept(result, System.currentTimeMillis(), url, sourceKey) }
+        }
+        return result
     }
 
     /** Not a blank frame, not an ad, not the page itself */
@@ -570,13 +656,42 @@ internal object VideoFinder {
         val client = Injekt.get<NetworkHelper>().client.newBuilder()
             .callTimeout(PLAYLIST_TIMEOUT_S, TimeUnit.SECONDS)
             .build()
+        // r103: the same playlist caught twice with another token (same host + path) is read once; the copy gets
+        // the first one's answer (it is dropped as a duplicate in [realQualities] either way). r103 fix pass: when
+        // the first one can't be read (its token expired, say), the next one of the same path is tried
+        val sameOf: (Hit) -> String = { hit -> playlistPathOf(hit.url) ?: normalUrl(hit.url) }
+        val groups = hits.groupBy(sameOf)
+        val extraReads = AtomicInteger(0)
         val answers = withContext(Dispatchers.IO) {
-            hits.map { hit ->
-                async { hit.url to readPlaylist(client, hit.url, headers[hit.url].orEmpty(), userAgent, pageUrl) }
+            groups.map { (same, copies) ->
+                async {
+                    var answer: Playlist? = null
+                    var readAt = 0
+                    for ((i, hit) in copies.withIndex()) {
+                        if (i > 0) extraReads.incrementAndGet()
+                        answer = readPlaylist(client, hit.url, headers[hit.url].orEmpty(), userAgent, pageUrl)
+                        if (answer != null) {
+                            readAt = i
+                            break
+                        }
+                    }
+                    // The copies before the one read failed: they get no answer (the read one is kept instead)
+                    same to (answer?.let { it to copies.drop(readAt).map { c -> c.url }.toSet() })
+                }
             }.awaitAll()
+        }.toMap()
+        if (groups.size < hits.size || extraReads.get() > 0) {
+            AppLog.add(
+                'D',
+                "video",
+                "find $pageUrl: read ${groups.size} playlists for ${hits.size} caught (same address read once" +
+                    "${if (extraReads.get() > 0) "; ${extraReads.get()} copies tried after a failed read" else ""})",
+            )
         }
         val out = LinkedHashMap<String, Playlist>()
-        answers.forEach { (url, playlist) -> if (playlist != null) out[url] = playlist }
+        hits.forEach { hit ->
+            answers[sameOf(hit)]?.let { (playlist, urls) -> if (hit.url in urls) out[hit.url] = playlist }
+        }
         return out
     }
 
@@ -698,12 +813,16 @@ internal object VideoFinder {
             if (variant) step("playlist ${tailOf(hit.url)}: dropped variant (its master playlist was caught too)")
             !variant
         }.let { list ->
-            // The same playlist caught twice with another token ("Auto, Auto"): host + path, the first one kept
-            val seen = HashSet<String>()
+            // The same playlist caught twice with another token ("Auto, Auto"): host + path, the first one kept.
+            // r103 fix pass: the first one that could be read, when the earlier copies couldn't
+            val sameOf: (Hit) -> String = { hit -> playlistPathOf(hit.url) ?: normalUrl(hit.url) }
+            val chosen = list.groupBy(sameOf).mapValues { (_, copies) ->
+                (copies.firstOrNull { it.url in read } ?: copies.first()).url
+            }
             list.filter { hit ->
-                val first = seen.add(playlistPathOf(hit.url) ?: normalUrl(hit.url))
-                if (!first) step("playlist ${tailOf(hit.url)}: dropped duplicate (same playlist, another token)")
-                first
+                val keep = chosen[sameOf(hit)] == hit.url
+                if (!keep) step("playlist ${tailOf(hit.url)}: dropped duplicate (same playlist, another token)")
+                keep
             }
         }
         kept.forEach { hit ->

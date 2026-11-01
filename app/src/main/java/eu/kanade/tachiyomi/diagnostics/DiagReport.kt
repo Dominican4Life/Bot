@@ -54,7 +54,12 @@ internal object DiagReport {
         val traces = TraceWriter.bytesMap().filterValues { it > 0L }
         val anr = File(context.cacheDir, DiagPaths.HEALTH_DIR).listFiles()?.sumOf { it.length() } ?: 0L
         return listOf(
-            ReportPartSize(ReportPart.LOG, ring + logFile, "ring ${fmt(ring)} · log.txt ${fmt(logFile)}"),
+            // KMK (r103): log.txt is only written when the ring couldn't be mapped
+            ReportPartSize(
+                ReportPart.LOG,
+                ring + logFile,
+                if (logFile > 0L) "ring ${fmt(ring)} · log.txt ${fmt(logFile)}" else "ring ${fmt(ring)}",
+            ),
             ReportPartSize(ReportPart.LIVE, 40_000L, "5-min rings and the last snapshot"),
             ReportPartSize(ReportPart.DEVICE, 2_000L, "build, Android, model, memory, network"),
             ReportPartSize(ReportPart.SOURCES, 20_000L, "extensions and JS sources"),
@@ -114,9 +119,12 @@ internal object DiagReport {
                 entry("log.txt") { w ->
                     for (line in AppLog.snapshot()) w.write(AppLog.format(line) + "\n")
                 }
-                entry("log-raw.tsv") { w ->
-                    val raw = File(context.filesDir, DiagPaths.APP_LOG_FILE)
-                    if (raw.isFile) raw.bufferedReader().useLines { lines -> lines.forEach { w.write(it + "\n") } }
+                // KMK (r103): the app's log file exists only when the ring couldn't be mapped (the ring is the store)
+                val raw = File(context.filesDir, DiagPaths.APP_LOG_FILE)
+                if (raw.isFile) {
+                    entry("log-raw.tsv") { w ->
+                        raw.bufferedReader().useLines { lines -> lines.forEach { w.write(it + "\n") } }
+                    }
                 }
                 // The ring holds up to 4 MB of lines of this and the previous run, more than log.txt's tail
                 entry("log-ring.tsv") { w -> AppLog.ring?.forEachLine { w.write(it + "\n") } }
@@ -505,7 +513,8 @@ internal object DiagReport {
         append("Always: Cookie / Set-Cookie / Authorization header values are removed from every file, and settings.json shows ")
         append("secret-looking preferences (token, password, cookie, auth, key, user, mail, …) only as <set> / <unset>.\n")
         append("Capture settings: ").append(if (options.includeCapture) "capture.json" else "left out").append("\n\n")
-        append("Files: log.txt (what the Logs screen showed), log-raw.tsv (the app's log file), log-ring.tsv (the mirror ring: this and the previous run),\n")
+        append("Files: log.txt (what the Logs screen showed), log-ring.tsv (the log ring: this and the previous run; ")
+        append("log-raw.tsv, the old log file, only when the ring couldn't be mapped),\n")
         append("live.json, device.json, sources.json, settings.json, health.json (+ health/anr-*.txt), probes/, traces/*.jsonl.gz, summary.txt.\n")
     }
 

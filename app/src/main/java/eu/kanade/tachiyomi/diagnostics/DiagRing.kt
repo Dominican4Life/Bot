@@ -52,6 +52,11 @@ internal class DiagRing private constructor(
     /** Written bytes since the last clear, capped at the capacity */
     val used: Int get() = if (wrapped) capacity else writeOffset
 
+    /** KMK (r103): records appended by this process (not counting dropped ones); read with the bytes by [snapshot] */
+    @Volatile
+    var appended: Long = 0L
+        private set
+
     /** Appends [len] bytes of [bytes] from [off]; a record larger than the capacity is dropped. */
     fun append(bytes: ByteArray, off: Int = 0, len: Int = bytes.size) {
         if (len <= 0 || len > capacity) return
@@ -80,13 +85,27 @@ internal class DiagRing private constructor(
             map.putInt(OFF_WRITE, at)
             map.putInt(OFF_WRAPPED, if (wrapped) 1 else 0)
             dirty = true
+            appended++
         }
     }
 
     /** Every byte written, oldest first (padding removed by [forEachLine]; raw here). */
-    fun readAll(): ByteArray = synchronized(lock) {
+    fun readAll(): ByteArray = synchronized(lock) { readAllLocked() }
+
+    /**
+     * KMK (r103): the whole lines (oldest first) together with [appended] at the same moment, so a caller can tell
+     * which of the newest lines this process wrote (the last `appended` ones) without comparing clock times.
+     */
+    fun snapshot(): Pair<List<String>, Long> {
+        val (all, wrap, count) = synchronized(lock) { Triple(readAllLocked(), wrapped, appended) }
+        val out = ArrayList<String>()
+        splitLines(all, wrap) { out.add(it) }
+        return out to count
+    }
+
+    private fun readAllLocked(): ByteArray {
         val view = map.duplicate()
-        if (!wrapped) {
+        return if (!wrapped) {
             val out = ByteArray(writeOffset)
             view.position(HEADER)
             view.get(out, 0, writeOffset)
@@ -117,10 +136,14 @@ internal class DiagRing private constructor(
 
     /** Calls [block] for each whole line (UTF-8, without the newline), oldest first; padding and partial lines skipped */
     fun forEachLine(block: (String) -> Unit) {
-        val all = readAll()
+        val (all, wrap) = synchronized(lock) { readAllLocked() to wrapped }
+        splitLines(all, wrap, block)
+    }
+
+    private fun splitLines(all: ByteArray, wrap: Boolean, block: (String) -> Unit) {
         var start = 0
         // A wrapped ring starts in the middle of a record: skip to the first newline
-        if (wrapped) {
+        if (wrap) {
             while (start < all.size && all[start] != NL) start++
             start++
         }

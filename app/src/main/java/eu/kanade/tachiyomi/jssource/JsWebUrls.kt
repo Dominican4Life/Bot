@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.jssource
 
 import android.content.Context
 import androidx.core.content.edit
+import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.serialization.json.JsonObject
 
 /**
@@ -13,16 +14,41 @@ internal class JsWebUrls(context: Context, private val sourceId: Long, baseUrl: 
     private val base = baseUrl.trimEnd('/')
     private val preferences = context.getSharedPreferences("js_weburls_$sourceId", Context.MODE_PRIVATE)
 
+    /** KMK (r103): entries in the file, counted once (preferences.all copied the whole map on every page) */
+    private var count = -1
+
+    private var lastLogAt = 0L
+
+    @Synchronized
     fun remember(items: List<JsonObject>) {
+        // KMK (r103): only what is new or changed is written (a page seen again used to rewrite the whole file)
         val found = items.mapNotNull { item ->
             val url = item.str("url") ?: return@mapNotNull null
             val web = item.str("webUrl")?.takeIf { it.startsWith("http") } ?: return@mapNotNull null
             url to web
         }
-        if (found.isEmpty()) return
+        val changed = found.filter { (url, web) -> preferences.getString(url, null) != web }
+        if (changed.isEmpty()) return
+        if (count < 0) count = runCatching { preferences.all.size }.getOrDefault(0)
+        val added = changed.count { (url, _) -> !preferences.contains(url) }
+        val clearFirst = count > 5000
+        // KMK (r103): a clear writes back every pair of this page, not only the changed ones (the unchanged ones
+        // would be lost with the rest of the file)
+        val written = if (clearFirst) found else changed
         preferences.edit {
-            if (preferences.all.size > 5000) clear()
-            found.forEach { (url, web) -> putString(url, web) }
+            if (clearFirst) clear()
+            written.forEach { (url, web) -> putString(url, web) }
+        }
+        count = if (clearFirst) written.distinctBy { it.first }.size else count + added
+        val now = System.currentTimeMillis()
+        if (now - lastLogAt >= 60_000L) {
+            lastLogAt = now
+            AppLog.add(
+                'D',
+                "js",
+                "webUrls $sourceId: wrote ${written.size} of ${items.size} (unchanged ones skipped" +
+                    "${if (clearFirst) "; file cleared first, page kept" else ""}), $count kept",
+            )
         }
     }
 

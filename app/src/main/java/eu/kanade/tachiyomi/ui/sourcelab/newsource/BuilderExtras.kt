@@ -36,6 +36,11 @@ import kotlin.random.Random
  * and settings, all without writing code. The values go into the generic-list template (v3) as placeholders:
  * paths override Derive's guesses, the lists are JSON text the template parses (`tabsList`, `filtersList`,
  * `settingsList`; never a name ending in `Json`, which Generator fills from its twin).
+ *
+ * r103: "Pick a menu on the site" (picker.js `menuMode`): one tap gives the site's menu groups ([MenuGroup]: a
+ * heading and its entries, sub-headings as their own groups); each group's card makes its own filter, learns its
+ * entries' addresses, or fetches its index page's full list, which becomes a Dropdown or a Text box with
+ * suggestions (`type: "autocomplete"`, generic-list v6).
  */
 
 @Immutable
@@ -48,7 +53,7 @@ internal data class ExtrasOption(val label: String, val value: String)
 internal data class ExtrasFilter(
     val key: String,
     val name: String,
-    val type: String, // select|sort|checkbox|text
+    val type: String, // select|sort|checkbox|text; r103: autocomplete (a text box with the options as suggestions)
     val options: List<ExtrasOption> = emptyList(),
     val onValue: String = "1",
     /** The options as the editor shows them, one `Label = value` per line ([options] is parsed from it) */
@@ -91,6 +96,34 @@ internal data class ExtrasCustomSetting(
 
 @Immutable
 internal data class FilterOffer(val param: String, val seen: List<String>, val path: String)
+
+/** r103: one entry of a menu group (picker.js `menuPick`): its text, link, value and exact css path */
+@Immutable
+internal data class MenuItem(val text: String, val href: String?, val value: String?, val path: String?)
+
+/**
+ * r103: a menu group of the site as its card shows it: [name] (the heading, cleaned: "Year: All ▾" → "Year"; "" when
+ * the list has no heading: the filter is then named by its entries, e.g. "Sort"), the
+ * headings above it ([headingPath]), the css path of the element that opens it ([opener]), its own link ([href]: an
+ * index page whose full list can be fetched), its [items], the page it was picked on, the `<select name>` when it is
+ * one ([param]); [made] = the key of the filter made from it
+ */
+@Immutable
+internal data class MenuGroup(
+    val id: Int,
+    val name: String,
+    val headingPath: List<String>,
+    val opener: String?,
+    val href: String?,
+    val index: Boolean,
+    val items: List<MenuItem>,
+    val pageUrl: String,
+    val param: String? = null,
+    val made: String? = null,
+) {
+    /** Every entry is a button / text without a link: "Learn addresses" can find where each goes */
+    val noLinks: Boolean get() = items.isNotEmpty() && items.none { !it.href.isNullOrBlank() }
+}
 
 /** r102: one entry of a picked list, for "Learn this list": its text, its css path when the page sent one, its link */
 @Immutable
@@ -171,6 +204,13 @@ internal data class BuilderExtras(
     val learn: LearnRun? = null,
     /** r102: the owner tapped a menu's button ("Year: All ▾") instead of one of its entries: the card says so */
     val menuHint: Boolean = false,
+    /** r103: the groups of the last menu picked on the site ("Pick a menu on the site"), one card each */
+    val menuGroups: List<MenuGroup> = emptyList(),
+    /**
+     * r103 fix: the menu hint card's text when it isn't the r102 "menu's button" one (picker.js `hint`: a dropdown
+     * whose menu the site adds only when it opens); null = the r102 text
+     */
+    val menuHintText: String? = null,
 )
 
 /** Pure functions of "Lists and options", kept apart from the model so they can be checked on their own */
@@ -459,6 +499,8 @@ internal object BuilderExtrasLogic {
         offers: List<FilterOffer> = emptyList(),
         /** r101: the address parameter the entries set when it is known (a `<select name=…>`), before [offers] */
         knownParam: String? = null,
+        /** r103: how many options the filter keeps (a text box with suggestions keeps more) */
+        maxOptions: Int = MAX_GROUP_OPTIONS,
     ): GroupDerived {
         val page = pageUrl.trim().toHttpUrlOrNull()
         val here = page?.let { withoutFragment(it) }
@@ -533,7 +575,7 @@ internal object BuilderExtrasLogic {
                         val v = l.url.queryParameter(param).orEmpty()
                         ExtrasOption(l.text.ifEmpty { v.ifEmpty { "Any" } }, v)
                     }
-                    filter = makeFilter(options, "param", param, "", param, heading)
+                    filter = makeFilter(options, "param", param, "", param, heading, maxOptions)
                     total = optionCount(options, "param")
                     how = "param $param"
                 } else {
@@ -569,7 +611,7 @@ internal object BuilderExtrasLogic {
                     val result = withPage(raw, rule)
                     val options = group.map { l -> ExtrasOption(l.text.ifEmpty { l.segs[at] }, l.segs[at]) }
                     val before = lead.segs.getOrNull(at - 1)
-                    val candidate = makeFilter(options, "path", "", result.path, before, heading)
+                    val candidate = makeFilter(options, "path", "", result.path, before, heading, maxOptions)
                     // r101: a menu entry that opens an index page ("Genres" next to "Actresses", "Makers") whose
                     // neighbours share no list name in the address and aren't sort orders: those are other pages,
                     // not a list's options — no filter, only "Read the whole list" of the tapped page
@@ -601,7 +643,7 @@ internal object BuilderExtrasLogic {
                 val values = options.map { it.value }.toSet()
                 val param = knownParam?.trim()?.takeIf { it.isNotEmpty() }
                     ?: offers.firstOrNull { o -> o.seen.isNotEmpty() && o.seen.all { it in values } }?.param.orEmpty()
-                filter = makeFilter(options, "param", param, "", param.ifEmpty { null }, heading)
+                filter = makeFilter(options, "param", param, "", param.ifEmpty { null }, heading, maxOptions)
                     .let { if (param.isEmpty()) it.copy(key = "", askParam = true) else it }
                 total = optionCount(options, "param")
                 how = if (param.isEmpty()) "values, parameter not known" else "values of $param"
@@ -622,7 +664,7 @@ internal object BuilderExtrasLogic {
                     val values = options.map { it.value }.filter { it.isNotEmpty() }.toSet()
                     val param = knownParam?.trim()?.takeIf { it.isNotEmpty() }
                         ?: offers.firstOrNull { o -> o.seen.isNotEmpty() && o.seen.all { it in values } }?.param.orEmpty()
-                    filter = makeFilter(options, "param", param, "", param.ifEmpty { null }, heading)
+                    filter = makeFilter(options, "param", param, "", param.ifEmpty { null }, heading, maxOptions)
                         .let { if (param.isEmpty()) it.copy(key = "", askParam = true) else it }
                     total = optionCount(options, "param")
                     how = if (param.isEmpty()) "texts (no links), parameter not known" else "texts of $param"
@@ -652,7 +694,7 @@ internal object BuilderExtrasLogic {
                 "picks add ${made.param.ifEmpty { "…" }}=… to it"
             }
             parts += "Made the filter \"${made.name}\" from ${made.options.count { it.value.isNotEmpty() }} entries: $where."
-            if (total > MAX_GROUP_OPTIONS) parts += "Kept the first $MAX_GROUP_OPTIONS of $total entries."
+            if (total > maxOptions) parts += "Kept the first $maxOptions of $total entries."
         } else if (group.size < 2 && note.isEmpty()) {
             parts += "Only one entry of that kind was found: no filter was made."
         }
@@ -671,7 +713,8 @@ internal object BuilderExtrasLogic {
     /** r102: entry texts that mean "no filter" (the dropdown's first, empty option) */
     private val ANY_WORDS = setOf("all", "any", "everything", "all types", "all years", "show all", "-", "—")
 
-    private val ARROWS = Regex("""[\s▾▴▼▲⌄⌃∨∧˅˄›»⏷⏶]+$""")
+    // r103: + the side menus' ▸ ▹ ► ▶
+    private val ARROWS = Regex("""[\s▾▴▼▲⌄⌃∨∧˅˄›»⏷⏶▸▹►▶]+$""")
 
     /**
      * r102: the list's name as a filter name: "Year: All ▾" (a menu button above the list) → "Year"; arrows and a
@@ -792,8 +835,9 @@ internal object BuilderExtrasLogic {
         path: String,
         keyBase: String?,
         heading: String?,
+        maxOptions: Int = MAX_GROUP_OPTIONS,
     ): ExtrasFilter {
-        val distinct = options.filter { it.value.isNotEmpty() || mode == "param" }.distinctBy { it.value }.take(MAX_GROUP_OPTIONS)
+        val distinct = options.filter { it.value.isNotEmpty() || mode == "param" }.distinctBy { it.value }.take(maxOptions)
         val sort = sortLike(distinct.map { it.label }, param.ifEmpty { null })
         val key = when {
             mode == "param" && param.isNotEmpty() -> param
@@ -841,6 +885,76 @@ internal object BuilderExtrasLogic {
     }
 
     const val MAX_GROUP_OPTIONS = 400
+
+    /** r103: a text box with suggestions keeps more of a long list (every actress, every maker) */
+    const val MAX_SUGGESTIONS = 3000
+
+    /**
+     * r103: a filter made from a fetched list as a Text box with suggestions: type "autocomplete", the options
+     * without the empty "Any" (an empty box means no filter); a Sort stays a Sort
+     */
+    /**
+     * r103 fix: [f] as [type]: "select" (Dropdown) puts the empty "Any" option first ([withAny]: the app sends the
+     * first option when nothing was picked), "autocomplete" drops it (an empty box is no filter), others keep theirs
+     */
+    fun withType(f: ExtrasFilter, type: String): ExtrasFilter {
+        if (f.type == type) return f
+        return when (type) {
+            "select" -> {
+                val options = withAny(f.options)
+                f.copy(type = type, options = options, optionsText = formatOptions(options))
+            }
+            "autocomplete" -> {
+                val options = f.options.filter { it.value.isNotEmpty() }
+                f.copy(type = type, options = options, optionsText = formatOptions(options))
+            }
+            else -> f.copy(type = type)
+        }
+    }
+
+    fun asAutocomplete(f: ExtrasFilter): ExtrasFilter {
+        if (f.type == "sort") return f
+        val options = f.options.filter { it.value.isNotEmpty() }
+        return f.copy(type = "autocomplete", options = options, optionsText = formatOptions(options))
+    }
+
+    /**
+     * r103: picker.js `menuPick`'s groups flattened into cards: a group with two or more entries, or with its own
+     * link (an index page), is a card; its subgroups follow it (Collections → Genres, Actresses…)
+     */
+    fun menuGroupsOf(groups: List<JsonObject>, pageUrl: String, firstId: Int): List<MenuGroup> {
+        val out = ArrayList<MenuGroup>()
+        fun walk(g: JsonObject, parents: List<String>) {
+            val rawHeading = g.str("heading").orEmpty()
+            val path = g.arr("headingPath")?.mapNotNull { (it as? JsonPrimitive)?.content }?.filter { it.isNotBlank() }
+                ?: (parents + rawHeading).filter { it.isNotBlank() }
+            val items = g.arr("items")?.mapNotNull { e ->
+                val o = e as? JsonObject ?: return@mapNotNull null
+                MenuItem(o.str("text").orEmpty(), o.str("href")?.takeIf { it.isNotBlank() }, o.str("value"), o.str("path")?.takeIf { it.isNotBlank() })
+            }.orEmpty().filter { it.text.isNotBlank() || !it.href.isNullOrBlank() || it.value != null }
+            val href = g.str("href")?.trim()?.takeIf { it.startsWith("http") }
+            val name = cleanHeading(rawHeading)
+                ?: path.lastOrNull()?.let(::cleanHeading)
+                ?: href?.let(::nameFromUrl)
+                ?: ""
+            if (items.size >= 2 || href != null) {
+                out += MenuGroup(
+                    id = firstId + out.size,
+                    name = name,
+                    headingPath = path.map { cleanHeading(it) ?: it },
+                    opener = g.str("opener")?.trim()?.takeIf { it.isNotEmpty() },
+                    href = href,
+                    index = g.bool("index") == true,
+                    items = items.take(MAX_GROUP_OPTIONS),
+                    pageUrl = pageUrl,
+                    param = g.str("param")?.trim()?.takeIf { it.isNotEmpty() },
+                )
+            }
+            g.arr("subgroups")?.forEach { sub -> (sub as? JsonObject)?.let { walk(it, path) } }
+        }
+        groups.forEach { walk(it, emptyList()) }
+        return out
+    }
 
     /** The query parameter whose value is `{q}` in a search path ("q" in `/search?q={q}&page={page}`) */
     fun searchParam(searchPath: String?): String? {
@@ -943,6 +1057,8 @@ internal object BuilderExtrasLogic {
                     "checkbox" -> "checkbox"
                     "select" -> if (options.isEmpty()) "text" else "select"
                     "sort" -> if (options.isEmpty()) "text" else "sort"
+                    // r103: a text box with suggestions (generic-list v6 maps the typed labels to values)
+                    "autocomplete" -> "autocomplete"
                     else -> "text"
                 }
                 val map = LinkedHashMap<String, JsonElement>()
@@ -952,7 +1068,7 @@ internal object BuilderExtrasLogic {
                 map["mode"] = JsonPrimitive(mode)
                 if (mode == "param") map["param"] = JsonPrimitive(param) else map["path"] = JsonPrimitive(path)
                 map["options"] = JsonArray(
-                    if (type == "select" || type == "sort") {
+                    if (type == "select" || type == "sort" || type == "autocomplete") {
                         options.map { JsonObject(mapOf("label" to JsonPrimitive(it.label), "value" to JsonPrimitive(it.value))) }
                     } else {
                         emptyList()
@@ -1366,7 +1482,7 @@ internal class BuilderExtrasModel {
         // r102: "Type: All ▾ / Year: All ▾ / Sort: Hot ▾" are the menus' buttons, not one list's entries
         val popup = obj.bool("tappedOpener") == true || tapped?.bool("popup") == true
         if (!isSelect && BuilderExtrasLogic.menuButtons(entries, tappedText, popup)) {
-            mutable.update { it.copy(menuHint = true, message = null, rev = it.rev + 1) }
+            mutable.update { it.copy(menuHint = true, menuHintText = null, message = null, rev = it.rev + 1) }
             AppLog.add(
                 'I',
                 "lab",
@@ -1421,10 +1537,15 @@ internal class BuilderExtrasModel {
     }
 
     /** r102: the menu hint's OK */
-    fun dismissMenuHint() = mutable.update { it.copy(menuHint = false) }
+    fun dismissMenuHint() = mutable.update { it.copy(menuHint = false, menuHintText = null) }
 
-    /** r101: what [BuilderListReader] read from [url] becomes a filter, derived like a group pick */
-    fun onListRead(url: String, result: BuilderListReader.Result) {
+    /**
+     * r101: what [BuilderListReader] read from [url] becomes a filter, derived like a group pick. r103: [form] "select"
+     * (a dropdown) or "autocomplete" (a text box with the entries as suggestions, up to
+     * [BuilderExtrasLogic.MAX_SUGGESTIONS]); [name] the menu group's name (else the address's last word)
+     */
+    fun onListRead(url: String, result: BuilderListReader.Result, form: String = "select", name: String? = null) {
+        val suggest = form == "autocomplete"
         val entries = result.items.map { BuilderExtrasLogic.GroupEntry(it.text, it.href, null) }
         val derived = BuilderExtrasLogic.deriveGroup(
             entries = entries,
@@ -1432,9 +1553,118 @@ internal class BuilderExtrasModel {
             tappedHref = null,
             pageUrl = url,
             rule = mutable.value.pageRule,
-            heading = BuilderExtrasLogic.nameFromUrl(url),
+            heading = name?.takeIf { it.isNotBlank() } ?: BuilderExtrasLogic.nameFromUrl(url),
+            maxOptions = if (suggest) BuilderExtrasLogic.MAX_SUGGESTIONS else BuilderExtrasLogic.MAX_GROUP_OPTIONS,
         )
-        applyDerived(derived.copy(listUrl = null), "the whole list (${result.pages} pages)")
+        val made = derived.filter?.let { if (suggest) BuilderExtrasLogic.asAutocomplete(it) else it }
+        AppLog.add('I', "lab", "extras full list of $url as ${if (suggest) "a text box with suggestions" else "a dropdown"}")
+        applyDerived(derived.copy(filter = made, listUrl = null), "the whole list (${result.pages} pages)")
+    }
+
+    // ---------- Pick a menu on the site (r103) ----------
+
+    @Volatile
+    private var nextMenuId = 1
+
+    /**
+     * r103, from picker.js `menuPick` (LabPicker.menu / console "LABMENU:"):
+     * `{ pageUrl, tapped: { text, href }, groups: [{ heading, headingPath, opener, href, index, items, subgroups }] }`.
+     * Every group with entries (or an index link) becomes a card; nothing is made until the owner says so.
+     */
+    fun onMenuPicked(json: String) {
+        val obj = runCatching { jsJson.parseToJsonElement(json) as? JsonObject }.getOrNull()
+        mutable.update { it.copy(groupMode = false) }
+        if (obj == null) {
+            AppLog.add('W', "lab", "extras menu: unreadable answer from the page (${json.take(120)})")
+            return
+        }
+        val pageUrl = obj.str("pageUrl")?.trim().orEmpty().ifEmpty { mutable.value.lastUrl.orEmpty() }.substringBefore('#')
+        val raw = obj.arr("groups")?.mapNotNull { it as? JsonObject }.orEmpty()
+        val cards = BuilderExtrasLogic.menuGroupsOf(raw, pageUrl, nextMenuId)
+        nextMenuId += cards.size + 1
+        val tapped = obj.obj("tapped")?.str("text").orEmpty().take(40)
+        // r103 fix: a dropdown whose menu isn't in the page until it opens: no groups, the hint card says what to do
+        val hint = obj.str("hint")?.trim()?.takeIf { it.isNotEmpty() && cards.isEmpty() }
+        if (hint != null) {
+            mutable.update { s -> s.copy(menuGroups = emptyList(), menuHint = true, menuHintText = hint, message = null, rev = s.rev + 1) }
+            AppLog.add('I', "lab", "extras menu picked at \"$tapped\": its menu isn't in the page until it opens (hint shown)")
+            return
+        }
+        mutable.update { s ->
+            s.copy(
+                menuGroups = cards,
+                menuHint = false,
+                menuHintText = null,
+                message = if (cards.isEmpty()) {
+                    "No menu found at \"$tapped\": tap a menu's heading (Trending, Types…), a dropdown's button or one entry of a list."
+                } else {
+                    null
+                },
+                rev = s.rev + 1,
+            )
+        }
+        AppLog.add(
+            'I',
+            "lab",
+            "extras menu picked at \"$tapped\": ${cards.size} group(s): " +
+                cards.joinToString(" · ") { g -> "${g.headingPath.joinToString(" › ")} (${g.items.size}${if (g.href != null) ", list page" else ""})" },
+        )
+    }
+
+    /** r103: a menu group card's "Make filter": a filter of that group's entries only (r101 derivation) */
+    fun makeMenuFilter(id: Int) {
+        val s = mutable.value
+        val g = s.menuGroups.firstOrNull { it.id == id } ?: return
+        val entries = g.items.map { BuilderExtrasLogic.GroupEntry(it.text, it.href, it.value) }
+        val derived = BuilderExtrasLogic.deriveGroup(
+            entries = entries,
+            tappedText = "",
+            tappedHref = null,
+            pageUrl = g.pageUrl,
+            rule = s.pageRule,
+            heading = g.name.ifBlank { null },
+            offers = s.offers,
+            knownParam = g.param,
+        )
+        applyDerived(derived.copy(listUrl = null), "the menu group \"${g.headingPath.joinToString(" › ")}\"")
+        val made = derived.filter
+        mutable.update { st ->
+            st.copy(menuGroups = st.menuGroups.map { if (it.id == id) it.copy(made = made?.key?.ifEmpty { "?" } ?: "") else it })
+        }
+        outlineGroup(g)
+    }
+
+    /** r103: "Learn addresses": the group's entries become the list "Learn this list" presses (its card opens) */
+    fun learnMenuGroup(id: Int) {
+        val g = mutable.value.menuGroups.firstOrNull { it.id == id } ?: return
+        if (learnJob?.isActive == true) return
+        val entries = g.items.mapNotNull { e ->
+            val text = e.text.trim()
+            if (text.isEmpty()) null else LearnEntry(text, e.path, e.href?.trim()?.takeIf { it.isNotEmpty() })
+        }.distinctBy { it.text }
+        if (entries.size < 2 || !g.pageUrl.startsWith("http")) return
+        val group = LearnGroup(
+            pageUrl = g.pageUrl,
+            opener = g.opener,
+            likeSelector = "",
+            name = g.name.ifBlank { "List" },
+            entries = entries,
+            hasLinks = entries.any { e -> e.href?.let { !it.startsWith("javascript:", ignoreCase = true) } == true },
+        )
+        mutable.update { it.copy(learnGroup = group, learn = null, rev = it.rev + 1) }
+        AppLog.add('D', "lab", "extras learn the menu group \"${g.name.ifBlank { "List" }}\": ${entries.size} entries, menu button ${g.opener ?: "(none)"}")
+        outlineGroup(g)
+    }
+
+    fun dismissMenuGroup(id: Int) = mutable.update { s -> s.copy(menuGroups = s.menuGroups.filter { it.id != id }) }
+
+    /** Dashed green on this group's entries only */
+    private fun outlineGroup(g: MenuGroup) {
+        val paths = g.items.mapNotNull { it.path }.take(BuilderExtrasLogic.MAX_GROUP_OPTIONS)
+        if (paths.isEmpty()) return
+        val push = runInPage ?: return
+        val list = JsonArray(paths.map { JsonPrimitive(it) })
+        runCatching { push("window.__labPicker && window.__labPicker.outlineItems && window.__labPicker.outlineItems($list);") }
     }
 
     fun dismissListOffer() = mutable.update { it.copy(listOffer = null) }
@@ -2044,7 +2274,12 @@ internal class BuilderExtrasModel {
     fun setFilterName(index: Int, name: String) = updateFilter(index) { it.copy(name = name) }
 
     fun setFilterType(index: Int, type: String) {
-        updateFilter(index) { it.copy(type = type) }
+        // r103 fix: Dropdown gets its empty "Any" option back first; a text box with suggestions drops it (rev: the
+        // options editor shows the new lines)
+        mutable.update { s ->
+            val f = s.filters.getOrNull(index) ?: return@update s
+            s.copy(filters = s.filters.toMutableList().also { it[index] = BuilderExtrasLogic.withType(f, type) }, rev = s.rev + 1)
+        }
         state.value.filters.getOrNull(index)?.let { f ->
             AppLog.add('I', "lab", "extras filter ${f.key} (${f.type}, ${f.options.size} options)")
         }

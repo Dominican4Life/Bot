@@ -30,9 +30,11 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * KMK: The app's own log, shown in the Logs screen (debug button on the navigation rail).
  *
- * Everything logged through logcat, XLog and the crash handler lands here with its time, level and tag. The file is
- * kept between about 1 and 2 MB, and the newest [MAX_LINES] lines of earlier runs are loaded (off the main thread) at
- * start, so they are still there after a restart (they show with a negative time, counted back from this run's start).
+ * Everything logged through logcat, XLog and the crash handler lands here with its time, level and tag. Since r103
+ * each line is written once, to the 4 MB memory-mapped ring ([ring]); log.txt (kept between about 1 and 2 MB) is only
+ * written when the ring can't be mapped. The newest [MAX_LINES] lines of earlier runs are loaded (off the main thread)
+ * at start, so they are still there after a restart (they show with a negative time, counted back from this run's
+ * start).
  */
 object AppLog {
 
@@ -77,14 +79,140 @@ object AppLog {
         // Capture levels (the gate in add) are read before the first line; the ring mirror is mapped (a stat and an
         // mmap, no read) so every line of this run lands in it from the start line on
         LogCapture.init(context)
+        // KMK (r103): the ring lives in filesDir (cacheDir may be wiped by the system); r97–r102 rings are moved once
+        val ringFile = File(context.filesDir, DiagPaths.LOG_RING)
+        val moved = moveLegacy(File(context.cacheDir, DiagPaths.LEGACY_LOG_RING), ringFile)
+        moveLegacy(File(context.cacheDir, DiagPaths.LEGACY_LOG_RING_OLD), File(context.filesDir, DiagPaths.LOG_RING_OLD))
         ring = DiagRing.open(
-            File(context.cacheDir, DiagPaths.LOG_RING),
+            ringFile,
             DiagBudget.LOG_RING_BYTES,
             sessionStart = sessionStart,
         )
         // KMK <--
         val dir = File(context.filesDir, "app_log").apply { mkdirs() }
         val logFile = File(dir, "log.txt")
+        clearedFile = File(dir, CLEARED_FILE)
+        // KMK (r103): every line used to be written twice, to log.txt and to the ring. The ring is now the only
+        // store when it could be mapped (a memcpy into kernel pages per line: it survives a process kill without a
+        // flush, and the previous runs' lines are read back from it). log.txt is only written when there is no ring.
+        val mapped = ring
+        if (mapped != null) {
+            scope.launch { restoreFromRing(mapped, logFile) }
+        } else {
+            startFileWriter(logFile)
+        }
+        add(
+            'I',
+            "app",
+            "start ${context.packageName} ${appVersion(context)} on Android ${Build.VERSION.RELEASE} " +
+                "(SDK ${Build.VERSION.SDK_INT}), ${Build.MANUFACTURER} ${Build.MODEL}",
+        )
+        if (mapped == null) {
+            add('W', "diag", "Log ring couldn't be opened: lines of this run won't survive a process kill")
+        }
+        if (moved != null) add('D', "diag", "Log: ring moved from the cache folder to app_log/ ($moved)")
+    }
+
+    /**
+     * KMK (r103): moves an r97–r102 ring file from cacheDir to filesDir (a rename: same partition; a copy and delete
+     * when the rename fails). Only when [to] doesn't exist yet. Returns how it was moved, or null when nothing was.
+     */
+    private fun moveLegacy(from: File, to: File): String? = runCatching {
+        if (!from.isFile || to.exists()) return@runCatching null
+        to.parentFile?.mkdirs()
+        if (from.renameTo(to)) return@runCatching "renamed"
+        try {
+            from.copyTo(to, overwrite = false)
+        } catch (e: Exception) {
+            to.delete() // a partial copy would be taken for a ring
+            throw e
+        }
+        from.delete()
+        "copied"
+    }.getOrNull()
+
+    /**
+     * KMK (r103): the earlier runs' newest [MAX_LINES] lines from the ring (not those before the last Clear), and the
+     * r97 "Log ring opened" line, in one pass over the ring. Earlier runs' lines are told apart by ring order (all but
+     * the lines this run appended), not by clock time, so a clock change can't hide them. A log.txt left by r102 or
+     * earlier is read first: its lines older than the ring's oldest line (the ring was in cacheDir and may have been
+     * wiped) are put in front; only then is the file removed.
+     */
+    private fun restoreFromRing(r: DiagRing, oldFile: File) {
+        val started = System.nanoTime()
+        var previous = 0
+        var fromFile = 0
+        var fileRead = false
+        val kept = ArrayList<Line>()
+        val cleared = maxOf(readClearedAt(), clearedAt)
+        runCatching {
+            val (all, ours) = r.snapshot()
+            // The last `ours` lines are this run's (appended since the ring was opened)
+            val earlier = (all.size.toLong() - ours).coerceIn(0L, all.size.toLong()).toInt()
+            previous = earlier
+            val ringOldest = all.firstNotNullOfOrNull { it.substringBefore('\t').toLongOrNull() }
+            // r102's log.txt: only lines older than everything in the ring (the rest are in the ring too)
+            fileRead = !oldFile.isFile || runCatching {
+                val fileLines = readTail(oldFile, oldFile.length(), MAX_BYTES).takeLast(MAX_LINES).mapNotNull(::decode)
+                for (line in fileLines) {
+                    if ((ringOldest == null || line.time < ringOldest) && line.time > cleared) {
+                        kept.add(line)
+                        fromFile++
+                    }
+                }
+            }.isSuccess
+            for (i in 0 until earlier) {
+                val line = decode(all[i]) ?: continue
+                if (line.time > cleared) kept.add(line)
+            }
+        }
+        val old = if (kept.size > MAX_LINES) kept.subList(kept.size - MAX_LINES, kept.size).toList() else kept
+        var restored = 0
+        if (old.isNotEmpty()) {
+            synchronized(lines) {
+                // KMK: a Clear of this run (clearedAt set) removed every earlier run's line, so none come back
+                if (clearedAt == 0L) {
+                    restored = old.size
+                    lines.addAll(0, old)
+                    while (lines.size > MAX_LINES) lines.removeFirst()
+                }
+            }
+            _version.value++
+        }
+        add('I', "diag", "Log ring opened: ${"%,d".format(previous)} lines from the previous run")
+        val ms = (System.nanoTime() - started) / 1_000_000
+        add(
+            'D',
+            "diag",
+            "Log: each line written once (to the ring); $restored earlier lines read back ($fromFile from the old " +
+                "log.txt) in $ms ms",
+        )
+        // KMK (r103): removed only once its lines were read (a failed read keeps it for the next start)
+        if (fileRead) {
+            runCatching {
+                if (oldFile.isFile) {
+                    val kb = oldFile.length() / 1024
+                    if (oldFile.delete()) add('D', "diag", "Log: removed the old log.txt ($kb KB), no longer written")
+                }
+            }
+        }
+    }
+
+    /** The time of the last Clear (persisted, so lines cleared before a restart don't come back from the ring) */
+    private fun readClearedAt(): Long =
+        runCatching { clearedFile?.takeIf { it.isFile }?.readText()?.trim()?.toLongOrNull() }.getOrNull() ?: 0L
+
+    /** KMK (r103): app_log/cleared_at; set in [init] */
+    private var clearedFile: File? = null
+
+    /** KMK (r103): when this run's last Clear happened (0 = none) */
+    @Volatile
+    private var clearedAt = 0L
+
+    private const val CLEARED_FILE = "cleared_at"
+
+    /** The r95 file writer, used only when the ring couldn't be mapped */
+    private fun startFileWriter(logFile: File) {
         // KMK: only a stat on the main thread; reading and trimming happen in the writer below. The stat comes before
         // `file` is set, so an E line written straight to the file can't fall before startLength (it was read back
         // as an earlier run's line and shown twice)
@@ -146,28 +274,6 @@ object AppLog {
                 }
             }
         }
-        add(
-            'I',
-            "app",
-            "start ${context.packageName} ${appVersion(context)} on Android ${Build.VERSION.RELEASE} " +
-                "(SDK ${Build.VERSION.SDK_INT}), ${Build.MANUFACTURER} ${Build.MODEL}",
-        )
-        // KMK (r97) -->
-        // One line that says the mirror ring works and what it kept (counted off the main thread)
-        ring?.let { r ->
-            scope.launch {
-                val previous = runCatching {
-                    var n = 0
-                    r.forEachLine { line ->
-                        val time = line.substringBefore('\t').toLongOrNull() ?: Long.MAX_VALUE
-                        if (time < sessionStart) n++
-                    }
-                    n
-                }.getOrDefault(0)
-                add('I', "diag", "Log ring opened: ${"%,d".format(previous)} lines from the previous run")
-            }
-        } ?: add('W', "diag", "Log ring couldn't be opened: lines of this run won't survive a process kill")
-        // KMK <--
     }
 
     // KMK (r97) -->
@@ -248,6 +354,22 @@ object AppLog {
         }
         out.reverse()
         out
+    }
+
+    /**
+     * KMK (r103): W/E lines among the newest [n] lines. A walk over the kept lines without building a LogEntry per
+     * line (the Diagnostics rail and the start-tab check used to format up to 4,000 entries for this count)
+     */
+    fun problemsInNewest(n: Int): Int = synchronized(lines) {
+        var count = 0
+        var i = lines.size - 1
+        var seen = 0
+        while (i >= 0 && seen < n) {
+            if (lines[i].isProblem) count++
+            i--
+            seen++
+        }
+        count
     }
 
     /** Lines in [from, to], oldest first */
@@ -339,8 +461,12 @@ object AppLog {
             lines.addLast(line)
             while (lines.size > MAX_LINES) lines.removeFirst()
         }
-        ring?.append(encoded.toByteArray(Charsets.UTF_8)) // KMK (r97): the mirror ring
-        if (level == 'E' && pendingClears.get() == 0) {
+        val r = ring
+        if (r != null) {
+            // KMK (r103): the ring is the only store; a line is in kernel pages (kept through a process kill) as soon
+            // as this returns, so E lines need no direct write any more
+            r.append(encoded.toByteArray(Charsets.UTF_8))
+        } else if (level == 'E' && pendingClears.get() == 0) {
             // A crash may end the process before the writer runs: write problems right away (through the open
             // stream when there is one, after what it buffered, so the file keeps its order)
             runCatching {
@@ -366,14 +492,26 @@ object AppLog {
     fun snapshot(): List<Line> = synchronized(lines) { lines.toList() }
 
     fun clear() {
+        val now = System.currentTimeMillis()
+        val ringStore = ring != null
         // KMK: counted inside the lock before clearing, so the writer's restore of older lines (which checks the
-        // count under the same lock) can't slip in between and put them back
+        // count under the same lock) can't slip in between and put them back. KMK (r103): with the ring as the store,
+        // the clear time does that instead
         synchronized(lines) {
-            pendingClears.incrementAndGet()
+            if (!ringStore) pendingClears.incrementAndGet()
+            clearedAt = now
             lines.clear()
         }
-        // KMK: in order with the queued lines (the writer empties the file when it gets here)
-        pending.trySend(CLEAR_MARK)
+        if (ringStore) {
+            // KMK (r103): the ring keeps its bytes (Health excerpts and the report read them); the clear time is
+            // saved so a restart doesn't show the cleared lines again
+            scope.launch {
+                runCatching { synchronized(fileLock) { clearedFile?.writeText(clearedAt.toString()) } }
+            }
+        } else {
+            // KMK: in order with the queued lines (the writer empties the file when it gets here)
+            pending.trySend(CLEAR_MARK)
+        }
         _version.value++
     }
 

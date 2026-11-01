@@ -242,11 +242,18 @@ internal object TestRuns {
             step(StepId.TITLE, "Title · ${entry.title}") {
                 val details = rt.call("getDetails", entry.url) as? JsonObject
                 val filled = details?.let(::detailFields).orEmpty()
+                // KMK (r103): getDetails may leave coverUrl out on purpose (generic-list v4+ does when the title page
+                // has none: the app keeps the list's cover). The list gave this title a cover: not counted as missing
+                val listCover = details != null && "coverUrl" !in filled && !entry.imageUrl.isNullOrBlank()
                 Result(
                     title = "",
                     ok = true,
                     millis = 0,
-                    text = if (details == null) "getDetails returned nothing" else "${filled.size} of 8 fields: ${filled.joinToString(", ")}",
+                    text = if (details == null) {
+                        "getDetails returned nothing"
+                    } else {
+                        "${filled.size} of 8 fields: ${filled.joinToString(", ")}" + if (listCover) LIST_COVER else ""
+                    },
                     raw = listOfNotNull(details),
                 )
             }
@@ -274,6 +281,9 @@ internal object TestRuns {
         val words = title.split(Regex("""[\s:：,.!?()\[\]'"-]+""")).filter { it.isNotBlank() }
         return words.firstOrNull { it.count { c -> c.isLetterOrDigit() } >= 3 } ?: title.trim()
     }
+
+    /** KMK (r103): the Title result's text ends with this when coverUrl was left out and the list gave a cover */
+    private const val LIST_COVER = " · coverUrl from the list"
 
     private val DETAIL_FIELDS = listOf("title", "coverUrl", "description", "author", "genres", "status", "webUrl", "rating")
 
@@ -398,15 +408,46 @@ internal object TestRuns {
         }
     }
 
-    /** The addresses of a list search() returned; null when it threw (cancellation goes through) */
-    private suspend fun searchUrls(rt: JsRuntime, filters: Map<String, JsonElement>): Pair<List<String>?, String?> = try {
-        val list = (rt.call("search", "", 1, filters) as? JsonArray).orEmpty().mapNotNull { (it as? JsonObject)?.str("url") }
-        list to null
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: Throwable) {
-        null to (e.message ?: e.toString()).lineSequence().firstOrNull().orEmpty().take(120)
+    /** What one search() of the Filters step gave: the titles' addresses (null when it threw), the error, the request */
+    private data class Searched(val urls: List<String>?, val error: String?, val address: String)
+
+    /**
+     * The addresses of a list search() returned; null when it threw (cancellation goes through). r103: with the
+     * address it fetched ("GET /en/trending/today?page=1", the first request it logged), so a wrong learned address
+     * shows in the step.
+     */
+    private suspend fun searchUrls(rt: JsRuntime, filters: Map<String, JsonElement>): Searched {
+        val started = System.currentTimeMillis()
+        val outcome: Pair<List<String>?, String?> = try {
+            val list = (rt.call("search", "", 1, filters) as? JsonArray).orEmpty().mapNotNull { (it as? JsonObject)?.str("url") }
+            list to null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            null to (e.message ?: e.toString()).lineSequence().firstOrNull().orEmpty().take(120)
+        }
+        val (urls, error) = outcome
+        val request = runCatching {
+            rt.consoleEntries.asSequence()
+                .filter { it.at >= started && it.level == "net" }
+                .mapNotNull { parseNetLine(it.line) }
+                .firstOrNull { it.url.isNotBlank() }
+        }.getOrNull()
+        val address = request?.let { "${it.method} ${pathOf(it.url)}" } ?: "no request logged"
+        return Searched(urls, error, address)
     }
+
+    /** `https://site/en/trending/today?page=1` → `/en/trending/today?page=1` (the address as the site sees it) */
+    private fun pathOf(url: String): String {
+        val afterScheme = url.substringAfter("://", url)
+        val slash = afterScheme.indexOf('/')
+        return if (slash < 0) "/" else afterScheme.substring(slash)
+    }
+
+    /** r103: a Filters try's subtitle is "<address> → <verdict>"; the verdict alone (older runs: the whole subtitle) */
+    private fun verdictOf(subtitle: String?): String = subtitle.orEmpty().substringAfter(ARROW)
+
+    private const val ARROW = " → "
 
     /**
      * Each filter (max 5) once with its first non-empty value, a Sort with its first two, through `search("", 1,
@@ -424,28 +465,31 @@ internal object TestRuns {
                 text = if (groups.isEmpty()) "getFilters returned no filters" else "${groups.size} filters, none with a value to try",
             )
         }
-        val (searched, _) = searchUrls(rt, emptyMap())
-        val base = searched?.takeIf { it.isNotEmpty() } ?: lists.firstOrNull { it.items.isNotEmpty() }?.items?.map { it.url }
+        val unfiltered = searchUrls(rt, emptyMap())
+        val base = unfiltered.urls?.takeIf { it.isNotEmpty() } ?: lists.firstOrNull { it.items.isNotEmpty() }?.items?.map { it.url }
         val items = ArrayList<Item>()
         tried.forEach { g ->
             val values = tryValues(g)
-            val outcomes = values.map { (label, value) -> Triple(label, value, searchUrls(rt, mapOf(g.key to value))) }
-            outcomes.forEachIndexed { index, (label, _, outcome) ->
-                val (urls, error) = outcome
+            val outcomes = values.map { (label, value) -> label to searchUrls(rt, mapOf(g.key to value)) }
+            outcomes.forEachIndexed { index, (label, outcome) ->
+                val urls = outcome.urls
                 val against = if (g.type == JsFilters.Type.Sort && outcomes.size == 2) {
-                    outcomes[1 - index].third.first
+                    outcomes[1 - index].second.urls
                 } else {
                     base
                 }
                 val verdict = when {
-                    urls == null -> FAILED + error.orEmpty()
+                    urls == null -> FAILED + outcome.error.orEmpty()
                     urls.isEmpty() -> "0 titles"
                     against == null -> "${urls.size} titles · $NOTHING_TO_COMPARE"
                     urls != against -> "${urls.size} titles · $WORKS"
                     else -> "${urls.size} titles · $SAME"
                 }
-                AppLog.add('D', "lab", "Test Run filter ${g.name} = $label: $verdict")
-                items.add(Item(title = "${g.name} = $label", subtitle = verdict, kind = Kind.Other, url = ""))
+                // r103: the exact address tried, so a wrong learned address is visible (Logs, the run's console, the step)
+                val line = "${g.name} = $label$ARROW${outcome.address}$ARROW$verdict"
+                AppLog.add('D', "lab", "Test Run filter $line")
+                runCatching { rt.onConsole?.invoke(JsConsoleEntry(System.currentTimeMillis(), "info", STEP_FILTERS, line)) }
+                items.add(Item(title = "${g.name} = $label", subtitle = "${outcome.address}$ARROW$verdict", kind = Kind.Other, url = ""))
             }
         }
         return Result(title = "", ok = true, millis = 0, items = items, text = "${items.size} tries")
@@ -663,12 +707,15 @@ internal object TestRuns {
             }
             id == StepId.TITLE -> {
                 val details = result.raw.firstOrNull()
-                val filled = details?.let(::detailFields).orEmpty()
+                // r103: coverUrl left out but the list gave the title a cover (the app keeps it): counted as there
+                val listCover = result.text?.endsWith(LIST_COVER) == true
+                val filled = details?.let(::detailFields).orEmpty().let { if (listCover) it + "coverUrl" else it }
                 val missing = DETAIL_FIELDS - filled.toSet()
+                val coverNote = if (listCover) " · cover from the list" else ""
                 when {
                     details == null -> step(StepStatus.Amber, 0, "getDetails returned nothing")
-                    filled.size >= 6 -> step(StepStatus.Green, filled.size, "${filled.size} of 8 fields" + if (missing.isEmpty()) "" else " · without ${missing.joinToString(", ")}")
-                    else -> step(StepStatus.Amber, filled.size, "only ${filled.size} of 8 fields · missing ${missing.joinToString(", ")}")
+                    filled.size >= 6 -> step(StepStatus.Green, filled.size, "${filled.size} of 8 fields$coverNote" + if (missing.isEmpty()) "" else " · without ${missing.joinToString(", ")}")
+                    else -> step(StepStatus.Amber, filled.size, "only ${filled.size} of 8 fields$coverNote · missing ${missing.joinToString(", ")}")
                 }
             }
             id == StepId.CHAPTERS -> {
@@ -703,16 +750,17 @@ internal object TestRuns {
                 }
             }
             id == STEP_FILTERS -> {
-                val verdicts = result.items.map { it.subtitle.orEmpty() }
+                val verdicts = result.items.map { verdictOf(it.subtitle) }
                 val works = verdicts.count { WORKS in it || NOTHING_TO_COMPARE in it }
                 val failed = verdicts.count { it.startsWith(FAILED) }
-                val off = result.items.filter { item -> item.subtitle.orEmpty().let { WORKS !in it && NOTHING_TO_COMPARE !in it } }
-                    .take(2).joinToString(" · ") { "${it.title}: ${it.subtitle}" }
+                // r103: "Sort = Today → GET /en/trending/today?page=1 → 0 titles" (the address tried, then the verdict)
+                val off = result.items.filter { item -> verdictOf(item.subtitle).let { WORKS !in it && NOTHING_TO_COMPARE !in it } }
+                    .take(2).joinToString(" · ") { "${it.title}$ARROW${it.subtitle}" }
                 when {
                     count == 0 -> step(StepStatus.Amber, 0, result.text.orEmpty())
-                    failed == count -> step(StepStatus.Red, 0, "every filter failed · ${off.take(160)}")
+                    failed == count -> step(StepStatus.Red, 0, "every filter failed · ${off.take(240)}")
                     works == count -> step(StepStatus.Green, works, "$works of $count tries change the list")
-                    else -> step(StepStatus.Amber, works, "$works of $count tries change the list · ${off.take(160)}")
+                    else -> step(StepStatus.Amber, works, "$works of $count tries change the list · ${off.take(240)}")
                 }
             }
             id == STEP_SETTINGS -> {

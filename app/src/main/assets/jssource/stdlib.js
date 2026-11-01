@@ -538,7 +538,7 @@
   // reason, steps, frames, tookMs }; can take up to `timeout` ms (45 s by default).
   g.host.findVideo = function (url, options) {
     var o = options || {};
-    return ask('findVideo', { url: String(url), frame: o.frame, referer: o.referer, timeout: o.timeout });
+    return ask('findVideo', { url: String(url), frame: o.frame, referer: o.referer, timeout: o.timeout, fresh: o.fresh === true });
   };
 
 
@@ -616,6 +616,26 @@
     });
     return headers;
   }
+
+  // KMK (r103): limits of fetch's { cache: true } copies (see rememberCached)
+  var FETCH_CACHE_MAX = 50;
+  var FETCH_CACHE_BODY_MAX = 1000000;
+  var FETCH_CACHE_INDEX = '__fetchCache:#index';
+  // The r103 test builds' index key, removed at the first repair
+  var FETCH_CACHE_INDEX_LEGACY = '__fetchCacheIndex';
+  // Every index update of this runtime runs after the one before it (two
+  // fetches finishing together used to read the same index and each write
+  // back its own, leaving entries no index named, never dropped)
+  var fetchCacheChain = Promise.resolve();
+  // Index updates since the index was last checked against the stored keys:
+  // the first one of a runtime checks, then every FETCH_CACHE_CHECK_EVERY
+  // (another runtime of the same source has its own chain)
+  var fetchCacheTouches = 0;
+  var FETCH_CACHE_CHECK_EVERY = 25;
+  // Entries this runtime stored whose index update hasn't run yet (count per
+  // key): a repair leaves them to their own update instead of taking them
+  // for forgotten (oldest) entries and dropping them
+  var fetchCachePending = {};
 
   g.fetch = function (url, options) {
     var o = {};
@@ -695,6 +715,98 @@
       return '__fetchCache:' + requested;
     }
 
+    // KMK (r103): the cache keeps at most FETCH_CACHE_MAX addresses (oldest
+    // used dropped first) and no body over FETCH_CACHE_BODY_MAX characters:
+    // every entry lives in the source's storage.json, which is written whole.
+    // The order is kept under FETCH_CACHE_INDEX (itself excluded from the
+    // entries). Updates go one at a time through fetchCacheChain; the index is
+    // repaired from host.storage.all() when it is missing, at a runtime's first
+    // update and every FETCH_CACHE_CHECK_EVERY after: stored entries it doesn't
+    // name are put in front (oldest; not this runtime's own queued ones),
+    // names with no entry are dropped.
+    function isCacheEntryKey(k) {
+      return k.indexOf('__fetchCache:') === 0 && k !== FETCH_CACHE_INDEX;
+    }
+
+    function indexedKeys() {
+      var check = fetchCacheTouches % FETCH_CACHE_CHECK_EVERY === 0;
+      fetchCacheTouches++;
+      return g.host.storage.get(FETCH_CACHE_INDEX).then(function (index) {
+        var known = Array.isArray(index) ? index : null;
+        if (known && !check) return known;
+        return g.host.storage.all().then(function (values) {
+          var keys = Object.keys(values || {}).filter(isCacheEntryKey);
+          var legacy = values && Object.prototype.hasOwnProperty.call(values, FETCH_CACHE_INDEX_LEGACY);
+          var drop = legacy ? g.host.storage.delete(FETCH_CACHE_INDEX_LEGACY) : Promise.resolve(true);
+          return drop.then(function () {
+            if (known && known.length >= keys.length) {
+              var present = {};
+              keys.forEach(function (k) {
+                present[k] = true;
+              });
+              if (known.every(function (k) { return present[k]; })) return known;
+            } else if (known) {
+              var listed = {};
+              known.forEach(function (k) {
+                listed[k] = true;
+              });
+              // Only this runtime's queued entries are unnamed: nothing to repair
+              if (keys.every(function (k) { return listed[k] || fetchCachePending[k]; })) return known;
+            }
+            var named = {};
+            var kept = (known || []).filter(function (k) {
+              if (!isCacheEntryKey(k) || named[k]) return false;
+              named[k] = true;
+              return keys.indexOf(k) !== -1;
+            });
+            var missing = keys.filter(function (k) {
+              return !named[k] && !fetchCachePending[k];
+            });
+            return missing.concat(kept);
+          });
+        });
+      });
+    }
+
+    function touchCacheIndex(dropOld) {
+      var key = cacheKey();
+      var run = fetchCacheChain.then(function () {
+        return indexedKeys().then(function (index) {
+          if (!dropOld && index.length && index[index.length - 1] === key) return true;
+          var next = index.filter(function (k) {
+            return k !== key;
+          });
+          next.push(key);
+          var removed = next.length > FETCH_CACHE_MAX ? next.splice(0, next.length - FETCH_CACHE_MAX) : [];
+          return Promise.all(
+            removed.map(function (k) {
+              return g.host.storage.delete(k);
+            })
+          ).then(function () {
+            return g.host.storage.set(FETCH_CACHE_INDEX, next);
+          });
+        });
+      });
+      // The chain goes on after a failed update too
+      fetchCacheChain = run.catch(function () {});
+      return run;
+    }
+
+    function rememberCached(entry) {
+      if (typeof entry.body === 'string' && entry.body.length > FETCH_CACHE_BODY_MAX) return;
+      var key = cacheKey();
+      fetchCachePending[key] = (fetchCachePending[key] || 0) + 1;
+      function done() {
+        if (--fetchCachePending[key] <= 0) delete fetchCachePending[key];
+      }
+      g.host.storage
+        .set(key, entry)
+        .then(function () {
+          return touchCacheIndex(true);
+        })
+        .then(done, done);
+    }
+
     function headerValue(rawHeaders, name) {
       var lower = name.toLowerCase();
       var found;
@@ -721,6 +833,7 @@
           });
         }
         if (useCache && result.statusCode === 304 && cached) {
+          touchCacheIndex(false).catch(function () {});
           return toResponse({
             statusCode: 200,
             url: result.url || requested,
@@ -732,7 +845,7 @@
           var etag = headerValue(result.headers, 'etag');
           var lastModified = headerValue(result.headers, 'last-modified');
           if (etag || lastModified) {
-            g.host.storage.set(cacheKey(), {
+            rememberCached({
               etag: etag,
               lastModified: lastModified,
               body: result.body,

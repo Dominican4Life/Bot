@@ -41,6 +41,10 @@ internal object Derive {
         val selector: String,
         val target: String = "tags",
         val values: List<String> = emptyList(),
+        /** r103: the row's place on the page (picker.js docIndex); groups are kept in the page's order; -1 unknown */
+        val order: Int = -1,
+        /** r103: an unlabelled row's exact place (picker.js rowExact): used when two rows share one look; "" = none */
+        val exact: String = "",
     )
 
     /** r102: the `tagGroups` placeholder: name, selector, target of each group (values stay in the builder) */
@@ -63,6 +67,11 @@ internal object Derive {
         val likeSelector: String,            // the css path without positions: "others like this"
         val hrefs: List<String>,             // the links of the like elements (up to 30)
         val attrsAllHttp: List<String>,      // attributes that hold an absolute address on every like element
+        /**
+         * r103: the row's selector anchored on its label (`dt:matches(^\s*Author…) + dd`) when the pick sits in a
+         * labelled row: the same on every title, unlike positions ("" = none)
+         */
+        val rowSelector: String = "",
     )
 
     val COVER_ATTRS = listOf("data-src", "data-lazy-src", "data-original", "srcset", "src")
@@ -260,7 +269,7 @@ internal object Derive {
 
         // r101: the title page's own fields: exact paths (one element per page), like-selectors for the tags
         if (bigCover != null) {
-            put("detailsCover", pageSelector(bigCover), "the title's picture you tapped on the title page (its exact place); og:image and the player's poster when a page has none there")
+            put("detailsCover", fieldSelector(bigCover), "the title's picture you tapped on the title page (${fieldWhere(bigCover)}); og:image and the player's poster when a page has none there")
             val attr = COVER_ATTRS.firstOrNull { it in bigCover.attrsAllHttp }
                 ?: COVER_ATTRS.firstOrNull { bigCover.pick.attrs[it]?.isNotBlank() == true } ?: "src"
             put(
@@ -270,7 +279,7 @@ internal object Derive {
             )
         }
         if (description != null) {
-            put("descriptionSelector", pageSelector(description), "the description you tapped on the title page (its exact place); the page's meta description when it isn't there")
+            put("descriptionSelector", fieldSelector(description), "the description you tapped on the title page (${fieldWhere(description)}); the page's meta description when it isn't there")
         }
         // r102: the rows tapped as Tags, one group each
         val groups = tagGroups.filter { it.selector.isNotBlank() }
@@ -299,10 +308,10 @@ internal object Derive {
             )
         }
         if (author != null) {
-            put("authorSelector", pageSelector(author), "the author you tapped on the title page (its exact place)")
+            put("authorSelector", fieldSelector(author), "the author you tapped on the title page (${fieldWhere(author)})")
         }
         if (status != null) {
-            put("statusSelector", pageSelector(status), "the status you tapped on the title page (its exact place); words like Ongoing / Completed are understood")
+            put("statusSelector", fieldSelector(status), "the status you tapped on the title page (${fieldWhere(status)}); words like Ongoing / Completed are understood")
         }
 
         // Pages (manga)
@@ -405,6 +414,26 @@ internal object Derive {
     /** r99: an element of a page read once (not per row): its exact path, positions kept */
     private fun pageSelector(p: Picked): String =
         p.pick.cssPath.ifBlank { p.likeSelector } // "body > " kept: without it a path can be a bare tag
+
+    /**
+     * r103: a title page field's selector that holds on every title of the source: its labelled row's selector
+     * (`dt:matches(Author) + dd`), else the look-alike path without positions when it is the only one on the page
+     * (positions differ from title to title), else the exact path; generated class names left out
+     */
+    fun fieldSelector(p: Picked): String {
+        val raw = when {
+            p.rowSelector.isNotBlank() -> p.rowSelector
+            p.pick.count <= 1 && p.likeSelector.isNotBlank() -> p.likeSelector
+            else -> pageSelector(p)
+        }
+        return clean(raw).first
+    }
+
+    private fun fieldWhere(p: Picked): String = when {
+        p.rowSelector.isNotBlank() -> "by its row's label, the same on every title"
+        p.pick.count <= 1 && p.likeSelector.isNotBlank() -> "the only one like it on the page, without positions"
+        else -> "its exact place"
+    }
 
     /**
      * r99: the next-page link, never a bare `a` (r98 wrote `a`, which is every link of the page): inside the pager

@@ -700,7 +700,7 @@ internal data class HealthSnapshot(
 // ---------------------------------------------------------------------------------------------------------------------
 
 internal enum class ReportPart(val label: String, val description: String, val defaultOn: Boolean) {
-    LOG("Log", "whole log file + log-raw.tsv", true),
+    LOG("Log", "whole log + log-ring.tsv", true),
     LIVE("Live snapshot", "memory, JS, workers, DB, network, jobs · 5-min rings", true),
     DEVICE("Device & app", "build, Android, model, memory, network type", true),
     SOURCES("Extensions & JS sources", "versions, memory, running", true),
@@ -1105,8 +1105,14 @@ internal object DiagKeys {
 /** Files. `cacheDir/diag/` may be wiped by the system; `filesDir/diag/` is what the owner wrote. */
 internal object DiagPaths {
     const val CACHE_DIR = "diag"
-    const val LOG_RING = "diag/log.ring"
-    const val LOG_RING_OLD = "diag/log.ring.old"
+    /**
+     * KMK (r103): under filesDir (the system may wipe cacheDir, and the ring is the log's only store since r103).
+     * [LEGACY_LOG_RING] / [LEGACY_LOG_RING_OLD] are the r97–r102 places under cacheDir, moved once by AppLog.init.
+     */
+    const val LOG_RING = "app_log/log.ring"
+    const val LOG_RING_OLD = "app_log/log.ring.old"
+    const val LEGACY_LOG_RING = "diag/log.ring"
+    const val LEGACY_LOG_RING_OLD = "diag/log.ring.old"
     const val SAMPLES_BIN = "diag/samples.bin"
     const val HEALTH_JSON = "diag/health.json"
     const val HEALTH_DIR = "diag/health"

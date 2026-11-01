@@ -30,6 +30,14 @@ abstract class PageLoader {
      */
     open suspend fun loadPage(page: ReaderPage) {}
 
+    /**
+     * KMK (r103): loads [page] for a Pages-panel tile: like [loadPage], but an online loader queues it behind the
+     * pages being read and doesn't preload the pages after it. Same rules for completion as [loadPage].
+     */
+    open suspend fun loadThumbnail(page: ReaderPage) {
+        loadPage(page)
+    }
+
     // KMK (r97) -->
     /**
      * Diagnostics reader trace: runs [block] (one page's fetch) with a timer and writes one record when the trace or

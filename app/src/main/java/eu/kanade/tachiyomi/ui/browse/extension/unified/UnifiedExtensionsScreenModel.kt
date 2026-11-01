@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import mihon.data.extension.service.ExtensionStoreStatus
 import mihon.data.extension.service.ExtensionStoreUrls
@@ -49,7 +50,8 @@ class UnifiedExtensionsScreenModel(
 ) : StateScreenModel<UnifiedExtensionsScreenModel.State>(
     // KMK: what was shown last time, until the lists are read again
     lastBuilt?.let { (packages, sources, repos) ->
-        State(isLoading = false, allPackages = packages, allSources = sources, allRepos = repos)
+        // KMK r103: the filtered lists come with it (with no search or chip on, that's the lists as they are)
+        State(isLoading = false, allPackages = packages, allSources = sources, allRepos = repos).refiltered()
     } ?: State(),
 ) {
 
@@ -128,16 +130,35 @@ class UnifiedExtensionsScreenModel(
                     .getOrNull()
             }.collectLatest { built ->
                 if (built == null) return@collectLatest
-                mutableState.update {
+                // KMK r103: the filtered lists are worked out here (IO) with the new lists, not on every redraw
+                val start = System.nanoTime()
+                val next = mutableState.updateAndGet {
                     it.copy(
                         isLoading = false,
                         allPackages = built.first,
                         allSources = built.second,
                         allRepos = built.third,
-                    )
+                    ).refiltered()
                 }
+                logFiltered(next, (System.nanoTime() - start) / 1_000_000)
                 // KMK: kept for the next time the screen opens, so it shows at once
                 lastBuilt = built
+            }
+        }
+        // KMK r103: the Sources / Repositories / Packages lists as filtered by the search box, the chips and "failed
+        // only", worked out off the main thread whenever one of those changes. The screen used to filter all
+        // 1,400+ packages and sources again on every redraw, on the main thread
+        screenModelScope.launch(Dispatchers.Default) {
+            state.collectLatest { current ->
+                if (current.isFiltered) return@collectLatest
+                val start = System.nanoTime()
+                val next = current.refiltered()
+                val ms = (System.nanoTime() - start) / 1_000_000
+                // Only if nothing it was worked out from changed meanwhile (a newer change is worked out next)
+                mutableState.update { now ->
+                    if (now.filterInputs().sameAs(next.filteredFrom)) now.withFiltered(next) else now
+                }
+                logFiltered(next, ms)
             }
         }
         // KMK: repos that were never read this session (after a restore, say) are read when the screen opens, so
@@ -759,39 +780,114 @@ class UnifiedExtensionsScreenModel(
         val tests: Map<String, SourceTest> = emptyMap(),
         val testing: Boolean = false,
         val failedOnly: Boolean = false,
+        // KMK r103 --> the filtered lists, worked out in the model ([refiltered]) instead of on every redraw
+        val packages: List<UnifiedPackage> = emptyList(),
+        // KMK: JS sources join the list, under their own kind chip
+        val sources: List<UnifiedSource> = emptyList(),
+        val repos: List<UnifiedRepo> = emptyList(),
+        val updateCount: Int = 0,
+        /** What [packages], [sources], [repos] and [updateCount] were worked out from; null: not yet */
+        val filteredFrom: FilterInputs? = null,
+        // KMK r103 <--
     ) {
-        private fun matchesQuery(vararg text: String?): Boolean {
-            val query = filters.query.trim()
-            if (query.isEmpty()) return true
-            return text.any { it?.contains(query, ignoreCase = true) == true }
-        }
-
-        private fun matchesKind(kind: ExtensionKind) = filters.kinds.isEmpty() || kind in filters.kinds
-
-        val packages: List<UnifiedPackage>
-            get() = allPackages.filter { p ->
-                matchesKind(p.kind) &&
-                    (filters.repoUrl == null || p.repoUrl == filters.repoUrl) &&
-                    filters.status.matches(p.state) &&
-                    (matchesQuery(p.name, p.pkgName) || p.sourceNames.any { matchesQuery(it) })
-            }
-
-        val sources: List<UnifiedSource>
-            // KMK: JS sources join the list, under their own kind chip
-            get() = (allSources + allJsSources).filter { s ->
-                (!failedOnly || tests[selectionKey(s)] is SourceTest.Failed) &&
-                    matchesKind(s.kind) &&
-                    (filters.repoUrl == null || s.repoUrl == filters.repoUrl) &&
-                    matchesQuery(s.name, s.packageName)
-            }
-
         val selectionMode: Boolean get() = selected.isNotEmpty()
 
-        val repos: List<UnifiedRepo>
-            get() = allRepos.filter { r -> matchesKind(r.kind) && matchesQuery(r.name, r.indexUrl) }
+        /** KMK r103: what the filtered lists depend on (the lists by identity: a copy keeps them) */
+        fun filterInputs(): FilterInputs = FilterInputs(
+            packages = allPackages,
+            sources = allSources,
+            jsSources = allJsSources,
+            repos = allRepos,
+            filters = filters,
+            failedOnly = failedOnly,
+            tests = if (failedOnly) tests else null,
+        )
 
-        val updateCount: Int
-            get() = allPackages.count { it.state == PackageState.UPDATE_AVAILABLE }
+        /** KMK r103: the filtered lists match the current lists and filters */
+        val isFiltered: Boolean get() = filterInputs().sameAs(filteredFrom)
+
+        /** KMK r103: this state with its filtered lists worked out again (same filters as before r103) */
+        fun refiltered(): State {
+            val inputs = filterInputs()
+            val query = filters.query.trim()
+            val plain = query.isEmpty() && filters.kinds.isEmpty() && filters.repoUrl == null &&
+                filters.status == PackageStatusFilter.ALL && !failedOnly
+            val updates = allPackages.count { it.state == PackageState.UPDATE_AVAILABLE }
+            if (plain) {
+                // Nothing to filter by: every row shows
+                return copy(
+                    packages = allPackages,
+                    sources = allSources + allJsSources,
+                    repos = allRepos,
+                    updateCount = updates,
+                    filteredFrom = inputs,
+                )
+            }
+            fun matchesQuery(vararg text: String?): Boolean {
+                if (query.isEmpty()) return true
+                return text.any { it?.contains(query, ignoreCase = true) == true }
+            }
+            fun matchesKind(kind: ExtensionKind) = filters.kinds.isEmpty() || kind in filters.kinds
+            return copy(
+                packages = allPackages.filter { p ->
+                    matchesKind(p.kind) &&
+                        (filters.repoUrl == null || p.repoUrl == filters.repoUrl) &&
+                        filters.status.matches(p.state) &&
+                        (matchesQuery(p.name, p.pkgName) || p.sourceNames.any { matchesQuery(it) })
+                },
+                sources = (allSources + allJsSources).filter { s ->
+                    (!failedOnly || tests[selectionKey(s)] is SourceTest.Failed) &&
+                        matchesKind(s.kind) &&
+                        (filters.repoUrl == null || s.repoUrl == filters.repoUrl) &&
+                        matchesQuery(s.name, s.packageName)
+                },
+                repos = allRepos.filter { r -> matchesKind(r.kind) && matchesQuery(r.name, r.indexUrl) },
+                updateCount = updates,
+                filteredFrom = inputs,
+            )
+        }
+
+        /** KMK r103: this state with [other]'s filtered lists */
+        fun withFiltered(other: State): State = copy(
+            packages = other.packages,
+            sources = other.sources,
+            repos = other.repos,
+            updateCount = other.updateCount,
+            filteredFrom = other.filteredFrom,
+        )
+    }
+
+    /** KMK r103: what the Extensions lists were filtered from; the lists compare by identity (cheap) */
+    class FilterInputs(
+        val packages: List<UnifiedPackage>,
+        val sources: List<UnifiedSource>,
+        val jsSources: List<UnifiedSource>,
+        val repos: List<UnifiedRepo>,
+        val filters: UnifiedFilters,
+        val failedOnly: Boolean,
+        val tests: Map<String, SourceTest>?,
+    ) {
+        fun sameAs(other: FilterInputs?): Boolean = other != null &&
+            packages === other.packages &&
+            sources === other.sources &&
+            jsSources === other.jsSources &&
+            repos === other.repos &&
+            filters == other.filters &&
+            failedOnly == other.failedOnly &&
+            tests === other.tests
+    }
+
+    // KMK r103: one D line per new result (not per keystroke with the same counts), so the owner can see the cost
+    @Volatile
+    private var lastFilterLog: String? = null
+
+    private fun logFiltered(state: State, ms: Long) {
+        val what = "${state.packages.size}/${state.allPackages.size} packages, " +
+            "${state.sources.size}/${state.allSources.size + state.allJsSources.size} sources, " +
+            "${state.repos.size}/${state.allRepos.size} repos"
+        if (what == lastFilterLog && ms < 16) return
+        lastFilterLog = what
+        AppLog.add('D', "extensions", "Extensions lists filtered off the main thread in $ms ms: $what")
     }
 }
 

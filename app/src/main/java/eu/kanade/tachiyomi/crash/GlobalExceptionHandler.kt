@@ -41,6 +41,9 @@ class GlobalExceptionHandler private constructor(
             )
             eu.kanade.tachiyomi.util.system.AppLog.flush()
         }
+        // KMK (r103 fix pass): the sources' storage is written behind (about 1 s): what wasn't written yet is now,
+        // before the process ends
+        runCatching { eu.kanade.tachiyomi.jssource.JsStorage.flushAllNow() }
         launchActivity(applicationContext, activityToBeLaunched, exception)
         defaultHandler.uncaughtException(thread, exception)
     }

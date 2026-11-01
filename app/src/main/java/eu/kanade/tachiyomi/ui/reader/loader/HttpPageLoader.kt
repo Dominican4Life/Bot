@@ -149,6 +149,40 @@ internal class HttpPageLoader(
     }
 
     /**
+     * KMK (r103): a Pages-panel tile asks for its page at the lowest priority ([THUMBNAIL_PRIORITY], behind the
+     * page being read and its preloads) and without queueing the next `preloadSize` pages (each tile on screen
+     * queued 10 more at the reader's priority, ahead of the page being read). Leaving the screen removes it.
+     */
+    override suspend fun loadThumbnail(page: ReaderPage) {
+        withIOContext {
+            val imageUrl = page.imageUrl
+            // Same checks as loadPage: a page whose file left the reader cache, or that failed, is asked for again
+            if (page.status == Page.State.Ready && imageUrl != null && !chapterCache.isImageInCache(imageUrl)) {
+                // KMK (r103 fix pass): the same Logs line as loadPage
+                logcat.logcat("pages", logcat.LogPriority.INFO) {
+                    "Page ${page.number}: its file is no longer in the reader cache, downloading it again"
+                }
+                page.status = Page.State.Queue
+            }
+            if (page.status is Page.State.Error) {
+                page.status = Page.State.Queue
+            }
+            val queued = if (page.status == Page.State.Queue) {
+                PriorityPage(page, THUMBNAIL_PRIORITY).also { queue.offer(it) }
+            } else {
+                null
+            }
+            suspendCancellableCoroutine<Nothing> { continuation ->
+                continuation.invokeOnCancellation {
+                    if (queued != null && queued.page.status == Page.State.Queue) {
+                        queue.remove(queued)
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * Retries a page. This method is only called from user interaction on the viewer.
      */
     override fun retryPage(page: ReaderPage) {
@@ -287,6 +321,9 @@ internal class HttpPageLoader(
     }
     // EXH <--
 }
+
+/** KMK (r103): Pages-panel tiles, below the reader's preloads (0), its page (1) and retries (2) */
+private const val THUMBNAIL_PRIORITY = -1
 
 /**
  * Data class used to keep ordering of pages in order to maintain priority.

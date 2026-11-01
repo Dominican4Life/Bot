@@ -314,7 +314,11 @@ object ChapterVideoDownloads {
      * first part `NNN__001.*` of a split picture) and that has a saved `NNN.video.*` becomes a video page again.
      */
     fun attachFromDirectory(pages: List<ReaderPage>, dir: UniFile?) {
-        val files = dir?.listFiles().orEmpty()
+        attachFromDirectory(pages, dir?.listFiles().orEmpty().toList())
+    }
+
+    /** KMK (r103): [attachFromDirectory] on the folder's listing the reader already made for the pages */
+    fun attachFromDirectory(pages: List<ReaderPage>, files: List<UniFile>) {
         val videos = files.filter { isVideoFile(it.name) && !it.name.orEmpty().endsWith(TMP) }
             .associateBy { it.name.orEmpty().substringBefore(MARK) }
         if (videos.isEmpty()) return
@@ -340,12 +344,19 @@ object ChapterVideoDownloads {
             archive.archiveReader(context).use { reader ->
                 reader.useEntries { entries ->
                     val all = entries.filter { it.isFile }.toList()
-                    val images = all
-                        .filter { !isVideoFile(it.name) && ImageUtil.isImage(it.name) { reader.getInputStream(it.name)!! } }
-                        .sortedWith { a, b -> a.name.compareToCaseInsensitiveNaturalOrder(b.name) }
-                        .map { it.name }
                     val videos = all.filter { isVideoFile(it.name) && !it.name.endsWith(TMP) }
                         .associate { it.name.substringAfterLast('/').substringBefore(MARK) to it.name }
+                    // KMK (r103): no videos (most chapters): the pictures aren't sorted and sniffed for nothing
+                    val images = if (videos.isEmpty()) {
+                        emptyList<String>()
+                    } else {
+                        all
+                            .filter {
+                                !isVideoFile(it.name) && ImageUtil.isImage(it.name) { reader.getInputStream(it.name)!! }
+                            }
+                            .sortedWith { a, b -> a.name.compareToCaseInsensitiveNaturalOrder(b.name) }
+                            .map { it.name }
+                    }
                     images to videos
                 }
             }

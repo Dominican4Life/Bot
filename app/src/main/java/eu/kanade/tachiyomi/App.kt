@@ -320,7 +320,17 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
                 DiskCache.Builder()
                     .directory(context.cacheDir.resolve("image_cache"))
                     .maxSizePercent(0.02)
-                    .build(),
+                    // KMK (r103): up to 1 GB (Coil's default ceiling is 250 MB), still at most 2 % of the storage:
+                    // covers outside the library and the Browse/JS preview page tiles share this cache
+                    .maximumMaxSizeBytes(IMAGE_DISK_CACHE_MAX_BYTES)
+                    .build()
+                    .also { cache ->
+                        eu.kanade.tachiyomi.util.system.AppLog.add(
+                            'D',
+                            "cover",
+                            "Image disk cache: up to ${cache.maxSize / (1024 * 1024)} MB",
+                        )
+                    },
             )
 
             memoryCache(
@@ -494,3 +504,6 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
 }
 
 private const val ACTION_DISABLE_INCOGNITO_MODE = "tachi.action.DISABLE_INCOGNITO_MODE"
+
+/** KMK (r103): ceiling of Coil's image disk cache (was Coil's default, 250 MB) */
+private const val IMAGE_DISK_CACHE_MAX_BYTES = 1024L * 1024 * 1024

@@ -247,6 +247,10 @@ class JsRuntime private constructor(
         // KMK: and its parsed pages go with it (a tag download's copy kept up to 24 big pages after it finished)
         runCatching { host.clearPages() }
         runCatching { host.health?.flush() } // KMK (r96)
+        // KMK (r103 fix pass): unsaved host.storage changes are written (now off the main thread, else on the writer)
+        runCatching {
+            if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) JsStorage.flushAllSoon() else JsStorage.flushAllNow()
+        }
     }
 
     class JsException(message: String, cause: Throwable? = null) : Exception(message, cause)
@@ -456,6 +460,10 @@ class JsRuntime private constructor(
                         payload.str("frame"),
                         payload.str("referer"),
                         payload.long("timeout") ?: 45_000L,
+                        // KMK (r103 fix pass): kept results are per source; a test runtime (Source Lab, Code
+                        // editor, Re-test) or `{ fresh: true }` always finds anew
+                        sourceKey = key ?: "id:$sourceId",
+                        fresh = testing || payload.bool("fresh") == true,
                     ).toMap()
                     "hash" -> mapOf("hash" to JsCrypto.hash(payload.str("algorithm").orEmpty(), payload.str("input").orEmpty()))
                     "aes" -> mapOf(

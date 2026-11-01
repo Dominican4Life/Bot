@@ -8,6 +8,8 @@ import android.os.Handler
 import android.os.Looper
 import eu.kanade.tachiyomi.util.system.AppLog
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 /**
  * KMK (r97): Freeze detection (design §7). One daemon thread, `diag-main-watchdog`, does both checks: every 3 s it
@@ -39,8 +41,21 @@ internal object Watchdogs {
     @Volatile
     var lastBackgroundAt = 0L
 
+    /**
+     * KMK (r103): true while an activity is started (ProcessLifecycleOwner). In the background both checks pause:
+     * the loop waits on [pauseLock] until this turns true again (before, it woke the main thread every 3 s and
+     * enumerated every thread every 5 s for the life of the process). r103 fix pass: its first value is set by
+     * DiagnosticsEngine from the process state before [start] (true here only until then).
+     */
     @Volatile
     var inForeground = true
+        set(value) {
+            field = value
+            if (value) pauseLock.withLock { resumed.signalAll() }
+        }
+
+    private val pauseLock = ReentrantLock()
+    private val resumed = pauseLock.newCondition()
 
     /** Reused thread array (contract §9: re-grown when the count equals its length) */
     private var threads = arrayOfNulls<Thread>(192)
@@ -72,6 +87,17 @@ internal object Watchdogs {
         var lastFollowUp = 0L
         while (true) {
             try {
+                if (!inForeground) {
+                    val pausedAt = System.currentTimeMillis()
+                    pauseLock.withLock {
+                        while (!inForeground) resumed.await()
+                    }
+                    val seconds = (System.currentTimeMillis() - pausedAt) / 1000
+                    AppLog.add('D', "diag", "Watchdogs resumed: paused $seconds s while the app was in the background")
+                    // A starvation streak from before the pause doesn't carry over
+                    stuckStreak = 0
+                    lastIoCheck = 0L
+                }
                 tokenRan.set(false)
                 mainHandler.post(token)
                 Thread.sleep(DiagBudget.MAIN_WATCHDOG_MS)

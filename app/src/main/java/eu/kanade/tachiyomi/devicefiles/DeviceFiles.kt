@@ -10,10 +10,11 @@ import android.os.storage.StorageManager
 import android.provider.MediaStore
 import androidx.core.content.ContextCompat
 import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
+import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import tachiyomi.core.common.preference.PreferenceStore
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -312,14 +313,23 @@ object DeviceFilesRepository {
     }
 
     // KMK: the entries are read several at a time (a folder of ~2,300 items took over ten seconds one by one)
-    fun list(dir: File, showHidden: Boolean): List<DeviceFile> {
+    // KMK (r103): a suspend function instead of runBlocking inside the caller's IO coroutine (the r93/r94 pattern:
+    // it parked one more IO worker and couldn't be cancelled); a newer load now cancels the entries not read yet
+    suspend fun list(dir: File, showHidden: Boolean): List<DeviceFile> = withContext(Dispatchers.IO) {
         val files = dir.listFiles().orEmpty()
             .filter { (showHidden || !it.name.startsWith(".")) && it.name != DeviceFilesTrash.DIR_NAME }
-        if (files.size < PARALLEL_FROM) return files.map { DeviceFile.of(it, countChildren = true) }
-        return runBlocking(Dispatchers.IO.limitedParallelism(LIST_THREADS)) {
+        if (files.size < PARALLEL_FROM) return@withContext files.map { DeviceFile.of(it, countChildren = true) }
+        val started = System.nanoTime()
+        val out = withContext(listDispatcher) {
             files.map { async { DeviceFile.of(it, countChildren = true) } }.awaitAll()
         }
+        val ms = (System.nanoTime() - started) / 1_000_000
+        AppLog.add('D', "files", "Listed ${out.size} entries of ${dir.name} in $ms ms ($LIST_THREADS at a time)")
+        out
     }
+
+    /** KMK (r103): made once (it was made per listing) */
+    private val listDispatcher = Dispatchers.IO.limitedParallelism(LIST_THREADS)
 
     /**
      * KMK: Android's media index misses files it hasn't scanned yet (just copied or downloaded), so the folders are

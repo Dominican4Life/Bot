@@ -290,7 +290,8 @@ class AnimeSourceScreenModel(
                     Listing.Latest -> source.getLatestUpdates(nextPage)
                     is Listing.Search -> source.getSearchAnime(nextPage, listing.query, current.filters)
                 }
-                val items = page.animes.map { repository.networkToLocal(it, source.id) }
+                // KMK (r103): the page in one transaction, unchanged rows not rewritten
+                val items = repository.networkToLocalAll(page.animes, source.id)
                 mutableState.update {
                     // KMK (r88): the listing changed meanwhile (another tab, filter or search): not its page
                     if (!it.isSameLoad(current, generation)) return@update it

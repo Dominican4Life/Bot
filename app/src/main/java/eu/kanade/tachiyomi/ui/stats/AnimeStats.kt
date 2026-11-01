@@ -45,10 +45,15 @@ object AnimeStats {
         val stats = repository.subscribeFavoritesLibraryStats().first().filterKeys { it in ids }
 
         // Downloads: count the episode files in each anime's folder
-        val downloaded = library.sumOf { anime ->
-            // KMK (r88): episode videos only (not the saved cover, subtitles or unfinished files). KMK (r90): and in
-            // a folder two titles share (names differing only in letter case), only this anime's own
-            runCatching { downloadManager.episodeFileCount(anime) }.getOrDefault(0)
+        // KMK (r88): episode videos only (not the saved cover, subtitles or unfinished files). KMK (r90): and in a
+        // folder two titles share (names differing only in letter case), only this anime's own. KMK (r103): from
+        // what the download manager already read (library badges, anime pages, downloads); only titles it hasn't
+        // read yet are read now, in one pass. Up to r102 every favourite's folder was read again on each Stats open.
+        val downloaded = try {
+            downloadManager.downloadedCounts(library).values.sum()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            0
         }
 
         val tracks = runCatching { trackRepository.getAll() }.getOrDefault(emptyList())

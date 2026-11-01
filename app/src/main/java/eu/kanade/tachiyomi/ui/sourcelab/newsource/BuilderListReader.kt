@@ -2,9 +2,11 @@ package eu.kanade.tachiyomi.ui.sourcelab.newsource
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Slider
@@ -305,12 +307,15 @@ internal object BuilderListReader {
 /**
  * The "Read the whole list" dialog: the page, a two-point slider for the random pause between pages (0–10 s, half
  * seconds, from the migration setting), how many pages to read (1–100), Start / Stop, progress, then "Make a filter".
+ * r103 ("Fetch the full list" of a menu group, [name]): after reading, the filter's form: **Dropdown** (select) or
+ * **Text box with suggestions** (autocomplete; chosen at first for long lists); [onDone] gets "select" / "autocomplete".
  */
 @Composable
 internal fun ReadListDialog(
     url: String,
     onDismiss: () -> Unit,
-    onDone: (BuilderListReader.Result) -> Unit,
+    onDone: (BuilderListReader.Result, String) -> Unit,
+    name: String? = null,
 ) {
     val scope = rememberCoroutineScope()
     var pause by remember { mutableStateOf(BuilderListReader.defaultPause()) }
@@ -320,6 +325,8 @@ internal fun ReadListDialog(
     var result by remember { mutableStateOf<BuilderListReader.Result?>(null) }
     var job by remember { mutableStateOf<Job?>(null) }
     val stop = remember { AtomicBoolean(false) }
+    // r103: null = not chosen yet (a long list starts as a text box with suggestions)
+    var form by remember { mutableStateOf<String?>(null) }
 
     fun seconds(v: Float): String = if (v == v.toInt().toFloat()) v.toInt().toString() else v.toString()
 
@@ -354,7 +361,7 @@ internal fun ReadListDialog(
     val done = result
     AlertDialog(
         onDismissRequest = { close() },
-        title = { Text("Read the whole list") },
+        title = { Text(if (name.isNullOrBlank()) "Fetch the full list" else "Fetch the full list: $name") },
         text = {
             Column(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -414,6 +421,26 @@ internal fun ReadListDialog(
                             maxLines = 3,
                             overflow = TextOverflow.Ellipsis,
                         )
+                        // r103: the filter's form
+                        val chosen = form ?: defaultForm(done.items.size)
+                        Text("The filter is a", style = MaterialTheme.typography.bodyMedium)
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(selected = chosen == "select", onClick = { form = "select" }, label = { Text("Dropdown") })
+                            FilterChip(
+                                selected = chosen == "autocomplete",
+                                onClick = { form = "autocomplete" },
+                                label = { Text("Text box with suggestions") },
+                            )
+                        }
+                        Text(
+                            if (chosen == "autocomplete") {
+                                "Typed names are matched to the list (any case); a name not in it is sent as a slug (Big Tits → big-tits)."
+                            } else {
+                                "One entry is picked from the list."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }
@@ -421,14 +448,18 @@ internal fun ReadListDialog(
         confirmButton = {
             when {
                 running -> TextButton(onClick = { stop.set(true) }) { Text("Stop") }
-                done != null && done.items.isNotEmpty() -> TextButton(onClick = { onDone(done) }) {
-                    Text(
-                        if (done.items.size > BuilderExtrasLogic.MAX_GROUP_OPTIONS) {
-                            "Make a filter (first ${BuilderExtrasLogic.MAX_GROUP_OPTIONS} of ${done.items.size})"
-                        } else {
-                            "Make a filter (${done.items.size})"
-                        },
-                    )
+                done != null && done.items.isNotEmpty() -> {
+                    val chosen = form ?: defaultForm(done.items.size)
+                    val cap = if (chosen == "autocomplete") BuilderExtrasLogic.MAX_SUGGESTIONS else BuilderExtrasLogic.MAX_GROUP_OPTIONS
+                    TextButton(onClick = { onDone(done, chosen) }) {
+                        Text(
+                            if (done.items.size > cap) {
+                                "Make a filter (first $cap of ${done.items.size})"
+                            } else {
+                                "Make a filter (${done.items.size})"
+                            },
+                        )
+                    }
                 }
                 else -> TextButton(onClick = { start() }) { Text(if (done == null) "Start" else "Read again") }
             }
@@ -438,3 +469,6 @@ internal fun ReadListDialog(
         },
     )
 }
+
+/** r103: a list longer than a dropdown reads well as a text box with suggestions */
+private fun defaultForm(entries: Int): String = if (entries > 60) "autocomplete" else "select"

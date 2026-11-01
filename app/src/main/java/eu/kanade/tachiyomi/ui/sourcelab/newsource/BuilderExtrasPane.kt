@@ -61,6 +61,10 @@ import kotlin.math.roundToLong
  *
  * r102: above the card, the menu hint (the owner tapped a menu's button instead of an entry) and the "Learn this
  * list" card for the last list picked for a filter (mockup 3).
+ *
+ * r103: Filters → **Pick a menu on the site** (replaces "List for a filter" / "Pick a list on the site"): the next tap
+ * on the site picks a menu group; a card per group (one per sub-heading) with Make filter / Learn addresses / Fetch
+ * the full list; a fetched list becomes a Dropdown or a Text box with suggestions.
  */
 @Composable
 internal fun BuilderExtrasPane(
@@ -73,8 +77,9 @@ internal fun BuilderExtrasPane(
     val s by extras.state.collectAsState()
     LaunchedEffect(siteUrl) { extras.setSite(siteUrl) }
     var open by rememberSaveable { mutableStateOf("") }
-    // r101: the page "Read the whole list" reads (null: the dialog is closed)
+    // r101: the page "Read the whole list" reads (null: the dialog is closed); r103: the menu group's name for it
     var readUrl by rememberSaveable { mutableStateOf<String?>(null) }
+    var readName by rememberSaveable { mutableStateOf<String?>(null) }
     fun toggle(section: String) {
         open = if (open == section) "" else section
     }
@@ -84,7 +89,7 @@ internal fun BuilderExtrasPane(
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = modifier.fillMaxWidth()) {
-        if (s.menuHint) MenuHintCard(onDismiss = extras::dismissMenuHint)
+        if (s.menuHint) MenuHintCard(text = s.menuHintText, onDismiss = extras::dismissMenuHint)
         val learnGroup = s.learnGroup
         if (learnGroup != null) LearnCard(learnGroup, s.learn, extras, siteUrl)
         Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
@@ -125,7 +130,12 @@ internal fun BuilderExtrasPane(
                 if (open == "tabs") TabsSection(s, extras, pageUrl)
                 HorizontalDivider()
                 SectionHeader("Filters", filtersStatus(s), open == "filters") { toggle("filters") }
-                if (open == "filters") FiltersSection(s, extras, pageUrl, onAskOptions) { readUrl = it }
+                if (open == "filters") {
+                    FiltersSection(s, extras, pageUrl, onAskOptions) { url, name ->
+                        readName = name
+                        readUrl = url
+                    }
+                }
                 HorizontalDivider()
                 SectionHeader("Settings", settingsStatus(s), open == "settings") { toggle("settings") }
                 if (open == "settings") SettingsSection(s, extras)
@@ -137,10 +147,11 @@ internal fun BuilderExtrasPane(
         ReadListDialog(
             url = reading,
             onDismiss = { readUrl = null },
-            onDone = { result ->
-                extras.onListRead(reading, result)
+            onDone = { result, form ->
+                extras.onListRead(reading, result, form, readName)
                 readUrl = null
             },
+            name = readName,
         )
     }
 }
@@ -356,13 +367,14 @@ private fun FiltersSection(
     extras: BuilderExtrasModel,
     pageUrl: String?,
     onAskOptions: (String) -> Unit,
-    onReadList: (String) -> Unit,
+    onReadList: (String, String?) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 12.dp)) {
         Hint(
-            "Pick a list on the site (its genres, its sort menu, its types) and its entries become a filter. A dropdown " +
-                "folds its entries away: open it first, then pick one entry. Or change a sort or a filter on the site " +
-                "with nothing armed: when the address changes, the Lab offers the changed part.",
+            "Pick a menu on the site: tap a menu's heading (Trending, Types…), a dropdown's button (Year: All ▾) or one " +
+                "entry of a list; each group of it gets a card below and becomes its own filter. Side menus that fold " +
+                "count too (open the menu first with nothing armed). Or change a sort or a filter on the site with " +
+                "nothing armed: when the address changes, the Lab offers the changed part.",
         )
         if (s.groupMode) {
             Surface(
@@ -372,7 +384,7 @@ private fun FiltersSection(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 10.dp)) {
                     Text(
-                        "Tap one entry of the list: a genre, a sort option, a type… (menus that fold open count too)",
+                        "Tap a menu's heading, a dropdown's button or one entry of a list on the site",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onTertiaryContainer,
                         modifier = Modifier.weight(1f).padding(vertical = 8.dp),
@@ -385,13 +397,15 @@ private fun FiltersSection(
                 OutlinedButton(onClick = { extras.setGroupMode(true) }) {
                     Icon(Icons.Outlined.TouchApp, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Pick a list on the site")
+                    Text("Pick a menu on the site")
                 }
-                TextButton(onClick = { pageUrl?.let(onReadList) }, enabled = pageUrl != null) {
-                    Text("Read the whole list of this page")
+                TextButton(onClick = { pageUrl?.let { onReadList(it, null) } }, enabled = pageUrl != null) {
+                    Text("Fetch the full list of this page")
                 }
             }
         }
+        // r103: one card per menu group of the last menu picked
+        s.menuGroups.forEach { group -> MenuGroupCard(group, extras, onReadList) }
         val offer = s.listOffer
         if (offer != null) {
             Surface(
@@ -412,7 +426,7 @@ private fun FiltersSection(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Row {
-                        TextButton(onClick = { onReadList(offer.url) }) { Text("Read the whole list") }
+                        TextButton(onClick = { onReadList(offer.url, null) }) { Text("Fetch the full list") }
                         TextButton(onClick = extras::dismissListOffer) { Text("Not now") }
                     }
                 }
@@ -471,6 +485,12 @@ private fun FilterEditor(rev: Int, index: Int, filter: ExtrasFilter, extras: Bui
             FilterChip(selected = filter.type == "sort", onClick = { extras.setFilterType(index, "sort") }, label = { Text("Sort") })
             FilterChip(selected = filter.type == "checkbox", onClick = { extras.setFilterType(index, "checkbox") }, label = { Text("Checkbox") })
             FilterChip(selected = filter.type == "text", onClick = { extras.setFilterType(index, "text") }, label = { Text("Text") })
+            // r103: a text box whose suggestions are the options (generic-list v6)
+            FilterChip(
+                selected = filter.type == "autocomplete",
+                onClick = { extras.setFilterType(index, "autocomplete") },
+                label = { Text("Text box with suggestions") },
+            )
         }
         if (!isPath && filter.askParam) {
             ExtrasField(
@@ -483,7 +503,7 @@ private fun FilterEditor(rev: Int, index: Int, filter: ExtrasFilter, extras: Bui
             )
         }
         when (filter.type) {
-            "select", "sort" -> {
+            "select", "sort", "autocomplete" -> {
                 ExtrasField(
                     rev,
                     "f$index.options",
@@ -495,8 +515,11 @@ private fun FilterEditor(rev: Int, index: Int, filter: ExtrasFilter, extras: Bui
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        "${filter.options.size} options · " +
-                            if (filter.type == "sort") "the first is picked at first" else "the first is used when nothing is picked",
+                        "${filter.options.size} options · " + when (filter.type) {
+                            "sort" -> "the first is picked at first"
+                            "autocomplete" -> "suggested while typing; an empty box is no filter"
+                            else -> "the first is used when nothing is picked"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f),
@@ -518,9 +541,12 @@ private fun FilterEditor(rev: Int, index: Int, filter: ExtrasFilter, extras: Bui
         }
         Text(
             when {
+                isPath && filter.type == "autocomplete" ->
+                    "The first name typed changes the address to ${filter.path.ifBlank { "…" }} (without a search word)"
                 isPath -> "Picks change the address to ${filter.path.ifBlank { "…" }} (without a search word)"
                 param.isBlank() -> "Picks add …=value to the search address: type the parameter above"
                 filter.type == "text" -> "What is typed is added to the search address as ?$param=…"
+                filter.type == "autocomplete" -> "The names typed are added to the search address as ?$param=a,b"
                 else -> "Picks add ?$param=… to the search address"
             },
             fontFamily = FontFamily.Monospace,
@@ -592,7 +618,7 @@ private fun CustomSettingEditor(rev: Int, index: Int, setting: ExtrasCustomSetti
 // ---------- r102: menu hint and Learn this list ----------
 
 @Composable
-private fun MenuHintCard(onDismiss: () -> Unit) {
+private fun MenuHintCard(text: String?, onDismiss: () -> Unit) {
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.tertiaryContainer,
@@ -600,13 +626,14 @@ private fun MenuHintCard(onDismiss: () -> Unit) {
     ) {
         Column(modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 4.dp)) {
             Text(
-                "That's the menu's button",
+                // r103 fix: picker.js's hint (a menu added only when it opens) has its own title and text
+                if (text != null) "This menu opens later" else "That's the menu's button",
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onTertiaryContainer,
             )
             Text(
-                "That's the menu's button: open it (with nothing armed), then choose List for a filter and tap one entry.",
+                text ?: "That's the menu's button: use Pick a menu on the site (Lists and options › Filters) and tap it again.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onTertiaryContainer,
                 modifier = Modifier.padding(top = 2.dp),
@@ -745,6 +772,72 @@ private fun LearnRowLine(row: LearnRow, pageUrl: String, siteUrl: String) {
 }
 
 private const val MAX_LEARN_ROWS = 12
+
+/**
+ * r103: one menu group picked on the site: "<Heading> — N options: a, b, c…" and its actions: Make filter (its
+ * entries only), Learn addresses (entries without links: the Learn card presses them), Fetch the full list (the
+ * group's own link is a list page: read it all, then Dropdown or Text box with suggestions)
+ */
+@Composable
+private fun MenuGroupCard(group: MenuGroup, extras: BuilderExtrasModel, onReadList: (String, String?) -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.padding(start = 10.dp, end = 4.dp, top = 8.dp, bottom = 4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        group.name.ifBlank { "Menu" } + if (group.items.isEmpty()) " — a list page" else " — ${group.items.size} options",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    val sample = group.items.take(4).joinToString(", ") { it.text.ifBlank { it.value.orEmpty() } } +
+                        if (group.items.size > 4) "…" else ""
+                    val where = if (group.headingPath.size > 1) group.headingPath.joinToString(" › ") + " · " else ""
+                    Text(
+                        where + sample.ifEmpty { group.href?.let { BuilderExtrasLogic.relative(it, it.toSiteOrigin()) }.orEmpty() },
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                IconButton(onClick = { extras.dismissMenuGroup(group.id) }, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Outlined.Close, contentDescription = "Not this", modifier = Modifier.size(16.dp))
+                }
+            }
+            val made = group.made
+            if (made != null) {
+                Text(
+                    if (made.isEmpty()) "No filter could be made of it (see the note above)" else "✓ Filter made ($made)",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (made.isEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                )
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (group.items.size >= 2) {
+                    TextButton(onClick = { extras.makeMenuFilter(group.id) }) { Text("Make filter") }
+                }
+                if (group.items.size >= 2 && group.noLinks) {
+                    TextButton(onClick = { extras.learnMenuGroup(group.id) }) { Text("Learn addresses") }
+                }
+                val href = group.href
+                if (href != null) {
+                    TextButton(onClick = { onReadList(href, group.name) }) { Text("Fetch the full list") }
+                }
+            }
+        }
+    }
+}
+
+/** The address's origin ("https://example.com"), for showing a path */
+private fun String.toSiteOrigin(): String = substringBefore("://", "").let { scheme ->
+    if (scheme.isEmpty()) "" else scheme + "://" + substringAfter("://").substringBefore('/')
+}
 
 // ---------- small parts ----------
 

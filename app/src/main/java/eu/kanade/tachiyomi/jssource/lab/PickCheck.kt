@@ -18,6 +18,7 @@ import kotlin.math.abs
  * @param rowLabel r102: the label of the row the element sits in ("Cast", "Release date"), "" when none
  * @param rowValues r102: that row's first values (its chips' texts, or its text)
  * @param rowChips r102: how many links / chips the row holds (0 = a plain text row)
+ * @param inMenu r103: it sits in the site's own menus (picker.js `inSiteMenu`)
  */
 internal data class PickInfo(
     val tag: String,
@@ -41,6 +42,8 @@ internal data class PickInfo(
     val rowLabel: String = "",
     val rowValues: List<String> = emptyList(),
     val rowChips: Int = 0,
+    /** r103 fix: picker.js says it sits in the site's menus (nav, a sidebar…): Tags warns instead of refusing */
+    val inMenu: Boolean = false,
 )
 
 /**
@@ -108,6 +111,9 @@ internal object PickCheck {
             """|\bago\b|\btoday\b|\byesterday\b|\b\d+\s*(mins?|minutes?|h|hours?|days?|weeks?|months?|years?)\b)""",
     )
     private val DIGIT = Regex("""\d""")
+
+    /** r103: a selector segment whose class says chip / tag / badge (a tag link, not a text block) */
+    private val CHIP_SEGMENT = Regex("""(?i)\.(\w+[-_])?(chips?|tags?|badges?|pills?)([-_][\w-]*)?(?!\w)""")
     private val PAGE_TWO = Regex("""[?&](page|p)=2(\D|$)|/page/2(\D|$)""")
 
     fun check(label: String, pick: PickInfo, others: Map<String, PickInfo>, anime: Boolean, singleEpisode: Boolean): Result {
@@ -283,31 +289,46 @@ internal object PickCheck {
             "description" -> {
                 val length = maxOf(pick.textLen, pick.text.trim().length)
                 add(length >= 40, "$length characters", "only $length characters (a description is a sentence or more)")
+                // r103: the owner's Description became `a.chip ×12`: a link / chip is never the description
+                val last = pick.likeSelector.substringAfterLast(" > ")
+                val chip = pick.tag == "a" || CHIP_SEGMENT.containsMatchIn(last)
+                add(!chip, "a text block (${pick.tag})", "a link / chip (${last.ifBlank { pick.tag }}), not the description")
                 okBody = "Reads as the description: “${pick.text.trim().take(60)}…”."
                 warnBody = youTapped + "Description is the paragraph about the title."
             }
-            "tags" -> if (pick.rowLabel.isNotBlank()) {
-                // r102: a row of the Details block: one group, named by its label
-                val values = pick.rowValues.filter { it.isNotBlank() }
-                add(true, "row “${pick.rowLabel}”", "")
-                add(values.isNotEmpty(), if (pick.rowChips > 0) "${pick.rowChips} ${if (pick.rowChips == 1) "value" else "values"}" else "text", "the row is empty")
-                okBody = "Group “${pick.rowLabel}”: ${values.take(4).joinToString(", ")}" +
-                    (if (values.size > 4) " …" else "") +
-                    (if (pick.rowChips > 0) " (shown as tags)." else " (a text row: added to the description).") +
-                    " Tap another row to add a group."
-                warnBody = youTapped + "The row “${pick.rowLabel}” shows nothing to read."
-            } else {
-                val shortTexts = pick.samples.filter { it.isNotBlank() }
-                val chips = if (pick.count >= 2) pick.count else pick.linkCount
-                add(chips >= 2, "$chips tags", if (chips == 1) "only one tag" else "no tags")
-                val short = if (pick.count >= 2) {
-                    shortTexts.isNotEmpty() && shortTexts.all { it.length <= 40 }
+            "tags" -> {
+                if (pick.rowLabel.isNotBlank()) {
+                    // r102: a row of the Details block: one group, named by its label
+                    val values = pick.rowValues.filter { it.isNotBlank() }
+                    add(true, "row “${pick.rowLabel}”", "")
+                    add(values.isNotEmpty(), if (pick.rowChips > 0) "${pick.rowChips} ${if (pick.rowChips == 1) "value" else "values"}" else "text", "the row is empty")
+                    okBody = "Group “${pick.rowLabel}”: ${values.take(4).joinToString(", ")}" +
+                        (if (values.size > 4) " …" else "") +
+                        (if (pick.rowChips > 0) " (shown as tags)." else " (a text row: added to the description).") +
+                        " Tap another row to add a group."
+                    warnBody = youTapped + "The row “${pick.rowLabel}” shows nothing to read."
                 } else {
-                    pick.linkCount >= 2 && pick.textLen <= pick.linkCount * 40
+                    val shortTexts = pick.samples.filter { it.isNotBlank() }
+                    val chips = if (pick.count >= 2) pick.count else pick.linkCount
+                    add(chips >= 2, "$chips tags", if (chips == 1) "only one tag" else "no tags")
+                    val short = if (pick.count >= 2) {
+                        shortTexts.isNotEmpty() && shortTexts.all { it.length <= 40 }
+                    } else {
+                        pick.linkCount >= 2 && pick.textLen <= pick.linkCount * 40
+                    }
+                    add(short, "short texts", "long texts (tags are a word or two each)")
+                    okBody = "$chips tags${if (shortTexts.isNotEmpty() && pick.count >= 2) ": " + shortTexts.joinToString(", ") else ""}."
+                    warnBody = youTapped + "Tags are the genre / tag links of the title (Tap one of them, or the box around them)."
                 }
-                add(short, "short texts", "long texts (tags are a word or two each)")
-                okBody = "$chips tags${if (shortTexts.isNotEmpty() && pick.count >= 2) ": " + shortTexts.joinToString(", ") else ""}."
-                warnBody = youTapped + "Tags are the genre / tag links of the title (Tap one of them, or the box around them)."
+                // r103 fix: a tap in the site's menus (Trending, Types, Collections…) makes its group but warns (r103
+                // refused it, and the owner's WordPress tags in the post's footer were refused too)
+                if (pick.inMenu) {
+                    add(false, "", "in the site's menu")
+                    level = Level.Warn
+                    title = "This looks like the site's menu, not this title's tags — keep it?"
+                    warnBody = youTapped + "It sits in the site's menus (navigation, a sidebar…). Keep mine keeps the group; " +
+                        "Not this removes it."
+                }
             }
             "author", "status" -> {
                 val t = pick.text.ifBlank { pick.snippet }.trim()

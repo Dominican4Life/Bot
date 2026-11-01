@@ -51,6 +51,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -76,10 +77,13 @@ import eu.kanade.tachiyomi.diagnostics.LogChips
 import eu.kanade.tachiyomi.diagnostics.LogEntry
 import eu.kanade.tachiyomi.diagnostics.LogLevelFilter
 import eu.kanade.tachiyomi.util.storage.getUriCompat
+import eu.kanade.tachiyomi.util.system.AppLog
 import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 
@@ -109,13 +113,45 @@ internal fun LogTab(model: DiagnosticsScreenModel, header: HeaderSlot) {
     val selecting = remember { mutableStateOf(false) }
     var markSheet by remember { mutableStateOf(false) }
     val waiting = (version - shownVersion).coerceAtLeast(0)
-    val chips = remember(shownVersion) { diag.logChips() }
-    val shown = remember(shownVersion, filter) { diag.logLines(filter) }
-    val problemIndices = remember(shown) {
-        val out = ArrayList<Int>()
-        shown.forEachIndexed { index, line -> if (line.isProblem) out.add(index) }
-        out.toIntArray()
+    // KMK (r103): the chips, the filtered lines, the problem positions and the row keys are built on
+    // Dispatchers.Default (r96 rule: nothing in composition walks the whole log). The last result stays on screen
+    // while the next one is built; the chips are only re-counted when the shown version changes.
+    // Builds this visit: count, slowest ms, lines of the slowest; written as one D line when the tab closes (a line
+    // written at once would itself show as "1 new lines")
+    val buildStats = remember { LongArray(3) }
+    val view by produceState(LogView.EMPTY, shownVersion, filter) {
+        val previous = value
+        val started = System.nanoTime()
+        val next = withContext(Dispatchers.Default) {
+            val chips = if (previous.loaded && previous.version == shownVersion) previous.chips else diag.logChips()
+            val lines = diag.logLines(filter)
+            val problems = ArrayList<Int>()
+            lines.forEachIndexed { index, line -> if (line.isProblem) problems.add(index) }
+            LogView(shownVersion, chips, lines, problems.toIntArray(), logLineKeys(lines), loaded = true)
+        }
+        val ms = (System.nanoTime() - started) / 1_000_000
+        buildStats[0]++
+        if (ms >= buildStats[1]) {
+            buildStats[1] = ms
+            buildStats[2] = next.lines.size.toLong()
+        }
+        value = next
     }
+    DisposableEffect(Unit) {
+        onDispose {
+            if (buildStats[0] > 0) {
+                AppLog.add(
+                    'D',
+                    "diag",
+                    "Log tab: ${buildStats[0]} list builds off the main thread, slowest ${buildStats[1]} ms " +
+                        "(${buildStats[2]} lines)",
+                )
+            }
+        }
+    }
+    val chips = view.chips
+    val shown = view.lines
+    val problemIndices = view.problems
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
@@ -127,8 +163,8 @@ internal fun LogTab(model: DiagnosticsScreenModel, header: HeaderSlot) {
         model.markLogSeen()
         onDispose { model.markLogSeen() }
     }
-    LaunchedEffect(shown) {
-        if (jumpToProblem && !jumped) {
+    LaunchedEffect(view) {
+        if (view.loaded && jumpToProblem && !jumped) {
             jumped = true
             problemIndices.firstOrNull()?.let { listState.scrollToItem(it) }
         }
@@ -231,6 +267,7 @@ internal fun LogTab(model: DiagnosticsScreenModel, header: HeaderSlot) {
             } else {
                 LogLineList(
                     lines = shown,
+                    keys = view.keys,
                     state = listState,
                     onMoveTag = { tag, category -> diag.setTagCategory(tag, category) },
                     modifier = Modifier.fillMaxSize(),
@@ -332,6 +369,38 @@ private fun ChipsRow(
     }
 }
 
+/** KMK (r103): what the Log tab shows, built off the main thread */
+private class LogView(
+    /** The log version the chips were counted at */
+    val version: Int,
+    val chips: LogChips,
+    val lines: List<LogEntry>,
+    val problems: IntArray,
+    val keys: LongArray,
+    val loaded: Boolean,
+) {
+    companion object {
+        val EMPTY = LogView(
+            version = -1,
+            chips = LogChips(problems = 0, marks = 0, categories = emptyList(), tags = emptyList(), sources = emptyList()),
+            lines = emptyList(),
+            problems = IntArray(0),
+            keys = LongArray(0),
+            loaded = false,
+        )
+    }
+}
+
+/** Stable row keys: time + text hash (not the index, which shifts with every refresh); duplicates get bumped */
+internal fun logLineKeys(lines: List<LogEntry>): LongArray {
+    val seen = HashSet<Long>(lines.size)
+    return LongArray(lines.size) { i ->
+        var k = lines[i].time * 31 + lines[i].text.hashCode()
+        while (!seen.add(k)) k++
+        k
+    }
+}
+
 /** Lines put in the select-text box: more made it slow to lay out */
 private const val SELECT_LIMIT = 300
 
@@ -343,6 +412,8 @@ private const val SELECT_LIMIT = 300
 @Composable
 internal fun LogLineList(
     lines: List<LogEntry>,
+    /** Row keys built with [logLineKeys] off the main thread; null builds them here (short lists) */
+    keys: LongArray? = null,
     state: LazyListState = rememberLazyListState(),
     onMoveTag: ((String, DiagCategory) -> Unit)? = null,
     modifier: Modifier = Modifier,
@@ -361,22 +432,15 @@ internal fun LogLineList(
     var expanded by remember { mutableStateOf(emptySet<Long>()) }
     var menuFor by remember { mutableStateOf<Long?>(null) }
     // Stable keys: time + text hash (not the index, which shifts with every refresh); duplicates get bumped
-    val keys = remember(lines) {
-        val seen = HashSet<Long>(lines.size)
-        LongArray(lines.size) { i ->
-            var k = lines[i].time * 31 + lines[i].text.hashCode()
-            while (!seen.add(k)) k++
-            k
-        }
-    }
+    val rowKeys = remember(lines, keys) { keys?.takeIf { it.size == lines.size } ?: logLineKeys(lines) }
     LazyColumn(
         state = state,
         modifier = modifier,
         contentPadding = PaddingValues(top = 4.dp, bottom = 88.dp),
     ) {
-        items(lines.size, key = { index -> keys[index] }) { index ->
+        items(lines.size, key = { index -> rowKeys[index] }) { index ->
             val line = lines[index]
-            val id = keys[index]
+            val id = rowKeys[index]
             val open = id in expanded
             var pickCategory by remember { mutableStateOf(false) }
             val mark = line.isMark

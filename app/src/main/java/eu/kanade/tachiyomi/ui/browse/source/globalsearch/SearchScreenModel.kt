@@ -9,6 +9,7 @@ import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.presentation.util.ioCoroutineScope
 import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.source.Source
+import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.toImmutableMap
@@ -257,6 +258,15 @@ abstract class SearchScreenModel(
 
     fun clearDialog() {
         mutableState.update { it.copy(dialog = null) }
+    }
+
+    // KMK r103: the 5 search threads are let go when the screen goes (Global and Migrate search left them running,
+    // one pool per search screen opened). A search still running then finishes on the IO pool or is cancelled
+    override fun onDispose() {
+        super.onDispose()
+        searchJob?.cancel()
+        coroutineDispatcher.close()
+        AppLog.add('D', "BrowseSearch", "${javaClass.simpleName}: search closed, its 5 search threads let go")
     }
 
     @Immutable

@@ -314,18 +314,15 @@ class SourceEditorScreenModel(
     // Saving
 
     /**
-     * KMK (r102): [inPlace] true = "Update vN (current)" (the current History version is overwritten, no new
-     * version), false = "Save as vN+1"; either choice is remembered ([saveModePreference]). Null (the header's main
-     * action) uses the remembered choice; the unsaved-changes dialogs' Save always adds a new version. A source not
-     * saved yet always gets its
-     * first version. The source's file is written the same way in both cases; only History differs (LabStore).
+     * KMK (r102, r103): [inPlace] true = "Save to vN": the version open now (History's current one, newest or restored)
+     * is overwritten in place, no new version; false = a new version ("Save as new version (vM)", the unsaved-changes
+     * dialogs' Save). r103: no remembered choice any more (the header's main action is always in place; the Baseline
+     * confirm is asked by the header before calling this). A source not saved yet always gets its first version. The
+     * source's file is written the same way in both cases; only History differs (LabStore).
      */
-    fun save(inPlace: Boolean? = null, rememberChoice: Boolean = true) {
+    fun save(inPlace: Boolean = false) {
         val s = state.value
-        val pref = saveModePreference()
-        // r102 fix: the unsaved-changes dialogs pass inPlace = false without remembering it (not the owner's choice)
-        if (inPlace != null && rememberChoice) pref.set(if (inPlace) SAVE_MODE_UPDATE else SAVE_MODE_NEW)
-        val update = s.saved && (inPlace ?: (pref.get() == SAVE_MODE_UPDATE))
+        val update = s.saved && inPlace
         val ownNote = saveNote // KMK (r96)
         val note = if (update) eu.kanade.tachiyomi.jssource.lab.LabStore.UPDATE_NOTE + ownNote.orEmpty() else ownNote
         if (update) AppLog.add('D', "lab", "Saving ${s.name.ifBlank { s.key }}: update the current version in place")
@@ -750,14 +747,5 @@ class SourceEditorScreenModel(
         return true
     }
 
-    companion object {
-        /** Save's remembered choice: [SAVE_MODE_UPDATE] ("Update vN (current)") or [SAVE_MODE_NEW] ("Save as vN+1") */
-        const val SAVE_MODE_KEY = "pref_lab_save_mode"
-        const val SAVE_MODE_UPDATE = "update"
-        const val SAVE_MODE_NEW = "new"
-
-        fun saveModePreference(): tachiyomi.core.common.preference.Preference<String> =
-            Injekt.get<tachiyomi.core.common.preference.PreferenceStore>().getString(SAVE_MODE_KEY, SAVE_MODE_NEW)
-    }
     // KMK <--
 }

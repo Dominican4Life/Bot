@@ -76,9 +76,10 @@ import eu.kanade.presentation.util.isTabletUi
 import eu.kanade.tachiyomi.diagnostics.DiagKeys
 import eu.kanade.tachiyomi.diagnostics.DiagTab
 import eu.kanade.tachiyomi.diagnostics.FloatingLogState
-import eu.kanade.tachiyomi.diagnostics.LogFilter
 import eu.kanade.tachiyomi.util.system.AppLog
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import tachiyomi.presentation.core.components.material.NavigationRail as AppNavigationRail
 import tachiyomi.presentation.core.components.material.Scaffold
 
@@ -381,17 +382,25 @@ private fun DiagRail(
     val context = LocalContext.current
     // New problems since the Log tab was last shown: the lines newer than SEEN_VERSION (≤ 4000), counted every
     // 10 s rather than on every line (contract §8 rule 4)
+    // KMK (r103): the count runs on Dispatchers.Default, walks the kept lines without formatting them, and is
+    // skipped while the log hasn't moved since the last pass
     val newProblems by produceState(initialValue = 0, tab) {
+        var countedAt = Int.MIN_VALUE
         while (true) {
             val logVersion = model.diag.logVersion.value
-            val seen = diagPrefs(context).getInt(DiagKeys.SEEN_VERSION, -1)
-            value = if (tab == DiagTab.LOG || seen < 0 || seen >= logVersion) {
-                0
-            } else {
-                runCatching {
-                    model.diag.logLines(LogFilter(), limit = (logVersion - seen).coerceAtMost(4000))
-                        .count { it.isProblem }
-                }.getOrDefault(0)
+            if (tab == DiagTab.LOG) {
+                value = 0
+            } else if (logVersion != countedAt) {
+                countedAt = logVersion
+                value = withContext(Dispatchers.Default) {
+                    val seen = diagPrefs(context).getInt(DiagKeys.SEEN_VERSION, -1)
+                    if (seen < 0 || seen >= logVersion) {
+                        0
+                    } else {
+                        runCatching { AppLog.problemsInNewest((logVersion - seen).coerceAtMost(4000)) }
+                            .getOrDefault(0)
+                    }
+                }
             }
             delay(10_000L)
         }

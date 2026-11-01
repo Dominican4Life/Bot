@@ -9,6 +9,7 @@ import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
 import eu.kanade.tachiyomi.animesource.AnimeCatalogueSource
 import eu.kanade.tachiyomi.data.anime.Anime
 import eu.kanade.tachiyomi.data.anime.AnimeRepository
+import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
@@ -95,6 +96,11 @@ class AnimeFeedScreenModel(
 
     private fun launchLoad(entry: Entry): Job {
         return screenModelScope.launchIO {
+            // KMK r103: only once the Feed tab is shown (opening Browse on Sources no longer loads the Feed's rows)
+            if (!FeedShown.isShown) {
+                FeedShown.await()
+                AppLog.add('D', "BrowseFeed", "Feed tab shown: loading anime row ${entry.encode()} now")
+            }
             // KMK: at a cold start the rows are read before the sources are registered: wait once for the anime
             // sources to be registered (not per source, so a source that isn't installed doesn't wait 20 s)
             if (sourceManager.get(entry.sourceId) == null) {

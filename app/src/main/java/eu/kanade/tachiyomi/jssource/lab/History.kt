@@ -113,24 +113,24 @@ internal object History {
     }
 
     /**
-     * KMK (r102): Save → "Update vN (current)": the current version's file is overwritten with [code] in place: same
-     * number, note "<its note> · updated", time now, +added −removed against the version listed before it, and its
-     * Test Run mark cleared (that run tested the old code; the next run marks it again). The source's own code was
-     * already written by the manager's save; only this bookkeeping differs from [append].
+     * KMK (r102, r103): Save → "Save to vN": the current version's file (the one open: the newest, or a restored older
+     * one) is overwritten with [code] in place: same number, note "<its note> · updated", time now, +added −removed
+     * against the version listed before it, and its Test Run mark cleared (that run tested the old code; the next run
+     * marks it again). The source's own code was already written by the manager's save; only this bookkeeping differs
+     * from [append]. A restored version stays current (currentN is kept); the generated-from mark stays on its number.
      *
-     * Falls back to [append] with [fallbackNote] (a new version, as a plain Save) when there is no current version
-     * yet, or when the current one is the version the code was generated from (kept as written, never overwritten).
-     * Returns the version written and whether it was updated in place; null when the source's folder is gone.
+     * r103: nothing is refused any more (r102 kept generated-from, Baseline and restored versions): a Baseline is
+     * confirmed by the Save button first ([overwriteConfirm]). Falls back to [append] with [fallbackNote] (a new
+     * version, as a plain Save) only when there is no current version yet. Returns the version written and whether it
+     * was updated in place; null when the source's folder is gone.
      */
     @Synchronized
     fun updateCurrent(key: String, code: String, json: Boolean, fallbackNote: String): Pair<LabVersion, Boolean>? {
         val index = index(key)
         val currentN = currentOf(index)
         val current = index.versions.firstOrNull { it.n == currentN }
-        val blocked = updateBlockedReason(index)
-        if (current == null || blocked != null) {
-            val why = blocked ?: "no version yet"
-            AppLog.add('I', "lab", "$key: update in place not possible ($why): saving as a new version")
+        if (current == null) {
+            AppLog.add('I', "lab", "$key: update in place not possible (no version yet): saving as a new version")
             return append(key, code, json, fallbackNote)?.let { it to false }
         }
         val old = runCatching { versionFile(key, current.n, current.json).readText() }.getOrNull()
@@ -156,27 +156,35 @@ internal object History {
             json = json,
         )
         write(key, index.copy(versions = index.versions.map { if (it.n == current.n) updated else it }))
-        AppLog.add('I', "lab", "$key: history v${current.n} updated in place (+$added −$removed against the version before it)")
+        val what = when {
+            current.n == index.generatedFrom -> " (the generated-from version)"
+            current.n != index.versions.lastOrNull()?.n -> " (restored, not the newest)"
+            else -> ""
+        }
+        AppLog.add('I', "lab", "$key: history v${current.n}$what updated in place (+$added −$removed against the version before it)")
         return updated to true
     }
 
     /**
-     * KMK (r102 fix): why "Update vN (current)" can't overwrite the current version, null when it can. Kept as written:
-     * the version the code was generated from, a "Baseline" (the original code of a hand-written / imported source),
-     * and any version that isn't the newest (after a Restore: overwriting it would rewrite the past). The split button
-     * shows the reason and [updateCurrent] falls back to a new version.
+     * KMK (r102, r103): why "Save to vN" can't overwrite the current version, null when it can. r103: only when there
+     * is no version yet (generated-from, Baseline and restored versions are overwritten too; Baseline after a confirm).
      */
-    fun updateBlockedReason(index: LabHistoryIndex): String? {
+    fun updateBlockedReason(index: LabHistoryIndex): String? =
+        if (index.versions.none { it.n == currentOf(index) }) "no version yet" else null
+
+    /**
+     * KMK (r103): the question the Save button asks before overwriting the current version in place, null when it
+     * saves without asking: only a Baseline (the pre-Lab original code of a hand-written / imported source) that was
+     * never overwritten yet. Generated-from and restored versions are saved in place without asking.
+     */
+    fun overwriteConfirm(index: LabHistoryIndex): String? {
         val currentN = currentOf(index)
-        val current = index.versions.firstOrNull { it.n == currentN } ?: return "no version yet"
-        val newest = index.versions.lastOrNull()?.n
-        return when {
-            current.n == index.generatedFrom -> "v${current.n} is the version the code was generated from and is kept"
-            current.note.removeSuffix(UPDATED_SUFFIX) == "Baseline" -> "v${current.n} is the source's original code (Baseline) and is kept"
-            current.n != newest -> "v${current.n} was restored and isn't the newest version: it is kept"
-            else -> null
-        }
+        val current = index.versions.firstOrNull { it.n == currentN } ?: return null
+        return if (current.note == BASELINE_NOTE) "v${current.n} is the original code from before the Lab. Overwrite it?" else null
     }
+
+    /** KMK (r103): the note of the version [baseline] writes */
+    const val BASELINE_NOTE = "Baseline"
 
     /** KMK (r102): what an in-place update adds to a version's note (once, however often it is updated) */
     const val UPDATED_SUFFIX = " · updated"
@@ -189,7 +197,7 @@ internal object History {
     fun baseline(key: String, code: String, json: Boolean): LabVersion? =
         // r98 fix: the "no versions yet" check is made inside append, on the index it writes, under History's lock
         // (the one every append takes), so a save that got there first is never followed by a Baseline
-        append(key, code, json, "Baseline", onlyIfEmpty = true)
+        append(key, code, json, BASELINE_NOTE, onlyIfEmpty = true)
 
     /**
      * KMK (r98 fix): when a Restore's [setCurrent] fails (the version went meanwhile), the newest version whose code

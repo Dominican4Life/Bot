@@ -22,6 +22,7 @@ import tachiyomi.source.local.isLocal
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.IOException
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * This class is used to provide the directories where the downloads should be saved.
@@ -60,11 +61,59 @@ class DownloadProvider(
     @Volatile
     private var cachedDownloadsDirAt = 0L
 
+    /**
+     * KMK (r103): the folders directly under downloads/Manga, kept for [ROOT_LISTING_TTL_MS]. r99's
+     * [findSourceDirs] lists that root on every call (a downloaded chapter open made three such calls, "Download
+     * all" one per chapter). The listing is made again when it is older than that, when the downloads folder
+     * changed, when [SourceFolderLinks] changed ([SourceFolderLinks.generation]), and after [invalidateRootListing]
+     * (storage folder changed, a source folder made, renamed or deleted, a download finished).
+     */
+    private class RootListing(
+        val dirUri: String,
+        val links: Long,
+        val epoch: Long,
+        val at: Long,
+        val children: List<UniFile>,
+    )
+
+    @Volatile
+    private var rootListing: RootListing? = null
+
+    private val rootListingEpoch = AtomicLong()
+    private val rootListingCount = AtomicLong()
+
+    /** KMK (r103): how many times downloads/Manga was listed (for the `D download` timing lines) */
+    val rootListings: Long get() = rootListingCount.get()
+
+    /** KMK (r103): the next lookup lists downloads/Manga again */
+    fun invalidateRootListing() {
+        rootListingEpoch.incrementAndGet()
+        rootListing = null
+    }
+
+    private fun rootChildren(dir: UniFile): List<UniFile> {
+        val now = System.currentTimeMillis()
+        val epoch = rootListingEpoch.get()
+        val links = SourceFolderLinks.generation
+        val uri = dir.uri.toString()
+        rootListing?.let { c ->
+            val fresh = now - c.at in 0L until ROOT_LISTING_TTL_MS
+            if (fresh && c.epoch == epoch && c.links == links && c.dirUri == uri) return c.children
+        }
+        val children = dir.listFiles().orEmpty().filter { it.isDirectory && !it.name.isNullOrBlank() }
+        rootListingCount.incrementAndGet()
+        // Stamped with the epoch read before listing: an invalidation meanwhile makes this entry stale at once
+        rootListing = RootListing(uri, links, epoch, now, children)
+        return children
+    }
+
+    // Declared after the fields it uses: the collector may run before the constructor has finished
     init {
         CoroutineScope(Dispatchers.IO).launch {
             storageManager.changes.collect {
                 cachedDownloadsDir = null
                 cachedDownloadsDirAt = 0L
+                invalidateRootListing()
             }
         }
     }
@@ -91,6 +140,8 @@ class DownloadProvider(
         // KMK (r99): the folder linked to the source's id comes first, so a renamed source keeps its folder
         val sourceDir = SourceFolderLinks.existing(SourceFolderLinks.Kind.MANGA, source.id, downloadsDir).firstOrNull()
             ?: SourceFolders.findOrCreate(downloadsDir, sourceDirName, sourceMatch(source))
+        // KMK (r103): a source folder may have just been made: the cached listing of downloads/Manga is dropped
+        invalidateRootListing()
         // Linked only when it is named exactly after the source: a folder found by the looser name rules may be
         // another source's (seeding links those, after checking every known source)
         if (sourceDir != null && !source.isLocal() && sourceDir.name.equals(sourceDirName, ignoreCase = true)) {
@@ -154,7 +205,8 @@ class DownloadProvider(
     fun findSourceDirs(source: Source): List<UniFile> {
         if (source.isLocal()) return listOfNotNull(storageManager.getLocalSourceDirectory())
         val dir = downloadsDir ?: return emptyList()
-        val children = dir.listFiles().orEmpty().filter { it.isDirectory && !it.name.isNullOrBlank() }
+        // KMK (r103): one listing per ROOT_LISTING_TTL_MS instead of one per call
+        val children = rootChildren(dir)
         val linked = SourceFolderLinks.existing(SourceFolderLinks.Kind.MANGA, source.id, children)
         val exactName = getSourceDirName(source)
         val exact = children.firstOrNull { it.name == exactName }
@@ -395,6 +447,9 @@ class DownloadProvider(
     private companion object {
         /** r96: how long the resolved downloads/Manga folder is reused */
         const val DOWNLOADS_DIR_TTL_MS = 30_000L
+
+        /** r103: how long the listing of downloads/Manga is reused */
+        const val ROOT_LISTING_TTL_MS = 10_000L
     }
     // KMK <--
 }

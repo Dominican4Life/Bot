@@ -435,7 +435,7 @@ internal fun EditorDialogs(
                     onClick = {
                         confirmLeave = false
                         leaveAfterSave = true
-                        model.save(inPlace = false, rememberChoice = false) // r102 fix: always a new version
+                        model.save(inPlace = false) // r102 fix: always a new version
                     },
                 ) { Text("Save") }
             },
@@ -467,7 +467,7 @@ internal fun EditorDialogs(
                     onClick = {
                         confirmReplace = null
                         replaceAfterSave = action
-                        model.save(inPlace = false, rememberChoice = false) // r102 fix: always a new version
+                        model.save(inPlace = false) // r102 fix: always a new version
                     },
                 ) { Text("Save") }
             },

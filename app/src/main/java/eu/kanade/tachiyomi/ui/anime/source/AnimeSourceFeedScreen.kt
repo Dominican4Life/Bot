@@ -184,7 +184,8 @@ class AnimeSourceFeedScreenModel(
         screenModelScope.launchIO {
             val result = try {
                 val page = if (row.latest) source.getLatestUpdates(1) else source.getPopularAnime(1)
-                page.animes.map { repository.networkToLocal(it, source.id) }.distinctBy { it.id } to null
+                // KMK (r103): one transaction for the row's titles
+                repository.networkToLocalAll(page.animes, source.id).distinctBy { it.id } to null
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
                 emptyList<Anime>() to (e.message ?: e.javaClass.simpleName)

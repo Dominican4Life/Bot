@@ -13,6 +13,7 @@ import eu.kanade.tachiyomi.diagnostics.LogFilter
 import eu.kanade.tachiyomi.diagnostics.LogLevelFilter
 import eu.kanade.tachiyomi.diagnostics.Resource
 import eu.kanade.tachiyomi.diagnostics.TimeWindow
+import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -98,8 +99,9 @@ internal class DiagnosticsScreenModel(
         val seen = prefs.getInt(DiagKeys.SEEN_VERSION, -1)
         if (seen in 0 until version) {
             val newer = (version - seen).coerceAtMost(4000)
-            val hasProblem = runCatching { diag.logLines(LogFilter(), limit = newer).any { it.isProblem } }
-                .getOrDefault(false)
+            // KMK (r103): a walk over the kept lines (no LogEntry built per line); it decides the first tab, so it
+            // stays synchronous
+            val hasProblem = runCatching { AppLog.problemsInNewest(newer) > 0 }.getOrDefault(false)
             if (hasProblem) {
                 scrollToNewestProblem = true
                 return DiagTab.LOG

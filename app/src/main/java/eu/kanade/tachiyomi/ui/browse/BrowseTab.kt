@@ -11,11 +11,13 @@ import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.TravelExplore
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.platform.LocalContext
 import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.navigator.LocalNavigator
@@ -39,6 +41,7 @@ import eu.kanade.tachiyomi.ui.browse.extension.ExtensionsScreenModel
 import eu.kanade.tachiyomi.ui.browse.extension.unified.UnifiedExtensionsScreenModel
 import eu.kanade.tachiyomi.ui.browse.extension.unified.unifiedExtensionsTab
 import eu.kanade.tachiyomi.ui.browse.feed.FeedScreenModel
+import eu.kanade.tachiyomi.ui.browse.feed.FeedShown
 import eu.kanade.tachiyomi.ui.browse.feed.feedTab
 import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchScreen
 import eu.kanade.tachiyomi.ui.browse.source.sourcesTab
@@ -48,6 +51,7 @@ import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.receiveAsFlow
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
@@ -220,6 +224,22 @@ data object BrowseTab : Tab {
         // SY <--
 
         val state = rememberPagerState { tabs.size }
+
+        // KMK r103: the Feed's rows load only while the Feed tab is the page on screen (FeedShown); opening Browse
+        // on Sources or Extensions used to load every Feed row
+        val feedPage = when {
+            hideFeedTab -> -1
+            feedTabInFront -> 0
+            else -> 1
+        }
+        LaunchedEffect(state, feedPage) {
+            snapshotFlow { state.currentPage == feedPage }
+                .distinctUntilChanged()
+                .collect { FeedShown.set(it) }
+        }
+        DisposableEffect(Unit) {
+            onDispose { FeedShown.set(false) }
+        }
 
         TabbedScreen(
             titleRes = MR.strings.browse,

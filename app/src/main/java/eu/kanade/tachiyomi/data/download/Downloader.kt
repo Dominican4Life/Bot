@@ -66,6 +66,7 @@ import tachiyomi.domain.track.interactor.GetTracks
 import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import uy.kohesive.injekt.injectLazy
 import java.io.File
 import java.util.Locale
 
@@ -80,7 +81,6 @@ class Downloader(
     private val provider: DownloadProvider,
     private val cache: DownloadCache,
     private val sourceManager: SourceManager = Injekt.get(),
-    private val chapterCache: ChapterCache = Injekt.get(),
     private val downloadPreferences: DownloadPreferences = Injekt.get(),
     private val xml: XML = Injekt.get(),
     private val getCategories: GetCategories = Injekt.get(),
@@ -89,6 +89,12 @@ class Downloader(
     private val sourcePreferences: SourcePreferences = Injekt.get(),
     // SY <--
 ) {
+
+    /**
+     * KMK (r103): built on first use (a download's worker thread). As a constructor default it was built with the
+     * DownloadManager, on the main thread at start, and opening the reader's disk cache reads its whole journal.
+     */
+    private val chapterCache: ChapterCache by injectLazy()
 
     /**
      * Store for persisting downloads across restarts.
@@ -295,10 +301,20 @@ class Downloader(
         // KMK <--
 
         val wasEmpty = queueState.value.isEmpty()
+        // KMK (r103): the title's folder is found and listed once for all the chapters (it was a full folder
+        // lookup per chapter: "Download all" on 300 chapters listed downloads/Manga 300 times). Same answer as
+        // DownloadProvider.findChapterDir: a chapter counts as downloaded when one of its folder or CBZ names is
+        // in the title's folder (compared ignoring case, as a lookup on shared storage does)
+        val started = System.nanoTime()
+        val listedBefore = provider.rootListings
+        val mangaDir = provider.findMangaDir(/* SY --> */ manga.ogTitle /* SY <-- */, source)
+        val existing = mangaDir?.listFiles().orEmpty().mapNotNullTo(HashSet()) { it.name?.lowercase() }
         val chaptersToQueue = chapters.asSequence()
             // Filter out those already downloaded.
-            .filter {
-                provider.findChapterDir(it.name, it.scanlator, it.url, /* SY --> */ manga.ogTitle /* SY <-- */, source) == null
+            .filter { chapter ->
+                existing.isEmpty() ||
+                    provider.getValidChapterDirNames(chapter.name, chapter.scanlator, chapter.url)
+                        .none { it.lowercase() in existing }
             }
             // Add chapters to queue from the start.
             .sortedByDescending { it.sourceOrder }
@@ -307,6 +323,14 @@ class Downloader(
             // Create a download for each one.
             .map { Download(source, manga, it) }
             .toList()
+
+        eu.kanade.tachiyomi.util.system.AppLog.add(
+            'D',
+            "download",
+            "Queue check: ${chaptersToQueue.size} of ${chapters.size} chapters to download; 1 title folder listing, " +
+                "downloads/Manga listed ${provider.rootListings - listedBefore}×, " +
+                "${(System.nanoTime() - started) / 1_000_000} ms",
+        )
 
         if (chaptersToQueue.isNotEmpty()) {
             addAllToQueue(chaptersToQueue)
@@ -458,6 +482,8 @@ class Downloader(
                 tmpDir.renameTo(chapterDirname)
             }
             cache.addChapter(chapterDirname, mangaDir, download.manga)
+            // KMK (r103): a finished download drops the short-lived listing of downloads/Manga
+            provider.invalidateRootListing()
 
             DiskUtil.createNoMediaFile(tmpDir, context)
 

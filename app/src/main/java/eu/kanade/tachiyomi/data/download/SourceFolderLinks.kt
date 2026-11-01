@@ -47,6 +47,14 @@ object SourceFolderLinks {
     private val lock = Any()
     private var state: State? = null
 
+    /**
+     * KMK (r103): bumped on every change of the links (each write), so [DownloadProvider]'s short-lived listing of
+     * downloads/Manga is made again after a link or a folder rename
+     */
+    @Volatile
+    var generation = 0L
+        private set
+
     private val file: File get() = File(Injekt.get<Application>().filesDir, "download_source_folders.json")
 
     private fun state(): State {
@@ -77,6 +85,7 @@ object SourceFolderLinks {
     }
 
     private fun write(s: State) {
+        generation++
         runCatching {
             val root = JSONObject()
             val tried = JSONObject()

@@ -78,7 +78,28 @@ internal object LabStore {
 
     fun source(key: String): LabSource? = manager.get(key)?.let { source(it) }
 
-    fun source(info: JsSourceInfo): LabSource = cache.getOrPut("${info.key}@${info.updatedAt}") { load(info) }
+    /**
+     * KMK (r103): one cached entry per source. The key holds the save time, so every save of a source used to add an
+     * entry and the older ones stayed for the process; they are dropped when the new one goes in, and the whole
+     * cache is held to [CACHE_MAX] entries.
+     */
+    fun source(info: JsSourceInfo): LabSource {
+        val id = "${info.key}@${info.updatedAt}"
+        cache[id]?.let { return it }
+        val loaded = load(info)
+        val prefix = "${info.key}@"
+        val dropped = cache.keys.count { it.startsWith(prefix) && it != id }
+        if (dropped > 0) cache.keys.removeAll { it.startsWith(prefix) && it != id }
+        if (cache.size >= CACHE_MAX) {
+            cache.keys.take(cache.size - CACHE_MAX + 1).forEach { cache.remove(it) }
+            AppLog.add('D', "lab", "Source Lab cache held to $CACHE_MAX sources")
+        }
+        cache[id] = loaded
+        return loaded
+    }
+
+    /** KMK (r103): sources kept in [cache] at most (more than anyone has saved; a bound, not a working size) */
+    private const val CACHE_MAX = 400
 
     private fun load(info: JsSourceInfo): LabSource {
         val lastRun = runCatching { TestRuns.latest(info.key) }.getOrNull()

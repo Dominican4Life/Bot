@@ -1,5 +1,9 @@
 package eu.kanade.tachiyomi.jssource
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.StateFlow
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
 import uy.kohesive.injekt.Injekt
@@ -16,8 +20,14 @@ object JsDebugLogs {
 
     fun preference(): Preference<Boolean> = Injekt.get<PreferenceStore>().getBoolean(KEY, true)
 
-    private val cached: Preference<Boolean>? by lazy { runCatching { preference() }.getOrNull() }
+    /**
+     * KMK (r103): the switch as a StateFlow kept up to date by the preference's change listener, so the check on
+     * every console line is one volatile read instead of a SharedPreferences lookup. A change still applies at once.
+     */
+    private val state: StateFlow<Boolean>? by lazy {
+        runCatching { preference().stateIn(CoroutineScope(SupervisorJob() + Dispatchers.Default)) }.getOrNull()
+    }
 
     /** True when every console line should reach Logs; true when the setting can't be read */
-    fun enabled(): Boolean = cached?.let { runCatching { it.get() }.getOrDefault(true) } ?: true
+    fun enabled(): Boolean = state?.value ?: true
 }

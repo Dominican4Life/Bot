@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.data.anime.Anime
 import eu.kanade.tachiyomi.data.anime.AnimeRepository
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.model.Filter
+import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -231,6 +232,11 @@ class TagMixFeedScreenModel(
 
     private fun launchLoad(mix: TagMix): Job {
         return screenModelScope.launchIO {
+            // KMK r103: only once the Feed tab is shown (opening Browse on Sources no longer loads the Feed's rows)
+            if (!FeedShown.isShown) {
+                FeedShown.await()
+                AppLog.add('D', "BrowseFeed", "Feed tab shown: loading tag mix row \"${mix.title}\" now")
+            }
             val result = try {
                 if (mix.anime) Row(mix, anime = loadAnime(mix)) else Row(mix, manga = loadManga(mix))
             } catch (e: Throwable) {

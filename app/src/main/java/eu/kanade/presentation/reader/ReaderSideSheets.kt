@@ -380,9 +380,11 @@ private fun PageThumbnail(
 
     // Ask the chapter's loader for this page while the thumbnail is on screen.
     // For online chapters this queues the download; leaving the screen cancels it.
+    // KMK (r103): at the lowest priority and without preloading the pages after it (loadThumbnail), so the tiles
+    // don't hold up the page being read
     LaunchedEffect(page) {
         val loader = chapter.pageLoader ?: return@LaunchedEffect
-        if (!loader.isRecycled) loader.loadPage(page)
+        if (!loader.isRecycled) loader.loadThumbnail(page)
     }
 
     // KMK: how long a page took to arrive, written to Logs when slow (with the tile timings of the image loader)

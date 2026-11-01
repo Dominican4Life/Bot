@@ -151,15 +151,19 @@ class AnimeRepository(
      * Returns the local copy of an anime from a source, inserting it the first time it's seen.
      */
     suspend fun networkToLocal(sAnime: SAnime, sourceId: Long): Anime {
-        val existing = handler.awaitOneOrNull { animesQueries.getByUrlAndSource(sAnime.url, sourceId, ::mapAnime) }
-        if (existing != null) {
+        val raw = handler.awaitOneOrNull { animesQueries.getByUrlAndSource(sAnime.url, sourceId, ::mapAnimeRaw) }
+        if (raw != null) {
+            val existing = raw.withCustomInfo()
             if (!existing.favorite) {
-                handler.await {
-                    animesQueries.updateThumbnailIfNotFavorite(
-                        title = sAnime.title,
-                        thumbnailUrl = sAnime.thumbnail_url,
-                        id = existing.id,
-                    )
+                // KMK (r103): written only when the title or the cover address changed
+                if (browseRowChanged(raw, sAnime)) {
+                    handler.await {
+                        animesQueries.updateThumbnailIfNotFavorite(
+                            title = sAnime.title,
+                            thumbnailUrl = sAnime.thumbnail_url,
+                            id = existing.id,
+                        )
+                    }
                 }
                 return existing.copy(title = sAnime.title, thumbnailUrl = sAnime.thumbnail_url ?: existing.thumbnailUrl)
             }
@@ -188,6 +192,71 @@ class AnimeRepository(
         }
         return getAnime(id)!!
     }
+
+    /**
+     * KMK (r103): [networkToLocal] for a whole Browse page, in one transaction: one write lock and one `animes`
+     * notification for the page instead of up to two statements and a notification per title (every screen watching
+     * the anime table re-queried up to 25 times per page). Rows are written only when the title or the cover address
+     * changed. Same results, in the same order, as calling [networkToLocal] for each.
+     */
+    suspend fun networkToLocalAll(list: List<SAnime>, sourceId: Long): List<Anime> {
+        if (list.isEmpty()) return emptyList()
+        val started = System.currentTimeMillis()
+        var inserted = 0
+        var updated = 0
+        val result = handler.await(inTransaction = true) {
+            list.map { sAnime ->
+                val raw = animesQueries.getByUrlAndSource(sAnime.url, sourceId, ::mapAnimeRaw).executeAsOneOrNull()
+                if (raw != null) {
+                    val existing = raw.withCustomInfo()
+                    if (existing.favorite) return@map existing
+                    if (browseRowChanged(raw, sAnime)) {
+                        animesQueries.updateThumbnailIfNotFavorite(
+                            title = sAnime.title,
+                            thumbnailUrl = sAnime.thumbnail_url,
+                            id = existing.id,
+                        )
+                        updated++
+                    }
+                    return@map existing.copy(
+                        title = sAnime.title,
+                        thumbnailUrl = sAnime.thumbnail_url ?: existing.thumbnailUrl,
+                    )
+                }
+                animesQueries.insert(
+                    source = sourceId,
+                    url = sAnime.url,
+                    artist = sAnime.artist,
+                    author = sAnime.author,
+                    description = sAnime.description,
+                    genre = sAnime.genre,
+                    title = sAnime.title,
+                    status = sAnime.status.toLong(),
+                    thumbnailUrl = sAnime.thumbnail_url,
+                    backgroundUrl = sAnime.background_url,
+                    initialized = false,
+                    fetchType = sAnime.fetch_type.toLong(),
+                )
+                val newId = animesQueries.selectLastInsertedRowId().executeAsOne()
+                // KMK: episode sort / filters / display chosen with "Set as default"
+                val defaults = AnimeEpisodeDefaults.newAnimeFlags()
+                if (defaults != 0L) animesQueries.setEpisodeFlags(flags = defaults, id = newId)
+                inserted++
+                animesQueries.getById(newId, ::mapAnimeRaw).executeAsOne().withCustomInfo()
+            }
+        }
+        AppLog.add(
+            'D',
+            "browse",
+            "Anime page saved: ${list.size} titles, $inserted new, $updated changed, " +
+                "${list.size - inserted - updated} unchanged, one transaction, ${System.currentTimeMillis() - started} ms",
+        )
+        return result
+    }
+
+    /** KMK (r103): what `updateThumbnailIfNotFavorite` would change on [raw] (as stored, without Edit info) */
+    private fun browseRowChanged(raw: Anime, sAnime: SAnime): Boolean =
+        raw.title != sAnime.title || (sAnime.thumbnail_url != null && sAnime.thumbnail_url != raw.thumbnailUrl)
 
     suspend fun updateFromSource(anime: Anime, sAnime: SAnime) {
         handler.await {

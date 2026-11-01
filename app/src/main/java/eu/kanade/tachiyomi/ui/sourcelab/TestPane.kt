@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -23,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.BugReport
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Stop
+import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -54,7 +56,8 @@ import tachiyomi.domain.source.interactor.GetRemoteManga
  * KMK (r96): the Test pane (D§2.5): the Test Run as step rows (status, name, count, ms, one evidence line, a
  * timing bar relative to the slowest step), "What came back" (covers, first chapters, the video lines) and
  * "Against the previous run". r102: the "Manual · Console" chip and pane are gone; the run's console is docked at
- * the bottom ([TestConsole]) and the run has Filters and Settings steps.
+ * the bottom ([TestConsole]) and the run has Filters and Settings steps. r103: [onEditByTapping] draws **Edit** next
+ * to "Open in Browse" (builder sources only: Edit by tapping moved here from Source info); the buttons wrap.
  */
 @Composable
 internal fun TestPane(
@@ -65,6 +68,7 @@ internal fun TestPane(
     query: String,
     onQuery: (String) -> Unit,
     modifier: Modifier = Modifier,
+    onEditByTapping: (() -> Unit)? = null,
 ) {
     val navigator = LocalNavigator.current
     val tablet = isTabletUi()
@@ -109,7 +113,11 @@ internal fun TestPane(
                             StepRow(step = step, slowest = slowest, onOpenLine = { model.setTab(LabTab.Code) })
                         }
                         Spacer(Modifier.height(10.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                        // r103: wraps (phone) instead of scrolling sideways, so Edit is never hidden off the edge
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
                             if (state.running) {
                                 OutlinedButton(onClick = model::cancelTest) {
                                     Icon(Icons.Outlined.Stop, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -138,6 +146,17 @@ internal fun TestPane(
                                         navigator?.push(if (source.anime) AnimeSourceScreen(id) else BrowseSourceScreen(id, GetRemoteManga.QUERY_POPULAR))
                                     },
                                 ) { Text("Open in Browse") }
+                                // KMK (r103): Edit by tapping, only for sources the builder wrote (generic-list):
+                                // detected engines / imported / hand-written sources have lab meta but no picks
+                                val lab = source.lab
+                                val builtByBuilder = lab != null &&
+                                    (lab.engine == "generic-list" || lab.templateId?.startsWith("generic-list") == true)
+                                if (onEditByTapping != null && builtByBuilder) {
+                                    OutlinedButton(onClick = onEditByTapping, enabled = !state.running) {
+                                        Icon(Icons.Outlined.TouchApp, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Text("  Edit")
+                                    }
+                                }
                             }
                         }
                     }

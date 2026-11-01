@@ -49,7 +49,8 @@ class DownloadPreferences(
     // SY <--
 
     // KMK -->
-    fun downloadCacheRenewInterval() = preferenceStore.getInt("download_cache_renew_interval", 1)
+    // KMK (r103): 12 h by default (was 1 h); the index is updated on every download, delete and rename
+    fun downloadCacheRenewInterval() = preferenceStore.getInt("download_cache_renew_interval", 12)
     // KMK <--
 
     companion object {

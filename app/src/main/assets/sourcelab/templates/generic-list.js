@@ -1,4 +1,4 @@
-// @version 5
+// @version 6
 // Generic list template of the Source Lab, written for {{name}} ({{baseUrl}}) from what was tapped in Build by
 // tapping (or filled by hand). Lists are pages of ITEM cards, chapters / episodes are the links of CHAPTER on a
 // title page, pages are the IMAGE pictures of a chapter page, videos the VIDEO_FRAME of an episode page.
@@ -10,6 +10,8 @@
 // r102 (v5): the title page's rows tapped as Tags groups (Cast, Maker, Genres…) give "Cast: name" tags, which the
 // app shows grouped like E-Hentai's; rows set to Description add a "Release date: …" line under the description.
 // Tapping a grouped tag searches it in the source (a filter with that name and option when there is one).
+// r103 (v6): filters made from the site's menus (one per menu group); a long list can be a text box with suggestions
+// ("autocomplete" filters: the names typed are matched to the list's entries).
 
 /*@part id="headers"*/
 // Headers and constants: the site as Referer on every picture; the selectors the builder derived (each with
@@ -88,6 +90,10 @@ var extension = {
   // like the group (or has it as key) and has an option labelled like the tag, that option is picked (no words);
   // else only the tag's words are searched. (Every constant / helper is checked, so this part also runs in older
   // sources.)
+  // r103 (v6): an "autocomplete" filter (a text box with suggestions) gets the names typed as a list: each is matched
+  // to an option by its label or value (any case), a name not in the list is sent as a slug ("Big Tits" → big-tits),
+  // names starting with "-" are left out; a path filter uses the first name, a param filter joins them with ",".
+  // A grouped tag whose group is an autocomplete filter searches that name even when the list doesn't have it.
   search: async function (query, page, filters) {
     var list = typeof FILTERS !== "undefined" && Array.isArray(FILTERS) ? FILTERS : [];
     var groups = typeof TAG_GROUPS !== "undefined" && Array.isArray(TAG_GROUPS) ? TAG_GROUPS : [];
@@ -100,6 +106,29 @@ var extension = {
       }
       return v === undefined || v === null ? "" : String(v).trim();
     };
+    function slug(t) {
+      return String(t).toLowerCase().replace(/[^0-9a-z\u00c0-\uffff]+/g, "-").replace(/^-+|-+$/g, "");
+    }
+    // r103 (v6): the value an autocomplete filter sends: its names mapped to option values
+    function suggested(f, v) {
+      var names = Array.isArray(v) ? v : (v === undefined || v === null || v === "" ? [] : [v]);
+      var out = [];
+      names.forEach(function (n) {
+        var t = String(n === null || n === undefined ? "" : n).trim();
+        if (!t) return;
+        if (t.charAt(0) === "-") { console.log("Filter " + (f.name || f.key) + ": \"" + t + "\" left out (exclusion isn't supported)"); return; }
+        var low = t.toLowerCase();
+        var hit = null;
+        (f.options || []).forEach(function (o) {
+          if (!hit && o && (String(o.label || "").trim().toLowerCase() === low || String(o.value || "").toLowerCase() === low)) hit = o;
+        });
+        var value = hit ? String(hit.value || "") : slug(t);
+        if (!hit) console.log("Filter " + (f.name || f.key) + ": \"" + t + "\" isn't in its list: sent as " + value);
+        if (value && out.indexOf(value) < 0) out.push(value);
+      });
+      if (!out.length) return "";
+      return f.mode === "path" ? out[0] : out.join(",");
+    }
     var q = String(query || "").trim();
     var tagged = /^([^:：]{1,40}?)\s*[:：]\s*(\S.*)$/.exec(q);
     if (tagged) {
@@ -109,16 +138,20 @@ var extension = {
         list.some(function (f) { return String(f.name || "").trim().toLowerCase() === ns || String(f.key || "").toLowerCase() === ns; });
       if (known) {
         var hit = null;
+        var typed = null;
         list.forEach(function (f) {
-          if (hit || (f.type !== "select" && f.type !== "sort")) return;
+          if (hit || (f.type !== "select" && f.type !== "sort" && f.type !== "autocomplete")) return;
           if (String(f.name || "").trim().toLowerCase() !== ns && String(f.key || "").toLowerCase() !== ns) return;
           (f.options || []).forEach(function (o, index) {
             if (!hit && o && String(o.label || "").trim().toLowerCase() === tag.toLowerCase()) hit = { f: f, o: o, index: index };
           });
+          if (!hit && !typed && f.type === "autocomplete") typed = f;
         });
+        if (!hit && typed) hit = { f: typed, o: { label: tag, value: slug(tag) }, index: -1 };
         if (hit) {
           filters = Object.assign({}, filters || {});
-          filters[hit.f.key] = hit.f.type === "sort" ? { index: hit.index, value: hit.o.value, ascending: false } : hit.o.value;
+          filters[hit.f.key] = hit.f.type === "sort" ? { index: hit.index, value: hit.o.value, ascending: false } :
+            hit.f.type === "autocomplete" ? [hit.o.label] : hit.o.value;
           q = "";
           console.log("Tag " + tagged[1].trim() + ": " + tag + " → filter " + (hit.f.name || hit.f.key) + " = " + (hit.o.value || "(any)"));
         } else {
@@ -130,7 +163,8 @@ var extension = {
     var chosen = [];
     for (var i = 0; i < list.length; i++) {
       var f = list[i];
-      var v = valueOf(f, filters ? filters[f.key] : undefined);
+      var raw = filters ? filters[f.key] : undefined;
+      var v = f.type === "autocomplete" ? suggested(f, raw) : valueOf(f, raw);
       if (v) chosen.push({ f: f, v: v });
     }
     var paths = chosen.filter(function (c) { return c.f.mode === "path" && c.f.path; });
@@ -380,6 +414,7 @@ var extension = {
 // (a source without them has exactly the methods above): TABS become tab buttons at the top of Browse (getCatalogs /
 // getCatalog: the tab's path with {page} filled, the same cards), FILTERS the filter sheet (search adds their
 // values), SETTINGS the source's settings (the code reads them with host.preference.get("key")).
+// r103 (v6): an "autocomplete" filter is a text box with its options as suggestions (no "-" exclusions).
 if (TABS.length) {
   extension.getCatalogs = function () {
     return TABS.map(function (t) { return { id: t.path, name: t.name || t.path, tab: true }; });
@@ -393,6 +428,11 @@ if (FILTERS.length) {
     return FILTERS.map(function (f) {
       var out = { key: f.key, name: f.name || f.key, type: f.type };
       if (f.type === "select" || f.type === "sort") out.options = f.options || [];
+      if (f.type === "autocomplete") {
+        out.options = f.options || [];
+        out.hint = "Type a name: " + (f.name || f.key);
+        out.prefixes = [];
+      }
       return out;
     });
   };

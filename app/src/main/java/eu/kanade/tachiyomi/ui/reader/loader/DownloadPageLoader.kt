@@ -3,7 +3,6 @@ package eu.kanade.tachiyomi.ui.reader.loader
 import android.app.Application
 import android.net.Uri
 import com.hippo.unifile.UniFile
-import eu.kanade.tachiyomi.data.database.models.toDomainChapter
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.Source
@@ -24,6 +23,8 @@ internal class DownloadPageLoader(
     private val source: Source,
     private val downloadManager: DownloadManager,
     private val downloadProvider: DownloadProvider,
+    // KMK (r103): the chapter's folder or CBZ when the caller already found it (ChapterLoader); looked up otherwise
+    private val chapterDir: UniFile? = null,
 ) : PageLoader() {
 
     private val context: Application by injectLazy()
@@ -34,7 +35,7 @@ internal class DownloadPageLoader(
 
     override suspend fun getPages(): List<ReaderPage> {
         val dbChapter = chapter.chapter
-        val chapterPath = downloadProvider.findChapterDir(
+        val chapterPath = chapterDir ?: downloadProvider.findChapterDir(
             dbChapter.name,
             dbChapter.scanlator,
             dbChapter.url,
@@ -48,8 +49,10 @@ internal class DownloadPageLoader(
                 // KMK: video pages get their saved videos back
                 .also { ChapterVideoDownloads.attachFromArchive(it, chapterPath) }
         } else {
-            getPagesFromDirectory()
-                .also { ChapterVideoDownloads.attachFromDirectory(it, chapterPath) }
+            // KMK (r103): the folder is listed once, for the pages and for the saved videos
+            val files = chapterPath?.listFiles().orEmpty().toList()
+            getPagesFromDirectory(files)
+                .also { ChapterVideoDownloads.attachFromDirectory(it, files) }
         }
     }
 
@@ -63,8 +66,8 @@ internal class DownloadPageLoader(
         return loader.getPages()
     }
 
-    private fun getPagesFromDirectory(): List<ReaderPage> {
-        val pages = downloadManager.buildPageList(source, manga, chapter.chapter.toDomainChapter()!!)
+    private fun getPagesFromDirectory(files: List<UniFile>): List<ReaderPage> {
+        val pages = downloadManager.buildPageList(files)
         return pages.map { page ->
             ReaderPage(page.index, page.url, page.imageUrl) {
                 context.contentResolver.openInputStream(page.uri ?: Uri.EMPTY)!!

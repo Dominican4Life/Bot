@@ -224,7 +224,8 @@ private fun FilterItem(filter: Filter<*>, onUpdate: () -> Unit/* SY --> */, star
                 name = filter.name,
                 state = filter.state.toImmutableList(),
                 hint = filter.hint,
-                values = filter.values.toImmutableList(),
+                // KMK r103: one kept copy of the tag list (it was copied on every redraw: up to 100,000 tags)
+                values = rememberTagValues(filter.values),
                 skipAutoFillTags = filter.skipAutoFillTags.toImmutableList(),
                 validPrefixes = filter.validPrefixes.toImmutableList(),
             ) {

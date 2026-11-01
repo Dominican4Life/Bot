@@ -171,7 +171,15 @@ class DownloadManager(
             // SY <--
             source,
         )
-        val files = chapterDir?.listFiles().orEmpty()
+        return buildPageList(chapterDir?.listFiles().orEmpty().toList())
+    }
+
+    /**
+     * KMK (r103): the page list from a chapter folder's listing the caller already made (the reader finds the
+     * folder once and lists it once, for the pages and for the saved videos).
+     */
+    fun buildPageList(chapterFiles: List<UniFile>): List<Page> {
+        val files = chapterFiles
             .filter { it.isFile && ImageUtil.isImage(it.name) { it.openInputStream() } }
 
         if (files.isEmpty()) {
@@ -223,6 +231,10 @@ class DownloadManager(
     // KMK -->
     /** KMK (r96): see [DownloadCache.findMangaDirInIndex] */
     fun findMangaDirInIndex(manga: Manga): Pair<Boolean, UniFile?>? = cache.findMangaDirInIndex(manga)
+
+    /** KMK (r103): see [DownloadCache.isIndexLoaded] */
+    val isIndexLoaded: Boolean
+        get() = cache.isIndexLoaded
     // KMK <--
 
     fun cancelQueuedDownloads(downloads: List<Download>) {
@@ -293,6 +305,8 @@ class DownloadManager(
             val sourceDir = provider.findSourceDir(source)
             if (sourceDir?.listFiles()?.isEmpty() == true) {
                 sourceDir.delete()
+                // KMK (r103): the cached listing of downloads/Manga still holds it
+                provider.invalidateRootListing()
                 cache.removeSource(source)
             }
         }
@@ -439,6 +453,8 @@ class DownloadManager(
         } else {
             logcat(LogPriority.ERROR) { "Failed to rename source download folder: $oldName" }
         }
+        // KMK (r103): the cached listing of downloads/Manga has the old name
+        provider.invalidateRootListing()
     }
 
     /**

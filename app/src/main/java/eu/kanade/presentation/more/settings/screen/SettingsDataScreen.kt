@@ -32,6 +32,7 @@ import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -69,6 +70,7 @@ import eu.kanade.tachiyomi.data.sync.SyncDataJob
 import eu.kanade.tachiyomi.data.sync.SyncManager
 import eu.kanade.tachiyomi.data.sync.service.GoogleDriveService
 import eu.kanade.tachiyomi.data.sync.service.GoogleDriveSyncService
+import eu.kanade.tachiyomi.util.system.AppLog
 import eu.kanade.tachiyomi.util.system.DeviceUtil
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.collections.immutable.persistentListOf
@@ -80,6 +82,7 @@ import logcat.LogPriority
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.storage.displayablePath
 import tachiyomi.core.common.util.lang.launchNonCancellable
+import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.backup.service.BackupPreferences
@@ -337,14 +340,25 @@ object SettingsDataScreen : SearchableSettings {
         val scope = rememberCoroutineScope()
         val libraryPreferences = remember { Injekt.get<LibraryPreferences>() }
 
-        val chapterCache = remember { Injekt.get<ChapterCache>() }
+        // KMK (r103): both caches are opened and their folders measured on IO, not in composition on the main
+        // thread (the reader cache can hold 5 GB of files); "…" shows until the size is known
         var cacheReadableSizeSema by remember { mutableIntStateOf(0) }
-        val cacheReadableSize = remember(cacheReadableSizeSema) { chapterCache.readableSize }
+        val cacheReadableSize by produceState("…", cacheReadableSizeSema) {
+            val started = System.nanoTime()
+            value = withIOContext { Injekt.get<ChapterCache>().readableSize }
+            AppLog.add(
+                'D',
+                "ChapterCache",
+                "Reader cache size $value, measured off the main thread in " +
+                    "${(System.nanoTime() - started) / 1_000_000} ms",
+            )
+        }
 
         // SY -->
-        val pagePreviewCache = remember { Injekt.get<PagePreviewCache>() }
         var pagePreviewReadableSizeSema by remember { mutableIntStateOf(0) }
-        val pagePreviewReadableSize = remember(pagePreviewReadableSizeSema) { pagePreviewCache.readableSize }
+        val pagePreviewReadableSize by produceState("…", pagePreviewReadableSizeSema) {
+            value = withIOContext { Injekt.get<PagePreviewCache>().readableSize }
+        }
         // SY <--
 
         return Preference.PreferenceGroup(
@@ -368,7 +382,7 @@ object SettingsDataScreen : SearchableSettings {
                     onClick = {
                         scope.launchNonCancellable {
                             try {
-                                val deletedFiles = chapterCache.clear()
+                                val deletedFiles = Injekt.get<ChapterCache>().clear()
                                 withUIContext {
                                     context.toast(context.stringResource(MR.strings.cache_deleted, deletedFiles))
                                     cacheReadableSizeSema++
@@ -387,7 +401,7 @@ object SettingsDataScreen : SearchableSettings {
                     onClick = {
                         scope.launchNonCancellable {
                             try {
-                                val deletedFiles = pagePreviewCache.clear()
+                                val deletedFiles = Injekt.get<PagePreviewCache>().clear()
                                 withUIContext {
                                     context.toast(context.stringResource(MR.strings.cache_deleted, deletedFiles))
                                     pagePreviewReadableSizeSema++

@@ -74,6 +74,12 @@ import java.util.Locale
  * links, or the list page). Every label can be picked on any step. [editKey] = "Edit by tapping": the saved builder
  * state (`LabMeta.picks` = `{ selection, builder }`, [builderState]) is restored, or for older sources the code's
  * `var X = "…"` values are kept ([State.fromCode]); Save regenerates the template into the same source key.
+ *
+ * r103: the "Tapping for…" rows are gone: a label is armed from the Labels card only (the screen shows one slim
+ * "Tapping for: X · Stop" bar over the page); "Pick a menu on the site" (the extras' `groupMode`) sends
+ * `__labPicker.menuMode`. Tags: every tapped row adds its own group (identified by its selector; unlabelled rows are
+ * "Tags", "Tags 2"… by their exact row), kept in the page's order (picker.js `docIndex`); a tap in the site's menus
+ * makes its group with a helper Warn (r103 fix; a [State.notice] when the helper is off). Title-page fields in a labelled row keep that row's selector ([Derive.fieldSelector]).
  */
 internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean, private val editKey: String? = null) :
     StateScreenModel<BuilderScreenModel.State>(State(url = startUrl.orEmpty(), anime = anime, editKey = editKey)) {
@@ -122,6 +128,14 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
         val rowTarget: String = "",
         val rowValues: List<String> = emptyList(),
         val rowChips: Int = 0,
+        /** r103: the element's (a row: its label's) place in the page, -1 unknown: Tags groups follow the page's order */
+        val docIndex: Int = -1,
+        /** r103: an unlabelled tag list's exact row selector (two such lists are two groups) */
+        val rowExact: String = "",
+        /** r103: the element sits in the site's menus (nav, aside, a sidebar…); r103 fix: Tags warns, never refuses */
+        val inMenu: Boolean = false,
+        /** r103 fix: every row of this look on the page (picker.js `likeRows`): a restored group finds its own row */
+        val likeRows: List<LikeRow> = emptyList(),
     ) {
         fun info(): PickInfo = PickInfo(
             tag = tag,
@@ -145,8 +159,14 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
             rowLabel = rowLabel,
             rowValues = rowValues,
             rowChips = rowChips,
+            inMenu = inMenu,
         )
     }
+
+    /** r103 fix: one row of a Tags pick's look on the page: its exact selector, its place, its first texts */
+    @Immutable
+    @Serializable
+    data class LikeRow(val exact: String, val order: Int = -1, val values: List<String> = emptyList())
 
     /** r100: the helper's "Test it now" on a Video pick: running, then what VideoFinder caught or why not */
     @Immutable
@@ -212,6 +232,10 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
          * tapped again (its row says "from the code")
          */
         val fromCode: Map<String, String> = emptyMap(),
+        /** r103: the edit banner's ✕ was pressed: it stays closed for this builder session */
+        val bannerDismissed: Boolean = false,
+        /** r103: a short note over the page (a Tags tap in the site's menu, kept), null = none */
+        val notice: String? = null,
     ) {
         val site: String get() = (pageUrl ?: loadUrl ?: url).let { Detector.normalize(it) }
         val host: String get() = site.removePrefix("https://").removePrefix("http://")
@@ -266,11 +290,13 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
         extras.runInPage = { script -> pageRaw(script) }
         if (editKey != null) screenModelScope.launchIO { loadForEdit(editKey) }
         if (!startUrl.isNullOrBlank()) load(startUrl)
-        // r101 (W4's "Pick a list on the site"): the page's group mode follows the extras' state
+        // r101 (W4's "Pick a list on the site"): the page's group mode follows the extras' state. r103: it is "Pick a
+        // menu on the site" now (picker.js menuMode: one filter per menu group); it disarms the armed label
         screenModelScope.launchIO {
             extras.state.map { it.groupMode }.distinctUntilChanged().collect { on ->
-                page("if (window.__labPicker.groupMode) window.__labPicker.groupMode($on);")
-                AppLog.add('D', "lab", "Builder: group pick mode = $on")
+                if (on && state.value.armed != null) mutableState.update { it.copy(armed = null, pending = null) }
+                page("if (window.__labPicker.menuMode) window.__labPicker.menuMode($on);")
+                AppLog.add('D', "lab", "Builder: menu pick mode = $on")
             }
         }
         // r101: a step change ends "Pick a list on the site" (it must not stay armed out of sight)
@@ -356,6 +382,13 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
         AppLog.add('D', "lab", "picker search form: ${json.take(300)}")
         runCatching { extras.onSearchForm(json) }
             .onFailure { AppLog.add('W', "lab", "extras: search form not read: ${it.message}") }
+    }
+
+    /** r103: a menu group pick (LabPicker.menu or the console's LABMENU line): "Pick a menu on the site" */
+    fun onMenuPicked(json: String) {
+        AppLog.add('D', "lab", "picker menu pick (${json.length} chars)")
+        runCatching { extras.onMenuPicked(json) }
+            .onFailure { AppLog.add('W', "lab", "extras: menu pick not read: ${it.message}") }
     }
 
     /** r101: a group pick (LabPicker.group or the console's LABGROUP line): a whole list for a filter */
@@ -455,6 +488,18 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
             rowTarget = o.obj("row")?.str("target").orEmpty(),
             rowValues = o.obj("row")?.arr("values")?.mapNotNull { (it as? JsonPrimitive)?.content }.orEmpty(),
             rowChips = o.obj("row")?.int("chips") ?: 0,
+            docIndex = o.obj("row")?.int("order")?.takeIf { it >= 0 } ?: o.int("docIndex") ?: -1,
+            rowExact = o.str("rowExact").orEmpty(),
+            inMenu = o.bool("inMenu") == true,
+            likeRows = o.arr("likeRows")?.mapNotNull { element ->
+                val row = element as? JsonObject ?: return@mapNotNull null
+                val exact = row.str("exact")?.trim().orEmpty()
+                if (exact.isEmpty()) {
+                    null
+                } else {
+                    LikeRow(exact, row.int("order") ?: -1, row.arr("values")?.mapNotNull { (it as? JsonPrimitive)?.content }.orEmpty())
+                }
+            }.orEmpty().take(30),
         )
         // r100: the helper's suggestion is shown by its card, never taken as a tap waiting for a label
         if (raw.via == "suggest") {
@@ -507,7 +552,9 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
         extras.setGroupMode(on)
     }
 
-    fun dismissBanner() = mutableState.update { it.copy(banner = null) }
+    fun dismissBanner() = mutableState.update { it.copy(banner = null, bannerDismissed = true) }
+
+    fun dismissNotice() = mutableState.update { it.copy(notice = null) }
 
     private fun onSuggestion(raw: RawPick, forLabel: String, none: Boolean) {
         val s = state.value
@@ -545,6 +592,19 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
      * the label most likely means (`suggest`).
      */
     private fun applyLabel(label: String, raw: RawPick) {
+        // r103 fix: a Tags tap (or a long press named Tags) in the site's own menus makes its group like any other;
+        // the helper warns ("This looks like the site's menu…": Keep mine / Not this). r103 refused it, and the
+        // owner's WordPress tags (footer.entry-footer) and other normal title layouts were refused with it
+        val menuTags = label == "tags" && raw.inMenu
+        if (menuTags) {
+            AppLog.add('I', "lab", "Builder: Tags tap in what looks like the site's menu, kept with a warning (${raw.likeSelector} · \"${raw.snippet.take(40)}\")")
+        }
+        // r103: Author / Status (and a plain-text Description row) keep their row's label-anchored selector
+        val rowSelector = if (label == "author" || label == "status" || (label == "description" && raw.rowTarget == "description")) {
+            raw.rowSelector
+        } else {
+            ""
+        }
         val picked = Derive.Picked(
             pick = BuilderPick(
                 label = label,
@@ -559,15 +619,22 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
             likeSelector = raw.likeSelector,
             hrefs = raw.hrefs,
             attrsAllHttp = raw.attrsAllHttp,
+            rowSelector = rowSelector,
         )
-        // r102: Tags is a group per Details row (Cast, Maker…); a tap outside a labelled row is a "Tags" group once
-        // groups exist, else r101's single tags selector
-        val group = if (label == "tags") tagGroupOf(raw, state.value.tagGroups.isNotEmpty()) else null
+        // r102: Tags is a group per Details row (Cast, Maker…). r103: every tap adds a group (an unlabelled row too)
+        val tagged = if (label == "tags") tagGroupOf(raw, state.value.tagGroups) else null
+        val group = tagged?.first
         mutableState.update { s ->
             s.copy(
                 picks = s.picks.filter { it.pick.label != label } + picked,
                 raws = s.raws + (label to raw),
-                tagGroups = if (group != null) withGroup(s.tagGroups, group) else s.tagGroups,
+                tagGroups = if (tagged != null) inPageOrder(withGroup(tagged.second, tagged.first)) else s.tagGroups,
+                // the helper card warns; with "Check each pick" off a notice says it instead
+                notice = if (menuTags && !s.helper) {
+                    "This looks like the site's menu, not this title's tags — kept. Undo removes it."
+                } else {
+                    null
+                },
                 tagTapOrder = if (group != null) s.tagTapOrder.filter { it != group.selector } + group.selector else s.tagTapOrder,
                 fromCode = s.fromCode - codeKeys(label),
                 pending = null,
@@ -608,7 +675,8 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
             }
             val name = PickCheck.labelName(label, s.anime)
             script.append(" if (window.__labPicker.mark) window.__labPicker.mark(${JsonPrimitive(level)}, ${JsonPrimitive(name)});")
-            if (check.level == PickCheck.Level.Warn) {
+            // r103 fix: the menu warning asks Keep mine / Not this (no suggestion, which would swap Not this away)
+            if (check.level == PickCheck.Level.Warn && !menuTags) {
                 // r101: an Item that doesn't hold the Title / Cover: the card derived from those picks is always
                 // offered (the page's own search found nothing the second time in the owner's run)
                 val itemCss = if (label == "item" && check.checks.any { !it.ok && it.text.startsWith("doesn't hold") }) {
@@ -638,29 +706,114 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
         return runCatching { Derive.itemSuggestion(title, cover) }.getOrNull()
     }
 
-    /** r102: the group a Tags tap makes: its row (picker.js), else (when groups exist) the tapped tags as "Tags" */
-    private fun tagGroupOf(raw: RawPick, groupsExist: Boolean): Derive.TagGroup? {
+    /**
+     * r102: the group a Tags tap makes: its row (picker.js). r103: a tap outside a labelled row is a group too (the
+     * owner's r102 card showed "1 group: Tags" after several taps): its tags' look-alike selector, or its exact row
+     * when another group already reads that look; named "Tags", "Tags 2"… so names stay distinct
+     */
+    private fun tagGroupOf(raw: RawPick, groups: List<Derive.TagGroup>): Pair<Derive.TagGroup, List<Derive.TagGroup>> {
         if (raw.rowSelector.isNotBlank()) {
-            return Derive.TagGroup(
-                name = raw.rowLabel.ifBlank { "Tags" },
+            val same = groups.firstOrNull { it.selector == raw.rowSelector }
+            val group = Derive.TagGroup(
+                name = same?.name ?: distinctName(raw.rowLabel.ifBlank { "Tags" }, groups),
                 selector = raw.rowSelector,
                 target = if (raw.rowTarget == "description") "description" else "tags",
                 values = raw.rowValues,
+                order = raw.docIndex,
             )
+            return group to groups
         }
-        if (!groupsExist) return null
         val one = raw.tag == "a" || raw.count >= 2
-        val selector = Derive.clean(if (one) raw.likeSelector else "${raw.cssPath.ifBlank { raw.likeSelector }} a").first
-        return Derive.TagGroup(name = "Tags", selector = selector, target = "tags", values = raw.samples)
+        val like = Derive.clean(if (one) raw.likeSelector else "${raw.cssPath.ifBlank { raw.likeSelector }} a").first
+        val exact = raw.rowExact.takeIf { it.isNotBlank() }?.let { Derive.clean(it).first }.orEmpty()
+        // The same row again (its exact place, or the same look with the same place) keeps its group
+        val again = groups.firstOrNull { g ->
+            (exact.isNotEmpty() && (g.selector == exact || g.exact == exact)) || (g.selector == like && g.order == raw.docIndex)
+        }
+        if (again != null) {
+            return again.copy(values = raw.rowValues.ifEmpty { raw.samples }, order = raw.docIndex) to groups
+        }
+        // The same look as another row's group: both are read by their exact row from now on
+        val owner = groups.firstOrNull { it.selector == like }
+        var list = groups
+        var selector = like
+        if (owner != null && exact.isNotEmpty()) {
+            selector = exact
+            if (owner.exact.isNotBlank()) {
+                list = groups.map { if (it === owner) it.copy(selector = it.exact) else it }
+            } else {
+                // r103 fix: a group restored from a saved build (no exact row): it read every row of this look, the
+                // new one's too (read twice). It gets its own row on this page (its saved texts, else the first
+                // other row); when its row is this tap's, this tap is that group again
+                val rows = raw.likeRows.mapNotNull { r ->
+                    Derive.clean(r.exact).first.takeIf { it.isNotEmpty() }?.let { it to r }
+                }.distinctBy { it.first }
+                val mine = restoredRowOf(owner, rows)
+                if (rows.isNotEmpty() && (rows.size == 1 || mine?.first == exact)) {
+                    AppLog.add('D', "lab", "Builder: tags group \"${owner.name}\" (restored) is this row: $exact")
+                    val again2 = owner.copy(selector = exact, exact = exact, values = raw.rowValues.ifEmpty { raw.samples }, order = raw.docIndex)
+                    return again2 to groups.filter { it !== owner }
+                }
+                val other = mine ?: rows.filter { it.first != exact }.minByOrNull { if (it.second.order < 0) Int.MAX_VALUE else it.second.order }
+                if (other != null) {
+                    AppLog.add('D', "lab", "Builder: tags group \"${owner.name}\" (restored) now reads its own row ${other.first}${if (mine == null) " (guessed: the first other row)" else ""}")
+                    list = groups.map {
+                        if (it === owner) it.copy(selector = other.first, exact = other.first, order = other.second.order) else it
+                    }
+                }
+            }
+        }
+        val group = Derive.TagGroup(
+            name = distinctName("Tags", groups),
+            selector = selector,
+            target = "tags",
+            values = raw.rowValues.ifEmpty { raw.samples },
+            order = raw.docIndex,
+            exact = exact,
+        )
+        return group to list
     }
 
-    /** r102: re-tapping the same row (same name or selector) replaces its group */
+    /** r103 fix: the row (of this tap's look) whose texts best match a restored group's saved values; null if none */
+    private fun restoredRowOf(owner: Derive.TagGroup, rows: List<Pair<String, LikeRow>>): Pair<String, LikeRow>? {
+        val saved = owner.values.map { it.trim().lowercase(Locale.ROOT) }.filter { it.isNotEmpty() }.toSet()
+        if (saved.isEmpty()) return null
+        var best: Pair<String, LikeRow>? = null
+        var bestScore = 0
+        for (row in rows) {
+            val score = row.second.values.count { it.trim().lowercase(Locale.ROOT) in saved }
+            if (score > bestScore) {
+                best = row
+                bestScore = score
+            }
+        }
+        return best
+    }
+
+    /** r103: [base], or "base 2", "base 3"… when another group has that name */
+    private fun distinctName(base: String, groups: List<Derive.TagGroup>): String {
+        val taken = groups.map { it.name.lowercase(Locale.ROOT) }.toSet()
+        if (base.lowercase(Locale.ROOT) !in taken) return base
+        var n = 2
+        while ("${base.lowercase(Locale.ROOT)} $n" in taken) n++
+        return "$base $n"
+    }
+
+    /** r102: re-tapping the same row replaces its group. r103: the same row = the same selector (never the name) */
     private fun withGroup(groups: List<Derive.TagGroup>, group: Derive.TagGroup): List<Derive.TagGroup> {
-        val i = groups.indexOfFirst { it.selector == group.selector || it.name.equals(group.name, ignoreCase = true) }
+        val i = groups.indexOfFirst { it.selector == group.selector }
         if (i < 0) return groups + group
-        // The owner's name and target for that row stay; the values are the new tap's
+        // The owner's name and target for that row stay; the values and place are the new tap's
         return groups.toMutableList().also { it[i] = group.copy(name = groups[i].name, target = groups[i].target) }
     }
+
+    /**
+     * r103: the groups in the order their rows appear on the page. r103 fix: groups without a place (restored from
+     * a build saved before places were kept) come first in their saved order; the others follow by place (a stable
+     * sort, so a new group no longer jumps ahead of the restored ones)
+     */
+    private fun inPageOrder(groups: List<Derive.TagGroup>): List<Derive.TagGroup> =
+        groups.sortedBy { if (it.order < 0) -1 else it.order }
 
     /** r102: the Tags card's ⋮ → Rename */
     fun renameTagGroup(index: Int, name: String) {
@@ -679,7 +832,8 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
         val gone = s.tagGroups.getOrNull(index) ?: return
         val left = s.tagGroups.filterIndexed { i, _ -> i != index }
         AppLog.add('D', "lab", "Builder: tags group \"${gone.name}\" removed")
-        if (left.isEmpty() && s.raws["tags"]?.rowSelector?.isNotBlank() == true) {
+        // r103: every Tags tap is a group now: the last one gone = no Tags pick
+        if (left.isEmpty() && (s.raws["tags"] != null || s.pick("tags") != null)) {
             removePick("tags")
         } else {
             mutableState.update { it.copy(tagGroups = left) }
@@ -776,6 +930,28 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
         val s = state.value
         val label = s.helperFor ?: return
         val selector = s.raws[label]?.likeSelector
+        // r103 fix: Tags with other groups: only the group this tap made goes (a menu tap's "Not this")
+        if (label == "tags" && s.tagGroups.size > 1) {
+            val lastTapped = s.tagTapOrder.lastOrNull { sel -> s.tagGroups.any { it.selector == sel } }
+            val at = lastTapped?.let { sel -> s.tagGroups.indexOfLast { it.selector == sel } } ?: -1
+            if (at >= 0) {
+                AppLog.add('D', "lab", "helper tags: group \"${s.tagGroups[at].name}\" removed (Not this)")
+                mutableState.update {
+                    it.copy(
+                        tagGroups = it.tagGroups.filterIndexed { i, _ -> i != at },
+                        tagTapOrder = it.tagTapOrder.filter { sel -> sel != lastTapped },
+                        // the check was this tap's: the other groups keep no verdict of their own
+                        raws = it.raws - "tags",
+                        helperFor = null,
+                        suggestion = null,
+                        relabel = null,
+                    )
+                }
+                rederive()
+                page("if (window.__labPicker.drop) window.__labPicker.drop(${JsonPrimitive(selector.orEmpty())});")
+                return
+            }
+        }
         AppLog.add('D', "lab", "helper $label: removed (Not this)")
         removePick(label)
         mutableState.update { it.copy(helperFor = null, suggestion = null, relabel = null) }
@@ -812,7 +988,8 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
         AppLog.add('I', "lab", "helper test video: $pageUrl (frame ${frame ?: "any"})")
         screenModelScope.launchIO {
             val test = try {
-                val r = VideoFinder.find(context, pageUrl, frame, referer)
+                // KMK (r103 fix pass): a test always loads the page (never a result kept from an earlier find)
+                val r = VideoFinder.find(context, pageUrl, frame, referer, fresh = true)
                 val seconds = String.format(Locale.ROOT, "%.1f", r.tookMs / 1000.0)
                 if (r.videos.isNotEmpty()) {
                     val kinds = r.videos.map { kindName(it.kind) }.distinct().joinToString(" / ")
@@ -933,7 +1110,9 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
         val info = manager.get(key)
         if (info == null) {
             AppLog.add('W', "lab", "Builder: edit $key: the source is gone")
-            mutableState.update { it.copy(banner = "This source is gone: what you pick here is written as a new source.", editKey = null) }
+            mutableState.update {
+                it.copy(banner = if (it.bannerDismissed) null else "This source is gone: what you pick here is written as a new source.", editKey = null)
+            }
             return
         }
         val code = runCatching { manager.code(key) }.getOrNull().orEmpty()
@@ -1009,7 +1188,8 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
                 "Builder: edit ${info.name} ($key): no builder state; ${picks.size} saved picks, ${kept.size} values from the code (${kept.keys.joinToString(", ")})",
             )
         }
-        mutableState.update { it.copy(editName = info.name, banner = banner) }
+        // r103: a banner closed before this finished stays closed
+        mutableState.update { it.copy(editName = info.name, banner = if (it.bannerDismissed) null else banner) }
         rederive()
     }
 

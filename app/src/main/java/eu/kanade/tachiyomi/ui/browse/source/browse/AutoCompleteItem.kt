@@ -70,11 +70,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
+import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import tachiyomi.presentation.core.components.SettingsItemsPaddings
 import tachiyomi.presentation.core.util.runOnEnterKeyPressed
+import java.lang.ref.WeakReference
 import kotlin.math.roundToInt
 
 /** KMK: the colours of a tag that's searched for (blue) and one that's left out (red), in the list and the chips */
@@ -95,18 +98,120 @@ fun tagLabel(tag: String): String {
     return out.toString()
 }
 
-/** KMK: 0-9 first, then A-Z, whatever the case */
-private val tagOrder = compareBy<String>(
-    { tag ->
-        val first = tag.firstOrNull { it.isLetterOrDigit() }
+/**
+ * KMK: 0-9 first, then A-Z, whatever the case. r103: each tag's sort key is worked out once ([TagKey]) instead of
+ * lower-casing both tags on every comparison (a 14,000-tag list did that ~400,000 times per sort).
+ */
+private class TagKey(val tag: String) {
+    val group: Int = tag.firstOrNull { it.isLetterOrDigit() }.let { first ->
         when {
             first == null -> 2
             first.isDigit() -> 0
             else -> 1
         }
-    },
-    { it.lowercase() },
-)
+    }
+    val lower: String = tag.lowercase()
+}
+
+private val tagKeyOrder = compareBy<TagKey>({ it.group }, { it.lower })
+
+/** KMK r103: the tags without repeats, in [TagKey] order (same result as `distinct().sortedWith(order)`) */
+private fun sortTags(values: List<String>): List<String> {
+    val seen = HashSet<String>(values.size * 2)
+    val keys = ArrayList<TagKey>(values.size)
+    for (tag in values) if (seen.add(tag)) keys.add(TagKey(tag))
+    keys.sortWith(tagKeyOrder)
+    return keys.map { it.tag }
+}
+
+/**
+ * KMK r103: tag lists kept between redraws and between openings of the filter sheet, by list identity (a few at
+ * most). [copyOf]: one immutable copy of a filter's tag list (a JS source's list can be 100,000 tags; it used to be
+ * copied on every redraw of the sheet). [sorted]: that copy sorted once (it used to be sorted again each time the
+ * sheet opened, and the typing bar sorted its matches on every key).
+ */
+private object TagLists {
+    private const val KEEP = 4
+
+    private class Copy(val source: WeakReference<List<String>>, val print: TagPrint, val copy: ImmutableList<String>)
+    private class Sorted(val source: WeakReference<List<String>>, val print: TagPrint, val sorted: List<String>)
+
+    private val copies = ArrayList<Copy>()
+    private val sortedLists = ArrayList<Sorted>()
+
+    /** The kept copy of [source] while it is the same list with the same [TagPrint]; otherwise a new copy */
+    fun copyOf(source: List<String>): ImmutableList<String> {
+        if (source is ImmutableList<String>) return source
+        val print = TagPrint.of(source)
+        synchronized(copies) {
+            copies.removeAll { it.source.get() == null }
+            copies.firstOrNull { it.source.get() === source && it.print == print }?.let { return it.copy }
+        }
+        val copy = source.toImmutableList()
+        synchronized(copies) {
+            copies.add(0, Copy(WeakReference(source), print, copy))
+            while (copies.size > KEEP) copies.removeAt(copies.lastIndex)
+        }
+        return copy
+    }
+
+    /** [values] sorted, if it was sorted before; null otherwise (cheap, for a first frame) */
+    fun peek(values: List<String>): List<String>? {
+        val print = TagPrint.of(values)
+        return synchronized(sortedLists) {
+            sortedLists.firstOrNull { it.source.get() === values && it.print == print }?.sorted
+        }
+    }
+
+    /** [values] sorted ([sortTags]), worked out once per list; call off the main thread */
+    fun sorted(values: List<String>): List<String> {
+        peek(values)?.let { return it }
+        val print = TagPrint.of(values)
+        val start = System.nanoTime()
+        val sorted = sortTags(values)
+        if (values.size >= LOG_FROM) {
+            val ms = (System.nanoTime() - start) / 1_000_000
+            AppLog.add('D', "BrowseTags", "Tag box: sorted ${values.size} tags in $ms ms (kept until the list changes)")
+        }
+        synchronized(sortedLists) {
+            sortedLists.removeAll { it.source.get() == null }
+            sortedLists.add(0, Sorted(WeakReference(values), print, sorted))
+            while (sortedLists.size > KEEP) sortedLists.removeAt(sortedLists.lastIndex)
+        }
+        return sorted
+    }
+
+    private const val LOG_FROM = 500
+}
+
+/**
+ * KMK r103 fix pass: a cheap fingerprint of a tag list (size, first and last tag), so a kept copy / sort is reused only
+ * while the list still holds the same tags (a list changed in place to the same size is noticed at its ends)
+ */
+private data class TagPrint(val size: Int, val first: String?, val last: String?) {
+    companion object {
+        fun of(values: List<String>): TagPrint = runCatching {
+            TagPrint(values.size, values.firstOrNull(), values.lastOrNull())
+        }.getOrElse { TagPrint(-1, null, null) }
+    }
+}
+
+/**
+ * KMK r103: a filter's tag list as the tag box takes it: one immutable copy, kept while the filter's list is the same
+ * object with the same size (a JS source's list that fills in later changes size, so the box still gets the new
+ * tags on the next redraw, as before).
+ */
+@Composable
+fun rememberTagValues(source: List<String>): ImmutableList<String> {
+    val print = TagPrint.of(source)
+    return remember(IdentityKey(source), print) { TagLists.copyOf(source) }
+}
+
+/** KMK r103: a `remember` key that matches only the very same object (a list's equals compares every element) */
+private class IdentityKey(val ref: Any) {
+    override fun equals(other: Any?): Boolean = other is IdentityKey && other.ref === ref
+    override fun hashCode(): Int = System.identityHashCode(ref)
+}
 
 @Composable
 fun AutoCompleteItem(
@@ -233,9 +338,10 @@ fun AutoCompleteTextField(
     val density = LocalDensity.current
     val hasList = values.isNotEmpty()
 
-    val allValues by produceState(emptyList(), values) {
+    // KMK r103: sorted once per list (kept for the next time the sheet opens, so it shows at once then)
+    val allValues by produceState(TagLists.peek(values) ?: emptyList(), values) {
         withContext(Dispatchers.Default) {
-            this@produceState.value = values.asSequence().distinct().sortedWith(tagOrder).toList()
+            this@produceState.value = TagLists.sorted(values)
         }
     }
 
@@ -404,7 +510,8 @@ private fun TypingBar(
     val matches by produceState(emptyList(), value, values) {
         withContext(Dispatchers.Default) {
             val (filter, prefix) = onValueFilter(value.text)
-            val found = values.asSequence().filter(filter).distinct().sortedWith(tagOrder)
+            // KMK r103: the matches of the list sorted once (same order as sorting the matches on every key)
+            val found = TagLists.sorted(values).asSequence().filter(filter)
             this@produceState.value = if (prefix != null && onPick == null) {
                 found.map { prefix + it }.toList()
             } else {

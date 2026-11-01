@@ -69,6 +69,7 @@ import tachiyomi.source.local.io.Format
 import tachiyomi.source.local.isLocal
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import uy.kohesive.injekt.injectLazy
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -81,7 +82,6 @@ class BrowsePreviewScreenModel(
     private val source: Source,
     private val getMangaWithChapters: GetMangaWithChapters = Injekt.get(),
     private val updateMangaFromRemote: UpdateMangaFromRemote = Injekt.get(),
-    private val chapterCache: ChapterCache = Injekt.get(),
     private val downloadManager: DownloadManager = Injekt.get(),
     private val downloadCache: DownloadCache = Injekt.get(),
     private val setReadStatus: SetReadStatus = Injekt.get(),
@@ -95,6 +95,10 @@ class BrowsePreviewScreenModel(
     private val uiPreferences: UiPreferences = Injekt.get(),
     private val downloadProvider: DownloadProvider = Injekt.get(),
 ) : StateScreenModel<BrowsePreviewScreenModel.State>(State()) {
+
+    // KMK (r103): opened on first use (on IO, where the page lists are read). As a constructor default it was
+    // opened on the main thread when the preview panel's screen model was made, reading the cache's whole journal
+    private val chapterCache: ChapterCache by injectLazy()
 
     private val jobs = mutableListOf<Job>()
     private var pagesJob: Job? = null

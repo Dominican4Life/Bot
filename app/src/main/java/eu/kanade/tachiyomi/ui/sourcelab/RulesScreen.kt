@@ -33,6 +33,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -55,8 +56,11 @@ import eu.kanade.tachiyomi.jssource.lab.LintCheck
 import eu.kanade.tachiyomi.jssource.lab.LintRule
 import eu.kanade.tachiyomi.jssource.lab.LintSeverity
 import eu.kanade.tachiyomi.util.storage.getUriCompat
+import eu.kanade.tachiyomi.util.system.AppLog
 import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import tachiyomi.presentation.core.components.material.Scaffold
 
 /**
@@ -77,9 +81,22 @@ internal class RulesScreen(private val ruleId: String? = null) : Screen() {
         var view by rememberSaveable { mutableStateOf(0) } // 0 reading, 1 machine rules, 2 versions
         val rules = state.rules
         val listState = rememberLazyListState()
-        val blocks = remember(rules?.body) { rules?.body?.let { markdownBlocks(it) }.orEmpty() }
+        // KMK (r103): the markdown is split, and the asset rules.md plus the imported versions are read, off the main
+        // thread (they were read in composition)
+        val blocks by produceState(emptyList<Block>(), rules?.body) {
+            val body = rules?.body
+            value = if (body == null) emptyList() else withContext(Dispatchers.Default) { markdownBlocks(body) }
+        }
         val machine = rules?.rules.orEmpty().filter { it.check != "text" && it.check.isNotBlank() }
-        val versions = remember(rules) { runCatching { model.rulesVersions() }.getOrDefault(emptyList()) }
+        val versions by produceState(emptyList<Pair<Int, String>>(), rules) {
+            value = withContext(Dispatchers.IO) {
+                val started = System.nanoTime()
+                val list = runCatching { model.rulesVersions() }.getOrDefault(emptyList())
+                val ms = (System.nanoTime() - started) / 1_000_000
+                AppLog.add('D', "lab", "Rules: ${list.size} versions read off the main thread in $ms ms")
+                list
+            }
+        }
         val hits = remember(state.sources) {
             state.sources.flatMap { s -> s.lastLint?.findings.orEmpty().filter { !it.ignored }.map { it.ruleId }.distinct() }
                 .groupingBy { it }.eachCount()

@@ -18,7 +18,6 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.List
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ArrowDropDown
-import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.ContentPaste
@@ -31,6 +30,7 @@ import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Terminal
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -49,6 +49,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -86,7 +87,6 @@ import eu.kanade.tachiyomi.ui.sourcelab.newsource.LabFlowScreenFactory
 import eu.kanade.tachiyomi.ui.sourcelab.newsource.TemplatesPane
 import kotlinx.coroutines.delay
 import tachiyomi.presentation.core.components.material.Scaffold
-import tachiyomi.presentation.core.util.collectAsState as collectPreferenceAsState
 
 /**
  * KMK (r96): the Source Lab, in place of the Code editor (D§1). `key == null` is Home: the source list with health,
@@ -171,9 +171,10 @@ internal class SourceLabScreen(
             )
         }
 
-        // KMK --> (r102) Edit by tapping (Source info, Lab sources only): the builder opens on this source's site with
-        // its picks and saves back to the same key. Unsaved edits are asked about first (Save / Discard / Cancel; on
-        // Discard the editor drops them now, so the code the builder saves over is the saved one)
+        // KMK --> (r102) Edit by tapping (r103: the Edit button in Test Run, builder sources only): the builder opens
+        // on this source's site with its picks and saves back to the same key. Unsaved edits are asked about first
+        // (Save / Discard / Cancel; on Discard the editor drops them now, so the code the builder saves over is the
+        // saved one)
         val editByTapping: () -> Unit = {
             actions.askBeforeReplacing("Editing by tapping") {
                 val s = editor.state.value
@@ -205,7 +206,6 @@ internal class SourceLabScreen(
                     labState = state,
                     onHide = null,
                     modifier = Modifier.fillMaxWidth(),
-                    onEditByTapping = editByTapping,
                 )
             }
         }
@@ -438,7 +438,6 @@ internal class SourceLabScreen(
                                             labState = state,
                                             onHide = { sourceInfo.set(false) },
                                             modifier = Modifier.width(340.dp).fillMaxHeight(),
-                                            onEditByTapping = editByTapping,
                                         )
                                     } else {
                                         SourceInfoStrip(
@@ -457,6 +456,7 @@ internal class SourceLabScreen(
                                         query = query,
                                         onQuery = { query = it },
                                         askBeforeReplacing = actions.askBeforeReplacing,
+                                    onEditByTapping = editByTapping,
                                         modifier = Modifier.weight(1f).fillMaxHeight(),
                                     )
                                 }
@@ -493,6 +493,7 @@ internal class SourceLabScreen(
                                     query = query,
                                     onQuery = { query = it },
                                     askBeforeReplacing = actions.askBeforeReplacing,
+                                    onEditByTapping = editByTapping,
                                     modifier = Modifier.fillMaxSize(),
                                 )
                             }
@@ -519,10 +520,20 @@ private fun SourcePane(
     onQuery: (String) -> Unit,
     askBeforeReplacing: (String, () -> Unit) -> Unit,
     modifier: Modifier,
+    onEditByTapping: () -> Unit,
 ) {
     when (tab) {
         LabTab.Code, LabTab.Explain -> ExplainPane(state = state, model = model, editorState = editorState, modifier = modifier)
-        LabTab.Test -> TestPane(state = state, model = model, editor = editor, editorState = editorState, query = query, onQuery = onQuery, modifier = modifier)
+        LabTab.Test -> TestPane(
+            state = state,
+            model = model,
+            editor = editor,
+            editorState = editorState,
+            query = query,
+            onQuery = onQuery,
+            modifier = modifier,
+            onEditByTapping = onEditByTapping,
+        )
         LabTab.Lint -> LintPane(state = state, model = model, editor = editor, modifier = modifier)
         LabTab.Report -> ReportPane(state = state, model = model, modifier = modifier)
         LabTab.History -> HistoryPane(
@@ -542,7 +553,7 @@ private fun LabHeader(
     editorState: SourceEditorScreenModel.State,
     dest: RailDest,
     onBack: () -> Unit,
-    onSave: (inPlace: Boolean?) -> Unit,
+    onSave: (inPlace: Boolean) -> Unit,
     menu: @Composable () -> Unit,
 ) {
     val source = state.source
@@ -592,108 +603,96 @@ private fun LabHeader(
 }
 
 /**
- * KMK (r102): Save as a split button. The main action is the remembered choice (`pref_lab_save_mode`): "Update vN
- * (current)" overwrites the current History version in place, "Save as vM" adds the next version (today's Save);
- * ▾ offers both, and the one picked becomes the default. A source with no version yet (not saved, or no history)
- * has a plain Save. The version the code was generated from is never overwritten: Update is then disabled and the
- * main action is "Save as vM" (History would fall back to a new version anyway). r102 fix: the same for a Baseline
- * and for a restored version that isn't the newest ([History.updateBlockedReason]).
+ * KMK (r102, r103): Save as a split button. r103: the main action always saves to the version open now ("Save to v3":
+ * overwritten in place, no new version), also when it is a restored older version or the generated-from one; no
+ * remembered choice. ▾ = "Save as new version (vM)" (the next number ever given). The open version being a Baseline
+ * (the pre-Lab original code, never overwritten yet) asks first ([History.overwriteConfirm]): Overwrite / Save as new.
+ * A source with no version yet (not saved, or no history) has a plain Save (a new version).
  */
 @Composable
 private fun SaveSplitButton(
     state: SourceLabScreenModel.State,
     editorState: SourceEditorScreenModel.State,
-    onSave: (inPlace: Boolean?) -> Unit,
+    onSave: (inPlace: Boolean) -> Unit,
 ) {
-    val tablet = isTabletUi()
-    val modePreference = remember { SourceEditorScreenModel.saveModePreference() }
-    val mode by modePreference.collectPreferenceAsState()
     var menuOpen by remember { mutableStateOf(false) }
+    var confirm by remember { mutableStateOf<String?>(null) }
     val history = state.history
     val current = History.currentOf(history)
     val next = maxOf(history.lastN, history.versions.lastOrNull()?.n ?: 0) + 1
     val enabled = editorState.running == null
-    if (!editorState.saved || current == 0) {
-        FilledTonalButton(onClick = { onSave(null) }, enabled = enabled) {
+    if (!editorState.saved || current == 0 || History.updateBlockedReason(history) != null) {
+        FilledTonalButton(onClick = { onSave(false) }, enabled = enabled) {
             Icon(Icons.Outlined.Save, contentDescription = null, modifier = Modifier.width(18.dp))
             Text("  Save")
         }
-    } else {
-        // r102 fix: generated-from, Baseline and restored (non-newest) versions are kept: Update is disabled with why
-        val updateBlocked = History.updateBlockedReason(history)
-        val canUpdate = updateBlocked == null
-        val updateIsDefault = canUpdate && mode == SourceEditorScreenModel.SAVE_MODE_UPDATE
-        Box {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                FilledTonalButton(
-                    onClick = { onSave(null) },
-                    enabled = enabled,
-                    shape = RoundedCornerShape(topStart = 20.dp, bottomStart = 20.dp, topEnd = 4.dp, bottomEnd = 4.dp),
-                    contentPadding = PaddingValues(start = 14.dp, end = 12.dp),
-                ) {
-                    Icon(Icons.Outlined.Save, contentDescription = null, modifier = Modifier.width(18.dp))
-                    Text(
-                        when {
-                            !updateIsDefault -> "  Save as v$next"
-                            tablet -> "  Update v$current (current)"
-                            else -> "  Update v$current"
-                        },
-                        maxLines = 1,
-                    )
-                }
-                Spacer(Modifier.width(2.dp))
-                FilledTonalButton(
-                    onClick = { menuOpen = true },
-                    enabled = enabled,
-                    shape = RoundedCornerShape(topStart = 4.dp, bottomStart = 4.dp, topEnd = 20.dp, bottomEnd = 20.dp),
-                    contentPadding = PaddingValues(0.dp),
-                    modifier = Modifier.width(40.dp),
-                ) {
-                    Icon(Icons.Outlined.ArrowDropDown, contentDescription = "Save options")
-                }
+        return
+    }
+    val question = History.overwriteConfirm(history)
+    Box {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            FilledTonalButton(
+                onClick = { if (question != null) confirm = question else onSave(true) },
+                enabled = enabled,
+                shape = RoundedCornerShape(topStart = 20.dp, bottomStart = 20.dp, topEnd = 4.dp, bottomEnd = 4.dp),
+                contentPadding = PaddingValues(start = 14.dp, end = 12.dp),
+            ) {
+                Icon(Icons.Outlined.Save, contentDescription = null, modifier = Modifier.width(18.dp))
+                Text("  Save to v$current", maxLines = 1)
             }
-            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                DropdownMenuItem(
-                    text = {
-                        Column {
-                            Text("Update v$current (current)")
-                            Text(
-                                updateBlocked ?: "Overwrites v$current, no new version",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    },
-                    leadingIcon = {
-                        if (updateIsDefault) Icon(Icons.Outlined.Check, contentDescription = "Default") else Spacer(Modifier.width(24.dp))
-                    },
-                    enabled = canUpdate,
-                    onClick = {
-                        menuOpen = false
-                        onSave(true)
-                    },
-                )
-                DropdownMenuItem(
-                    text = {
-                        Column {
-                            Text("Save as v$next")
-                            Text(
-                                "Keeps v$current as it is and adds v$next",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    },
-                    leadingIcon = {
-                        if (!updateIsDefault) Icon(Icons.Outlined.Check, contentDescription = "Default") else Spacer(Modifier.width(24.dp))
-                    },
-                    onClick = {
-                        menuOpen = false
-                        onSave(false)
-                    },
-                )
+            Spacer(Modifier.width(2.dp))
+            FilledTonalButton(
+                onClick = { menuOpen = true },
+                enabled = enabled,
+                shape = RoundedCornerShape(topStart = 4.dp, bottomStart = 4.dp, topEnd = 20.dp, bottomEnd = 20.dp),
+                contentPadding = PaddingValues(0.dp),
+                modifier = Modifier.width(40.dp),
+            ) {
+                Icon(Icons.Outlined.ArrowDropDown, contentDescription = "Save options")
             }
         }
+        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+            DropdownMenuItem(
+                text = {
+                    Column {
+                        Text("Save as new version (v$next)")
+                        Text(
+                            "Keeps v$current as it is and adds v$next",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                },
+                leadingIcon = { Icon(Icons.Outlined.Add, contentDescription = null) },
+                onClick = {
+                    menuOpen = false
+                    onSave(false)
+                },
+            )
+        }
+    }
+    confirm?.let { text ->
+        AlertDialog(
+            onDismissRequest = { confirm = null },
+            title = { Text("Overwrite v$current?") },
+            text = { Text(text) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirm = null
+                        onSave(true)
+                    },
+                ) { Text("Overwrite") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        confirm = null
+                        onSave(false)
+                    },
+                ) { Text("Save as new") }
+            },
+        )
     }
 }
 

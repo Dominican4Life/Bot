@@ -54,7 +54,7 @@
     },
     "search": {
       "title": "Search",
-      "text": "The search path with the words and page filled (the address recorded from a real search on the site, or its search box, when there is one), the same cards. Each filter adds its value: a \"param\" filter as param=value, a \"path\" filter (a genre or sort list of the site, /genres/{value}) by opening that list's address instead when no words are typed (left out while searching for words); a sort filter sends its picked option's value; empty ones are left out. A grouped tag tapped on a title page arrives as \"Group: tag\": a filter named like the group with an option labelled like the tag picks that option; else only the tag's words are searched.",
+      "text": "The search path with the words and page filled (the address recorded from a real search on the site, or its search box, when there is one), the same cards. Each filter adds its value: a \"param\" filter as param=value, a \"path\" filter (a genre or sort list of the site, /genres/{value}) by opening that list's address instead when no words are typed (left out while searching for words); a sort filter sends its picked option's value; empty ones are left out. A grouped tag tapped on a title page arrives as \"Group: tag\": a filter named like the group with an option labelled like the tag picks that option; else only the tag's words are searched. A text box with suggestions (\"autocomplete\") sends the names typed: each is matched to its list's entry by label (any case), a name not in the list goes as a slug; a path filter uses the first, a param filter joins them with commas.",
       "ruleIds": []
     },
     "getDetails": {
@@ -87,7 +87,7 @@
     },
     "extras": {
       "title": "Tabs, filters and settings",
-      "text": "Added only when \"Lists and options\" recorded some: tabs become buttons at the top of Browse (getCatalogs / getCatalog with the same cards), filters the filter sheet (dropdowns, sort lists, checkboxes, text; search adds their values or opens their list's address), settings the source's settings (read with host.preference.get(\"key\")).",
+      "text": "Added only when \"Lists and options\" recorded some: tabs become buttons at the top of Browse (getCatalogs / getCatalog with the same cards), filters the filter sheet (dropdowns, sort lists, checkboxes, text, text boxes with suggestions; search adds their values or opens their list's address), settings the source's settings (read with host.preference.get(\"key\")).",
       "optional": true,
       "ruleIds": []
     },
@@ -116,6 +116,13 @@
         "search"
       ],
       "note": "Tags grouped by the rows you tap (Cast, Maker…); tapping a grouped tag searches it in the source."
+    },
+    "6": {
+      "parts": [
+        "search",
+        "extras"
+      ],
+      "note": "Filters made from the site's menus: one per group; long lists can be a text box with suggestions."
     }
   }
 }

@@ -698,6 +698,38 @@ Commit 4754c926. The owner's r101 run: the builder stayed on "home page · step 
 - **Not done / to watch**: JSON-format builds get no tag groups; "hand-edited" detection compares with the last builder-written History version; learn.js has no reply when its script fails to load (rows show "missing").
 - **What must not change**: Tags stays armed until tapped off; "missing" learned entries never become options; Update in place never touches Baseline / generated-from / restored versions; every genre contains ":" when groups exist.
 
+## Changes in r103 (1 November 2026)
+
+Commit TBD. "Speed and battery": the r95 audit was re-checked against r102's code (`scratchpad/r103/recheck-01-02-03.md`, `recheck-04-05.md`: about 30 items fixed earlier, about 37 still present, about 15 new since r96), and items 1–11 of the owner-approved list were done here; **cold start (extensions / logs folder off the main thread) and History / Updates query changes (migration 58) are held for r104**. The owner's r102 feedback was added (Save button, Edit button, builder space, menus → filters, tag order). Writers from `scratchpad/r103/CONTRACT.md` and `CONTRACT-B.md`, then reviews, behaviour tests and two fix passes.
+
+### Downloads, reader, images
+- **Downloaded chapter open: one lookup** (`ChapterLoader` → `DownloadPageLoader(chapterDir)`, `DownloadManager.buildPageList(files)`, `ChapterVideoDownloads.attachFromDirectory(pages, files)`): the folder is found once and listed once for pages and video pairing. `DownloadProvider` keeps the `downloads/Manga` listing 10 s, dropped on storage change, `getMangaDir`, source-folder rename / delete, a finished download and `SourceFolderLinks.generation` (r99 links are read fresh). Log `D download Downloaded chapter lookup: 1 lookup, …`.
+- **Reader**: the download button runs on IO; the queue check lists the title folder once per request (not one lookup per chapter); the transition view and preload trust the download index only when it says "downloaded", else check storage on IO. Pages-panel tiles use `loadThumbnail` (below the reader's preloads, no 10-page preload). Settings › Data sizes on IO; the chapter panel's date formatter built once; `ChapterCache` created lazily off main.
+- **Coil disk cache 1 GB** (still capped at 2 % of total storage by Coil). **Download index re-scan default 12 h** (was 1 h), the root listed once per re-scan.
+
+### Anime and video
+- **Anime badges**: `refreshAll` lists the Anime root once and each source folder once per pass (exact name, then case-insensitive, then one-by-one fallback if folders change mid-pass); r99 links and r90 case-twin rules kept. **Anime Stats** reads the manager's counts. **Anime Browse** saves a page in one transaction (`AnimeRepository.networkToLocalAll`) and skips unchanged rows.
+- **VideoFinder**: results kept 10 min per (source, page, frame, referer), max 30; never for test runtimes (`fresh`, editor / Re-test / builder); `forgetPage` on an anime download failure and the player's self-healing; the next-episode preload is skipped for sources using `findVideo` (found when the episode starts); a playlist caught twice is read once, the next copy if the first fails. The ad list now anchors `vast`.
+
+### Logs, Diagnostics, JS
+- **Logs are written once**: the memory-mapped ring is the only store when it maps — **moved to `filesDir/app_log/log.ring`** (migrated from `cacheDir/diag/`; Android may clear the cache) — earlier runs are restored by ring order (not clock time), an old `log.txt` tail is merged then deleted, Clear writes `app_log/cleared_at`. Fallback to `log.txt` when the ring can't map.
+- **Logs tab** builds lines / chips / keys on `Dispatchers.Default`; the rail's problem count uses `AppLog.problemsInNewest` off main; **watchdogs pause in the background** (initial state from the process importance); the Memory line every 60 s unless it moved ≥ 16 MB.
+- **JS**: `JsStorage` write-behind (1 s, flushed on app stop, on `JsRuntime.close` off main and in the crash handler, `flushAllNow`); stdlib fetch cache ≤ 50 addresses, index `__fetchCache:#index` updated through one promise chain; `JsWebUrls` writes only changes; `LabStore` cache bounded; Rules screen reads off composition; Device files listing is `suspend`. The debug-logs switch stays on by default (one volatile read per line).
+
+### Browse
+- **Tag boxes**: one immutable copy and one sort per list (key: identity + size + first / last tag), max 4 cached. **Extensions** lists filtered off main and kept. **Feed** rows load only when the Feed tab is shown (`FeedShown`); global search closes its 5-thread pool on dispose.
+
+### Source Lab (owner's r102 feedback)
+- **Save**: the main button always saves in place to the **open** version ("Save to v3", also a restored or generated version); ▾ = "Save as new version (vN)". The first in-place save of a **Baseline** version asks first. Leave / replace dialogs save a new version. `pref_lab_save_mode` removed.
+- **Edit** (builder sources) is next to **Open in Browse** in Test Run (removed from Source info). Test Run: an omitted `coverUrl` counts as present when the list gave a cover; the Filters step shows the exact address tried (`Sort = Today → GET /… → 0 titles`).
+- **Builder space**: the "Tapping for…" rows are gone; labels are armed from the Labels card; one slim "Tapping for: X · Stop" bar over the page; the edit banner can be dismissed; the hint shows only until the first pick.
+- **Pick a menu on the site** (replaces "List for a filter"): the tapped heading / toggle / dropdown and the list it controls (hidden entries included; sub-headings → subgroups; index words → index subgroups) → one card per group: **Make filter** (that group only), **Learn addresses** (no links), **Fetch the full list** → Dropdown or **Text box with suggestions** (autocomplete; default over 60 entries). Menus that only exist once opened get a hint instead of a lumped group.
+- **Tags**: every tapped row adds a group (identity = its selector; unlabelled rows "Tags", "Tags 2"…), ordered by the rows' **page order** (`docIndex`); picks are label-anchored / position-free so they work for every title; a Description tap on a chip or link picks the description block; taps in the site's menus warn (kept on request).
+- **generic-list v6**: autocomplete filters in `search` (path: first value; param: comma join; unknown text as a slug; "-x" skipped; "Group: tag" maps into them); `getFilters` gives the JsFilters autocomplete shape. Update 5 → 6 replaces `search` and `extras`.
+
+- **Not done (r104)**: cold start (manga extension loading and the logs folder lookup off the main thread) and History / Updates queries (migration 58: `UNION ALL`, `date_fetch` index, scoped `historyView`).
+- **What must not change**: the log ring stays in `filesDir`; test runtimes never use the VideoFinder memo; the reader shows "not downloaded" only after a storage check; Feed models wait for `FeedShown`.
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.

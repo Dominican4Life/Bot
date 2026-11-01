@@ -1,7 +1,11 @@
 package eu.kanade.tachiyomi.diagnostics
 
+import android.app.ActivityManager
 import android.app.Application
+import android.os.Handler
+import android.os.Looper
 import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import eu.kanade.tachiyomi.jssource.JsSourceManager
@@ -61,6 +65,32 @@ internal class DiagnosticsEngine(private val app: Application) : Diagnostics {
         LiveSampler.init(app, scope)
         TraceWriter.init(app)
         NetStats.install()
+        // KMK (r103 fix pass): the watchdogs start paused unless an activity is started or the process is being
+        // started for one (foreground importance: a launch from the launcher or a notification), so a stall during
+        // a cold start is still caught. A process started for a job / broadcast pauses at once, or after 10 s when
+        // no activity came by then
+        val lifecycle = ProcessLifecycleOwner.get().lifecycle
+        val started = lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+        val launching = !started && runCatching {
+            val info = ActivityManager.RunningAppProcessInfo()
+            ActivityManager.getMyMemoryState(info)
+            info.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+        }.getOrDefault(true)
+        Watchdogs.inForeground = started || launching
+        if (launching) {
+            Handler(Looper.getMainLooper()).postDelayed(
+                {
+                    if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) Watchdogs.inForeground = false
+                },
+                10_000L,
+            )
+        }
+        AppLog.add(
+            'D',
+            "diag",
+            "Watchdogs start ${if (started || launching) "running" else "paused"} " +
+                "(activity started: $started, launching one: $launching)",
+        )
         Watchdogs.start(app)
         ProbeRuntime.init(app, scope, probeStore)
         LogCapture.onChanged = { armAutoOff() }

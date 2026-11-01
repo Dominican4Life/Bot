@@ -15,6 +15,7 @@ import eu.kanade.tachiyomi.data.anime.AnimeRepository
 import eu.kanade.tachiyomi.data.anime.AnimeVideoFetcher
 import eu.kanade.tachiyomi.data.anime.Episode
 import eu.kanade.tachiyomi.data.download.SourceFolderLinks
+import eu.kanade.tachiyomi.data.download.SourceFolders
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.data.download.video.ParallelVideoDownload
 import eu.kanade.tachiyomi.network.NetworkHelper
@@ -40,6 +41,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import okhttp3.Headers
 import okhttp3.Request
@@ -113,11 +115,59 @@ class AnimeDownloadManager(
     private class AnimeFolder(val dir: UniFile, val shared: Boolean)
 
     /**
+     * KMK (r103): one pass's listing of `downloads/Anime` ([root], its folders in [children]) and, read the first
+     * time a title needs it, of each source folder. [refreshAll] and [downloadedCounts] look every title up in it,
+     * so a pass lists the root once and each source folder once instead of per title (up to r102 every title listed
+     * the whole Anime root, checked each of its folders and asked each source folder for the title by name: about
+     * five storage queries per title, seconds on an SD card with 300 anime). [epoch] is [folderChanges] when it was
+     * read: once a folder was made or deleted since, titles are looked up one by one again (as before).
+     */
+    private class FolderListing(val root: UniFile?, val children: List<UniFile>, val epoch: Int) {
+        private val sourceFolders = ConcurrentHashMap<Long, List<UniFile>>()
+        private val listings = ConcurrentHashMap<String, List<UniFile>>()
+        val sourceListings = AtomicInteger()
+
+        /** A source's folders: linked to its id first (r99, link order), then the ones [match] accepts, best first */
+        fun sourceDirs(sourceId: Long, match: SourceFolders.Match): List<UniFile> =
+            sourceFolders.computeIfAbsent(sourceId) {
+                val linked = SourceFolderLinks.existing(SourceFolderLinks.Kind.ANIME, sourceId, children)
+                // As SourceFolders.findIn, on folders already known to be folders (no isDirectory query per folder)
+                val matched = children
+                    .mapNotNull { dir -> match.rank(dir.name!!)?.let { dir to it } }
+                    .sortedBy { it.second }
+                    .map { it.first }
+                (linked + matched).distinctBy { it.name }
+            }
+
+        /** What is in a source folder, listed once per pass */
+        fun childrenOf(dir: UniFile): List<UniFile> =
+            listings.computeIfAbsent(dir.name.orEmpty()) {
+                sourceListings.incrementAndGet()
+                dir.listFiles().orEmpty().toList()
+            }
+
+        /** The folder [name] in [dir]: the exact name first, else the same apart from letter case (as findFile) */
+        fun folderIn(dir: UniFile, name: String): UniFile? {
+            val children = childrenOf(dir)
+            val hit = children.firstOrNull { it.name == name }
+                ?: children.firstOrNull { it.name.equals(name, ignoreCase = true) }
+            return hit?.takeIf { it.isDirectory }
+        }
+    }
+
+    /**
+     * KMK (r103): bumped when an anime or source folder is made ([findAnimeFolder] with create), an anime's folder is
+     * deleted or folders are linked anew, so a [FolderListing] read before it is no longer used.
+     */
+    private val folderChanges = AtomicInteger()
+
+    /**
      * KMK (r94): a view of the IO pool with at most 8 threads. The manager's own jobs (queue restore, folder reads,
      * deletes) never need more, and a fan-out from here can no longer take every IO worker from the rest of the app.
      * The downloads themselves run in [AnimeDownloadJob]'s scope, not this one.
      */
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(SCOPE_PARALLELISM))
+    private val ioView = Dispatchers.IO.limitedParallelism(SCOPE_PARALLELISM)
+    private val scope = CoroutineScope(SupervisorJob() + ioView)
     private val queuePref = preferenceStore.getStringSet("anime_download_queue", emptySet())
 
     private val _queue = MutableStateFlow<List<Item>>(emptyList())
@@ -359,6 +409,20 @@ class AnimeDownloadManager(
             saveQueue()
             // KMK (r88): a failed download starts afresh when retried
             ParallelVideoDownload.discard(pieceKey(next.episode), labelOf(next))
+            // KMK (r103 fix pass): and finds its video again (the links the video finder kept may be what failed)
+            forgetFoundVideos(next)
+        }
+    }
+
+    /** KMK (r103 fix pass): drops what the video finder kept for a failed episode of a JS source (cheap, no IO) */
+    private fun forgetFoundVideos(item: Item) {
+        runCatching {
+            val js = sourceManager.get(item.anime.source) as? eu.kanade.tachiyomi.jssource.JsAnimeSource ?: return
+            eu.kanade.tachiyomi.jssource.VideoFinder.forgetPage(
+                item.episode.url,
+                js.info.key,
+                "the download of ${labelOf(item)} failed",
+            )
         }
     }
 
@@ -398,29 +462,87 @@ class AnimeDownloadManager(
         if (animes.isEmpty()) return
         scope.launch {
             val started = System.currentTimeMillis()
-            ensureLibraryNames()
-            val gate = Semaphore(REFRESH_PARALLELISM)
-            val done = AtomicInteger()
-            coroutineScope {
-                animes.forEach { anime ->
-                    launch {
-                        gate.withPermit {
-                            try {
-                                reload(anime)
-                            } catch (e: Exception) {
-                                if (e is CancellationException) throw e
-                                logcat(LogPriority.WARN, e) { "Couldn't read the download folder of ${anime.title}" }
-                            }
-                        }
-                        // Badges fill in as the scan goes, without one update per title
-                        if (done.incrementAndGet() % REFRESH_BATCH == 0) _changes.update { it + 1 }
-                    }
-                }
-            }
-            _changes.update { it + 1 }
+            scanAll(animes, "library")
             val ms = System.currentTimeMillis() - started
             AppLog.add('I', LOG_TAG, "Anime download folders: ${animes.size} read in $ms ms")
         }
+    }
+
+    /**
+     * KMK (r103): Stats' downloaded episodes. Titles whose folder was already read ([refreshAll], the anime page,
+     * a download) are counted from what the manager holds; only the others are read now, in one pass with one
+     * listing of the Anime root and of each source folder. Up to r102 Stats read every favourite's folder again,
+     * one after another (each with its own root listing).
+     */
+    suspend fun downloadedCounts(animes: List<Anime>): Map<Long, Int> = withContext(ioView) {
+        val started = System.currentTimeMillis()
+        val missing = animes.filter { !fileCache.containsKey(it.id) }
+        if (missing.isNotEmpty()) scanAll(missing, "stats")
+        val counts = animes.associate { it.id to downloadedCount(it) }
+        AppLog.add(
+            'D',
+            LOG_TAG,
+            "Anime Stats downloads: ${animes.size - missing.size} of ${animes.size} titles from memory, " +
+                "${missing.size} read now, ${System.currentTimeMillis() - started} ms",
+        )
+        counts
+    }
+
+    /**
+     * KMK (r94/r103): reads the folders of [animes] into [fileCache]: the library's names once, then at most
+     * [REFRESH_PARALLELISM] titles at a time, all looked up in one [FolderListing]. No `runBlocking` anywhere on this
+     * path (r94); runs on the caller's dispatcher (the manager's 8-thread [ioView]).
+     */
+    private suspend fun scanAll(animes: List<Anime>, why: String) {
+        val started = System.currentTimeMillis()
+        ensureLibraryNames()
+        val listing = try {
+            listAnimeRoot()
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            logcat(LogPriority.WARN, e) { "Couldn't list the anime download folder" }
+            null
+        }
+        val listedMs = System.currentTimeMillis() - started
+        val gate = Semaphore(REFRESH_PARALLELISM)
+        val done = AtomicInteger()
+        val oneByOne = AtomicInteger()
+        coroutineScope {
+            animes.forEach { anime ->
+                launch {
+                    gate.withPermit {
+                        try {
+                            // A folder made or deleted since the listing: this title is looked up on its own
+                            val current = listing?.takeIf { it.epoch == folderChanges.get() }
+                            if (current == null) oneByOne.incrementAndGet()
+                            reload(anime, current)
+                        } catch (e: Exception) {
+                            if (e is CancellationException) throw e
+                            logcat(LogPriority.WARN, e) { "Couldn't read the download folder of ${anime.title}" }
+                        }
+                    }
+                    // Badges fill in as the scan goes, without one update per title
+                    if (done.incrementAndGet() % REFRESH_BATCH == 0) _changes.update { it + 1 }
+                }
+            }
+        }
+        _changes.update { it + 1 }
+        AppLog.add(
+            'D',
+            LOG_TAG,
+            "Anime download lookup ($why): ${animes.size} titles, Anime folder listed once " +
+                "(${listing?.children?.size ?: 0} source folders, $listedMs ms), " +
+                "${listing?.sourceListings?.get() ?: 0} source folder listings, ${oneByOne.get()} looked up one by one, " +
+                "${System.currentTimeMillis() - started} ms",
+        )
+    }
+
+    /** KMK (r103): `downloads/Anime` and its folders, read once for a [scanAll] pass (nothing is created) */
+    private fun listAnimeRoot(): FolderListing {
+        val epoch = folderChanges.get()
+        val root = storageManager.getAnimeDownloadsDirectory(false)
+        val children = root?.listFiles().orEmpty().filter { it.isDirectory && !it.name.isNullOrBlank() }
+        return FolderListing(root, children, epoch)
     }
 
     fun findEpisodeFile(anime: Anime, episode: Episode): UniFile? {
@@ -468,14 +590,17 @@ class AnimeDownloadManager(
     /** KMK (r90): episode videos in the anime's folder, read now (Stats); only its own in a shared folder */
     fun episodeFileCount(anime: Anime): Int = listFiles(anime).count { isEpisodeVideo(it) }
 
-    /** KMK (r88): reads the folder and the episode names again */
-    private suspend fun reload(anime: Anime) {
+    /**
+     * KMK (r88): reads the folder and the episode names again. KMK (r103): with [listing], the anime's folder is
+     * looked up in that pass's listing instead of listing the Anime root and its source folder again.
+     */
+    private suspend fun reload(anime: Anime, listing: FolderListing? = null) {
         // KMK (r90): the episode names first, a shared folder's files are picked by them
         val counts = loadNameCounts(anime.id)
         if (counts != null) nameCounts[anime.id] = counts else nameCounts.remove(anime.id)
         // KMK (r94): and the library's names, so the letter-case check below finds them in the cache
         ensureLibraryNames()
-        fileCache[anime.id] = listFiles(anime)
+        fileCache[anime.id] = listFiles(anime, listing)
     }
 
     /**
@@ -588,6 +713,7 @@ class AnimeDownloadManager(
             } else {
                 folder?.dir?.delete()
             }
+            if (folder != null) folderChanges.incrementAndGet() // KMK (r103): a pass's listing may still hold it
             fileCache[anime.id] = emptySet()
             nameCounts.remove(anime.id)
             // KMK (r88): and the pieces kept for any of its episodes
@@ -655,6 +781,7 @@ class AnimeDownloadManager(
                 )
             }
             if (recovered > 0) {
+                folderChanges.incrementAndGet() // KMK (r103): new links, a pass's listing of them is out of date
                 fileCache.clear()
                 nameCounts.clear()
                 _changes.update { it + 1 }
@@ -677,20 +804,30 @@ class AnimeDownloadManager(
         libraryNames = null
     }
 
-    private fun findAnimeFolder(anime: Anime, create: Boolean): AnimeFolder? {
+    /**
+     * KMK (r103): [listing] (only without [create]): a [scanAll] pass's listing of the Anime root and the source
+     * folders, used instead of listing them again for this title. Same lookup order and rules as without it.
+     */
+    private fun findAnimeFolder(anime: Anime, create: Boolean, listing: FolderListing? = null): AnimeFolder? {
+        val listed = listing?.takeIf { !create }
         // downloads/Anime (the older "anime" folder counts too)
-        val animeRoot = storageManager.getAnimeDownloadsDirectory(create) ?: return null
+        val animeRoot = (if (listed != null) listed.root else storageManager.getAnimeDownloadsDirectory(create))
+            ?: return null
         val title = DiskUtil.buildValidFilename(anime.title)
         val match = sourceMatch(anime)
         // KMK (r99): the folders linked to the source's id first (a renamed source keeps its folder), then by name
-        val sourceDirs = eu.kanade.tachiyomi.data.download.SourceFolders
-            .findLinked(animeRoot, SourceFolderLinks.Kind.ANIME, anime.source, match)
+        val sourceDirs = listed?.sourceDirs(anime.source, match)
+            ?: SourceFolders.findLinked(animeRoot, SourceFolderLinks.Kind.ANIME, anime.source, match)
         val twins = caseTwinNames(anime, title)
         if (twins.isEmpty()) {
             // KMK: the anime's folder wherever it already is
-            sourceDirs.firstNotNullOfOrNull { dir -> dir.findFile(title)?.takeIf { it.isDirectory } }
+            sourceDirs
+                .firstNotNullOfOrNull { dir ->
+                    if (listed != null) listed.folderIn(dir, title) else dir.findFile(title)?.takeIf { it.isDirectory }
+                }
                 ?.let { return AnimeFolder(it, shared = false) }
             if (!create) return null
+            folderChanges.incrementAndGet() // KMK (r103): a folder may be made now
             val sourceDir = sourceDirs.firstOrNull()
                 ?: eu.kanade.tachiyomi.data.download.SourceFolders.findOrCreate(animeRoot, sourceDirName(anime), match)
                 ?: return null
@@ -705,7 +842,7 @@ class AnimeDownloadManager(
         // after this anime's episodes count ([listFiles]).
         val tagged = taggedDirName(anime)
         val folders = sourceDirs.flatMap { dir ->
-            dir.listFiles().orEmpty().filter { it.isDirectory && it.name != null }
+            (listed?.childrenOf(dir) ?: dir.listFiles().orEmpty().toList()).filter { it.isDirectory && it.name != null }
         }
         folders.firstOrNull { it.name == title }?.let { return AnimeFolder(it, shared = true) }
         folders.firstOrNull { it.name == tagged }?.let { return AnimeFolder(it, shared = true) }
@@ -722,6 +859,7 @@ class AnimeDownloadManager(
                 ?.let { return AnimeFolder(it, shared = true) }
         }
         if (!create) return null
+        folderChanges.incrementAndGet() // KMK (r103): a folder may be made now
         val sourceDir = sourceDirs.firstOrNull()
             ?: eu.kanade.tachiyomi.data.download.SourceFolders.findOrCreate(animeRoot, sourceDirName(anime), match)
             ?: return null
@@ -785,8 +923,8 @@ class AnimeDownloadManager(
     }
 
     /** KMK (r90): in a shared folder, only the files named after this anime's episodes (none if unknown) */
-    private fun listFiles(anime: Anime): Set<String> {
-        val folder = findAnimeFolder(anime, create = false) ?: return emptySet()
+    private fun listFiles(anime: Anime, listing: FolderListing? = null): Set<String> {
+        val folder = findAnimeFolder(anime, create = false, listing) ?: return emptySet()
         val names = folder.dir.listFiles()?.mapNotNull { it.name }?.toSet() ?: return emptySet()
         if (!folder.shared) return names
         val counts = nameCountsOf(anime) ?: return emptySet()

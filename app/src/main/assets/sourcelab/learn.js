@@ -216,6 +216,8 @@
       // Still taking taps with nothing armed: a group pick ("List for a filter") is waiting; it would eat the clicks
       var root = document.documentElement;
       if (root && root.classList.contains("__lab-picking") && typeof p.groupMode === "function") p.groupMode(false);
+      // r103: "Pick a menu on the site" waiting for its tap would eat them too
+      if (root && root.classList.contains("__lab-picking") && typeof p.menuMode === "function") p.menuMode(false);
     } catch (e) { /* nothing */ }
   }
 

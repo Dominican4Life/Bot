@@ -187,14 +187,15 @@ class ReaderViewModel @JvmOverloads constructor(
      * @param chapter the chapter to download.
      */
     private fun downloadChapter(chapter: Chapter) {
-        viewModelScope.launch {
+        // KMK (r103): off the main thread (the queue check looks at the title's download folder)
+        viewModelScope.launchIO {
             val manga = manga?.let {
                 if (it.source == MERGED_SOURCE_ID) {
-                    state.value.mergedManga?.get(chapter.mangaId) ?: return@launch
+                    state.value.mergedManga?.get(chapter.mangaId) ?: return@launchIO
                 } else {
                     it
                 }
-            } ?: return@launch
+            } ?: return@launchIO
             downloadManager.downloadChapters(manga, listOf(chapter))
             downloadManager.startDownloads()
         }
@@ -510,6 +511,8 @@ class ReaderViewModel @JvmOverloads constructor(
         // KMK <--
 
         val currentChapter = getCurrentChapter()
+        // KMK (r103): one formatter for the whole list (it was built for every chapter)
+        val dateFormat = UiPreferences.dateFormat(uiPreferences.dateFormat().get())
 
         return chapterList.map {
             ReaderChapterItem(
@@ -518,7 +521,7 @@ class ReaderViewModel @JvmOverloads constructor(
                 manga = mangaList[it.chapter.manga_id] ?: manga,
                 // KMK <--
                 isCurrent = it.chapter.id == currentChapter?.chapter?.id,
-                dateFormat = UiPreferences.dateFormat(uiPreferences.dateFormat().get()),
+                dateFormat = dateFormat,
             )
         }
     }
@@ -639,7 +642,9 @@ class ReaderViewModel @JvmOverloads constructor(
         if (chapter.pageLoader?.isLocal == false) {
             val manga = state.value.mergedManga?.get(chapter.chapter.manga_id) ?: manga ?: return
             val dbChapter = chapter.chapter
-            val isDownloaded = downloadManager.isChapterDownloaded(
+            // KMK (r103 fix pass): the download index is trusted when it says "downloaded"; when it says no (not
+            // loaded yet, or behind the storage) the storage is checked on IO, as up to r102 (on the caller's thread)
+            val inIndex = downloadManager.isIndexLoaded && downloadManager.isChapterDownloaded(
                 dbChapter.name,
                 dbChapter.scanlator,
                 dbChapter.url,
@@ -647,8 +652,28 @@ class ReaderViewModel @JvmOverloads constructor(
                 manga.ogTitle,
                 // SY <--
                 manga.source,
-                skipCache = true,
+                skipCache = false,
             )
+            val isDownloaded = inIndex || withIOContext {
+                downloadManager.isChapterDownloaded(
+                    dbChapter.name,
+                    dbChapter.scanlator,
+                    dbChapter.url,
+                    // SY -->
+                    manga.ogTitle,
+                    // SY <--
+                    manga.source,
+                    skipCache = true,
+                )
+            }.also { onStorage ->
+                if (onStorage && downloadManager.isIndexLoaded) {
+                    eu.kanade.tachiyomi.util.system.AppLog.add(
+                        'D',
+                        "reader",
+                        "preload: ${dbChapter.name} is downloaded but not in the download index (found on storage)",
+                    )
+                }
+            }
             if (isDownloaded) {
                 chapter.state = ReaderChapter.State.Wait
             }

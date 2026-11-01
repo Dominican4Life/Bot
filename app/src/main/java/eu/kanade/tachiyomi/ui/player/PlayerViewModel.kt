@@ -2658,6 +2658,19 @@ class PlayerViewModel @JvmOverloads constructor(
 
         preloadJob?.cancel()
         preloadJob = viewModelScope.launchIO {
+            // KMK (r103): a source whose videos are found by playing the episode page in a hidden browser
+            // (host.findVideo) would load and play a second video, muted, while this one plays, and hold the
+            // source's other calls for up to 45 s. Its next episode's videos are found when that episode starts.
+            if (usesVideoFinder(source)) {
+                PlayerDebugLog.add("preload", "Skipped: ${source.name} finds its videos by playing the page")
+                eu.kanade.tachiyomi.util.system.AppLog.add(
+                    'D',
+                    "video",
+                    "Next-episode preload skipped for ${source.name}: it uses host.findVideo, " +
+                        "the videos are found when the episode starts",
+                )
+                return@launchIO
+            }
             PlayerDebugLog.add("preload", "Fetching the videos of '${nextEpisode.name}'")
             try {
                 val hosters = EpisodeLoader.getHosters(nextEpisode, anime, source, allowDownloaded = false)
@@ -2692,6 +2705,20 @@ class PlayerViewModel @JvmOverloads constructor(
     }
 
     private fun PreloadedEpisode.isFresh(): Boolean = System.currentTimeMillis() - fetchedAt < PRELOAD_MAX_AGE_MS
+
+    /** KMK (r103): per JS source key, whether its code calls host.findVideo (read once per player) */
+    private val finderSources = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
+    /** KMK (r103): a JS source whose code calls `host.findVideo` (IO: reads the source's code the first time) */
+    private fun usesVideoFinder(source: AnimeSource): Boolean {
+        val js = source as? eu.kanade.tachiyomi.jssource.JsAnimeSource ?: return false
+        return finderSources.getOrPut(js.info.key) {
+            val code = runCatching {
+                Injekt.get<eu.kanade.tachiyomi.jssource.JsSourceManager>().code(js.info.key)
+            }.getOrNull()
+            code != null && "findVideo" in code
+        }
+    }
 
     /** The preloaded hosters of [episode] when they're recent and the episode wasn't downloaded meanwhile */
     private fun takePreloadedHosters(episode: Episode): List<Hoster>? {
@@ -2775,6 +2802,8 @@ class PlayerViewModel @JvmOverloads constructor(
         viewModelScope.launchIO {
             eventChannel.send(Event.ShowToast(KMR.strings.player_link_refreshing))
             try {
+                // KMK (r103): fresh links, not the video finder's kept results (kept 10 min per page)
+                eu.kanade.tachiyomi.jssource.VideoFinder.forget("the player is getting fresh links")
                 val hosters = EpisodeLoader.getHosters(domainEpisode, anime, source, allowDownloaded = false)
                 if (currentEpisode.value?.id != episodeId) return@launchIO
                 check(hosters.isNotEmpty()) { "The source returned no hosters" }

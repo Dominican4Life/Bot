@@ -48,6 +48,11 @@ object MemoryLog {
             var detailAt = 0L
             var lastImagesMb = 0L
             var lastJsMb = 0f
+            // KMK (r103): while memory is high but steady, the 10 s line is skipped (see HIGH_STEP_MB); counted here
+            // and reported in one D line at most every SKIP_REPORT_MS
+            var lastNativeLogged = 0L
+            var skippedHigh = 0
+            var skipReportAt = 0L
             while (true) {
                 delay(SAMPLE_MS)
                 runCatching {
@@ -76,10 +81,33 @@ object MemoryLog {
                     // Every minute, and every 10 seconds while memory climbs fast or is high
                     val climbing = used - lastLogged >= CLIMB_MB
                     val high = used * 100 / max.coerceAtLeast(1) >= HIGH_PERCENT
-                    if (now - lastLineAt >= everyMs || climbing || high) {
+                    // KMK (r103): a high reading writes a line only when it moved since the last line (heap or
+                    // native by HIGH_STEP_MB or more); a steady high heap falls back to the minute (most of a
+                    // reading session sits above 60 %, which wrote a near-identical line every 10 s)
+                    val native = if (high) nativeMb() else lastNativeLogged
+                    val highMoved = high && (
+                        kotlin.math.abs(used - lastLogged) >= HIGH_STEP_MB ||
+                            kotlin.math.abs(native - lastNativeLogged) >= HIGH_STEP_MB
+                        )
+                    if (now - lastLineAt >= everyMs || climbing || highMoved) {
                         line(if (climbing) "climbing +${used - lastLogged} MB" else null)
                         lastLineAt = now
                         lastLogged = used
+                        lastNativeLogged = nativeMb()
+                    } else if (high) {
+                        skippedHigh++
+                    }
+                    if (skippedHigh > 0 && now - skipReportAt >= SKIP_REPORT_MS) {
+                        if (skipReportAt > 0L) {
+                            AppLog.add(
+                                'D',
+                                "Memory",
+                                "$skippedHigh high-memory lines skipped in the last ${SKIP_REPORT_MS / 60_000} min: " +
+                                    "use moved less than $HIGH_STEP_MB MB (a line is still written every minute)",
+                            )
+                            skippedHigh = 0
+                        }
+                        skipReportAt = now
                     }
                     highSamples = if (used >= max * TRIM_AT) highSamples + 1 else 0
                     if (highSamples >= TRIM_AFTER_SAMPLES && now - lastTrimAt >= TRIM_COOLDOWN_MS) {
@@ -240,6 +268,12 @@ object MemoryLog {
     private const val SAMPLE_MS = 10_000L
     private const val CLIMB_MB = 40L
     private const val HIGH_PERCENT = 60L
+
+    /** KMK (r103): a high reading moved this much (heap or native) since the last line: write it at once */
+    private const val HIGH_STEP_MB = 16L
+
+    /** KMK (r103): at most one "lines skipped" D line this often */
+    private const val SKIP_REPORT_MS = 10 * 60_000L
     private const val MB = 1024L * 1024L
     private const val TRIM_AT = 0.75
     /** Samples in a row (10 s apart) past [TRIM_AT] before a trim */
