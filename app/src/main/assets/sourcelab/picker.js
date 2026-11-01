@@ -9,12 +9,51 @@
 // "browse" leaves the page alone so a title page can be opened by hand. The app switches with
 // window.__labPicker.setMode("pick" | "browse"). Injected again after every page load and on in-page (SPA)
 // navigations, so it has to be idempotent: a second run only puts the style back and re-applies the mode.
+//
+// r98: every message to the app goes through send(): the LabPicker bridge when the page can call it, else
+// console.log("LABPICK:" + json) / console.log("LABLOG:" + text), which the app's WebChromeClient takes. The
+// outlines are inline !important styles drawn inside the element (outline-offset < 0), so a card with
+// overflow:hidden or a site rule can't hide them, and a small badge at the top of the page says what was picked.
+// r98 fix: the console fallback carries a per-session token the app injects as window.__labToken right before this
+// script ("LABPICK:<token>:<json>"); the app ignores console lines without it, so the page can't fake a pick. The
+// token is taken off window at once. Unpainting puts back the element's own inline outline / background values.
 (function () {
+  var TOKEN = "";
+  try {
+    TOKEN = String(window.__labToken || "");
+    delete window.__labToken;
+  } catch (e0) { /* nothing */ }
+
+  function bridgeHas(name) {
+    try {
+      return typeof LabPicker !== "undefined" && LabPicker && typeof LabPicker[name] === "function";
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function send(kind, text) {
+    var method = kind === "pick" ? "pick" : "log";
+    if (bridgeHas(method)) {
+      try {
+        LabPicker[method](text);
+        return;
+      } catch (e) {
+        // falls through to the console
+      }
+    }
+    try { console.log((kind === "pick" ? "LABPICK:" : "LABLOG:") + TOKEN + ":" + text); } catch (e2) { /* nothing left to try */ }
+  }
+
   var STYLE_ID = "__lab-picker-style";
   var STYLE_TEXT =
-    ".__lab-like{outline:2px dashed #7aa2ff !important;outline-offset:1px !important}" +
-    ".__lab-picked{outline:3px solid #2962ff !important;outline-offset:1px !important}" +
-    ".__lab-kept{outline:2px solid #4cd3c2 !important;outline-offset:-1px !important}" +
+    ".__lab-like{outline:2px dashed #ff6d00 !important;outline-offset:-2px !important}" +
+    ".__lab-picked{outline:3px solid #2962ff !important;outline-offset:-3px !important;background-color:rgba(41,98,255,.12) !important}" +
+    ".__lab-kept{outline:2px solid #00bfa5 !important;outline-offset:-2px !important}" +
+    "#__lab-badge{position:fixed !important;left:8px !important;right:8px !important;top:8px !important;z-index:2147483647 !important;" +
+    "background:#2962ff !important;color:#fff !important;font:600 13px/1.3 sans-serif !important;padding:6px 10px !important;" +
+    "border-radius:8px !important;box-shadow:0 2px 8px rgba(0,0,0,.35) !important;pointer-events:none !important;" +
+    "white-space:nowrap !important;overflow:hidden !important;text-overflow:ellipsis !important}" +
     "html.__lab-picking a,html.__lab-picking a *,html.__lab-picking button,html.__lab-picking [role=button]{cursor:crosshair !important}";
 
   function ensureStyle() {
@@ -35,7 +74,7 @@
     // Same window (an SPA route change, or the app injecting again): the listeners are still attached
     ensureStyle();
     applyModeClass(window.__labPicker.mode);
-    if (window.LabPicker && window.LabPicker.log) window.LabPicker.log("picker already on " + location.href + " (" + window.__labPicker.mode + ")");
+    send("log", "already on " + location.href + " (" + window.__labPicker.mode + ")");
     return;
   }
   ensureStyle();
@@ -112,12 +151,64 @@
     return /^https?:\/\//.test(v) || v.indexOf("//") === 0;
   }
 
+  // Inline !important beats any stylesheet rule (a site's `*{outline:none !important}` included). r98 fix: the
+  // element's own inline values (and their priority) are saved the first time it is painted and put back after
+  var STYLED = [];
+  var PAINTED = ["outline", "outline-offset", "background-color"];
+  function paint(el, outline, offset, background) {
+    try {
+      var saved = null;
+      for (var s = 0; s < STYLED.length; s++) if (STYLED[s].el === el) saved = STYLED[s];
+      if (!saved) {
+        saved = { el: el, values: {} };
+        for (var p = 0; p < PAINTED.length; p++) {
+          saved.values[PAINTED[p]] = [el.style.getPropertyValue(PAINTED[p]), el.style.getPropertyPriority(PAINTED[p])];
+        }
+        STYLED.push(saved);
+      }
+      el.style.setProperty("outline", outline, "important");
+      el.style.setProperty("outline-offset", offset, "important");
+      if (background) el.style.setProperty("background-color", background, "important");
+    } catch (e) { /* an SVG node without style */ }
+  }
+
+  function unpaint(saved) {
+    try {
+      for (var p = 0; p < PAINTED.length; p++) {
+        var name = PAINTED[p];
+        var before = saved.values[name];
+        if (before && before[0]) saved.el.style.setProperty(name, before[0], before[1] || "");
+        else saved.el.style.removeProperty(name);
+      }
+    } catch (e) { /* nothing */ }
+  }
+
   function clearMarks() {
     var marked = document.querySelectorAll(".__lab-like, .__lab-picked");
     for (var i = 0; i < marked.length; i++) {
       marked[i].classList.remove("__lab-like");
       marked[i].classList.remove("__lab-picked");
     }
+    for (var j = 0; j < STYLED.length; j++) {
+      // a kept element keeps its class outline (the stylesheet draws it once the inline style is gone)
+      unpaint(STYLED[j]);
+    }
+    STYLED = [];
+    showBadge(null);
+  }
+
+  function showBadge(text) {
+    var badge = document.getElementById("__lab-badge");
+    if (!text) {
+      if (badge && badge.parentNode) badge.parentNode.removeChild(badge);
+      return;
+    }
+    if (!badge) {
+      badge = document.createElement("div");
+      badge.id = "__lab-badge";
+      (document.body || document.documentElement).appendChild(badge);
+    }
+    badge.textContent = text;
   }
 
   function describe(el) {
@@ -167,11 +258,23 @@
     return "";
   }
 
+  // The tapped element solid blue (tinted), its repeats dashed orange; returns how many there are
   function mark(el) {
     clearMarks();
     var likes = queryAll(likeSelector(pathOf(el)));
-    for (var i = 0; i < likes.length; i++) likes[i].classList.add("__lab-like");
+    for (var i = 0; i < likes.length; i++) {
+      if (likes[i] === el) continue;
+      likes[i].classList.add("__lab-like");
+      paint(likes[i], "2px dashed #ff6d00", "-2px", null);
+    }
     el.classList.add("__lab-picked");
+    paint(el, "3px solid #2962ff", "-3px", "rgba(41,98,255,.12)");
+    return likes.indexOf(el) < 0 ? likes.length + 1 : likes.length;
+  }
+
+  function shortName(path) {
+    var parts = likeSelector(path).split(" > ");
+    return parts[parts.length - 1] || path;
   }
 
   function onTap(event) {
@@ -190,11 +293,12 @@
       if (inner && el.children.length === 1) el = inner;
       else if (link && String(el.textContent || "").trim().length > 0 && String(el.textContent || "").trim() === String(link.textContent || "").trim()) el = link;
     }
-    mark(el);
+    var count = mark(el);
+    showBadge("Picked " + shortName(pathOf(el)) + " \u00d7" + count + " \u2014 now tap a label in the app");
     try {
-      if (window.LabPicker && window.LabPicker.pick) window.LabPicker.pick(JSON.stringify(describe(el)));
+      send("pick", JSON.stringify(describe(el)));
     } catch (e) {
-      if (window.LabPicker && window.LabPicker.log) window.LabPicker.log("pick failed: " + e.message);
+      send("log", "pick failed: " + e.message);
     }
   }
 
@@ -228,13 +332,16 @@
       window.__labPicker.mode = mode;
       applyModeClass(mode);
       if (mode === "browse") clearMarks();
-      if (window.LabPicker && window.LabPicker.log) window.LabPicker.log("picker mode " + mode + " on " + location.href);
+      send("log", "mode " + mode + " on " + location.href);
       return mode;
     },
     // Keeps the outline on the elements already labelled (called by the app after a label is given)
     keep: function (selector) {
+      clearMarks();
       var els = queryAll(selector);
       for (var i = 0; i < els.length; i++) els[i].classList.add("__lab-kept");
+      showBadge("Labelled " + els.length + " \u2014 tap the next thing");
+      setTimeout(function () { showBadge(null); }, 2500);
       return els.length;
     },
     clear: function () {
@@ -244,5 +351,5 @@
     },
     count: function (selector) { return queryAll(selector).length; },
   };
-  if (window.LabPicker && window.LabPicker.log) window.LabPicker.log("picker ready (" + mode + ") on " + location.href);
+  send("log", "ready (" + mode + ") on " + location.href + " \u00b7 bridge " + (bridgeHas("pick") ? "yes" : "no, console"));
 })();

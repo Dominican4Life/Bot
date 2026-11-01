@@ -242,7 +242,7 @@ internal object ApkImport {
                 )
                 if (fromApk.isNotEmpty()) append(". From the APK's strings: ${fromApk.joinToString("; ")}")
                 if (guessed.isNotEmpty()) append(". Guessed: ${guessed.joinToString("; ")}")
-                if (!recognised) append(". The parts that read pages are not written: use Build by tapping or the extension's code on GitHub")
+                if (!recognised) append(". The parts that read pages are not written: use Record and convert (r98), Build by tapping or the extension's code on GitHub")
                 append(".")
             },
         )

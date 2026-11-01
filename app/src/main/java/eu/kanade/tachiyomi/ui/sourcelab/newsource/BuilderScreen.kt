@@ -1,12 +1,17 @@
 package eu.kanade.tachiyomi.ui.sourcelab.newsource
 
 import android.annotation.SuppressLint
+import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -57,6 +62,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -78,6 +84,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import tachiyomi.presentation.core.components.material.Scaffold
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.util.UUID
 
 /**
  * KMK (r96, Source Lab): "Build by tapping" (D§2.4, still 04). The site in a WebView card with picker.js
@@ -88,7 +95,20 @@ import uy.kohesive.injekt.api.get
  */
 internal class BuilderScreen(private val startUrl: String? = null, private val anime: Boolean = false) : Screen(), LabFlowScreen {
 
-    /** What the page calls: `LabPicker.pick(json)` and `LabPicker.log(text)`; runs on a WebView thread */
+    /**
+     * r98 fix: a random token for this screen, put on the page as `window.__labToken` right before picker.js (which
+     * takes it off window at once). A console line is a pick only when it carries it ("LABPICK:<token>:<json>"), so
+     * the site's own `console.log` can't fake one. The bridge path doesn't need it (only this app adds LabPicker).
+     */
+    private val labToken: String = UUID.randomUUID().toString().replace("-", "")
+
+    /**
+     * What the page calls: `LabPicker.pick(json)` and `LabPicker.log(text)`; runs on a WebView thread. r98: both
+     * methods are kept from R8 by `-keepclassmembers class * { @android.webkit.JavascriptInterface <methods>; }` in
+     * proguard-rules.pro (without it the release build removed them as unused: the page saw a `LabPicker` with no
+     * `pick`, so no tap ever reached the app). picker.js also falls back to `console.log("LABPICK:<token>:" + json)`,
+     * taken by the WebChromeClient below only with this screen's [labToken].
+     */
     private class Bridge(private val model: BuilderScreenModel) {
         @JavascriptInterface
         fun pick(json: String) {
@@ -114,13 +134,17 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
             if (state.delivered) navigator.popUntil { it !is LabFlowScreen }
         }
         // Page requests from the model (Go, Next: open a title / a chapter). Each request is loaded once: after a
-        // rotation the tick is already handled (the recreated WebView reloads the page shown, see WebCard's factory)
+        // rotation the tick is already handled (the recreated WebView reloads the page shown, see WebCard's factory).
+        // r98: a request that comes before the WebView exists waits for it (webGeneration), instead of being
+        // marked handled with nothing loaded
         var handledLoadTick by rememberSaveable { mutableIntStateOf(-1) }
-        LaunchedEffect(state.loadTick) {
+        var webGeneration by remember { mutableIntStateOf(0) }
+        LaunchedEffect(state.loadTick, webGeneration) {
             if (state.loadTick == handledLoadTick) return@LaunchedEffect
+            val web = holder[0] ?: return@LaunchedEffect
             handledLoadTick = state.loadTick
             val url = state.loadUrl ?: return@LaunchedEffect
-            holder[0]?.loadUrl(url)
+            web.loadUrl(url)
         }
         // picker.js arrives from the asset read after the first page may have loaded: injected once per arrival
         // (not from AndroidView.update, which ran on every recomposition)
@@ -209,9 +233,15 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
                 )
                 UrlRow(state, model, holder)
+                PickHint(state, model)
                 if (tablet) {
                     Row(modifier = Modifier.fillMaxSize()) {
-                        WebCard(model, holder, modifier = Modifier.weight(1f).fillMaxHeight().padding(start = 16.dp, bottom = 16.dp))
+                        WebCard(
+                            model,
+                            holder,
+                            onCreated = { webGeneration++ },
+                            modifier = Modifier.weight(1f).fillMaxHeight().padding(start = 16.dp, bottom = 16.dp),
+                        )
                         Column(
                             modifier = Modifier
                                 .width(400.dp)
@@ -226,7 +256,12 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
                     }
                 } else {
                     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-                        WebCard(model, holder, modifier = Modifier.fillMaxWidth().height(420.dp).padding(horizontal = 16.dp))
+                        WebCard(
+                            model,
+                            holder,
+                            onCreated = { webGeneration++ },
+                            modifier = Modifier.fillMaxWidth().height(420.dp).padding(horizontal = 16.dp),
+                        )
                         Column(modifier = Modifier.padding(16.dp)) {
                             LabelsPane(state, model)
                             Spacer(Modifier.height(12.dp))
@@ -237,30 +272,6 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
             }
         }
 
-        val pending = state.pending
-        if (pending != null) {
-            AlertDialog(
-                onDismissRequest = model::dismissPending,
-                title = { Text("What is it?") },
-                text = {
-                    Column {
-                        Text(
-                            "${pending.tag} · ${pending.count} like it on the page" + (if (pending.text.isNotBlank()) " · \"${pending.text.take(60)}\"" else ""),
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Text(pending.likeSelector, fontFamily = FontFamily.Monospace, fontSize = 12.sp, modifier = Modifier.padding(vertical = 8.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            state.labels.forEach { label ->
-                                FilterChip(selected = false, onClick = { model.label(label) }, label = { Text(labelName(label)) })
-                            }
-                        }
-                    }
-                },
-                confirmButton = { TextButton(onClick = model::dismissPending) { Text("Not this") } },
-            )
-        }
         val error = state.error
         if (error != null) {
             AlertDialog(
@@ -298,6 +309,55 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
         }
     }
 
+    /**
+     * KMK (r98): the step after a tap, above the page on phone and tablet alike: "Picked a.title ×24 — now tap a
+     * label" with this page's labels as chips (the Labels card's rows take a tap too). r96 asked in a dialog that
+     * covered the page and its outlines.
+     */
+    @Composable
+    private fun PickHint(state: BuilderScreenModel.State, model: BuilderScreenModel) {
+        val pending = state.pending ?: return
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.primaryContainer,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+        ) {
+            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                Text(
+                    "Picked ${BuilderScreenModel.shortSelector(pending.likeSelector)} ×${pending.count} — now tap a label",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (pending.text.isNotBlank()) {
+                    Text(
+                        "\"${pending.text.take(80)}\"",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                ) {
+                    state.labels.forEach { label ->
+                        FilterChip(
+                            selected = state.pick(label) != null,
+                            onClick = { model.label(label) },
+                            label = { Text(labelName(label)) },
+                        )
+                    }
+                    TextButton(onClick = model::dismissPending) { Text("Not this") }
+                }
+            }
+        }
+    }
+
     /** `window.__labPicker.setMode(...)`: a no-op until the picker is on the page */
     private fun modeScript(pick: Boolean): String =
         "window.__labPicker && window.__labPicker.setMode(${JsonPrimitive(if (pick) "pick" else "browse")})"
@@ -309,13 +369,14 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
      */
     private fun inject(view: WebView, model: BuilderScreenModel) {
         val script = model.state.value.pickerScript ?: return
-        view.evaluateJavascript(script, null)
+        // One evaluation: no page script runs between setting the token and picker.js taking it
+        view.evaluateJavascript("window.__labToken = ${JsonPrimitive(labToken)};\n$script", null)
         view.evaluateJavascript(modeScript(model.state.value.pickMode), null)
     }
 
     @SuppressLint("SetJavaScriptEnabled")
     @Composable
-    private fun WebCard(model: BuilderScreenModel, holder: Array<WebView?>, modifier: Modifier) {
+    private fun WebCard(model: BuilderScreenModel, holder: Array<WebView?>, onCreated: () -> Unit, modifier: Modifier) {
         val userAgent = remember { Injekt.get<NetworkHelper>().defaultUserAgentProvider() }
         Surface(
             shape = RoundedCornerShape(16.dp),
@@ -333,7 +394,28 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
                         settings.userAgentString = userAgent
                         settings.blockNetworkImage = false
                         settings.loadsImagesAutomatically = true
+                        // Before any loadUrl: an interface is only visible to pages loaded after it was added
                         addJavascriptInterface(Bridge(model), "LabPicker")
+                        // r98: picker.js's fallback when the bridge isn't there: console.log("LABPICK:<token>:" + json)
+                        webChromeClient = object : WebChromeClient() {
+                            override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
+                                val text = consoleMessage?.message() ?: return false
+                                // r98 fix: only lines that carry this screen's token; any other is the page's own
+                                val pick = "$PICK_PREFIX$labToken:"
+                                val log = "$LOG_PREFIX$labToken:"
+                                return when {
+                                    text.startsWith(pick) -> {
+                                        model.onPick(text.removePrefix(pick), viaConsole = true)
+                                        true
+                                    }
+                                    text.startsWith(log) -> {
+                                        model.onPickerLog(text.removePrefix(log))
+                                        true
+                                    }
+                                    else -> false
+                                }
+                            }
+                        }
                         webViewClient = object : WebViewClient() {
                             // Navigations stay in this WebView (Browse mode, Go, Next); in Pick mode the page never
                             // starts one, picker.js takes the tap first
@@ -355,6 +437,7 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
                             }
                         }
                         holder[0] = this
+                        onCreated()
                         // A recreated WebView (rotation) shows the page it showed; the first one waits for the
                         // loadTick effect in Content (so the start URL isn't loaded twice)
                         val shown = model.state.value.pageUrl
@@ -372,7 +455,7 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Labels", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                     Text(
-                        "${state.picks.size} picked · tap the page, then a label",
+                        if (state.pending != null) "now tap a label" else "${state.picks.size} picked · tap the page, then a label",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -381,16 +464,31 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
                 all.forEach { label ->
                     val pick = state.pick(label)
                     val here = label in state.labels
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                    // r98: with a tap waiting, this page's labels take it (the same as the chips above the page)
+                    val choosable = here && state.pending != null
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (choosable) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f) else Color.Transparent)
+                            .clickable(enabled = choosable) { model.label(label) }
+                            .padding(vertical = 6.dp),
+                    ) {
                         Icon(
                             if (pick != null) Icons.Outlined.CheckBox else Icons.Outlined.CheckBoxOutlineBlank,
                             contentDescription = null,
-                            tint = if (pick != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                            tint = when {
+                                pick != null -> MaterialTheme.colorScheme.primary
+                                choosable -> MaterialTheme.colorScheme.onPrimaryContainer
+                                else -> MaterialTheme.colorScheme.outline
+                            },
                         )
                         Spacer(Modifier.width(10.dp))
                         Text(labelName(label), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.width(110.dp))
                         Text(
                             text = when {
+                                choosable -> "tap here: it is the ${labelName(label).lowercase()}"
                                 pick != null -> pick.likeSelector.substringAfterLast(" > ") + " · ${pick.pick.count}"
                                 here -> "tap it on the page"
                                 label in BuilderScreenModel.Step.TitlePage.labels -> "open a title to pick it"
@@ -477,6 +575,11 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
                 }
             }
         }
+    }
+
+    private companion object {
+        const val PICK_PREFIX = "LABPICK:"
+        const val LOG_PREFIX = "LABLOG:"
     }
 
     private fun labelName(label: String): String = when (label) {

@@ -48,9 +48,33 @@ internal object LabStore {
         tick.update { it + 1 }
     }
 
-    /** Every saved source with its sidecar facts, newest change first; re-read on every save, run or lint */
+    /**
+     * Every saved source with its sidecar facts, newest change first; re-read on every save, run or lint. r98: a
+     * source with no history first gets its code as v1 "Baseline" ([baseline], once per source and process).
+     */
     fun sources(): Flow<List<LabSource>> = combine(manager.savedFlow, tick) { saved, _ -> saved }
-        .map { infos -> withContext(Dispatchers.IO) { infos.map { source(it) } } }
+        .map { infos ->
+            withContext(Dispatchers.IO) {
+                infos.forEach { baseline(it) }
+                infos.map { source(it) }
+            }
+        }
+
+    /** Keys already given a baseline (or found with history) in this process */
+    private val baselined = ConcurrentHashMap.newKeySet<String>()
+
+    /** KMK (r98): v1 "Baseline" for a saved source without history, so History always has the code to go back to */
+    private fun baseline(info: JsSourceInfo) {
+        // A source saved a moment ago is getting its own v1 from onSaved (savedFlow changes before the manager calls
+        // onSaved): writing "Baseline" first would take that version's note. Left for a later pass.
+        if (System.currentTimeMillis() - info.updatedAt < BASELINE_SETTLE_MS) return
+        if (!baselined.add(info.key)) return
+        runCatching {
+            if (History.index(info.key).versions.isNotEmpty()) return
+            val code = manager.code(info.key) ?: return
+            if (History.baseline(info.key, code, info.json) != null) cache.keys.removeAll { it.startsWith("${info.key}@") }
+        }.onFailure { AppLog.add('W', "lab", "Couldn't write the baseline of ${info.name}: ${it.message}") }
+    }
 
     fun source(key: String): LabSource? = manager.get(key)?.let { source(it) }
 
@@ -68,6 +92,7 @@ internal object LabStore {
             anime = info.anime,
             json = info.json,
             hasVideos = !info.anime && hasVideos(code, info.json),
+            // r98: the version the code is now (a restored one), not the newest
             version = runCatching { History.latestVersion(info.key) }.getOrDefault(0),
             lastRun = lastRun,
             lastLint = lastLint,
@@ -105,7 +130,18 @@ internal object LabStore {
      * whichever save came first.
      */
     fun onSaved(info: JsSourceInfo, code: String, note: String? = null) {
-        History.append(info.key, code, info.json, note ?: "Saved")
+        // r98: a Restore's save carries RESTORE_NOTE + n: the version becomes current, no new version is added
+        val restored = note?.takeIf { it.startsWith(RESTORE_NOTE) }?.removePrefix(RESTORE_NOTE)?.toIntOrNull()
+        if (restored != null) {
+            // r98 fix: the version may have gone between the Restore and this save (trimmed or deleted): then the
+            // newest version with the same code is marked current (or the code is added), never left unmarked
+            if (!History.setCurrent(info.key, restored)) {
+                AppLog.add('W', "lab", "${info.name}: v$restored is gone, marking the version with the same code current")
+                History.markCurrentByCode(info.key, code, info.json, "Restored v$restored")
+            }
+        } else {
+            History.append(info.key, code, info.json, note ?: "Saved")
+        }
         invalidate(info.key)
         scope.launch {
             runCatching { Lint.run(info.key) }
@@ -178,7 +214,18 @@ internal object LabStore {
         Adopted.Saved(info, idNote)
     }
 
-    /** Writes version [n]'s code back as a new version ("Restored vN") through the manager's save; Lint follows */
+    /**
+     * The note a Restore passes to the manager's save: [onSaved] then marks the version current instead of
+     * appending one (r98). It travels with the call, like every History note (r96: no shared pending field).
+     */
+    const val RESTORE_NOTE = "\u0000restore:"
+
+    private const val BASELINE_SETTLE_MS = 30_000L
+
+    /**
+     * Writes version [n]'s code back as the source's code through the manager's save and marks it current in
+     * `index.json` (r98: no new version; r96 added "Restored vN"); Lint follows.
+     */
     suspend fun restore(key: String, n: Int): Result<JsSourceInfo> = withContext(Dispatchers.IO) {
         val info = manager.get(key) ?: return@withContext Result.failure<JsSourceInfo>(IllegalStateException("The source is gone"))
         val code = History.code(key, n) ?: return@withContext Result.failure<JsSourceInfo>(IllegalStateException("Version $n was trimmed"))
@@ -197,7 +244,7 @@ internal object LabStore {
                     baseUrl = info.baseUrl,
                     lab = info.lab,
                 ),
-                note = "Restored v$n",
+                note = RESTORE_NOTE + n,
             )
         }.onFailure {
             AppLog.add('W', "lab", "Restoring v$n of ${info.name} failed: ${it.message}")

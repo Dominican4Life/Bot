@@ -164,7 +164,6 @@ internal object LiveSampler {
     private var lastPssAt = 0L
     private var lastPssMb = 0
     private var deviceTotalMb = -1
-    private var maxWorkerIndex = 0
 
     /** MemoryLog.trim tells the sampler (shown on the Memory page) */
     fun noteTrim(text: String) {
@@ -211,7 +210,6 @@ internal object LiveSampler {
 
         // Workers
         val w = countThreads()
-        Watchdogs.noteIoBusy(w.ioBusy)
         // One honest "busy workers" series (Default and IO share the DefaultDispatcher-worker threads) + JS
         rings.write(Resource.WORKERS, now, intervalMs, floatArrayOf(w.ioBusy.toFloat(), jsBusy.toFloat()))
 
@@ -365,35 +363,30 @@ internal object LiveSampler {
             threadArray = arrayOfNulls(threadArray.size * 2)
             count = group.enumerate(threadArray, true)
         }
-        // Slots are sized from the highest worker index seen (the scheduler names workers 1..N, N can pass 64), cap 128
+        // KMK (r98): the pool is the IO limit (64), not the highest worker index. IO and Default share the
+        // DefaultDispatcher-worker threads (a release build had 72 of them, so "2/75"); a thread's name doesn't say
+        // which dispatcher it serves, and the scheduler keeps idle workers for 60 s. So the 64 slots are filled by
+        // state — running, then blocked, then parked — and threads past 64 (idle Default/IO workers) are not slots.
         var busy = 0
         var parked = 0
         var blocked = 0
-        var workers = 0
-        var maxIdx = 0
         for (i in 0 until count) {
             val t = threadArray[i] ?: continue
-            val name = t.name
-            if (!name.startsWith("DefaultDispatcher-worker-")) continue
-            val idx = name.substringAfterLast('-').toIntOrNull() ?: continue
-            if (idx > maxIdx) maxIdx = idx
-        }
-        if (maxIdx > maxWorkerIndex) maxWorkerIndex = maxIdx.coerceAtMost(MAX_SLOTS)
-        val total = maxOf(DiagBudget.IO_POOL_DEFAULT, maxWorkerIndex)
-        val slots = ByteArray(total)
-        for (i in 0 until count) {
-            val t = threadArray[i] ?: continue
-            val name = t.name
-            if (!name.startsWith("DefaultDispatcher-worker-")) continue
-            workers++
-            val idx = (name.substringAfterLast('-').toIntOrNull() ?: workers) - 1
-            val state = when (t.state) {
-                Thread.State.RUNNABLE -> { busy++; 1 }
-                Thread.State.BLOCKED -> { blocked++; 3 }
-                else -> { parked++; 2 }
+            if (!t.name.startsWith("DefaultDispatcher-worker-")) continue
+            when (t.state) {
+                Thread.State.RUNNABLE -> busy++
+                Thread.State.BLOCKED -> blocked++
+                else -> parked++
             }
-            if (idx in 0 until total) slots[idx] = state.toByte()
         }
+        val total = DiagBudget.IO_POOL_DEFAULT
+        busy = busy.coerceAtMost(total)
+        blocked = blocked.coerceAtMost(total - busy)
+        parked = parked.coerceAtMost(total - busy - blocked)
+        val slots = ByteArray(total)
+        java.util.Arrays.fill(slots, 0, busy, 1.toByte())
+        java.util.Arrays.fill(slots, busy, busy + blocked, 3.toByte())
+        java.util.Arrays.fill(slots, busy + blocked, busy + blocked + parked, 2.toByte())
         java.util.Arrays.fill(threadArray, 0, count, null)
         val cores = Runtime.getRuntime().availableProcessors()
         return WorkerSnapshot(
@@ -674,7 +667,7 @@ internal object LiveSampler {
                 val w = workers.value
                 SampleWindow(
                     resource, window, read.startMs, stepMs, series, null, w.ioTotal.toFloat(),
-                    "${w.ioBusy} / ${w.ioTotal} IO busy",
+                    "${w.ioBusy} / ${w.ioTotal} workers busy",
                     "${w.ioParked} parked · ${w.ioBlocked} blocked · JS ${w.jsBusy} busy · ${w.threads} threads",
                     markers,
                 )
@@ -793,7 +786,6 @@ internal object LiveSampler {
     }
 
     private const val MB = 1024L * 1024L
-    private const val MAX_SLOTS = 128
 }
 
 /**

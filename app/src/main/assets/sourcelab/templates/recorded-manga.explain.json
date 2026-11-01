@@ -1,0 +1,66 @@
+{
+  "name": "Recorded from an extension (manga)",
+  "kind": "manga",
+  "defaults": {
+    "iconUrl": ""
+  },
+  "parts": {
+    "headers": {
+      "title": "Identity and headers",
+      "text": "The loaded extension's name, language and address, its own request headers (also sent with pictures), the bot check the recording met and the setting that holds the site's address.",
+      "ruleIds": []
+    },
+    "getPopular": {
+      "title": "Popular",
+      "text": "Written from the recorded popular pages 1 and 2: the request with its page number, and the fields read from the reply.",
+      "ruleIds": []
+    },
+    "getLatest": {
+      "title": "Latest",
+      "text": "Written from the recorded latest page 1.",
+      "ruleIds": []
+    },
+    "search": {
+      "title": "Search",
+      "text": "Written from the recorded search. The filters are shown in the sheet; how the extension sends them was not recorded.",
+      "ruleIds": []
+    },
+    "getDetails": {
+      "title": "Title page",
+      "text": "Written from the recorded details of the first popular title.",
+      "optional": true,
+      "ruleIds": []
+    },
+    "getChapterList": {
+      "title": "Chapters",
+      "text": "Written from the recorded list of the first popular title; the addresses keep the extension's format so library titles stay linked.",
+      "ruleIds": [
+        "stable-chapter-url"
+      ]
+    },
+    "getPageList": {
+      "title": "Pages",
+      "text": "Written from the recorded pages of the first chapter.",
+      "ruleIds": [
+        "relative-url-returned"
+      ]
+    },
+    "getFilters": {
+      "title": "Filters",
+      "text": "The extension's filter list with its names, options and defaults.",
+      "optional": true,
+      "ruleIds": []
+    },
+    "getSourcePreferences": {
+      "title": "Settings",
+      "text": "The extension's settings with the same keys and defaults.",
+      "optional": true,
+      "ruleIds": []
+    },
+    "helpers": {
+      "title": "Helpers",
+      "text": "Requests with the extension's headers and the bot-check retry, the site's address and the extension's settings, JSON paths, address pieces, the HTML pickers, numbers, dates and packed scripts.",
+      "ruleIds": []
+    }
+  }
+}

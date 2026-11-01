@@ -32,6 +32,7 @@ import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Extension
+import androidx.compose.material.icons.outlined.FiberManualRecord
 import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.TouchApp
@@ -72,9 +73,11 @@ import eu.kanade.presentation.util.isTabletUi
 import eu.kanade.tachiyomi.jssource.lab.ApkImport
 import eu.kanade.tachiyomi.jssource.lab.DetectionStep
 import eu.kanade.tachiyomi.jssource.lab.EngineGuess
+import eu.kanade.tachiyomi.jssource.lab.ExtensionRecorder
 import eu.kanade.tachiyomi.jssource.lab.FingerprintFile
 import eu.kanade.tachiyomi.jssource.lab.LabFlowScreen
 import eu.kanade.tachiyomi.jssource.lab.LabTemplate
+import eu.kanade.tachiyomi.jssource.lab.RecordedConverter
 import eu.kanade.tachiyomi.jssource.lab.StepStatus
 import eu.kanade.tachiyomi.ui.sourcelab.LabStatusStrip
 import eu.kanade.tachiyomi.ui.sourcelab.MonoCard
@@ -185,7 +188,8 @@ internal class NewSourceScreen(private val kindHint: Boolean? = null) : Screen()
         // Pickers and cards over the screen
         when (state.picker) {
             NewSourceScreenModel.Picker.Template -> TemplatePickerDialog(
-                templates = state.templates,
+                // KMK (r98): the recorded-* templates are only written by Record and convert
+                templates = state.templates.filter { !it.id.startsWith("recorded-") },
                 onPick = model::writeTemplate,
                 onDismiss = model::closePicker,
             )
@@ -198,10 +202,26 @@ internal class NewSourceScreen(private val kindHint: Boolean? = null) : Screen()
             )
             NewSourceScreenModel.Picker.Extension -> {
                 val import = state.extensionImport
-                if (import != null) {
+                val recordSteps = state.recordSteps
+                if (recordSteps != null) {
+                    // KMK (r98): Record and convert
+                    RecordDialog(
+                        row = state.extensionRow,
+                        steps = recordSteps,
+                        running = state.recording,
+                        result = state.recorded,
+                        error = state.recordError,
+                        busy = state.busy,
+                        onStop = model::stopRecording,
+                        onWrite = model::confirmRecorded,
+                        onBack = model::closeRecording,
+                    )
+                } else if (import != null) {
                     ExtensionImportDialog(
                         result = import,
+                        host = state.extensionRow?.baseUrl.orEmpty(),
                         onWrite = model::confirmExtensionImport,
+                        onRecord = model::startRecording,
                         onGitHub = {
                             val q = import.generated.lab.fromExtension.orEmpty().substringAfterLast('.')
                             context.openInBrowser("https://github.com/keiyoushi/extensions-source/search?q=$q")
@@ -212,6 +232,7 @@ internal class NewSourceScreen(private val kindHint: Boolean? = null) : Screen()
                     ExtensionPickerDialog(
                         rows = state.extensions,
                         busy = state.busy,
+                        error = state.error,
                         onPick = model::importExtension,
                         onDismiss = model::closePicker,
                     )
@@ -383,7 +404,8 @@ private fun StartFromCard(
     onDuplicate: () -> Unit,
     onExtension: () -> Unit,
 ) {
-    val engineNames = templates.filter { !it.id.startsWith("blank-") && !it.id.startsWith("generic") }.map { it.name.substringBefore(" (") }
+    val engineNames = templates.filter { !it.id.startsWith("blank-") && !it.id.startsWith("generic") && !it.id.startsWith("recorded-") }
+        .map { it.name.substringBefore(" (") }
     LabCard(title = "Or start from") {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             StartTile(Icons.Outlined.Description, "A template", engineNames.take(3).joinToString(", ").ifBlank { "blank skeletons" }, onTemplate, Modifier.weight(1f))
@@ -684,6 +706,7 @@ private fun ListPickerDialog(title: String, empty: String, items: List<Pair<Stri
 private fun ExtensionPickerDialog(
     rows: List<ApkImport.ExtensionSourceRow>?,
     busy: String?,
+    error: String?,
     onPick: (ApkImport.ExtensionSourceRow) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -706,6 +729,17 @@ private fun ExtensionPickerDialog(
                 else -> {
                     val groups = rows.groupBy { it.pkgName }
                     LazyColumn(modifier = Modifier.heightIn(max = 460.dp)) {
+                        // KMK (r98): an import that failed says why here (the screen's error dialog waits for the picker)
+                        if (error != null) {
+                            item(key = "error") {
+                                Text(
+                                    text = error,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.padding(bottom = 8.dp),
+                                )
+                            }
+                        }
                         groups.forEach { (pkg, sources) ->
                             val first = sources.first()
                             item(key = "pkg:$pkg") {
@@ -751,7 +785,14 @@ private fun ExtensionPickerDialog(
 }
 
 @Composable
-private fun ExtensionImportDialog(result: ApkImport.ImportResult, onWrite: () -> Unit, onGitHub: () -> Unit, onDismiss: () -> Unit) {
+private fun ExtensionImportDialog(
+    result: ApkImport.ImportResult,
+    host: String,
+    onWrite: () -> Unit,
+    onRecord: () -> Unit,
+    onGitHub: () -> Unit,
+    onDismiss: () -> Unit,
+) {
     val g = result.generated
     val facts = result.facts
     AlertDialog(
@@ -766,7 +807,7 @@ private fun ExtensionImportDialog(result: ApkImport.ImportResult, onWrite: () ->
                         } else if (facts.error != null) {
                             "${facts.error.replaceFirstChar { it.uppercase() }}. The Lab kept the id, name and URL. Use Build by tapping for the rest, or open its source on GitHub."
                         } else {
-                            "Custom extension: the Lab can't read its logic; it kept the id, name and URL. Use Build by tapping for the rest, or open its source on GitHub."
+                            "Custom extension: the APK's strings don't tell its logic; the template only keeps the id, name and URL. Record and convert below runs the extension and writes the parts from what it really does."
                         },
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(bottom = 10.dp),
@@ -791,9 +832,33 @@ private fun ExtensionImportDialog(result: ApkImport.ImportResult, onWrite: () ->
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 10.dp),
                 )
+                // KMK (r98): the second level, for any source; the main way for a custom extension
+                Text(
+                    text = if (result.themeRecognised) {
+                        "Record and convert runs the extension itself and writes every part from what it really does, settings and filters included."
+                    } else {
+                        "Record and convert runs the extension itself, captures its requests and writes the source from them: settings, filters, and every step it can derive."
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(top = 14.dp),
+                )
+                RecordNote(host)
+                if (result.themeRecognised) {
+                    OutlinedButton(onClick = onRecord, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                        Icon(Icons.Outlined.FiberManualRecord, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Record and convert")
+                    }
+                } else {
+                    Button(onClick = onRecord, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                        Icon(Icons.Outlined.FiberManualRecord, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Record and convert")
+                    }
+                }
             }
         },
-        confirmButton = { TextButton(onClick = onWrite) { Text("Write the source") } },
+        confirmButton = { TextButton(onClick = onWrite) { Text(if (result.themeRecognised) "Write the source" else "Template only") } },
         dismissButton = {
             Row {
                 TextButton(onClick = onGitHub) {
@@ -803,6 +868,124 @@ private fun ExtensionImportDialog(result: ApkImport.ImportResult, onWrite: () ->
                 }
                 TextButton(onClick = onDismiss) { Text("Cancel") }
             }
+        },
+    )
+}
+
+// ---------- KMK (r98): Record and convert ----------
+
+@Composable
+private fun RecordNote(host: String) {
+    val site = host.removePrefix("https://").removePrefix("http://").trimEnd('/').ifBlank { "the site" }
+    Text(
+        text = "It uses your installed extension and your connection: about 10–20 requests to $site and the hosts it calls, " +
+            "${ExtensionRecorder.STEP_TIMEOUT_MS / 1000} s per step at most. Nothing is added to your library. Cookie and login " +
+            "values are left out of what is kept. The extension may save to its own settings as it always does. Only its " +
+            "requests are recorded, but one the app makes meanwhile to the same site can slip in, so wait on this screen.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 6.dp),
+    )
+}
+
+@Composable
+private fun RecordDialog(
+    row: ApkImport.ExtensionSourceRow?,
+    steps: List<ExtensionRecorder.StepProgress>,
+    running: Boolean,
+    result: RecordedConverter.Result?,
+    error: String?,
+    busy: String?,
+    onStop: () -> Unit,
+    onWrite: () -> Unit,
+    onBack: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = { if (!running) onBack() },
+        title = { Text("Record and convert") },
+        text = {
+            Column(modifier = Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState())) {
+                if (row != null) {
+                    Text(
+                        "${row.sourceName} (${row.lang}) · ${row.extensionName} ${row.versionName}",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                }
+                if (running) RecordNote(row?.baseUrl.orEmpty())
+                Spacer(Modifier.height(8.dp))
+                if (steps.isEmpty() && running) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(12.dp))
+                        Text("Loading the extension's source…")
+                    }
+                }
+                steps.forEachIndexed { index, step ->
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                        StatusDot(step.status)
+                        Spacer(Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(step.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            step.note?.let {
+                                Text(
+                                    it,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (step.status == StepStatus.Red) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                        if (step.ms > 0) {
+                            Text(
+                                "${step.requests} req · ${step.ms / 100 / 10.0} s",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    if (index < steps.lastIndex) HorizontalDivider()
+                }
+                if (error != null) {
+                    Text(
+                        if (error == "Stopped") "Stopped: nothing was written." else "Recording failed: $error",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(top = 10.dp),
+                    )
+                }
+                if (result != null) {
+                    Spacer(Modifier.height(10.dp))
+                    val lines = buildList {
+                        add("settings        ${result.settings}")
+                        add("filters         ${result.filters}")
+                        add("steps written   ${result.written.size}${if (result.written.isNotEmpty()) " (" + result.written.joinToString(", ") + ")" else ""}")
+                        add("TODO parts      ${result.todo.size}${if (result.todo.isNotEmpty()) " (" + result.todo.joinToString(", ") + ")" else ""}")
+                        result.botCheck?.let { add("bot check       $it (passed in the hidden browser)") }
+                        add("id              ${result.generated.sourceId} (kept: library titles stay linked)")
+                    }
+                    MonoCard(title = null, text = lines.joinToString("\n"))
+                    result.notes.forEach { note ->
+                        Text(
+                            note,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            when {
+                running -> TextButton(onClick = onStop) { Text("Stop") }
+                result != null -> TextButton(onClick = onWrite, enabled = busy == null) { Text("Write the source") }
+                else -> TextButton(onClick = onBack) { Text("Back") }
+            }
+        },
+        dismissButton = {
+            if (!running && result != null) TextButton(onClick = onBack) { Text("Back") }
         },
     )
 }

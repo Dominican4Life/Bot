@@ -13,6 +13,7 @@ import eu.kanade.tachiyomi.jssource.lab.DetectionResult
 import eu.kanade.tachiyomi.jssource.lab.DetectionStep
 import eu.kanade.tachiyomi.jssource.lab.Detector
 import eu.kanade.tachiyomi.jssource.lab.EngineGuess
+import eu.kanade.tachiyomi.jssource.lab.ExtensionRecorder
 import eu.kanade.tachiyomi.jssource.lab.FingerprintFile
 import eu.kanade.tachiyomi.jssource.lab.Fingerprints
 import eu.kanade.tachiyomi.jssource.lab.GeneratedSource
@@ -20,6 +21,7 @@ import eu.kanade.tachiyomi.jssource.lab.Generator
 import eu.kanade.tachiyomi.jssource.lab.LabHandoff
 import eu.kanade.tachiyomi.jssource.lab.LabMeta
 import eu.kanade.tachiyomi.jssource.lab.LabTemplate
+import eu.kanade.tachiyomi.jssource.lab.RecordedConverter
 import eu.kanade.tachiyomi.jssource.lab.StepStatus
 import eu.kanade.tachiyomi.jssource.lab.Templates
 import eu.kanade.tachiyomi.util.system.AppLog
@@ -36,6 +38,9 @@ import uy.kohesive.injekt.api.get
  * runs, the fingerprint card, and the "Or start from" ways in (a template, Build by tapping, Import a file,
  * Duplicate a source, Import from extension). Nothing is saved here: a finished source is handed to Half A through
  * [LabHandoff] (CONTRACT-LAB §5.2).
+ *
+ * KMK (r98): Import from extension's second level, "Record and convert": [startRecording] runs the extension's own
+ * source through [ExtensionRecorder] (only on the owner's tap) and [RecordedConverter] writes the JS from it.
  */
 internal class NewSourceScreenModel(kindHint: Boolean?) : StateScreenModel<NewSourceScreenModel.State>(State(kindHint = kindHint)) {
 
@@ -57,6 +62,12 @@ internal class NewSourceScreenModel(kindHint: Boolean?) : StateScreenModel<NewSo
         val savedSources: List<Pair<String, String>> = emptyList(),   // key to name, for Duplicate
         val extensions: List<ApkImport.ExtensionSourceRow>? = null,   // null while loading
         val extensionImport: ApkImport.ImportResult? = null,          // the card after an APK was read
+        // KMK (r98): Record and convert
+        val extensionRow: ApkImport.ExtensionSourceRow? = null,       // the source the card is about
+        val recordSteps: List<ExtensionRecorder.StepProgress>? = null, // non-null once a recording started
+        val recording: Boolean = false,                               // running now
+        val recorded: RecordedConverter.Result? = null,               // the summary after the conversion
+        val recordError: String? = null,
         val busy: String? = null,                                     // "Reading the APK…", "Writing…"
         val error: String? = null,
         val botCheckUrl: String? = null,                              // a detection step hit a bot check
@@ -69,6 +80,7 @@ internal class NewSourceScreenModel(kindHint: Boolean?) : StateScreenModel<NewSo
 
     private val context: Context get() = Injekt.get<Application>()
     private var detection: Job? = null
+    private var record: Job? = null
 
     init {
         screenModelScope.launchIO {
@@ -83,7 +95,7 @@ internal class NewSourceScreenModel(kindHint: Boolean?) : StateScreenModel<NewSo
     fun setKind(kind: Boolean?) = mutableState.update { it.copy(kindHint = kind) }
 
     fun openPicker(picker: Picker) {
-        mutableState.update { it.copy(picker = picker, error = null, extensionImport = null) }
+        mutableState.update { it.copy(picker = picker, error = null, extensionImport = null, extensionRow = null) }
         when (picker) {
             Picker.Duplicate -> mutableState.update { s ->
                 s.copy(savedSources = Injekt.get<JsSourceManager>().savedFlow.value.map { it.key to it.name })
@@ -100,7 +112,21 @@ internal class NewSourceScreenModel(kindHint: Boolean?) : StateScreenModel<NewSo
         }
     }
 
-    fun closePicker() = mutableState.update { it.copy(picker = Picker.None, extensionImport = null) }
+    fun closePicker() {
+        record?.cancel()
+        record = null
+        mutableState.update {
+            it.copy(
+                picker = Picker.None,
+                extensionImport = null,
+                extensionRow = null,
+                recordSteps = null,
+                recording = false,
+                recorded = null,
+                recordError = null,
+            )
+        }
+    }
 
     fun clearError() = mutableState.update { it.copy(error = null) }
 
@@ -229,7 +255,7 @@ internal class NewSourceScreenModel(kindHint: Boolean?) : StateScreenModel<NewSo
 
     /** "Import from extension": reads the APK and shows the card; [confirmExtensionImport] hands it over */
     fun importExtension(row: ApkImport.ExtensionSourceRow) {
-        mutableState.update { it.copy(busy = "Reading the APK of ${row.extensionName}…", error = null) }
+        mutableState.update { it.copy(busy = "Reading the APK of ${row.extensionName}…", error = null, extensionRow = row) }
         screenModelScope.launchIO {
             try {
                 val result = withIOContext { ApkImport.import(context, row) }
@@ -248,6 +274,52 @@ internal class NewSourceScreenModel(kindHint: Boolean?) : StateScreenModel<NewSo
         deliver("Writing the source…") { result.generated }
     }
 
+    // ---------- KMK (r98): Record and convert ----------
+
+    /**
+     * Runs the chosen extension's own source (popular 1 and 2, latest, a search, the first title's details and
+     * chapters or episodes, the first chapter's pages or the first episode's videos) and converts what it did. Only
+     * ever started by the owner's tap; each step is time-boxed by the recorder, and nothing touches the library.
+     */
+    fun startRecording() {
+        val row = state.value.extensionRow ?: return
+        if (record?.isActive == true) return
+        mutableState.update { it.copy(recordSteps = emptyList(), recording = true, recorded = null, recordError = null, error = null) }
+        record = screenModelScope.launchIO {
+            try {
+                val recording = ExtensionRecorder.record(context, row) { steps ->
+                    mutableState.update { it.copy(recordSteps = steps) }
+                }
+                val result = RecordedConverter.convert(recording, state.value.extensionImport?.facts)
+                mutableState.update { it.copy(recording = false, recorded = result) }
+            } catch (e: CancellationException) {
+                mutableState.update { it.copy(recording = false, recordError = "Stopped") }
+                throw e
+            } catch (e: Throwable) {
+                val described = ApkImport.describe(e)
+                AppLog.add('E', "lab", "Record and convert of ${row.sourceName} (${row.pkgName}) failed: $described")
+                mutableState.update { it.copy(recording = false, recordError = described) }
+            }
+        }
+    }
+
+    fun stopRecording() {
+        record?.cancel()
+        record = null
+    }
+
+    /** Back from the record card to the import card (the APK card stays) */
+    fun closeRecording() {
+        record?.cancel()
+        record = null
+        mutableState.update { it.copy(recordSteps = null, recording = false, recorded = null, recordError = null) }
+    }
+
+    fun confirmRecorded() {
+        val result = state.value.recorded ?: return
+        deliver("Writing the source…") { result.generated }
+    }
+
     // ---------- hand-off ----------
 
     private fun deliver(busy: String, build: suspend () -> GeneratedSource) {
@@ -257,7 +329,9 @@ internal class NewSourceScreenModel(kindHint: Boolean?) : StateScreenModel<NewSo
                 val generated = withIOContext { build() }
                 LabHandoff.deliver(generated)
                 AppLog.add('I', "lab", "Handed over: ${generated.note}")
-                mutableState.update { it.copy(busy = null, picker = Picker.None, extensionImport = null, delivered = true) }
+                mutableState.update {
+                    it.copy(busy = null, picker = Picker.None, extensionImport = null, recordSteps = null, recorded = null, delivered = true)
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -273,6 +347,7 @@ internal class NewSourceScreenModel(kindHint: Boolean?) : StateScreenModel<NewSo
 
     override fun onDispose() {
         detection?.cancel()
+        record?.cancel()
         super.onDispose()
     }
 }

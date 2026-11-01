@@ -383,7 +383,7 @@ internal class DiagnosticsEngine(private val app: Application) : Diagnostics {
             append("JS sources running ${m.engines.size}, JS parsed pages ${m.jsPages} (page text ${m.jsPageTextMb} MB), ")
             append("animated tiles ${m.animatedTiles}\n")
             append("Health: ${s.health.label} · ${s.sentence}\n")
-            append("Workers: ${w.ioBusy} / ${w.ioTotal} IO busy · ${w.ioParked} parked · ${w.ioBlocked} blocked · JS ${w.jsBusy} busy · ${w.threads} threads\n")
+            append("Workers: ${w.ioBusy} / ${w.ioTotal} workers busy (IO limit ${w.ioTotal}; Default shares the threads) · ${w.ioParked} parked · ${w.ioBlocked} blocked · JS ${w.jsBusy} busy · ${w.threads} threads\n")
             append("Network: ${"%.2f".format(s.netMbps)} MB/s · ${NetStats.calls.get()} requests · ${NetStats.bytesIn.get() / (1024 * 1024)} MB in this run\n")
             append("Native: ${m.nativeMb} MB = QuickJS ${m.jsMb} + diag ${m.diagMb} + other · RSS ${m.rssMb} MB of ${m.deviceTotalMb} MB\n")
             for (e in m.engines) append("  JS ${e.name}: ${"%.1f".format(e.mb)} MB · ${e.pages} pages${if (e.busy) " · busy" else ""}\n")

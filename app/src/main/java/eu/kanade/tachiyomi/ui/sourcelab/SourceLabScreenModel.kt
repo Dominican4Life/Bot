@@ -353,17 +353,44 @@ internal class SourceLabScreenModel(
         }
     }
 
-    /** Restore vN: the version's code becomes a new version through the manager's save; the editor reloads */
+    /**
+     * Restore vN: the version's code is written to the source through the manager's save and vN is marked current
+     * (r98: no new version); the editor reloads. The caller has already asked about unsaved edits.
+     */
     fun restore(editor: SourceEditorScreenModel, n: Int) {
         val key = state.value.key ?: return
         screenModelScope.launchIO {
             LabStore.restore(key, n)
                 .onSuccess {
                     editor.open(key)
+                    mutableState.update { if (it.key == key) it.copy(selectedVersion = null, diff = emptyList()) else it }
                     loadSource(key)
-                    message("Restored v$n as v${History.latestVersion(key)}")
+                    message("v$n is the current code now (no new version)")
                 }
                 .onFailure { message("Couldn't restore v$n: ${it.message}") }
+        }
+    }
+
+    /** KMK (r98): deletes versions [ns] from History (never the current one, never the generated-from one) */
+    fun deleteVersions(ns: Set<Int>) {
+        val key = state.value.key ?: return
+        if (ns.isEmpty()) return
+        screenModelScope.launchIO {
+            val gone = runCatching { History.delete(key, ns) }
+                .onFailure { AppLog.add('W', "lab", "Deleting versions of $key failed: ${it.message}") }
+                .getOrDefault(emptyList())
+            mutableState.update {
+                if (it.key == key && it.selectedVersion?.let { v -> v in gone } == true) it.copy(selectedVersion = null, diff = emptyList()) else it
+            }
+            LabStore.invalidate(key)
+            loadSource(key)
+            message(
+                when {
+                    gone.isEmpty() -> "Nothing deleted (the current version and the generated one are kept)"
+                    gone.size == 1 -> "Deleted v${gone.first()}"
+                    else -> "Deleted ${gone.size} versions"
+                },
+            )
         }
     }
 

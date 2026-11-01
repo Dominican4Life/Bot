@@ -338,3 +338,10 @@
 -keep class eu.kanade.tachiyomi.ui.player.cast.CastOptionsProvider { *; }
 -keep class eu.kanade.tachiyomi.ui.player.cast.CustomCastProvider { <init>(android.content.Context); }
 # KMK <--
+
+# KMK --> (r98) WebView JavaScript bridges (the Source Lab's LabPicker, Discord login): their methods are only
+# called by the page through reflection, so R8 removed them as unused and the page saw no `pick` / `log`
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}
+# KMK <--

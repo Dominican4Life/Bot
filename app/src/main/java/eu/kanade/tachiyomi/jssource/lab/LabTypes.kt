@@ -67,7 +67,14 @@ internal data class LabVersion(
 )
 
 @Serializable
-internal data class LabHistoryIndex(val versions: List<LabVersion> = emptyList(), val generatedFrom: Int? = null)
+internal data class LabHistoryIndex(
+    val versions: List<LabVersion> = emptyList(),
+    val generatedFrom: Int? = null,
+    // KMK (r98): the version the source's code is now (a Restore points here instead of adding a version); null = the newest
+    val currentN: Int? = null,
+    // KMK (r98): the highest version number ever given, so a deleted number is never reused (0 = read from versions)
+    val lastN: Int = 0,
+)
 // generatedFrom = the version the code was generated from (never trimmed)
 
 // ---------- 3.3 Test Run ----------

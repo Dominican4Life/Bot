@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -24,6 +25,7 @@ import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilledTonalButton
@@ -59,6 +61,7 @@ import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.util.Screen
 import eu.kanade.presentation.util.isTabletUi
+import eu.kanade.tachiyomi.diagnostics.DiagTab
 import eu.kanade.tachiyomi.jssource.lab.GeneratedSource
 import eu.kanade.tachiyomi.jssource.lab.HealthState
 import eu.kanade.tachiyomi.jssource.lab.LabHandoff
@@ -68,6 +71,7 @@ import eu.kanade.tachiyomi.ui.codeeditor.EditorDialogs
 import eu.kanade.tachiyomi.ui.codeeditor.MenuItem
 import eu.kanade.tachiyomi.ui.codeeditor.SourceEditorScreenModel
 import eu.kanade.tachiyomi.ui.codeeditor.rememberEditorActions
+import eu.kanade.tachiyomi.ui.diagnostics.DiagnosticsScreen
 import eu.kanade.tachiyomi.ui.sourcelab.newsource.LabFlowScreenFactory
 import eu.kanade.tachiyomi.ui.sourcelab.newsource.TemplatesPane
 import kotlinx.coroutines.delay
@@ -98,6 +102,8 @@ internal class SourceLabScreen(
         var railDest by rememberSaveable { mutableStateOf(RailDest.Sources) }
         var showMenu by remember { mutableStateOf(false) }
         val pop: () -> Unit = { navigator.pop() }
+        // r98: the app's Log (Diagnostics, Log tab) on top of the Lab; Back returns here with the editor untouched
+        val openLogs: () -> Unit = { navigator.push(DiagnosticsScreen(DiagTab.LOG)) }
         val actions = rememberEditorActions(editor, editorState, onLeave = pop)
 
         // The New-source flow's result (C§5.2): taken once on arrival, and whenever one lands while this is on top.
@@ -225,6 +231,7 @@ internal class SourceLabScreen(
                         onTemplates = { railDest = RailDest.Templates },
                         onRetest = model::retestAll,
                         onTab = model::setTab,
+                        onLogs = openLogs,
                     )
                     VerticalDivider()
                 }
@@ -262,6 +269,10 @@ internal class SourceLabScreen(
                                             showMenu = false
                                             model.checkAllSources()
                                         }
+                                        MenuItem("Logs", Icons.Outlined.Terminal) {
+                                            showMenu = false
+                                            openLogs()
+                                        }
                                     } else {
                                         MenuItem("Copy code", Icons.Outlined.ContentCopy) {
                                             showMenu = false
@@ -294,6 +305,11 @@ internal class SourceLabScreen(
                                                 showMenu = false
                                                 actions.deleteSource()
                                             }
+                                        }
+                                        HorizontalDivider()
+                                        MenuItem("Logs", Icons.Outlined.Terminal) {
+                                            showMenu = false
+                                            openLogs()
                                         }
                                     }
                                 }
@@ -339,6 +355,7 @@ internal class SourceLabScreen(
                                     editorState = editorState,
                                     query = query,
                                     onQuery = { query = it },
+                                    askBeforeReplacing = actions.askBeforeReplacing,
                                     modifier = Modifier.weight(1f).fillMaxHeight(),
                                 )
                             }
@@ -372,6 +389,7 @@ internal class SourceLabScreen(
                                     editorState = editorState,
                                     query = query,
                                     onQuery = { query = it },
+                                    askBeforeReplacing = actions.askBeforeReplacing,
                                     modifier = Modifier.fillMaxSize(),
                                 )
                             }
@@ -396,6 +414,7 @@ private fun SourcePane(
     editorState: SourceEditorScreenModel.State,
     query: String,
     onQuery: (String) -> Unit,
+    askBeforeReplacing: (String, () -> Unit) -> Unit,
     modifier: Modifier,
 ) {
     when (tab) {
@@ -403,7 +422,14 @@ private fun SourcePane(
         LabTab.Test -> TestPane(state = state, model = model, editor = editor, editorState = editorState, query = query, onQuery = onQuery, modifier = modifier)
         LabTab.Lint -> LintPane(state = state, model = model, editor = editor, modifier = modifier)
         LabTab.Report -> ReportPane(state = state, model = model, modifier = modifier)
-        LabTab.History -> HistoryPane(state = state, model = model, editor = editor, editorState = editorState, modifier = modifier)
+        LabTab.History -> HistoryPane(
+            state = state,
+            model = model,
+            editor = editor,
+            editorState = editorState,
+            askBeforeReplacing = askBeforeReplacing,
+            modifier = modifier,
+        )
     }
 }
 
@@ -525,6 +551,7 @@ private fun LabRail(
     onTemplates: () -> Unit,
     onRetest: () -> Unit,
     onTab: (LabTab) -> Unit,
+    onLogs: () -> Unit,
 ) {
     NavigationRail {
         NavigationRailItem(
@@ -572,5 +599,13 @@ private fun LabRail(
                 )
             }
         }
+        // r98: Logs at the bottom of the rail (the rail's Column fills the height, so the spacer takes what's left)
+        Spacer(Modifier.weight(1f))
+        NavigationRailItem(
+            selected = false,
+            onClick = onLogs,
+            icon = { Icon(Icons.Outlined.Terminal, contentDescription = null) },
+            label = { Text("Logs") },
+        )
     }
 }

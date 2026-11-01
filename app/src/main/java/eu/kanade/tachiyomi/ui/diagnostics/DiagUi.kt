@@ -97,6 +97,7 @@ internal fun Mono(
     color: Color = MaterialTheme.colorScheme.onSurface,
     weight: FontWeight = FontWeight.Normal,
     maxLines: Int = 1,
+    textAlign: TextAlign = TextAlign.Unspecified,
 ) {
     Text(
         text,
@@ -107,6 +108,7 @@ internal fun Mono(
         fontWeight = weight,
         maxLines = maxLines,
         overflow = TextOverflow.Ellipsis,
+        textAlign = textAlign,
         modifier = modifier,
     )
 }

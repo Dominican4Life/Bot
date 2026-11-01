@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -41,6 +42,7 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -62,6 +64,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -117,7 +120,7 @@ internal fun LiveTab(model: DiagnosticsScreenModel, header: HeaderSlot, tablet: 
         onDispose { diag.setLiveVisible(false) }
     }
     DisposableEffect(capture.sampleMs) {
-        header.subtitle.value = "Overview · live · sampling ${sampleLabel(capture.sampleMs)}"
+        header.subtitle.value = "live · sampling ${sampleLabel(capture.sampleMs)}"
         header.actions.value = {
             IconButton(
                 onClick = {
@@ -145,9 +148,15 @@ internal fun LiveTab(model: DiagnosticsScreenModel, header: HeaderSlot, tablet: 
         Resource.entries.filter { it != Resource.PLAYER || player != null || tablet }
     }
 
+    // KMK (r98): the tablet is packed like tb-01 (graph + legend in one card, slider under it, usage | events side by
+    // side) so the usage rows and the events show without scrolling at 2560×1600; the phone keeps ph-01
     LazyColumn(
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 32.dp),
+        verticalArrangement = Arrangement.spacedBy(if (tablet) 8.dp else 12.dp),
+        contentPadding = if (tablet) {
+            PaddingValues(start = 0.dp, end = 0.dp, top = 4.dp, bottom = 24.dp)
+        } else {
+            PaddingValues(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 32.dp)
+        },
     ) {
         item("chips") {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -211,14 +220,14 @@ internal fun LiveTab(model: DiagnosticsScreenModel, header: HeaderSlot, tablet: 
         if (tablet) {
             item("usage-events") {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Box(modifier = Modifier.weight(1.6f)) { UsageCard(diag = diag) }
+                    Box(modifier = Modifier.weight(1.6f)) { UsageCard(diag = diag, wide = true) }
                     Box(modifier = Modifier.weight(1f)) {
                         EventsCard(window = window, onOpen = { m -> model.openLogAround(m.timeMs, m.tag) })
                     }
                 }
             }
         } else {
-            if (resource == Resource.NETWORK) item("usage") { UsageCard(diag = diag) }
+            if (resource == Resource.NETWORK) item("usage") { UsageCard(diag = diag, wide = false) }
             item("events") { EventsCard(window = window, onOpen = { m -> model.openLogAround(m.timeMs, m.tag) }) }
         }
         item("running") { RunningCard(diag = diag, onOpen = { model.setResource(it) }) }
@@ -258,10 +267,10 @@ private fun GraphCard(
     val probeCounts = remember(window.markers) {
         window.markers.filter { it.kind == MarkerKind.PROBE }.groupingBy { it.tag }.eachCount().toList()
     }
-    DiagCard {
+    val headRow: @Composable () -> Unit = {
         Row(verticalAlignment = Alignment.Top) {
             Column(modifier = Modifier.weight(1f)) {
-                Headline(window)
+                Headline(window, compact = tablet)
                 Mono(
                     window.subline,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -277,19 +286,39 @@ private fun GraphCard(
                 Caption("last ${window.window.label}${if (tablet) " · sampling ${sampleLabel(sampleMs)}" else ""}")
             }
         }
+    }
+    DiagCard(padding = if (tablet) 14 else 16) {
         if (tablet) {
-            Row(modifier = Modifier.padding(top = 8.dp)) {
-                LiveGraph(window = window, cursorTimeMs = cursor?.timeMs, onTap = onTap, modifier = Modifier.weight(1f))
-                Column(modifier = Modifier.width(220.dp).padding(start = 16.dp)) {
-                    Caption("${window.resource.label.uppercase()} · ${window.resource.unit} NOW")
+            // tb-01: the headline and the graph on the left, the legend in its own column on the right (beside the
+            // headline too, so the legend's rows don't add to the card's height)
+            Row(modifier = Modifier.height(IntrinsicSize.Min)) {
+                Column(modifier = Modifier.weight(1f)) {
+                    headRow()
+                    LiveGraph(
+                        window = window,
+                        cursorTimeMs = cursor?.timeMs,
+                        onTap = onTap,
+                        modifier = Modifier.height(TABLET_GRAPH_HEIGHT).padding(top = 6.dp),
+                    )
+                }
+                VerticalDivider(
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.padding(horizontal = 14.dp),
+                )
+                Column(modifier = Modifier.width(220.dp)) {
+                    Caption(
+                        "${window.resource.label.uppercase()} · ${window.resource.unit} NOW",
+                        modifier = Modifier.padding(top = 4.dp, bottom = 2.dp),
+                    )
                     window.series.asReversed().forEach { s ->
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(vertical = 4.dp),
+                            modifier = Modifier.padding(vertical = 3.dp),
                         ) {
                             Swatch(DiagColors.fixed(s.color))
                             Text(
                                 s.label,
+                                style = MaterialTheme.typography.bodyMedium,
                                 modifier = Modifier.weight(1f).padding(start = 8.dp),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
@@ -300,28 +329,40 @@ private fun GraphCard(
                     window.overlay?.let { s ->
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(vertical = 4.dp),
+                            modifier = Modifier.padding(vertical = 3.dp),
                         ) {
-                            Box(modifier = Modifier.width(12.dp).height(2.dp).padding(0.dp)) {
+                            Box(modifier = Modifier.width(12.dp)) {
                                 HorizontalDivider(thickness = 2.dp, color = DiagColors.fixed(s.color))
                             }
-                            Text(s.label, modifier = Modifier.weight(1f).padding(start = 8.dp))
+                            Text(
+                                s.label,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                                modifier = Modifier.weight(1f).padding(start = 8.dp),
+                            )
                             Mono(formatValue(s.current, window.resource))
                         }
                     }
                     probeCounts.forEach { (tag, n) ->
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(vertical = 4.dp),
+                            modifier = Modifier.padding(vertical = 3.dp),
                         ) {
                             Dot(DiagColors.probe, size = 10)
-                            Text(tag, color = DiagColors.probe, modifier = Modifier.weight(1f).padding(start = 8.dp))
+                            Text(
+                                tag,
+                                color = DiagColors.probe,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                                modifier = Modifier.weight(1f).padding(start = 8.dp),
+                            )
                             Mono("$n ev")
                         }
                     }
                 }
             }
         } else {
+            headRow()
             LiveGraph(
                 window = window,
                 cursorTimeMs = cursor?.timeMs,
@@ -372,12 +413,12 @@ private fun GraphCard(
 
 /** "1.0 MB/s" or "231 / 512 MB" (headline from the engine, unit beside it). */
 @Composable
-private fun Headline(window: SampleWindow) {
+private fun Headline(window: SampleWindow, compact: Boolean = false) {
     Row(verticalAlignment = Alignment.Bottom) {
         val parts = window.headline.split(' ', limit = 2)
         Text(
             parts.firstOrNull() ?: window.headline,
-            style = MaterialTheme.typography.displaySmall,
+            style = if (compact) MaterialTheme.typography.headlineLarge else MaterialTheme.typography.displaySmall,
             fontWeight = FontWeight.Bold,
             maxLines = 1,
         )
@@ -388,11 +429,14 @@ private fun Headline(window: SampleWindow) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = 6.dp, bottom = 6.dp),
+                modifier = Modifier.padding(start = 6.dp, bottom = if (compact) 4.dp else 6.dp),
             )
         }
     }
 }
+
+/** The tablet graph's height (tb-01); the phone keeps LiveGraph's 260 dp */
+private val TABLET_GRAPH_HEIGHT = 210.dp
 
 internal fun formatValue(value: Float, resource: Resource): String = when (resource) {
     Resource.NETWORK, Resource.PLAYER -> String.format(Locale.US, "%.1f", value)
@@ -448,12 +492,15 @@ private fun MarkerSlider(window: SampleWindow, markers: List<Marker>, onRelease:
                 modifier = Modifier.fillMaxWidth(),
             )
         }
-        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
+        // KMK (r98): three separate slots — start left, hint centred (ellipsized, never under the ends), "now" right —
+        // so "−6 min" and the hint can't run together ("−6 mindrag to go back") at any width
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
             Mono("−${window.window.seconds * 6L / 60L} min", color = MaterialTheme.colorScheme.onSurfaceVariant)
             Mono(
-                if (dragging) formatHms(now - ((1f - value) * rangeMs).toLong()) else "drag to go back",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.weight(1f),
+                if (dragging) formatHms(now - ((1f - value) * rangeMs).toLong()) else "drag to go back · markers are events",
+                color = if (dragging) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.weight(1f).padding(horizontal = 12.dp),
             )
             Mono("now", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -641,7 +688,9 @@ private fun WorkersBlock(diag: Diagnostics) {
     var dumping by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         DiagCard {
-            CardHeader("IO pool", "Dispatchers.IO · ${workers.ioTotal} slots")
+            // KMK (r98): 64 slots = the IO limit; Default's workers carry the same thread name, so the slots are filled by
+            // state (running, blocked, parked) and idle threads past the limit aren't drawn
+            CardHeader("IO pool", "Dispatchers.IO · limit ${workers.ioTotal} · Default shares these threads")
             Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.padding(top = 4.dp)) {
                 Text("${workers.ioBusy}", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
                 Text(
@@ -662,7 +711,8 @@ private fun WorkersBlock(diag: Diagnostics) {
             Caption(
                 "Default busy ${workers.defaultBusy}" +
                     (if (workers.defaultTotal > 0) " / ${workers.defaultTotal}" else "") +
-                    " · JS busy ${workers.jsBusy} · ${workers.threads} threads" +
+                    " · JS busy ${workers.jsBusy} · ${workers.threads} threads in the app · slots are filled by state, " +
+                    "idle workers past the limit aren't slots" +
                     (if (workers.starved) " · STARVED" else ""),
                 modifier = Modifier.padding(top = 6.dp),
                 color = if (workers.starved) DiagColors.problem else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -866,7 +916,7 @@ private fun PlayerBlock(player: PlayerLive?) {
 // --- Network usage table (ph-01 bottom) ---------------------------------------------------------------------------
 
 @Composable
-private fun UsageCard(diag: Diagnostics) {
+private fun UsageCard(diag: Diagnostics, wide: Boolean) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
@@ -974,12 +1024,62 @@ private fun UsageCard(diag: Diagnostics) {
         Row(modifier = Modifier.padding(top = 10.dp, bottom = 4.dp)) {
             Caption("#", modifier = Modifier.width(24.dp))
             Caption("${usageBy.label.lowercase()} · hosts", modifier = Modifier.weight(1f))
-            Caption(metric.label, modifier = Modifier.width(72.dp))
-            Caption("req", modifier = Modifier.width(44.dp))
-            Caption("avg ms", modifier = Modifier.width(52.dp))
+            val align = if (wide) TextAlign.End else TextAlign.Start
+            HeaderCell(metric.label, align, Modifier.width(72.dp))
+            HeaderCell("req", align, Modifier.width(44.dp))
+            HeaderCell("avg ms", align, Modifier.width(52.dp))
         }
         HorizontalDivider()
         if (sorted.isEmpty()) Caption("No requests in this period yet.", modifier = Modifier.padding(top = 8.dp))
+        // KMK (r98): tablet rows are one line (tb-01: name · hosts · bar · figures), so four or more fit on screen
+        if (wide) {
+            sorted.take(20).forEachIndexed { index, row ->
+                val value = when (metric) {
+                    UsageMetric.BYTES -> row.bytes
+                    UsageMetric.REQUESTS -> row.requests.toLong()
+                    UsageMetric.AVG_MS -> row.avgMs
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 6.dp)) {
+                    Mono(
+                        "${index + 1}",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.width(24.dp),
+                    )
+                    Swatch(DiagColors.fixed(row.color))
+                    Text(
+                        row.name,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(0.9f).padding(start = 8.dp),
+                    )
+                    Mono(
+                        row.hosts,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        size = 11.sp,
+                        modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                    )
+                    UsageBar(fraction = value.toFloat() / max, color = DiagColors.fixed(row.color), modifier = Modifier.width(88.dp))
+                    Mono(
+                        when (metric) {
+                            UsageMetric.BYTES -> formatBytes(row.bytes)
+                            UsageMetric.REQUESTS -> "${row.requests}"
+                            UsageMetric.AVG_MS -> "${row.avgMs}"
+                        },
+                        textAlign = TextAlign.End,
+                        modifier = Modifier.width(72.dp),
+                    )
+                    Mono("${row.requests}", textAlign = TextAlign.End, modifier = Modifier.width(44.dp))
+                    Mono(
+                        "${row.avgMs}",
+                        color = if (row.avgMs > 1_000L) DiagColors.problem else MaterialTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.End,
+                        modifier = Modifier.width(52.dp),
+                    )
+                }
+            }
+            return@DiagCard
+        }
         sorted.take(20).forEachIndexed { index, row ->
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 5.dp)) {
                 Mono(
@@ -1035,6 +1135,35 @@ private fun UsageCard(diag: Diagnostics) {
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun HeaderCell(text: String, align: TextAlign, modifier: Modifier) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = align,
+        maxLines = 1,
+        modifier = modifier,
+    )
+}
+
+/** The thin share bar of a usage row */
+@Composable
+private fun UsageBar(fraction: Float, color: Color, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .height(4.dp)
+            .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f), RoundedCornerShape(2.dp)),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(fraction.coerceIn(0f, 1f))
+                .height(4.dp)
+                .background(color, RoundedCornerShape(2.dp)),
+        )
     }
 }
 

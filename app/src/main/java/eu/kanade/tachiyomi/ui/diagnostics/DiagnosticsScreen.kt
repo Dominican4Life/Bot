@@ -1,6 +1,9 @@
 package eu.kanade.tachiyomi.ui.diagnostics
 
 import android.content.Context
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,28 +15,35 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.automirrored.outlined.List
+import androidx.compose.material.icons.automirrored.outlined.Article
+import androidx.compose.material.icons.filled.Analytics
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.PictureInPictureAlt
+import androidx.compose.material.icons.filled.RadioButtonChecked
+import androidx.compose.material.icons.outlined.Analytics
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.PictureInPictureAlt
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
-import androidx.compose.material.icons.outlined.ShowChart
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.SecondaryTabRow
 import androidx.compose.material3.Switch
@@ -63,13 +73,13 @@ import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.util.Screen
 import eu.kanade.presentation.util.isTabletUi
-import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.diagnostics.DiagKeys
 import eu.kanade.tachiyomi.diagnostics.DiagTab
 import eu.kanade.tachiyomi.diagnostics.FloatingLogState
 import eu.kanade.tachiyomi.diagnostics.LogFilter
 import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.delay
+import tachiyomi.presentation.core.components.material.NavigationRail as AppNavigationRail
 import tachiyomi.presentation.core.components.material.Scaffold
 
 /**
@@ -123,6 +133,7 @@ internal class DiagnosticsScreen(
                             title = if (tab == DiagTab.LIVE) "Overview" else tab.label,
                             subtitle = header.subtitle.value ?: defaultSubtitle(tab),
                             back = null,
+                            inline = true,
                             actions = header.actions.value,
                             onMenu = { menuOpen = true },
                             menu = {
@@ -140,7 +151,7 @@ internal class DiagnosticsScreen(
                         StatusStripBar(
                             onOpenHealth = { model.setTab(DiagTab.HEALTH) },
                             onOpenLog = { model.setTab(DiagTab.LOG) },
-                            modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
+                            modifier = Modifier.padding(top = 2.dp, bottom = 4.dp),
                         )
                         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                             TabPage(tab = tab, model = model, header = header, tablet = true)
@@ -245,20 +256,36 @@ private fun Header(
     actions: (@Composable RowScope.() -> Unit)?,
     onMenu: () -> Unit,
     menu: @Composable () -> Unit,
+    // KMK (r98): tablet (tb-01): title and subtitle on one line, so the Live page's usage rows fit without scrolling
+    inline: Boolean = false,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
         if (back != null) {
             IconButton(onClick = back) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back") }
         }
-        Column(modifier = Modifier.weight(1f).padding(start = 4.dp)) {
-            Text(title, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+        if (inline) {
+            Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.weight(1f).padding(start = 4.dp)) {
+                Text(title, style = MaterialTheme.typography.headlineSmall, maxLines = 1)
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(start = 16.dp, bottom = 3.dp),
+                )
+            }
+        } else {
+            Column(modifier = Modifier.weight(1f).padding(start = 4.dp)) {
+                Text(title, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         if (actions != null) actions()
         Box {
@@ -312,16 +339,35 @@ internal fun toggleFloating(context: Context, on: Boolean) {
     diagPrefs(context).edit { putBoolean(DiagKeys.FLOAT_ON, on) }
 }
 
-private fun DiagTab.icon(): ImageVector = when (this) {
-    DiagTab.LIVE -> Icons.Outlined.ShowChart
-    DiagTab.LOG -> Icons.AutoMirrored.Outlined.List
-    DiagTab.CAPTURE -> Icons.Outlined.RadioButtonUnchecked
-    DiagTab.HEALTH -> Icons.Outlined.FavoriteBorder
-    DiagTab.REPORT -> Icons.Outlined.Description
-    DiagTab.PROBES -> Icons.Outlined.Code
+// KMK (r98): outline when idle, filled when selected, cross-faded like the main rail's animated vectors (which morph
+// from outline to filled in 300 ms, fast-out-slow-in: anim_*_enter.xml); the indicator pill is M3's own animation.
+private fun DiagTab.icon(selected: Boolean): ImageVector = when (this) {
+    DiagTab.LIVE -> if (selected) Icons.Filled.Analytics else Icons.Outlined.Analytics
+    DiagTab.LOG -> if (selected) Icons.AutoMirrored.Filled.Article else Icons.AutoMirrored.Outlined.Article
+    DiagTab.CAPTURE -> if (selected) Icons.Filled.RadioButtonChecked else Icons.Outlined.RadioButtonUnchecked
+    DiagTab.HEALTH -> if (selected) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder
+    DiagTab.REPORT -> if (selected) Icons.Filled.Description else Icons.Outlined.Description
+    DiagTab.PROBES -> if (selected) Icons.Filled.Code else Icons.Outlined.Code
 }
 
-/** The tablet rail (tb-01): back + title, the six tabs (a dot on Probes while running, a badge on Log), floating log */
+/** The main rail's selection animation for an icon pair (see [DiagTab.icon]) */
+@Composable
+private fun RailIcon(selected: Boolean, icon: (Boolean) -> ImageVector, contentDescription: String) {
+    Crossfade(
+        targetState = selected,
+        animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing),
+        label = "railIcon",
+    ) { on ->
+        Icon(icon(on), contentDescription = contentDescription, tint = LocalContentColor.current)
+    }
+}
+
+/**
+ * The tablet rail (r98): the app's own rail ([tachiyomi.presentation.core.components.material.NavigationRail], 80 dp,
+ * the same M3 items, icon above label, labelLarge) — back arrow in the header, the six tabs centred (a badge on Log, a
+ * dot on Probes while one runs), and "Float" at the bottom, lit while the floating log is on. The tab name is in the
+ * page header, so the rail has no title.
+ */
 @Composable
 private fun DiagRail(
     tab: DiagTab,
@@ -350,54 +396,55 @@ private fun DiagRail(
             delay(10_000L)
         }
     }
-    NavigationRail(
-        modifier = Modifier.width(236.dp).fillMaxHeight(),
+    AppNavigationRail(
         header = {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().padding(start = 8.dp, top = 8.dp),
-            ) {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
-                }
-                Text("Diagnostics", style = MaterialTheme.typography.titleLarge)
+            IconButton(onClick = onBack, modifier = Modifier.padding(top = 4.dp)) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
             }
         },
     ) {
+        Spacer(Modifier.weight(1f))
         DiagTab.entries.forEach { t ->
+            val selected = tab == t
             NavigationRailItem(
-                selected = tab == t,
+                selected = selected,
                 onClick = { onTab(t) },
                 icon = {
                     when {
                         t == DiagTab.LOG && newProblems > 0 -> BadgedBox(badge = { Badge { Text("$newProblems") } }) {
-                            Icon(t.icon(), contentDescription = t.label)
+                            RailIcon(selected, t::icon, t.label)
                         }
                         t == DiagTab.PROBES && probes.runningCount > 0 -> BadgedBox(
                             badge = {
                                 Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(DiagColors.probe))
                             },
-                        ) { Icon(t.icon(), contentDescription = t.label) }
-                        else -> Icon(t.icon(), contentDescription = t.label)
+                        ) { RailIcon(selected, t::icon, t.label) }
+                        else -> RailIcon(selected, t::icon, t.label)
                     }
                 },
-                label = { Text(t.label) },
+                label = { RailLabel(t.label) },
                 alwaysShowLabel = true,
             )
         }
         Spacer(Modifier.weight(1f))
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-        ) {
-            Text("Floating log", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-            Switch(checked = floating, onCheckedChange = onFloating)
-        }
-        Text(
-            "Komikku ${BuildConfig.VERSION_NAME}",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 16.dp, bottom = 12.dp),
+        // The floating log as a toggle item: selected (indicator lit, filled icon) while the window is on
+        NavigationRailItem(
+            selected = floating,
+            onClick = { onFloating(!floating) },
+            icon = {
+                RailIcon(
+                    selected = floating,
+                    icon = { on -> if (on) Icons.Filled.PictureInPictureAlt else Icons.Outlined.PictureInPictureAlt },
+                    contentDescription = if (floating) "Floating log on" else "Floating log off",
+                )
+            },
+            label = { RailLabel("Float") },
+            alwaysShowLabel = true,
         )
     }
+}
+
+@Composable
+private fun RailLabel(text: String) {
+    Text(text, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
 }

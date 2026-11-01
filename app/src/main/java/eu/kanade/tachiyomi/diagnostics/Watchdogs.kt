@@ -12,8 +12,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * KMK (r97): Freeze detection (design §7). One daemon thread, `diag-main-watchdog`, does both checks: every 3 s it
  * posts a token to the main thread and waits for it (a stall is a token that didn't run); every 5 s it enumerates
- * the threads into a reused array and counts the parked `DefaultDispatcher-worker-*` threads (starvation is ≥ 56 of
- * 64 parked across two checks while the pool was in use). Both flag, never kill. Stack traces only when a rule
+ * the threads into a reused array and counts the parked `DefaultDispatcher-worker-*` threads; when ≥ 56 are parked it
+ * reads their stacks, and starvation is ≥ 56 workers parked outside the scheduler's own idle park on two checks in a
+ * row (r98). Both flag, never kill. Stack traces only when a rule
  * fires, one grouped dump per minute.
  */
 internal object Watchdogs {
@@ -44,13 +45,6 @@ internal object Watchdogs {
     /** Reused thread array (contract §9: re-grown when the count equals its length) */
     private var threads = arrayOfNulls<Thread>(192)
 
-    /** Busy IO workers seen by [LiveSampler] (or by this thread) in the last minute, for the "pool was in use" rule */
-    @Volatile
-    private var busyPeakAt = 0L
-
-    @Volatile
-    private var parkedStreak = 0
-
     @Volatile
     var ioStarved = false
         private set
@@ -61,14 +55,6 @@ internal object Watchdogs {
 
     @Volatile
     private var lastIoWarnAt = 0L
-
-    @Volatile
-    private var lastStuckCheckAt = 0L
-
-    /** Called by the sampler with the busy IO count of a tick (so a burst that parked 60 idle workers isn't a stall) */
-    fun noteIoBusy(busy: Int) {
-        if (busy >= 32) busyPeakAt = System.currentTimeMillis()
-    }
 
     fun start(context: Context) {
         if (!started.compareAndSet(false, true)) return
@@ -180,65 +166,83 @@ internal object Watchdogs {
         RecordingNotification.onStall(context, now)
     }
 
+    // KMK (r98) -->
+    // The r97 rule fired "IO pool starved: 72/72 workers parked · 72 in run" on an idle app. Two reasons: the total
+    // counted every DefaultDispatcher-worker (IO and Default share the name, so 72 > the IO limit of 64), and the idle
+    // test looked for a `CoroutineScheduler$Worker.park/tryPark` frame that a release build doesn't have: R8 inlines
+    // park → tryPark → runWorker into `Worker.run` (and may rename the class), so the idle stack read
+    // `LockSupport.parkNanos ← Worker.run` and every idle worker counted as stuck. Now:
+    //  - a parked worker is idle when the first frame below the park internals belongs to the worker thread's own
+    //    class (`thread.javaClass.name`, which is CoroutineScheduler$Worker under any R8 name) or to
+    //    kotlinx.coroutines.scheduling; idle parks never count, whatever their state;
+    //  - the rule fires only when ≥ IO_STARVED_PARKED (56) workers are parked in other frames (runBlocking, Object.wait,
+    //    a SQLite lock, a socket read…) on two checks in a row; the total shown is the IO limit (64).
+    private var stuckStreak = 0
+
+    /** When the last stack read found the parked workers idle (stacks are then not read again for 30 s) */
+    private var lastIdleVerdictAt = 0L
+
     private fun checkIoPool(now: Long) {
         var count = Thread.currentThread().threadGroup?.let { rootGroup(it).enumerate(threads, true) } ?: 0
         while (count >= threads.size && threads.size < 2048) {
             threads = arrayOfNulls(threads.size * 2)
             count = rootGroup(Thread.currentThread().threadGroup!!).enumerate(threads, true)
         }
-        var workers = 0
-        var parked = 0
-        var busy = 0
-        for (i in 0 until count) {
-            val t = threads[i] ?: continue
-            if (!t.name.startsWith(IO_PREFIX)) continue
-            workers++
-            when (t.state) {
-                Thread.State.WAITING, Thread.State.TIMED_WAITING, Thread.State.BLOCKED -> parked++
-                Thread.State.RUNNABLE -> busy++
-                else -> Unit
-            }
-        }
-        if (busy >= 32) busyPeakAt = now
-        val total = DiagBudget.IO_POOL_DEFAULT.coerceAtLeast(workers)
-        val starvedNow = workers > 0 && (parked >= DiagBudget.IO_STARVED_PARKED || parked * 100 / total >= 87)
-        parkedStreak = if (starvedNow) parkedStreak + 1 else 0
-        val inUse = now - busyPeakAt <= 60_000L || now - lastStallAt <= 60_000L
-        if (parkedStreak >= 2 && inUse) {
-            if ((!ioStarved && now - lastStuckCheckAt >= 30_000L) || (ioStarved && now - lastIoWarnAt >= 60_000L)) {
-                // Idle workers park too (CoroutineScheduler.Worker.park): only the ones stuck elsewhere count, so
-                // the stacks of the parked workers are read now (the rule fired; at most every 30 s while it holds)
-                lastStuckCheckAt = now
-                val stuck = runCatching { stuckWorkers(count) }.getOrDefault(emptyList())
-                val stuckNow = stuck.size >= DiagBudget.IO_STARVED_PARKED || stuck.size * 100 / total >= 87
-                if (stuckNow) {
-                    lastIoWarnAt = now
-                    val dump = runCatching { group(now, stuck) }.getOrNull()
-                    val top = dump?.groups?.maxByOrNull { it.count }
-                    val suffix = top?.let { " · ${it.count} in ${it.title.removePrefix("parked in ")}" } ?: ""
-                    val text = "IO pool starved: ${stuck.size}/$total workers parked$suffix"
-                    AppLog.add('W', "app", text)
-                    Health.lastStallText = text
-                    Health.event(HealthKind.STALL_IO, "IO pool starved", "${stuck.size} of $total workers parked$suffix", dump)
-                    if (dump != null) {
-                        lastDump = dump
-                        DumpTrace.event("io-starved", text, dump)
-                    }
-                    ioStarved = true
-                } else if (ioStarved) {
-                    ioStarved = false
-                    AppLog.add('I', "app", "IO pool recovered: ${stuck.size}/$total workers stuck")
-                    DumpTrace.event("io-recovered", "IO pool recovered", null)
+        try {
+            var parked = 0
+            for (i in 0 until count) {
+                val t = threads[i] ?: continue
+                if (!t.name.startsWith(IO_PREFIX)) continue
+                when (t.state) {
+                    Thread.State.WAITING, Thread.State.TIMED_WAITING, Thread.State.BLOCKED -> parked++
+                    else -> Unit
                 }
             }
-        } else if (ioStarved && !starvedNow) {
-            ioStarved = false
-            AppLog.add('I', "app", "IO pool recovered: $parked/$total workers parked")
-            DumpTrace.event("io-recovered", "IO pool recovered", null)
+            val limit = DiagBudget.IO_POOL_DEFAULT
+            // Cheap pre-check without stacks: fewer than 56 parked threads of any kind can't be 56 stuck ones
+            if (parked < DiagBudget.IO_STARVED_PARKED) {
+                stuckStreak = 0
+                if (ioStarved) recovered("$parked parked, none stuck")
+                return
+            }
+            // Many parked threads: after an idle verdict, an idle pool (workers live 60 s after a burst) is not re-read
+            // for 30 s; while a streak or an incident is running, stacks are read on every check (5 s)
+            if (!ioStarved && stuckStreak == 0 && now - lastIdleVerdictAt < 30_000L) return
+            val stuck = runCatching { stuckWorkers(count) }.getOrDefault(emptyList())
+            if (stuck.size < DiagBudget.IO_STARVED_PARKED) {
+                stuckStreak = 0
+                lastIdleVerdictAt = now
+                if (ioStarved) recovered("${stuck.size} stuck")
+                return
+            }
+            stuckStreak++
+            if (stuckStreak < 2) return
+            if (ioStarved && now - lastIoWarnAt < 60_000L) return
+            lastIoWarnAt = now
+            val dump = runCatching { group(now, stuck) }.getOrNull()
+            val top = dump?.groups?.maxByOrNull { it.count }
+            val suffix = top?.let { " · ${it.count} in ${it.title.removePrefix("parked in ").removePrefix("blocked in ")}" } ?: ""
+            val text = "IO pool starved: ${stuck.size} workers blocked outside the scheduler (IO limit $limit)$suffix"
+            AppLog.add('W', "app", text)
+            Health.lastStallText = text
+            Health.event(HealthKind.STALL_IO, "IO pool starved", "${stuck.size} workers blocked (IO limit $limit)$suffix", dump)
+            if (dump != null) {
+                lastDump = dump
+                DumpTrace.event("io-starved", text, dump)
+            }
+            ioStarved = true
+        } finally {
+            // Arrays are reused; drop the references so threads can be collected
+            java.util.Arrays.fill(threads, 0, count, null)
         }
-        // Arrays are reused; drop the references so threads can be collected
-        java.util.Arrays.fill(threads, 0, count, null)
     }
+
+    private fun recovered(detail: String) {
+        ioStarved = false
+        AppLog.add('I', "app", "IO pool recovered: $detail")
+        DumpTrace.event("io-recovered", "IO pool recovered", null)
+    }
+    // KMK (r98) <--
 
     private fun rootGroup(g: ThreadGroup): ThreadGroup {
         var root = g
@@ -254,8 +258,9 @@ internal object Watchdogs {
     }
 
     /**
-     * The parked IO workers that are stuck somewhere of ours: a worker whose top meaningful frame is the scheduler's
-     * own `CoroutineScheduler.Worker.park` / `tryPark` / `parkNanos` is idle, not starved, and is left out.
+     * The parked workers that are stuck somewhere of ours or a library's (KMK r98): a worker whose first frame below
+     * the park internals is the scheduler's own (the worker thread's class, or kotlinx.coroutines.scheduling) is idle
+     * and left out, whatever R8 named or inlined.
      */
     private fun stuckWorkers(count: Int): List<Pair<Thread, Array<StackTraceElement>>> {
         val list = ArrayList<Pair<Thread, Array<StackTraceElement>>>()
@@ -264,16 +269,28 @@ internal object Watchdogs {
             if (!t.name.startsWith(IO_PREFIX)) continue
             if (t.state == Thread.State.RUNNABLE) continue
             val stack = t.stackTrace
-            if (isIdleWorkerStack(stack)) continue
+            if (isIdleWorkerStack(t, stack)) continue
             list.add(t to stack)
         }
         return list
     }
 
-    private fun isIdleWorkerStack(stack: Array<StackTraceElement>): Boolean {
-        val top = meaningful(stack).firstOrNull() ?: return stack.isEmpty()
-        return top.className.endsWith("CoroutineScheduler\$Worker") &&
-            (top.methodName == "park" || top.methodName == "tryPark" || top.methodName == "parkNanos")
+    private fun isIdleWorkerStack(thread: Thread, stack: Array<StackTraceElement>): Boolean {
+        if (stack.isEmpty()) return true
+        val top = stack.firstOrNull { f -> !isParkInternal(f) } ?: return true
+        val cls = top.className
+        return cls == thread.javaClass.name ||
+            cls.startsWith("kotlinx.coroutines.scheduling.") ||
+            cls.endsWith("CoroutineScheduler\$Worker")
+    }
+
+    /** The park/wait machinery at the top of a parked stack (not where the thread is held) */
+    private fun isParkInternal(f: StackTraceElement): Boolean {
+        val c = f.className
+        return c.startsWith("sun.misc.Unsafe") ||
+            c.startsWith("jdk.internal.misc.Unsafe") ||
+            c.startsWith("java.util.concurrent.locks.LockSupport") ||
+            c == "java.lang.Thread" && (f.methodName == "parkWith" || f.methodName == "park")
     }
 
     private fun group(now: Long, stacks: List<Pair<Thread, Array<StackTraceElement>>>): ThreadDump {

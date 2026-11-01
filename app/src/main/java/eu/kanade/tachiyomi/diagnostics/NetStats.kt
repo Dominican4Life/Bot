@@ -48,6 +48,20 @@ internal object NetStats : NetworkHooks.Listener {
 
     fun slotName(slot: Int): String? = slotNames.getOrNull(slot)
 
+    // KMK (r98) -->
+    /** The name the Source Lab's runtimes are shown under (graph legend, usage table, net lines, traces) */
+    const val LAB_TESTS = "Source Lab tests"
+
+    /**
+     * The display name of a runtime's [SourceTag]. The Lab's detection probe runs as `JsRuntime.create(name = "lab",
+     * key = LabProbe.KEY, sourceId = 0)` and a Retest of a source without a name falls back to "lab": both are the
+     * Lab's tests, not a source. The editor's and the Retest's test copies of a real source keep that source's name
+     * (they fetch what the source fetches).
+     */
+    private fun nameOf(tag: SourceTag): String =
+        if (tag.key == eu.kanade.tachiyomi.jssource.lab.LabProbe.KEY || tag.name == "lab") LAB_TESTS else tag.name
+    // KMK (r98) <--
+
     private fun slotOf(source: String?, image: Boolean): Int {
         if (source == null) return if (image) SLOT_COVERS else SLOT_OTHER
         slotBySource[source]?.let { return it }
@@ -271,7 +285,7 @@ internal object NetStats : NetworkHooks.Listener {
 
     override fun beforeProceed(tag: SourceTag?, request: Request) {
         if (ProbeRuntime.mask and ProbeHook.NET_REQUEST.mask == 0) return
-        val source = tag?.name ?: sourceOfHost(request.url.host)?.second
+        val source = tag?.let(::nameOf) ?: sourceOfHost(request.url.host)?.second
         val e = NetTraceEvent(
             t = System.currentTimeMillis(), source = source, method = request.method, url = request.url.toString(),
             status = 0, ms = 0L, bytesIn = 0L, bytesOut = request.body?.contentLength()?.coerceAtLeast(0L) ?: 0L,
@@ -287,7 +301,7 @@ internal object NetStats : NetworkHooks.Listener {
 
     override fun afterResponse(tag: SourceTag?, request: Request, response: Response): Response {
         if (ProbeRuntime.mask and ProbeHook.NET_RESPONSE.mask == 0) return response
-        val source = tag?.name ?: sourceOfHost(request.url.host)?.second
+        val source = tag?.let(::nameOf) ?: sourceOfHost(request.url.host)?.second
         val type = response.header("Content-Type")
         val e = NetTraceEvent(
             t = System.currentTimeMillis(), source = source, method = request.method, url = response.request.url.toString(),
@@ -310,7 +324,7 @@ internal object NetStats : NetworkHooks.Listener {
         record.ms = ms
         record.bytesOut = request.body?.contentLength()?.coerceAtLeast(0L) ?: 0L
         val apk = if (tag == null) sourceOfHost(url.host) else null
-        record.source = tag?.name ?: apk?.second
+        record.source = tag?.let(::nameOf) ?: apk?.second
         record.sourceKey = tag?.key
         record.sourceId = tag?.id ?: apk?.first
         if (response != null) {

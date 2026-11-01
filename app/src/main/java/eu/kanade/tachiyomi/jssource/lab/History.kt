@@ -14,6 +14,10 @@ import java.io.File
  * Test Run at that time). At most 30 versions; the oldest go first, never the version the code was generated from
  * and never the newest. Nothing here ever deletes the source's own code.
  *
+ * r98: `currentN` in the index is the version the code is now. Restore points it at an older version instead of
+ * adding one; Delete removes chosen versions (never the current one, never `generatedFrom`); a source with no
+ * history gets a "Baseline" v1 when the Lab's Home loads.
+ *
  * Callers run on IO. The object is synchronised per call so two saves can't interleave an index write.
  */
 internal object History {
@@ -37,8 +41,21 @@ internal object History {
         if (f.exists()) jsJson.decodeFromString(LabHistoryIndex.serializer(), f.readText()) else null
     }.getOrNull() ?: LabHistoryIndex()
 
+    /**
+     * KMK (r98): the version the source's code is now: [LabHistoryIndex.currentN] when it names a kept version
+     * (after a Restore), else the newest. 0 when there is no history yet.
+     */
+    fun currentOf(index: LabHistoryIndex): Int =
+        index.currentN?.takeIf { c -> index.versions.any { it.n == c } } ?: index.versions.lastOrNull()?.n ?: 0
+
+    /**
+     * The version the code is now (r98: the restored one after a Restore, not necessarily the newest), 0 when there
+     * is no history yet. Test Runs and Issue Reports record this number.
+     */
+    fun latestVersion(key: String): Int = currentOf(index(key))
+
     /** The newest version number, 0 when there is no history yet */
-    fun latestVersion(key: String): Int = index(key).versions.lastOrNull()?.n ?: 0
+    fun newestVersion(key: String): Int = index(key).versions.lastOrNull()?.n ?: 0
 
     /** The code of version [n], or null when it was trimmed or never existed */
     @Synchronized
@@ -48,9 +65,9 @@ internal object History {
     }
 
     /**
-     * Adds [code] as the next version with [note]. When the newest version already holds exactly this code nothing
-     * is added (a save that changed only the Details fields isn't a new version). Returns the version written, or
-     * the unchanged newest one.
+     * Adds [code] as the next version with [note]. When the current version (r98: the restored one, else the newest)
+     * already holds exactly this code nothing is added (a save that changed only the Details fields isn't a new
+     * version). The new version becomes current. Returns the version written, or the unchanged current one.
      */
     @Synchronized
     fun append(
@@ -60,13 +77,19 @@ internal object History {
         note: String,
         testRunId: String? = null,
         generatedFrom: Boolean = false,
+        onlyIfEmpty: Boolean = false,
     ): LabVersion? {
         val index = index(key)
+        // Baseline: decided on the index read here, under the same lock as the write below
+        if (onlyIfEmpty && index.versions.isNotEmpty()) return null
         val last = index.versions.lastOrNull()
-        val previous = last?.let { runCatching { versionFile(key, it.n, it.json).readText() }.getOrNull() }
-        if (last != null && previous == code) return last
+        val currentN = currentOf(index)
+        val current = index.versions.firstOrNull { it.n == currentN }
+        val previous = current?.let { runCatching { versionFile(key, it.n, it.json).readText() }.getOrNull() }
+        if (current != null && previous == code) return current
         val (added, removed) = counts(previous.orEmpty(), code)
-        val n = (last?.n ?: 0) + 1
+        // r98 fix: after the highest number ever given (lastN), so a deleted version's number is never reused
+        val n = maxOf(index.lastN, last?.n ?: 0) + 1
         val folder = dir(key)
         // KMK: only next to an existing source (a sidecar never makes a source exist, C§4)
         if (folder.parentFile?.isDirectory != true) return null
@@ -81,10 +104,73 @@ internal object History {
             testRunId = testRunId,
             json = json,
         )
-        val kept = trim(key, index.versions + version, index.generatedFrom ?: n.takeIf { generatedFrom })
-        write(key, LabHistoryIndex(kept, index.generatedFrom ?: n.takeIf { generatedFrom }))
+        val generated = index.generatedFrom ?: n.takeIf { generatedFrom }
+        val kept = trim(key, index.versions + version, generated, n)
+        // The new version is the newest, so it is current: currentN goes back to null ("the newest")
+        write(key, LabHistoryIndex(kept, generated, currentN = null, lastN = n))
         AppLog.add('I', "lab", "$key: history v$n ($note, +$added −$removed)")
         return version
+    }
+
+    /**
+     * KMK (r98): a source saved before the Lab existed (or whose history was lost) gets its code as v1 "Baseline",
+     * so every source shows a version to come back to. Nothing happens when the source already has a version.
+     */
+    @Synchronized
+    fun baseline(key: String, code: String, json: Boolean): LabVersion? =
+        // r98 fix: the "no versions yet" check is made inside append, on the index it writes, under History's lock
+        // (the one every append takes), so a save that got there first is never followed by a Baseline
+        append(key, code, json, "Baseline", onlyIfEmpty = true)
+
+    /**
+     * KMK (r98 fix): when a Restore's [setCurrent] fails (the version went meanwhile), the newest version whose code
+     * equals [code] becomes current; when none does, [code] is added as a version with [note]. Returns its number.
+     */
+    @Synchronized
+    fun markCurrentByCode(key: String, code: String, json: Boolean, note: String): Int? {
+        val index = index(key)
+        val same = index.versions.lastOrNull { v -> runCatching { versionFile(key, v.n, v.json).readText() }.getOrNull() == code }
+        if (same == null) return append(key, code, json, note)?.n
+        val newest = index.versions.last().n
+        write(key, index.copy(currentN = same.n.takeIf { it != newest }))
+        AppLog.add('I', "lab", "$key: v${same.n} is current (same code as the restored version)")
+        return same.n
+    }
+
+    /**
+     * KMK (r98): Restore: version [n] becomes current without a new version (the source's code was already written
+     * by the manager's save, see LabStore.restore). A later Save appends after the newest as usual.
+     */
+    @Synchronized
+    fun setCurrent(key: String, n: Int): Boolean {
+        val index = index(key)
+        if (index.versions.none { it.n == n }) return false
+        val newest = index.versions.last().n
+        write(key, index.copy(currentN = n.takeIf { it != newest }))
+        AppLog.add('I', "lab", "$key: v$n is current (restored)")
+        return true
+    }
+
+    /**
+     * KMK (r98): deletes versions [ns] (their `v<n>` files and index lines). The current version and the one the code
+     * was generated from are never deleted; returns the numbers really removed.
+     */
+    @Synchronized
+    fun delete(key: String, ns: Set<Int>): List<Int> {
+        val index = index(key)
+        val current = currentOf(index)
+        val victims = index.versions.filter { it.n in ns && it.n != current && it.n != index.generatedFrom }
+        if (victims.isEmpty()) return emptyList()
+        victims.forEach { v -> runCatching { versionFile(key, v.n, v.json).delete() } }
+        val gone = victims.map { it.n }.toSet()
+        val kept = index.versions.filterNot { it.n in gone }
+        // currentN stays pointing at the same version; null again when that one is now the newest
+        val currentN = current.takeIf { c -> kept.lastOrNull()?.n != c }
+        // lastN keeps the highest number ever given (an index from before r98 has 0: the newest before the delete)
+        val lastN = maxOf(index.lastN, index.versions.lastOrNull()?.n ?: 0)
+        write(key, index.copy(versions = kept, currentN = currentN, lastN = lastN))
+        AppLog.add('I', "lab", "$key: history deleted ${gone.sorted().joinToString { "v$it" }}")
+        return gone.sorted()
     }
 
     /** The newest version becomes the one the code was generated from, unless one is set already */
@@ -96,22 +182,23 @@ internal object History {
         write(key, index.copy(generatedFrom = last.n))
     }
 
-    /** Marks a Test Run as the one made on the newest version */
+    /** Marks a Test Run as the one made on the current version (r98: the restored one, else the newest) */
     @Synchronized
     fun noteTestRun(key: String, runId: String) {
         val index = index(key)
-        val last = index.versions.lastOrNull() ?: return
-        if (last.testRunId != null) return
-        val versions = index.versions.dropLast(1) + last.copy(testRunId = runId)
+        val currentN = currentOf(index)
+        val current = index.versions.firstOrNull { it.n == currentN } ?: return
+        if (current.testRunId != null) return
+        val versions = index.versions.map { if (it.n == currentN) it.copy(testRunId = runId) else it }
         write(key, index.copy(versions = versions))
     }
 
-    /** Keeps the newest [CAP], the generated-from version and the newest; deletes the files of the rest */
-    private fun trim(key: String, versions: List<LabVersion>, generatedFrom: Int?): List<LabVersion> {
+    /** Keeps the newest [CAP], the generated-from version, [keep] and the newest; deletes the files of the rest */
+    private fun trim(key: String, versions: List<LabVersion>, generatedFrom: Int?, keep: Int?): List<LabVersion> {
         if (versions.size <= CAP) return versions
         val newest = versions.last().n
         val out = versions.toMutableList()
-        val removable = out.filter { it.n != generatedFrom && it.n != newest }.toMutableList()
+        val removable = out.filter { it.n != generatedFrom && it.n != newest && it.n != keep }.toMutableList()
         while (out.size > CAP && removable.isNotEmpty()) {
             val victim = removable.removeAt(0)
             out.remove(victim)

@@ -214,45 +214,72 @@ internal fun StatusStripBar(
                 modifier = Modifier.weight(1f),
             )
         }
-        if (showSentence && strip.sentence.isNotBlank()) {
+        // KMK (r98): when the state isn't Good the reason is always shown under the strip, one line, with its action
+        // ("1 stall in 24 h · IO pool starved … — open in Health"); tapping the line runs the action. When Good, a tap
+        // on the pill still shows the sentence.
+        val notGood = strip.health != HealthState.GOOD
+        if ((showSentence || notGood) && strip.sentence.isNotBlank()) {
+            val action = strip.action
+            val runAction: () -> Unit = {
+                when (action) {
+                    StripAction.OPEN_HEALTH -> onOpenHealth()
+                    StripAction.OPEN_LOG -> onOpenLog()
+                    StripAction.FREE_MEMORY -> scope.launch {
+                        val result = runCatching { diag.trimMemory() }
+                            .getOrElse { it.message ?: "Couldn't free memory" }
+                        context.toast(result)
+                    }
+                    StripAction.CLOSE_IDLE_JS -> scope.launch {
+                        val n = runCatching { diag.closeIdleRuntimes() }.getOrDefault(0)
+                        context.toast("Closed $n idle JS runtime${if (n == 1) "" else "s"}")
+                    }
+                    StripAction.THREAD_DUMP -> scope.launch {
+                        val dump = runCatching { diag.threadDump() }.getOrNull()
+                        context.toast(dump?.summary ?: "Thread dump failed")
+                    }
+                    null -> Unit
+                }
+                showSentence = false
+            }
+            // The last stall's own words when the reason is a stall ("IO pool starved: …", "Main thread stalled …")
+            val stallText = strip.lastStallText
+            val reason = if (notGood && stallText != null && strip.sentence.contains("stall")) {
+                "${strip.sentence} · last: $stallText"
+            } else {
+                strip.sentence
+            }
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(enabled = action != null) { runAction() }
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
             ) {
+                if (notGood) {
+                    Box(
+                        modifier = Modifier
+                            .padding(end = 8.dp)
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(DiagColors.health(strip.health)),
+                    )
+                }
                 Text(
-                    strip.sentence,
+                    reason,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (notGood) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
-                val action = strip.action
                 if (action != null) {
                     Text(
-                        action.label,
+                        actionHint(action),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier
-                            .padding(start = 8.dp)
-                            .clickable {
-                                when (action) {
-                                    StripAction.OPEN_HEALTH -> onOpenHealth()
-                                    StripAction.OPEN_LOG -> onOpenLog()
-                                    StripAction.FREE_MEMORY -> scope.launch {
-                                        val result = runCatching { diag.trimMemory() }
-                                            .getOrElse { it.message ?: "Couldn't free memory" }
-                                        context.toast(result)
-                                    }
-                                    StripAction.CLOSE_IDLE_JS -> scope.launch {
-                                        val n = runCatching { diag.closeIdleRuntimes() }.getOrDefault(0)
-                                        context.toast("Closed $n idle JS runtime${if (n == 1) "" else "s"}")
-                                    }
-                                    StripAction.THREAD_DUMP -> scope.launch {
-                                        val dump = runCatching { diag.threadDump() }.getOrNull()
-                                        context.toast(dump?.summary ?: "Thread dump failed")
-                                    }
-                                }
-                                showSentence = false
-                            },
+                        maxLines = 1,
+                        modifier = Modifier.padding(start = 8.dp),
                     )
                 }
             }
@@ -261,6 +288,12 @@ internal fun StatusStripBar(
             RecordingStrip(recording!!, onStop = { diag.stopRecording() })
         }
     }
+}
+
+/** "— tap to open in Health" / "— tap for a thread dump" (KMK r98) */
+private fun actionHint(action: StripAction): String = when (action) {
+    StripAction.THREAD_DUMP -> "— tap for a thread dump"
+    else -> "— tap to ${action.label}"
 }
 
 @Composable

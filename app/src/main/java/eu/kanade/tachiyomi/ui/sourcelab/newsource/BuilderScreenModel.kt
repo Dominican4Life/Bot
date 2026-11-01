@@ -142,10 +142,21 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
     /** Pick mode (taps select, nothing navigates) or browse mode (the site works as usual) */
     fun setPickMode(pick: Boolean) = mutableState.update { it.copy(pickMode = pick, pending = if (pick) it.pending else null) }
 
-    /** From the picker script (a WebView thread): one tap, as JSON */
-    fun onPick(json: String) {
-        if (!state.value.pickMode) return
-        val o = runCatching { jsJson.parseToJsonElement(json) as? JsonObject }.getOrNull() ?: return
+    /**
+     * From the picker script: one tap, as JSON. Through the `LabPicker` bridge (a WebView thread) or, r98, through
+     * the console fallback ([viaConsole], the main thread) when the page can't see the bridge. Every tap is logged
+     * (`D lab picker tap …`), so a Log without these lines means the page never reached the app.
+     */
+    fun onPick(json: String, viaConsole: Boolean = false) {
+        if (!state.value.pickMode) {
+            AppLog.add('D', "lab", "picker tap ignored: Browse mode")
+            return
+        }
+        val o = runCatching { jsJson.parseToJsonElement(json) as? JsonObject }.getOrNull()
+        if (o == null) {
+            AppLog.add('W', "lab", "picker tap not understood (${json.length} chars${if (viaConsole) ", console" else ""})")
+            return
+        }
         val raw = RawPick(
             cssPath = o.str("cssPath").orEmpty(),
             likeSelector = o.str("likeSelector") ?: o.str("cssPath").orEmpty(),
@@ -159,10 +170,15 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
             pageUrl = o.str("pageUrl") ?: state.value.pageUrl.orEmpty(),
         )
         if (raw.cssPath.isBlank()) return
+        AppLog.add(
+            'D',
+            "lab",
+            "picker tap ${shortSelector(raw.likeSelector)} ×${raw.count} · ${raw.cssPath}${if (viaConsole) " (console)" else ""}",
+        )
         mutableState.update { it.copy(pending = raw) }
     }
 
-    fun onPickerLog(text: String) = AppLog.add('D', "lab", "picker: $text")
+    fun onPickerLog(text: String) = AppLog.add('D', "lab", "picker $text")
 
     /** Gives the pending tap a label; the same label picked again replaces the earlier pick */
     fun label(label: String) {
@@ -248,6 +264,11 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
     }
 
     fun clearError() = mutableState.update { it.copy(error = null) }
+
+    companion object {
+        /** The last segment of a selector, as the hint shows it: `div.item > a.title` → `a.title` */
+        fun shortSelector(selector: String): String = selector.substringAfterLast(" > ").ifBlank { selector }
+    }
 
     private fun rederive() {
         val s = state.value

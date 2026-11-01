@@ -1,7 +1,7 @@
 package eu.kanade.tachiyomi.ui.sourcelab
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -17,7 +17,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -45,8 +49,12 @@ import java.util.Locale
 
 /**
  * KMK (r96): the History pane (D§2.9): every version (note, time, +added −removed, the Test Run at that time),
- * a line diff of the selected version against the code in the editor, and Restore vN (a new version through the
- * manager's save; nothing is deleted).
+ * a line diff of the selected version against the code in the editor, and Restore vN.
+ *
+ * r98: Restore makes vN the source's code and marks it **current** (no new version; the list says which one is
+ * current); a later edit + Save appends after the newest as before. Unsaved edits are asked about first
+ * ([askBeforeReplacing], the editor's Save / Discard / Cancel). Delete removes versions (one per row, or several
+ * after a long press), never the current one nor the one the code was generated from, after a dialog that names them.
  */
 @Composable
 internal fun HistoryPane(
@@ -54,11 +62,27 @@ internal fun HistoryPane(
     model: SourceLabScreenModel,
     editor: SourceEditorScreenModel,
     editorState: SourceEditorScreenModel.State,
+    askBeforeReplacing: (String, () -> Unit) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var confirmRestore by remember { mutableStateOf<Int?>(null) }
+    var confirmDelete by remember { mutableStateOf<List<Int>?>(null) }
+    // Long-press selection for deleting several; per visit of the source (a stale selection is a hidden argument)
+    var selection by remember(state.key) { mutableStateOf(emptySet<Int>()) }
     val versions = state.history.versions.asReversed()
+    val current = History.currentOf(state.history)
+    val deletable: (Int) -> Boolean = { n -> n != current && n != state.history.generatedFrom }
+    // Versions gone from the list (deleted, trimmed) leave the selection
+    val shownSelection = selection.filter { n -> versions.any { it.n == n } && deletable(n) }.toSet()
     val format = remember { SimpleDateFormat("d MMM HH:mm", Locale.getDefault()) }
+    val restore: (Int) -> Unit = { n ->
+        if (editorState.dirty) {
+            // The editor's own dialog: Save (then restore), Discard (then restore), Cancel
+            askBeforeReplacing("Restoring v$n") { model.restore(editor, n) }
+        } else {
+            confirmRestore = n
+        }
+    }
     LazyColumn(
         contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -68,23 +92,62 @@ internal fun HistoryPane(
             Text(
                 text = when {
                     versions.isEmpty() -> "No versions yet. Every Save keeps one here (30 at most; the one the code was generated from is never trimmed)."
-                    else -> "${versions.size} versions · newest v${versions.first().n}" +
+                    else -> "${versions.size} versions · current v$current" +
+                        (if (versions.first().n != current) " · newest v${versions.first().n}" else "") +
                         (state.history.generatedFrom?.let { " · generated at v$it" }.orEmpty()) +
-                        if (editorState.dirty) " · the editor has unsaved changes" else ""
+                        (if (editorState.dirty) " · the editor has unsaved changes" else "") +
+                        (if (versions.size > 1 && shownSelection.isEmpty()) " · long-press to select several" else "")
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+        if (shownSelection.isNotEmpty()) {
+            item(key = "selection") {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.secondaryContainer)
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                ) {
+                    Text(
+                        "${shownSelection.size} selected · " + shownSelection.sortedDescending().take(6).joinToString { "v$it" } +
+                            if (shownSelection.size > 6) " …" else "",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { selection = emptySet() }) { Text("Clear") }
+                    TextButton(onClick = { confirmDelete = shownSelection.sortedDescending() }) { Text("Delete") }
+                }
+            }
+        }
         items(versions, key = { it.n }) { version ->
+            val canDelete = deletable(version.n)
             VersionRow(
                 version = version,
-                newest = version.n == versions.first().n,
+                current = version.n == current,
                 generatedFrom = version.n == state.history.generatedFrom,
                 selected = state.selectedVersion == version.n,
+                checked = version.n in shownSelection,
+                canDelete = canDelete,
                 time = format.format(Date(version.time)),
-                onClick = { model.selectVersion(if (state.selectedVersion == version.n) null else version.n, editorState.code) },
-                onRestore = { confirmRestore = version.n },
+                onClick = {
+                    if (shownSelection.isNotEmpty()) {
+                        if (canDelete) selection = if (version.n in shownSelection) shownSelection - version.n else shownSelection + version.n
+                    } else {
+                        model.selectVersion(if (state.selectedVersion == version.n) null else version.n, editorState.code)
+                    }
+                },
+                onLongClick = {
+                    if (canDelete) selection = if (version.n in shownSelection) shownSelection - version.n else shownSelection + version.n
+                },
+                onRestore = { restore(version.n) },
+                onDelete = { confirmDelete = listOf(version.n) },
             )
         }
         val selected = state.selectedVersion
@@ -103,9 +166,9 @@ internal fun HistoryPane(
             title = { Text("Restore v$n?") },
             text = {
                 Text(
-                    "The code of v$n is saved as a new version (the newer versions stay in the list). " +
-                        "The source's settings, test copy and library titles are untouched." +
-                        if (editorState.dirty) "\n\nThe editor's unsaved changes are replaced." else "",
+                    "The code of v$n becomes the source's code and v$n is marked current. No new version is added and " +
+                        "every version stays in the list; your next Save adds a new version as usual. " +
+                        "The source's settings, test copy and library titles are untouched.",
                 )
             },
             confirmButton = {
@@ -119,25 +182,59 @@ internal fun HistoryPane(
             dismissButton = { TextButton(onClick = { confirmRestore = null }) { Text("Cancel") } },
         )
     }
+    confirmDelete?.let { ns ->
+        val names = ns.take(6).joinToString { "v$it" } + if (ns.size > 6) " and ${ns.size - 6} more" else ""
+        AlertDialog(
+            onDismissRequest = { confirmDelete = null },
+            title = { Text(if (ns.size == 1) "Delete v${ns.first()}?" else "Delete ${ns.size} versions?") },
+            text = {
+                Text(
+                    "Deletes $names from this source's history for good (the files are removed). " +
+                        "The source's code, the current version (v$current) and the version it was generated from are kept.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmDelete = null
+                        selection = emptySet()
+                        model.deleteVersions(ns.toSet())
+                    },
+                ) { Text("Delete") }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = null }) { Text("Cancel") } },
+        )
+    }
 }
 
 @Composable
 private fun VersionRow(
     version: LabVersion,
-    newest: Boolean,
+    current: Boolean,
     generatedFrom: Boolean,
     selected: Boolean,
+    checked: Boolean,
+    canDelete: Boolean,
     time: String,
     onClick: () -> Unit,
+    onLongClick: () -> Unit,
     onRestore: () -> Unit,
+    onDelete: () -> Unit,
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
-            .background(if (selected) MaterialTheme.colorScheme.surfaceContainerHigh else Color.Transparent)
-            .clickable(onClick = onClick)
+            .background(
+                when {
+                    checked -> MaterialTheme.colorScheme.secondaryContainer
+                    selected -> MaterialTheme.colorScheme.surfaceContainerHigh
+                    current -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                    else -> Color.Transparent
+                },
+            )
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = 8.dp, vertical = 8.dp),
     ) {
         Text(
@@ -145,6 +242,7 @@ private fun VersionRow(
             fontFamily = FontFamily.Monospace,
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.SemiBold,
+            color = if (current) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.width(44.dp),
         )
         Column(modifier = Modifier.weight(1f)) {
@@ -155,7 +253,6 @@ private fun VersionRow(
                     append(" · +${version.added} −${version.removed}")
                     if (version.testRunId != null) append(" · tested")
                     if (generatedFrom) append(" · generated")
-                    if (newest) append(" · current")
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -163,8 +260,25 @@ private fun VersionRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        if (!newest) {
+        if (current) {
+            Text(
+                "Current",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.primary)
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+            )
+        } else {
             OutlinedButton(onClick = onRestore) { Text("Restore") }
+            if (canDelete) {
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Outlined.DeleteOutline, contentDescription = "Delete v${version.n}")
+                }
+            } else {
+                Spacer(Modifier.width(48.dp))
+            }
         }
     }
 }
