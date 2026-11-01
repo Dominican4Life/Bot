@@ -1,5 +1,9 @@
 package eu.kanade.tachiyomi.jssource.lab
 
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
@@ -18,10 +22,42 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
  * `detailsCoverAttr`, `descriptionSelector`, `tagsSelector`, `authorSelector`, `statusSelector` (the template's
  * getDetails reads them first; empty = not picked, the template's fallbacks then). [itemSuggestion] is the Item the
  * tap helper offers when the tapped one doesn't hold the Title.
+ *
+ * r102: Tags are groups ([TagGroup]: one per Details row tapped, named by the row's label): written as `tagGroups`, a
+ * JSON text list `[{"name":"Cast","selector":"…","target":"tags"}]` the template's TAG_GROUPS parses; with groups,
+ * `tagsSelector` is "" (r101's single selector stays for sources without groups). [Picked] is serializable: the
+ * builder keeps its own state in `LabMeta.picks` for "Edit by tapping".
  */
 internal object Derive {
 
+    /**
+     * r102: one Tags group: the Details row's [name] ("Cast"), a Jsoup [selector] for its values (by the row's label
+     * text, from picker.js), and where the values go: [target] "tags" (genres "Cast: Reina Ohara"), "description"
+     * (a line "Cast: …" under the description) or "both". [values] are the first ones seen (for the Tags card only).
+     */
+    @Serializable
+    data class TagGroup(
+        val name: String,
+        val selector: String,
+        val target: String = "tags",
+        val values: List<String> = emptyList(),
+    )
+
+    /** r102: the `tagGroups` placeholder: name, selector, target of each group (values stay in the builder) */
+    fun tagGroupsJson(groups: List<TagGroup>): String = JsonArray(
+        groups.filter { it.selector.isNotBlank() }.map { g ->
+            JsonObject(
+                mapOf(
+                    "name" to JsonPrimitive(g.name.ifBlank { "Tags" }),
+                    "selector" to JsonPrimitive(g.selector),
+                    "target" to JsonPrimitive(g.target.takeIf { it == "description" || it == "both" } ?: "tags"),
+                ),
+            )
+        },
+    ).toString()
+
     /** A pick as the picker script sent it: the saved [BuilderPick] plus what the derivations need */
+    @Serializable
     data class Picked(
         val pick: BuilderPick,
         val likeSelector: String,            // the css path without positions: "others like this"
@@ -34,7 +70,13 @@ internal object Derive {
     /** Class names a build tool generated: they change on every deploy, so a selector on them dies */
     val GENERATED_CLASS = Regex("""\.(css|sc|jss|emotion)-[a-z0-9]{4,}\b""")
 
-    fun derive(siteUrl: String, anime: Boolean, picks: List<Picked>, singleEpisode: Boolean = false): BuilderSelection {
+    fun derive(
+        siteUrl: String,
+        anime: Boolean,
+        picks: List<Picked>,
+        singleEpisode: Boolean = false,
+        tagGroups: List<TagGroup> = emptyList(),
+    ): BuilderSelection {
         val derived = LinkedHashMap<String, String>()
         val reasons = LinkedHashMap<String, String>()
         fun put(key: String, value: String, reason: String) {
@@ -230,7 +272,24 @@ internal object Derive {
         if (description != null) {
             put("descriptionSelector", pageSelector(description), "the description you tapped on the title page (its exact place); the page's meta description when it isn't there")
         }
-        if (tags != null) {
+        // r102: the rows tapped as Tags, one group each
+        val groups = tagGroups.filter { it.selector.isNotBlank() }
+        if (groups.isNotEmpty()) {
+            val where = groups.joinToString(", ") { g ->
+                g.name + when (g.target) {
+                    "description" -> " (description)"
+                    "both" -> " (tags + description)"
+                    else -> ""
+                }
+            }
+            put(
+                "tagGroups",
+                tagGroupsJson(groups),
+                "${groups.size} ${if (groups.size == 1) "row" else "rows"} you tapped as Tags, each a group named by its label: $where. " +
+                    "Tags show as “Cast: Reina Ohara”, so the app groups them",
+            )
+            put("tagsSelector", "", "the tags come from the groups above")
+        } else if (tags != null) {
             val one = tags.pick.tag == "a" || tags.pick.count >= 2
             val sel = if (one) tags.likeSelector else "${pageSelector(tags)} a"
             put(

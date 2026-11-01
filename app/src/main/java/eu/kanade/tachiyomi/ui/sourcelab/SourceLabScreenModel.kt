@@ -572,23 +572,7 @@ internal class SourceLabScreenModel(
         }
     }
 
-    /** ⋮ Duplicate: a copy under a new key, " copy" after the name, no `id` line; opens it */
-    fun duplicate(editor: SourceEditorScreenModel) {
-        val key = state.value.key ?: return
-        screenModelScope.launchIO {
-            runCatching { manager.duplicate(key) }
-                .onSuccess { copy ->
-                    if (copy == null) {
-                        message("Save the source first")
-                    } else {
-                        editor.open(copy.key)
-                        open(copy.key, LabTab.Code)
-                        message("Duplicated as ${copy.name}")
-                    }
-                }
-                .onFailure { message("Couldn't duplicate: ${it.message}") }
-        }
-    }
+    // KMK (r102): ⋮ Duplicate is gone (the owner's request); JsSourceManager.duplicate stays for other callers
 
     /** Called when the editor saved: the open key may have just become a saved source */
     fun onEditorSaved(info: JsSourceInfo) {

@@ -8,17 +8,27 @@ import eu.kanade.tachiyomi.jssource.lab.Detector
 import eu.kanade.tachiyomi.jssource.obj
 import eu.kanade.tachiyomi.jssource.str
 import eu.kanade.tachiyomi.util.system.AppLog
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.net.URLEncoder
+import kotlin.coroutines.cancellation.CancellationException
+import kotlin.random.Random
 
 /*
  * KMK (r100, Source Lab): "Lists and options" of Build by tapping: the search address recorded from a real search
@@ -82,6 +92,46 @@ internal data class ExtrasCustomSetting(
 @Immutable
 internal data class FilterOffer(val param: String, val seen: List<String>, val path: String)
 
+/** r102: one entry of a picked list, for "Learn this list": its text, its css path when the page sent one, its link */
+@Immutable
+internal data class LearnEntry(val text: String, val path: String?, val href: String?)
+
+/**
+ * r102: the last list picked for a filter, kept so "Learn this list" can press its entries: the page it was picked on,
+ * the css path of its menu's button ([opener], from picker.js), the entries' look-alike selector, the filter's name
+ */
+@Immutable
+internal data class LearnGroup(
+    val pageUrl: String,
+    val opener: String?,
+    val likeSelector: String,
+    val name: String,
+    val entries: List<LearnEntry>,
+    /** Some entries are links: the card offers "Check where each entry goes" instead of "Learn this list" */
+    val hasLinks: Boolean,
+)
+
+/**
+ * r102: an entry of a learning run: [status] waiting|pressing|learned|nochange|missing|filled|missed; [url] where it
+ * went. r102 fix: "missing" = learn.js didn't find the entry on the page (never made the filter's "Any")
+ */
+@Immutable
+internal data class LearnRow(val text: String, val url: String?, val status: String)
+
+/** r102: a "Learn this list" run as the card shows it */
+@Immutable
+internal data class LearnRun(
+    val name: String,
+    val rows: List<LearnRow>,
+    val running: Boolean,
+    /** The pattern found ("year=<text>", "/en/<text>"), or null */
+    val pattern: String?,
+    val note: String?,
+    val pressed: Int,
+    val pauseMinMs: Long,
+    val pauseMaxMs: Long,
+)
+
 @Immutable
 internal data class BuilderExtras(
     val searchWord: String = "test",
@@ -115,6 +165,12 @@ internal data class BuilderExtras(
     val groupMode: Boolean = false,
     /** r101: the last tapped entry that opens a list page */
     val listOffer: ListOffer? = null,
+    /** r102: the last list picked for a filter ("Learn this list" presses its entries), null when there is none */
+    val learnGroup: LearnGroup? = null,
+    /** r102: the current or last "Learn this list" run */
+    val learn: LearnRun? = null,
+    /** r102: the owner tapped a menu's button ("Year: All ▾") instead of one of its entries: the card says so */
+    val menuHint: Boolean = false,
 )
 
 /** Pure functions of "Lists and options", kept apart from the model so they can be checked on their own */
@@ -551,9 +607,31 @@ internal object BuilderExtrasLogic {
                 how = if (param.isEmpty()) "values, parameter not known" else "values of $param"
                 note = if (param.isEmpty()) {
                     " These entries have values but no links: type the address parameter they set " +
-                        "(pick one in Browse and look at the address: the part before =)."
+                        "(choose one on the site with nothing armed and look at the address: the part before =)."
                 } else {
                     ""
+                }
+            } else if (links.size < 2) {
+                // r102: entries without links and values (a dropdown of buttons) keep their texts as the options;
+                // "All" / "Any" is the empty first option. "Learn this list" finds where each one goes.
+                val options = entries.map { cleanLabel(it.text) }
+                    .filter { it.isNotEmpty() }
+                    .distinct()
+                    .map { label -> ExtrasOption(label, if (label.lowercase() in ANY_WORDS) "" else label) }
+                if (options.size >= 2) {
+                    val values = options.map { it.value }.filter { it.isNotEmpty() }.toSet()
+                    val param = knownParam?.trim()?.takeIf { it.isNotEmpty() }
+                        ?: offers.firstOrNull { o -> o.seen.isNotEmpty() && o.seen.all { it in values } }?.param.orEmpty()
+                    filter = makeFilter(options, "param", param, "", param.ifEmpty { null }, heading)
+                        .let { if (param.isEmpty()) it.copy(key = "", askParam = true) else it }
+                    total = optionCount(options, "param")
+                    how = if (param.isEmpty()) "texts (no links), parameter not known" else "texts of $param"
+                    note = if (param.isEmpty()) {
+                        " These entries are buttons without links: their texts are the options. Learn this list " +
+                            "to find the address each one opens (or type the parameter they set)."
+                    } else {
+                        ""
+                    }
                 }
             }
         }
@@ -588,6 +666,119 @@ internal object BuilderExtrasLogic {
             used = made?.options?.size ?: 0,
             how = how,
         )
+    }
+
+    /** r102: entry texts that mean "no filter" (the dropdown's first, empty option) */
+    private val ANY_WORDS = setOf("all", "any", "everything", "all types", "all years", "show all", "-", "—")
+
+    private val ARROWS = Regex("""[\s▾▴▼▲⌄⌃∨∧˅˄›»⏷⏶]+$""")
+
+    /**
+     * r102: the list's name as a filter name: "Year: All ▾" (a menu button above the list) → "Year"; arrows and a
+     * value after the colon dropped. Null when nothing is left.
+     */
+    fun cleanHeading(raw: String?): String? {
+        var t = raw?.replace(SPACES, " ")?.trim().orEmpty().replace(ARROWS, "").trim()
+        val colon = t.indexOf(':')
+        if (colon > 0) t = t.substring(0, colon).trim()
+        return t.takeIf { it.isNotEmpty() && it.length <= 40 }
+    }
+
+    /**
+     * r102: the tapped entries are a menu's buttons ("Type: All ▾ / Year: All ▾ / Sort: Hot ▾"), not the entries of
+     * one list: the tapped element says it opens a popup, or most of 2–8 link-less entries read "Name: value" and the
+     * tapped one does too
+     */
+    fun menuButtons(entries: List<GroupEntry>, tappedText: String, tappedPopup: Boolean): Boolean {
+        if (tappedPopup) return true
+        val plain = entries.filter { it.href.isNullOrBlank() && it.text.isNotBlank() }
+        if (plain.size < 2 || plain.size > 8 || plain.size < entries.size) return false
+        // A menu's button reads "Type: All", "Year: 2024 ▾", "Sort: Hot": a short name, a colon, a short value
+        fun buttonLike(raw: String): Boolean {
+            val text = raw.replace(SPACES, " ").trim().replace(ARROWS, "").trim()
+            val at = text.indexOf(':')
+            return at in 1..24 && text.length - at in 2..42 && text.substring(at + 1).isNotBlank()
+        }
+        val hits = plain.count { buttonLike(it.text) }
+        val tapped = tappedText.trim()
+        return hits >= 2 && hits * 5 >= plain.size * 3 && (tapped.isEmpty() || buttonLike(tapped))
+    }
+
+    // ---------- r102: Learn this list: the pattern of the learned addresses ----------
+
+    /**
+     * Where an entry's text goes in its address: query parameter [name] (`kind` "param") or path segment [index]
+     * (`kind` "path"), written as [variant] (text|lower|dash|underscore); [template] is a learned address to fill
+     */
+    data class LearnPattern(val kind: String, val name: String, val index: Int, val variant: String, val template: String, val shown: String)
+
+    private val VARIANTS = listOf("text", "lower", "dash", "underscore")
+    private val NON_WORD = Regex("""[^\p{L}\p{N}]+""")
+    private const val MARK = "labvalue0mark"
+
+    /** An entry's text as the address writes it: as is, lowercased, or slugified with - or _ */
+    fun variantOf(text: String, variant: String): String = when (variant) {
+        "lower" -> text.lowercase()
+        "dash" -> text.lowercase().replace(NON_WORD, "-").trim('-')
+        "underscore" -> text.lowercase().replace(NON_WORD, "_").trim('_')
+        else -> text
+    }
+
+    /**
+     * One query parameter or path segment whose value is each learned entry's text (as is, lowercased or slugified,
+     * the same way for all), the rest of the addresses being the same: [learned] is (text, address), ≥ 2 of them.
+     * Null when there is none.
+     */
+    fun findPattern(learned: List<Pair<String, String>>): LearnPattern? {
+        if (learned.size < 2) return null
+        val urls = learned.mapNotNull { (text, url) ->
+            val u = url.trim().toHttpUrlOrNull() ?: return@mapNotNull null
+            val t = cleanLabel(text)
+            if (t.isEmpty()) null else t to u.newBuilder().fragment(null).build()
+        }
+        if (urls.size < learned.size) return null
+        val first = urls.first().second
+        for (name in first.queryParameterNames) {
+            for (variant in VARIANTS) {
+                val values = urls.map { (t, u) -> u.queryParameter(name)?.takeIf { it == variantOf(t, variant) } }
+                if (values.any { it.isNullOrEmpty() } || values.distinct().size < 2) continue
+                val rest = urls.map { (_, u) -> u.newBuilder().setQueryParameter(name, MARK).build().toString() }
+                if (rest.distinct().size != 1) continue
+                return LearnPattern("param", name, -1, variant, first.toString(), "$name=<text>" + shownVariant(variant))
+            }
+        }
+        val segs = first.pathSegments
+        for (index in segs.indices) {
+            for (variant in VARIANTS) {
+                val values = urls.map { (t, u) ->
+                    u.pathSegments.takeIf { it.size == segs.size }?.get(index)?.takeIf { it == variantOf(t, variant) }
+                }
+                if (values.any { it.isNullOrEmpty() } || values.distinct().size < 2) continue
+                val rest = urls.map { (_, u) -> u.newBuilder().setPathSegment(index, MARK).build().toString() }
+                if (rest.distinct().size != 1) continue
+                val shownPath = "/" + segs.mapIndexed { at, seg -> if (at == index) "<text>" else seg }.joinToString("/") +
+                    (first.encodedQuery?.let { "?$it" } ?: "")
+                return LearnPattern("path", "", index, variant, first.toString(), shownPath + shownVariant(variant))
+            }
+        }
+        return null
+    }
+
+    private fun shownVariant(variant: String): String = when (variant) {
+        "lower" -> " (lowercase)"
+        "dash" -> " (a-b)"
+        "underscore" -> " (a_b)"
+        else -> ""
+    }
+
+    /** The address [pattern] gives [text], or null (an empty value) */
+    fun fillPattern(pattern: LearnPattern, text: String): String? {
+        val value = variantOf(cleanLabel(text), pattern.variant).takeIf { it.isNotEmpty() } ?: return null
+        val base = pattern.template.toHttpUrlOrNull() ?: return null
+        return when (pattern.kind) {
+            "param" -> base.newBuilder().setQueryParameter(pattern.name, value).build().toString()
+            else -> if (pattern.index < base.pathSize) base.newBuilder().setPathSegment(pattern.index, value).build().toString() else null
+        }
     }
 
     /** How many distinct options [makeFilter] sees before its [MAX_GROUP_OPTIONS] cap */
@@ -863,6 +1054,38 @@ internal class BuilderExtrasModel {
     private var site: String? = null
 
     /**
+     * r102: pushes a script into the builder's WebView (BuilderScreenModel sets it). "Learn this list" loads the list
+     * page with it (`location.assign`) and presses entries (`window.__labLearn.press`). Called on the main thread.
+     */
+    @Volatile
+    var runInPage: ((String) -> Unit)? = null
+
+    /** r102: the learning runs; [dispose] cancels them */
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    @Volatile
+    private var learnJob: Job? = null
+
+    @Volatile
+    private var stopLearning = false
+
+    /** r102: every address the WebView reports ([onPageUrl]), numbered, so a run can wait for the next one */
+    private data class SeenUrl(val tick: Long, val url: String)
+
+    private val seen = MutableStateFlow(SeenUrl(0L, ""))
+
+    /** r102 fix: only the pages that finished loading ([onPageFinished]), so a run presses on a loaded page */
+    private val finished = MutableStateFlow(SeenUrl(0L, ""))
+
+    /** r102 fix: learn.js's answer to the last press ([onLearnLog]): the press id and pressed|missing|error */
+    private data class PressOutcome(val id: Long, val state: String)
+
+    private val outcome = MutableStateFlow(PressOutcome(0L, ""))
+
+    @Volatile
+    private var pressId = 0L
+
+    /**
      * Anything besides the defaults set: the source is written as JS (the JSON format has no tabs, filters, settings
      * or names, and its paths are joined to the site, so an address on another site can't be said either)
      */
@@ -1114,6 +1337,10 @@ internal class BuilderExtrasModel {
     /**
      * r101, from picker.js group mode:
      * `{ pageUrl, tapped: { text, href }, likeSelector, count, items: [{ text, href, value }], isSelect }`
+     * r102: also `opener` (css path of the list's menu button, "" when none), `tappedOpener` (the tapped element is a
+     * menu's own button) and items' `path` when the page sends them (all optional). Taps on a menu's
+     * buttons show the menu hint instead; entries without links keep their texts; the list is kept for
+     * "Learn this list".
      */
     fun onGroupPicked(json: String) {
         val obj = runCatching { jsJson.parseToJsonElement(json) as? JsonObject }.getOrNull()
@@ -1134,20 +1361,67 @@ internal class BuilderExtrasModel {
             "extras group picked: ${entries.size} entries like ${obj.str("likeSelector").orEmpty()} " +
                 "(tapped \"${tapped?.str("text").orEmpty().take(40)}\"${if (obj.bool("isSelect") == true) ", a dropdown" else ""})",
         )
+        val isSelect = obj.bool("isSelect") == true
+        val tappedText = tapped?.str("text").orEmpty()
+        // r102: "Type: All ▾ / Year: All ▾ / Sort: Hot ▾" are the menus' buttons, not one list's entries
+        val popup = obj.bool("tappedOpener") == true || tapped?.bool("popup") == true
+        if (!isSelect && BuilderExtrasLogic.menuButtons(entries, tappedText, popup)) {
+            mutable.update { it.copy(menuHint = true, message = null, rev = it.rev + 1) }
+            AppLog.add(
+                'I',
+                "lab",
+                "extras group: \"${tappedText.take(40)}\" is a menu's button (${entries.size} like it" +
+                    (if (popup) ", opens a popup" else "") + "): no filter, hint shown",
+            )
+            return
+        }
         val s = mutable.value
+        val heading = BuilderExtrasLogic.cleanHeading(obj.str("heading"))
         val derived = BuilderExtrasLogic.deriveGroup(
             entries = entries,
-            tappedText = tapped?.str("text").orEmpty(),
+            tappedText = tappedText,
             tappedHref = tapped?.str("href"),
             pageUrl = pageUrl,
             rule = s.pageRule,
-            heading = obj.str("heading"),
+            heading = heading,
             offers = s.offers,
             // r101: a <select name="sort"> sets that parameter (picker.js sends its name)
-            knownParam = if (obj.bool("isSelect") == true) obj.str("name") else null,
+            knownParam = if (isSelect) obj.str("name") else null,
         )
         applyDerived(derived, "the tapped list")
+        // r102: kept for "Learn this list" (not a <select>: its options are read, never pressed)
+        val paths = obj.arr("items")?.map { element -> (element as? JsonObject)?.str("path")?.takeIf { it.isNotBlank() } }.orEmpty()
+        val learnEntries = entries.mapIndexedNotNull { at, e ->
+            val text = e.text.trim()
+            if (text.isEmpty()) null else LearnEntry(text, paths.getOrNull(at), e.href?.trim()?.takeIf { it.isNotEmpty() })
+        }.distinctBy { it.text }
+        val group = if (!isSelect && learnEntries.size >= 2 && pageUrl.startsWith("http")) {
+            LearnGroup(
+                pageUrl = pageUrl.substringBefore('#'),
+                opener = obj.str("opener")?.trim()?.takeIf { it.isNotEmpty() },
+                likeSelector = obj.str("likeSelector").orEmpty(),
+                name = derived.filter?.name?.takeIf { it.isNotBlank() } ?: heading ?: "List",
+                entries = learnEntries.take(BuilderExtrasLogic.MAX_GROUP_OPTIONS),
+                hasLinks = learnEntries.any { e -> e.href?.let { !it.startsWith("javascript:", ignoreCase = true) } == true },
+            )
+        } else {
+            null
+        }
+        mutable.update { st ->
+            if (st.learn?.running == true) st.copy(menuHint = false) else st.copy(learnGroup = group, learn = null, menuHint = false)
+        }
+        if (group != null) {
+            AppLog.add(
+                'D',
+                "lab",
+                "extras learnable list \"${group.name}\": ${group.entries.size} entries" +
+                    (if (group.hasLinks) ", with links" else ", no links") + ", menu button ${group.opener ?: "(none sent)"}",
+            )
+        }
     }
+
+    /** r102: the menu hint's OK */
+    fun dismissMenuHint() = mutable.update { it.copy(menuHint = false) }
 
     /** r101: what [BuilderListReader] read from [url] becomes a filter, derived like a group pick */
     fun onListRead(url: String, result: BuilderListReader.Result) {
@@ -1165,7 +1439,12 @@ internal class BuilderExtrasModel {
 
     fun dismissListOffer() = mutable.update { it.copy(listOffer = null) }
 
-    private fun applyDerived(derived: BuilderExtrasLogic.GroupDerived, from: String) {
+    private fun applyDerived(
+        derived: BuilderExtrasLogic.GroupDerived,
+        from: String,
+        /** r102: other filters the new one replaces (the texts-only filter of a list that was then learned) */
+        replaces: (ExtrasFilter) -> Boolean = { false },
+    ) {
         var added: ExtrasFilter? = null
         mutable.update { s ->
             added = null
@@ -1173,7 +1452,7 @@ internal class BuilderExtrasModel {
             val filters = if (f == null) {
                 s.filters
             } else {
-                val others = s.filters.filterNot { sameFilter(it, f) }
+                val others = s.filters.filterNot { sameFilter(it, f) || replaces(it) }
                 val made = if (f.key.isEmpty()) f else f.copy(key = BuilderExtrasLogic.uniqueKey(f.key, others.map { it.key }))
                 added = made
                 others + made
@@ -1201,6 +1480,453 @@ internal class BuilderExtrasModel {
      * `/en/{value}` path as a menu's other pages) is never replaced: the new one is added under a unique key
      */
     private fun sameFilter(a: ExtrasFilter, b: ExtrasFilter): Boolean = BuilderExtrasLogic.sameFilter(a, b)
+
+    // ---------- Learn this list (r102) ----------
+
+    /** r102: the WebView loaded an address or its history changed (BuilderScreenModel calls it every time) */
+    fun onPageUrl(url: String) {
+        val u = url.trim()
+        if (!u.startsWith("http://") && !u.startsWith("https://")) return
+        seen.update { SeenUrl(it.tick + 1, u) }
+    }
+
+    /** r102 fix: a page finished loading (BuilderScreenModel calls it from the WebView's onPageFinished only) */
+    fun onPageFinished(url: String) {
+        val u = url.trim()
+        if (!u.startsWith("http://") && !u.startsWith("https://")) return
+        // (onPageUrl heard the same address just before: [seen] isn't ticked twice)
+        finished.update { SeenUrl(it.tick + 1, u) }
+    }
+
+    /**
+     * r102 fix: a "learn: …" line of learn.js (BuilderScreenModel.onPickerLog forwards them): "learn: pressed #<id> …",
+     * "learn: missing #<id> …" or "learn: error #<id> …" says what became of press <id>.
+     */
+    fun onLearnLog(line: String) {
+        val m = LEARN_OUTCOME.find(line) ?: return
+        val id = m.groupValues[2].toLongOrNull() ?: return
+        outcome.value = PressOutcome(id, m.groupValues[1])
+    }
+
+    /** r102: the card's "Not now": forget the picked list (a run in progress is stopped) */
+    fun dismissLearn() {
+        stopLearning = true
+        mutable.update { it.copy(learnGroup = null, learn = null) }
+    }
+
+    /** r102: the card's Stop: the run ends after the current press, keeping what it learned */
+    fun stopLearn() {
+        if (learnJob?.isActive == true) {
+            stopLearning = true
+            AppLog.add('D', "lab", "learn: stop asked")
+        }
+    }
+
+    /** r102: the builder is closed: a run in progress ends at once (BuilderScreenModel.onDispose) */
+    fun dispose() {
+        stopLearning = true
+        learnJob?.cancel()
+        learnJob = null
+    }
+
+    /**
+     * r102: "Learn this list": presses the picked list's entries one at a time on its page and records where each
+     * goes, pausing a random [pauseMinMs]..[pauseMaxMs] between presses. After 3 learned addresses a pattern (one
+     * parameter or path segment holding the entry's text) fills in the rest without pressing.
+     */
+    fun startLearn(pauseMinMs: Long, pauseMaxMs: Long) {
+        val group = mutable.value.learnGroup ?: return
+        if (learnJob?.isActive == true) return
+        if (runInPage == null) {
+            mutable.update { it.copy(message = "The page isn't ready: open the list page in the builder first") }
+            AppLog.add('W', "lab", "learn: no page to press in (runInPage not set)")
+            return
+        }
+        val low = minOf(pauseMinMs, pauseMaxMs).coerceAtLeast(0L)
+        val high = maxOf(pauseMinMs, pauseMaxMs).coerceAtLeast(0L)
+        stopLearning = false
+        learnJob = scope.launch {
+            try {
+                runLearn(group, low, high)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLog.add('E', "lab", "learn failed: ${e.message ?: e.javaClass.simpleName}")
+                mutable.update { s ->
+                    val run = s.learn ?: return@update s
+                    s.copy(learn = run.copy(running = false, note = "Learning stopped: ${e.message ?: "an error"}"))
+                }
+            }
+        }
+    }
+
+    private suspend fun runLearn(group: LearnGroup, low: Long, high: Long) {
+        val rows = group.entries.map { e ->
+            LearnRow(BuilderExtrasLogic.cleanLabel(e.text).ifEmpty { e.text }, null, "waiting")
+        }.toMutableList()
+        val base = group.pageUrl
+        var pressed = 0
+        var pattern: BuilderExtrasLogic.LearnPattern? = null
+        var note: String? = null
+        fun publish(running: Boolean) {
+            val run = LearnRun(
+                name = group.name,
+                rows = rows.toList(),
+                running = running,
+                pattern = pattern?.shown,
+                note = note,
+                pressed = pressed,
+                pauseMinMs = low,
+                pauseMaxMs = high,
+            )
+            // "Not now" / "Make filter" during the run forgot the list: the card stays closed
+            mutable.update { if (it.learnGroup == null) it else it.copy(learn = run) }
+        }
+        publish(true)
+        AppLog.add('I', "lab", "learn \"${group.name}\": ${rows.size} entries on $base, pause $low–$high ms, menu button ${group.opener ?: "(none)"}")
+        var triedPattern = false
+        var stopReason: String? = null
+        try {
+            for (i in rows.indices) {
+                if (stopLearning) {
+                    stopReason = "Stopped by you after $pressed presses."
+                    break
+                }
+                if (pressed >= MAX_PRESSES) {
+                    stopReason = "Pressed $MAX_PRESSES entries, the most one run presses."
+                    break
+                }
+                if (pressed > 0 && high > 0) {
+                    pause(Random.nextLong(low, high + 1))
+                    if (stopLearning) {
+                        stopReason = "Stopped by you after $pressed presses."
+                        break
+                    }
+                }
+                rows[i] = rows[i].copy(status = "pressing")
+                publish(true)
+                if (!onPage(base) && !loadPage(base)) {
+                    rows[i] = rows[i].copy(status = "waiting")
+                    stopReason = "The list page didn't load again ($base): learning stopped."
+                    AppLog.add('W', "lab", "learn: the list page $base didn't load in ${LOAD_MS / 1000} s")
+                    break
+                }
+                pause(SETTLE_MS)
+                if (stopLearning) {
+                    rows[i] = rows[i].copy(status = "waiting")
+                    stopReason = "Stopped by you after $pressed presses."
+                    break
+                }
+                val from = clean(currentUrl())
+                val before = seen.value.tick
+                val e = group.entries[i]
+                val id = press(group, e)
+                pressed++
+                // r102 fix: learn.js says whether it found the entry; a missing one is never "no change" (= "Any")
+                val answer = waitFor(ANSWER_MS) { outcome.value.takeIf { it.id == id } }
+                val gone = waitFor(0L) { seen.value.takeIf { it.tick > before && clean(it.url) != from } }
+                val changed = when {
+                    gone != null -> gone
+                    answer == null || answer.state != "pressed" -> null
+                    else -> waitFor(CHANGE_MS) { seen.value.takeIf { it.tick > before && clean(it.url) != from } }
+                }
+                if (changed == null && stopLearning) {
+                    rows[i] = rows[i].copy(status = "waiting")
+                    stopReason = "Stopped by you after $pressed presses."
+                    break
+                }
+                if (changed == null && (answer == null || answer.state != "pressed")) {
+                    rows[i] = rows[i].copy(status = "missing")
+                    val why = answer?.state ?: "no answer from the page"
+                    AppLog.add('D', "lab", "learn ${rows[i].text} → missing ($why)")
+                } else if (changed == null) {
+                    rows[i] = rows[i].copy(status = "nochange")
+                    AppLog.add('D', "lab", "learn ${rows[i].text} → no change")
+                } else {
+                    rows[i] = rows[i].copy(status = "learned", url = changed.url.substringBefore('#'))
+                    AppLog.add('D', "lab", "learn ${rows[i].text} → ${changed.url}")
+                }
+                val learned = rows.filter { it.status == "learned" && it.url != null }
+                if (!triedPattern && learned.size >= PATTERN_AFTER) {
+                    triedPattern = true
+                    val found = BuilderExtrasLogic.findPattern(learned.map { it.text to it.url.orEmpty() })
+                    if (found != null) {
+                        pattern = found
+                        for (k in rows.indices) {
+                            if (rows[k].status != "waiting") continue
+                            val url = BuilderExtrasLogic.fillPattern(found, rows[k].text)
+                            rows[k] = rows[k].copy(status = if (url == null) "missed" else "filled", url = url)
+                        }
+                        publish(true)
+                        AppLog.add('D', "lab", "learn: pattern ${found.shown} after $PATTERN_AFTER entries")
+                        break
+                    }
+                    AppLog.add('D', "lab", "learn: no pattern in the first $PATTERN_AFTER addresses, pressing all")
+                }
+                publish(true)
+            }
+        } finally {
+            val learned = rows.count { it.status == "learned" || it.status == "filled" }
+            note = when {
+                stopReason != null -> stopReason
+                pattern != null -> "Pattern found after $PATTERN_AFTER: ${pattern?.shown} — the rest are filled in without pressing."
+                learned == 0 -> "No entry changed the address: this list can't be learned (the site changes the page without a new address)."
+                else -> "Pressed all ${rows.count { it.status == "learned" || it.status == "nochange" }}: no pattern, each address is the one seen." +
+                    rows.count { it.status == "missing" }.let { m -> if (m > 0) " $m not found on the page." else "" }
+            }
+            publish(false)
+            val how = pattern?.let { "pattern ${it.shown}" } ?: "pressed all"
+            AppLog.add('I', "lab", "learn: $learned entries, $how" + (stopReason?.let { " ($it)" } ?: ""))
+        }
+        // Back to the list page, so the page shows what was learned from
+        if (!onPage(base)) runCatching { loadPage(base) }
+    }
+
+    /** "Make "Year" filter": what was learned becomes a filter (the r101 derivation: param / path / sort) */
+    fun makeLearnedFilter() {
+        val s = mutable.value
+        val run = s.learn ?: return
+        val group = s.learnGroup ?: return
+        stopLearning = true
+        val entries = run.rows.mapNotNull { r ->
+            when (r.status) {
+                "learned", "filled" -> r.url?.let { BuilderExtrasLogic.GroupEntry(r.text, it, null) }
+                // "All": pressing it leaves the list page as it is
+                "nochange" -> BuilderExtrasLogic.GroupEntry(r.text, group.pageUrl, null)
+                else -> null
+            }
+        }
+        val derived = BuilderExtrasLogic.deriveGroup(
+            entries = entries,
+            tappedText = "",
+            tappedHref = null,
+            pageUrl = group.pageUrl,
+            rule = s.pageRule,
+            heading = group.name,
+            offers = s.offers,
+        )
+        // A "no change" entry ("All") names the empty option
+        val anyLabel = run.rows.firstOrNull { it.status == "nochange" }?.text
+        val made = derived.filter?.let { f ->
+            if (anyLabel == null || f.type == "sort") {
+                f
+            } else {
+                val options = f.options.map { if (it.value.isEmpty()) it.copy(label = anyLabel) else it }
+                f.copy(options = options, optionsText = BuilderExtrasLogic.formatOptions(options))
+            }
+        }
+        val texts = run.rows.map { it.text }.toSet()
+        applyDerived(derived.copy(filter = made, listUrl = null), "the learned list \"${group.name}\"") { old ->
+            // the texts-only filter made when the list was picked
+            old.askParam && old.param.isBlank() && old.options.count { it.label in texts } >= 2
+        }
+        if (made != null) {
+            mutable.update { st ->
+                st.copy(
+                    learnGroup = null,
+                    learn = null,
+                    offers = if (made.mode == "param") st.offers.filter { it.param != made.param } else st.offers,
+                )
+            }
+        }
+    }
+
+    private fun currentUrl(): String = seen.value.url.ifEmpty { mutable.value.lastUrl.orEmpty() }
+
+    private fun clean(url: String): String = url.trim().substringBefore('#').trimEnd('/')
+
+    private fun onPage(url: String): Boolean = clean(currentUrl()) == clean(url)
+
+    /**
+     * Loads [url] in the WebView and waits until it finished loading (r102 fix: onPageFinished, not the first history
+     * event, which comes before the page's scripts ran), or any page finished, when the site redirects
+     */
+    private suspend fun loadPage(url: String): Boolean {
+        val before = finished.value.tick
+        inPage("location.assign(${JsonPrimitive(url)});")
+        val loaded = waitFor(LOAD_MS) { finished.value.takeIf { it.tick > before && clean(it.url) == clean(url) } }
+        if (loaded != null) return true
+        return finished.value.tick > before
+    }
+
+    /**
+     * r102 fix: waits up to [ms] for [find] to give a value, looking every 200 ms, and gives up at once when Stop was
+     * pressed (so Stop answers within a fifth of a second); [ms] 0 = look once
+     */
+    private suspend fun <T : Any> waitFor(ms: Long, find: () -> T?): T? {
+        val end = System.currentTimeMillis() + ms
+        while (true) {
+            find()?.let { return it }
+            val left = end - System.currentTimeMillis()
+            if (left <= 0L || stopLearning) return null
+            delay(minOf(left, WAIT_STEP_MS))
+        }
+    }
+
+    /**
+     * Presses [entry] through learn.js, waiting up to 5 s for learn.js to be injected after a load; returns the press
+     * id learn.js reports the outcome under ([onLearnLog])
+     */
+    private suspend fun press(group: LearnGroup, entry: LearnEntry): Long {
+        val id = ++pressId
+        val request = JsonObject(
+            mapOf(
+                "id" to JsonPrimitive(id),
+                "opener" to (group.opener?.let { JsonPrimitive(it) } ?: JsonNull),
+                "entry" to JsonObject(
+                    mapOf(
+                        "path" to JsonPrimitive(entry.path ?: group.likeSelector),
+                        "text" to JsonPrimitive(entry.text),
+                    ),
+                ),
+            ),
+        )
+        inPage(
+            "(function(){var r=$request;function go(k){if(window.__labLearn){window.__labLearn.press(r);}" +
+                "else if(k<50){setTimeout(function(){go(k+1);},100);}}go(0);})();",
+        )
+        return id
+    }
+
+    private suspend fun inPage(script: String) {
+        val push = runInPage ?: return
+        withContext(Dispatchers.Main) { push(script) }
+    }
+
+    private suspend fun pause(ms: Long) {
+        var left = ms
+        while (left > 0 && !stopLearning) {
+            val step = minOf(left, WAIT_STEP_MS)
+            delay(step)
+            left -= step
+        }
+    }
+
+    // ---------- Saved with the source (r102: Edit by tapping) ----------
+
+    /** r102: what the owner set here, for the builder state saved with the source ([restore] reads it back) */
+    fun snapshot(): JsonElement {
+        val s = mutable.value
+        fun str(v: String?): JsonElement = v?.let { JsonPrimitive(it) } ?: JsonNull
+        return JsonObject(
+            mapOf(
+                "v" to JsonPrimitive(1),
+                "searchWord" to JsonPrimitive(s.searchWord),
+                "searchPath" to str(s.searchPath),
+                "searchFrom" to str(s.searchFrom),
+                "searchFromForm" to JsonPrimitive(s.searchFromForm),
+                "popularPath" to str(s.popularPath),
+                "popularName" to JsonPrimitive(s.popularName),
+                "latestPath" to str(s.latestPath),
+                "latestName" to JsonPrimitive(s.latestName),
+                "tabs" to JsonArray(s.tabs.map { JsonObject(mapOf("name" to JsonPrimitive(it.name), "path" to JsonPrimitive(it.path))) }),
+                "filters" to JsonArray(
+                    s.filters.map { f ->
+                        JsonObject(
+                            mapOf(
+                                "key" to JsonPrimitive(f.key),
+                                "name" to JsonPrimitive(f.name),
+                                "type" to JsonPrimitive(f.type),
+                                "optionsText" to JsonPrimitive(f.optionsText),
+                                "options" to JsonArray(
+                                    f.options.map { JsonObject(mapOf("label" to JsonPrimitive(it.label), "value" to JsonPrimitive(it.value))) },
+                                ),
+                                "onValue" to JsonPrimitive(f.onValue),
+                                "mode" to JsonPrimitive(f.mode),
+                                "param" to JsonPrimitive(f.param),
+                                "path" to JsonPrimitive(f.path),
+                                "askParam" to JsonPrimitive(f.askParam),
+                            ),
+                        )
+                    },
+                ),
+                "qualitySetting" to JsonPrimitive(s.qualitySetting),
+                "serverSetting" to JsonPrimitive(s.serverSetting),
+                "hideWordsSetting" to JsonPrimitive(s.hideWordsSetting),
+                "custom" to JsonArray(
+                    s.custom.map { c ->
+                        JsonObject(
+                            mapOf(
+                                "key" to JsonPrimitive(c.key),
+                                "name" to JsonPrimitive(c.name),
+                                "type" to JsonPrimitive(c.type),
+                                "optionsText" to JsonPrimitive(c.optionsText),
+                            ),
+                        )
+                    },
+                ),
+                "pageRule" to (s.pageRule?.let { JsonObject(mapOf("kind" to JsonPrimitive(it.kind), "name" to JsonPrimitive(it.name))) } ?: JsonNull),
+                "dismissed" to JsonArray(synchronized(dismissed) { dismissed.toList() }.map { JsonPrimitive(it) }),
+            ),
+        )
+    }
+
+    /** r102: puts back what [snapshot] saved (missing parts keep their defaults); the fields re-read their text */
+    fun restore(json: JsonElement) {
+        val o = json as? JsonObject
+        if (o == null) {
+            AppLog.add('W', "lab", "extras restore: not an object")
+            return
+        }
+        val tabs = o.arr("tabs")?.mapNotNull { e ->
+            val t = e as? JsonObject ?: return@mapNotNull null
+            ExtrasTab(t.str("name").orEmpty(), t.str("path").orEmpty())
+        }.orEmpty()
+        val filters = o.arr("filters")?.mapNotNull { e ->
+            val f = e as? JsonObject ?: return@mapNotNull null
+            val options = f.arr("options")?.mapNotNull { oe ->
+                val op = oe as? JsonObject ?: return@mapNotNull null
+                ExtrasOption(op.str("label").orEmpty(), op.str("value").orEmpty())
+            }.orEmpty()
+            val key = f.str("key").orEmpty()
+            ExtrasFilter(
+                key = key,
+                name = f.str("name").orEmpty(),
+                type = f.str("type") ?: "select",
+                options = options,
+                onValue = f.str("onValue") ?: "1",
+                optionsText = f.str("optionsText") ?: BuilderExtrasLogic.formatOptions(options),
+                mode = f.str("mode") ?: "param",
+                param = f.str("param") ?: key,
+                path = f.str("path").orEmpty(),
+                askParam = f.bool("askParam") == true,
+            )
+        }.orEmpty()
+        val custom = o.arr("custom")?.mapNotNull { e ->
+            val c = e as? JsonObject ?: return@mapNotNull null
+            val text = c.str("optionsText").orEmpty()
+            ExtrasCustomSetting(
+                key = c.str("key").orEmpty(),
+                name = c.str("name").orEmpty(),
+                type = c.str("type") ?: "switch",
+                options = text.lines().map { it.trim() }.filter { it.isNotEmpty() },
+                optionsText = text,
+            )
+        }.orEmpty()
+        val rule = o.obj("pageRule")?.let { r -> r.str("kind")?.let { PageRule(it, r.str("name").orEmpty()) } }
+        o.arr("dismissed")?.forEach { e -> (e as? JsonPrimitive)?.content?.let { dismissed.add(it) } }
+        mutable.update { s ->
+            s.copy(
+                searchWord = o.str("searchWord") ?: s.searchWord,
+                searchPath = o.str("searchPath"),
+                searchFrom = o.str("searchFrom"),
+                searchFromForm = o.bool("searchFromForm") == true,
+                popularPath = o.str("popularPath"),
+                popularName = o.str("popularName").orEmpty(),
+                latestPath = o.str("latestPath"),
+                latestName = o.str("latestName").orEmpty(),
+                tabs = tabs,
+                filters = filters,
+                qualitySetting = o.bool("qualitySetting") == true,
+                serverSetting = o.bool("serverSetting") == true,
+                hideWordsSetting = o.bool("hideWordsSetting") == true,
+                custom = custom,
+                pageRule = rule,
+                rev = s.rev + 1,
+            )
+        }
+        AppLog.add('I', "lab", "extras restored: ${tabs.size} tab(s), ${filters.size} filter(s), ${custom.size} setting(s)")
+    }
 
     // ---------- Tabs ----------
 
@@ -1411,5 +2137,21 @@ internal class BuilderExtrasModel {
     private companion object {
         const val MAX_SEEN = 30
         const val MAX_OPTIONS = 60
+
+        // r102: Learn this list
+        const val MAX_PRESSES = 60
+        const val PATTERN_AFTER = 3
+        const val CHANGE_MS = 6_000L
+        const val LOAD_MS = 15_000L
+        const val SETTLE_MS = 700L
+
+        /** r102 fix: how long learn.js may take to say what became of a press (5 s injection wait + menu opening) */
+        const val ANSWER_MS = 8_000L
+
+        /** r102 fix: how often a wait looks at Stop */
+        const val WAIT_STEP_MS = 200L
+
+        /** r102 fix: learn.js's outcome lines ("learn: pressed #12 …") */
+        val LEARN_OUTCOME = Regex("^learn: (pressed|missing|error) #([0-9]+)")
     }
 }

@@ -28,12 +28,13 @@
     "descriptionSelector": "",
     "tagsSelector": "",
     "authorSelector": "",
-    "statusSelector": ""
+    "statusSelector": "",
+    "tagGroups": ""
   },
   "parts": {
     "headers": {
       "title": "Headers and constants",
-      "text": "The site as Referer on every picture, and the selectors and list paths the builder derived (each has its reason in the builder's card); the title page's own fields tapped in Build by tapping (Cover, Description, Tags, Author, Status; empty when not tapped); the Popular / Latest button names, tabs, filters and settings from \"Lists and options\" (empty lists when none were recorded).",
+      "text": "The site as Referer on every picture, and the selectors and list paths the builder derived (each has its reason in the builder's card); the title page's own fields tapped in Build by tapping (Cover, Description, Tags, Author, Status; empty when not tapped); the rows tapped as Tags groups (TAG_GROUPS: name, selector, target; empty list when none); the Popular / Latest button names, tabs, filters and settings from \"Lists and options\" (empty lists when none were recorded).",
       "ruleIds": [
         "referer-on-images",
         "selector-generated-class"
@@ -53,12 +54,12 @@
     },
     "search": {
       "title": "Search",
-      "text": "The search path with the words and page filled (the address recorded from a real search on the site, or its search box, when there is one), the same cards. Each filter adds its value: a \"param\" filter as param=value, a \"path\" filter (a genre or sort list of the site, /genres/{value}) by opening that list's address instead when no words are typed (left out while searching for words); a sort filter sends its picked option's value; empty ones are left out.",
+      "text": "The search path with the words and page filled (the address recorded from a real search on the site, or its search box, when there is one), the same cards. Each filter adds its value: a \"param\" filter as param=value, a \"path\" filter (a genre or sort list of the site, /genres/{value}) by opening that list's address instead when no words are typed (left out while searching for words); a sort filter sends its picked option's value; empty ones are left out. A grouped tag tapped on a title page arrives as \"Group: tag\": a filter named like the group with an option labelled like the tag picks that option; else only the tag's words are searched.",
       "ruleIds": []
     },
     "getDetails": {
       "title": "Title page",
-      "text": "The Cover, Description, Tags, Author and Status tapped on the title page first. Else og:image, a video poster or the player's poster as cover, and no cover at all when the page has none, so the list's cover stays; og:description unless it is the site's own slogan (the home page's description, read once); genre / tag links outside the site's menus (nav, header, footer, aside, menus), without words like \"Genres\" or \"Tags\". Author and status only when tapped.",
+      "text": "The Cover, Description, Tags, Author and Status tapped on the title page first. Rows tapped as Tags groups (Cast, Maker, Genres…) give tags \"Group: value\" that the app shows grouped (the other tags are then \"Tags: value\"), and rows set to Description a \"Group: a, b\" line under the description. Else og:image, a video poster or the player's poster as cover, and no cover at all when the page has none, so the list's cover stays; og:description unless it is the site's own slogan (the home page's description, read once); genre / tag links outside the site's menus (nav, header, footer, aside, menus), without words like \"Genres\" or \"Tags\". Author and status only when tapped.",
       "optional": true,
       "ruleIds": []
     },
@@ -108,6 +109,13 @@
         "getDetails"
       ],
       "note": "Title page: the cover / description / tags / author you tap; keeps the list cover when the page has none; skips the site-wide description and menu links."
+    },
+    "5": {
+      "parts": [
+        "getDetails",
+        "search"
+      ],
+      "note": "Tags grouped by the rows you tap (Cast, Maker…); tapping a grouped tag searches it in the source."
     }
   }
 }

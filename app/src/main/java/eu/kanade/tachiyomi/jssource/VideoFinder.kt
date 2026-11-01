@@ -103,7 +103,15 @@ internal object VideoFinder {
     private val TAPS_AT_MS = longArrayOf(2_000L, 5_000L)
 
     // No braces in any of these (ICU regex: a bare brace throws at class init)
-    private val AD = Regex("""doubleclick|googlesyndication|adservice|/ads/|vast|preroll""", RegexOption.IGNORE_CASE)
+    // r102: plus the adult ad / traffic networks that put iframes over players (pnonolet, pemsrv, …): their frames
+    // are ads, never the video, and opening them as "the player" in pass 2 wastes the budget. r102 fix: `vast` only as
+    // its own path / host part (not "vastporn"/"canvas…"), no bare `syndication.` (googlesyndication is listed)
+    private val AD = Regex(
+        """doubleclick|googlesyndication|adservice|/ads/|[/._-]vast([/._?-]|$)|preroll|pnonolet|pemsrv|juicyads|exoclick|exosrv|""" +
+            """trafficjunky|trafficstars|tsyndicate|adsterra|popads|propellerads|magsrv|realsrv|clickadu|hilltopads|""" +
+            """adspyglass|ero-advertising|onclickads|a-ads\.com|adnxs""",
+        RegexOption.IGNORE_CASE,
+    )
 
     // r100 fix pass: matched against the address's PATH (not its query), after the script / style / page / picture
     // addresses are set aside (`m3u8-parser.min.js`, `thumbs/a.mp4.jpg`, `videos.mp4player.html` aren't videos)

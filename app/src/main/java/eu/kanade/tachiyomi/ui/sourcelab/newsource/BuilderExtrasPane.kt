@@ -18,13 +18,16 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.TouchApp
+import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -45,6 +48,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.roundToLong
 
 /**
  * KMK (r100, Source Lab): "Lists and options" of Build by tapping: four sections that open and close (Search, Tabs,
@@ -54,6 +58,9 @@ import androidx.compose.ui.unit.sp
  *
  * [onAskOptions] asks the page for a parameter's options (picker.js `optionsFor`); the answer comes back through the
  * bridge to [BuilderExtrasModel.onPageOptions].
+ *
+ * r102: above the card, the menu hint (the owner tapped a menu's button instead of an entry) and the "Learn this
+ * list" card for the last list picked for a filter (mockup 3).
  */
 @Composable
 internal fun BuilderExtrasPane(
@@ -76,47 +83,53 @@ internal fun BuilderExtrasPane(
         if (open != "filters" && extras.state.value.groupMode) extras.setGroupMode(false)
     }
 
-    Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainer, modifier = modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text("Lists and options", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Text(
-                "Search, tabs, filters and settings without code. Searching and changing filters need the site to work: switch to Browse first.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 2.dp, bottom = 6.dp),
-            )
-            val message = s.message
-            if (message != null) {
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = MaterialTheme.colorScheme.secondaryContainer,
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 10.dp)) {
-                        Text(
-                            message,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer,
-                            modifier = Modifier.weight(1f).padding(vertical = 8.dp),
-                        )
-                        IconButton(onClick = extras::clearMessage, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Outlined.Close, contentDescription = "Dismiss", modifier = Modifier.size(16.dp))
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = modifier.fillMaxWidth()) {
+        if (s.menuHint) MenuHintCard(onDismiss = extras::dismissMenuHint)
+        val learnGroup = s.learnGroup
+        if (learnGroup != null) LearnCard(learnGroup, s.learn, extras, siteUrl)
+        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("Lists and options", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Search, tabs, filters and settings without code. Searching and changing filters need the site to work: " +
+                        "use the page with nothing armed in \"Tapping for…\".",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp, bottom = 6.dp),
+                )
+                val message = s.message
+                if (message != null) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 10.dp)) {
+                            Text(
+                                message,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.weight(1f).padding(vertical = 8.dp),
+                            )
+                            IconButton(onClick = extras::clearMessage, modifier = Modifier.size(32.dp)) {
+                                Icon(Icons.Outlined.Close, contentDescription = "Dismiss", modifier = Modifier.size(16.dp))
+                            }
                         }
                     }
                 }
-            }
 
-            SectionHeader("Search", searchStatus(s), open == "search") { toggle("search") }
-            if (open == "search") SearchSection(s, extras)
-            HorizontalDivider()
-            SectionHeader("Tabs", tabsStatus(s), open == "tabs") { toggle("tabs") }
-            if (open == "tabs") TabsSection(s, extras, pageUrl)
-            HorizontalDivider()
-            SectionHeader("Filters", filtersStatus(s), open == "filters") { toggle("filters") }
-            if (open == "filters") FiltersSection(s, extras, pageUrl, onAskOptions) { readUrl = it }
-            HorizontalDivider()
-            SectionHeader("Settings", settingsStatus(s), open == "settings") { toggle("settings") }
-            if (open == "settings") SettingsSection(s, extras)
+                SectionHeader("Search", searchStatus(s), open == "search") { toggle("search") }
+                if (open == "search") SearchSection(s, extras)
+                HorizontalDivider()
+                SectionHeader("Tabs", tabsStatus(s), open == "tabs") { toggle("tabs") }
+                if (open == "tabs") TabsSection(s, extras, pageUrl)
+                HorizontalDivider()
+                SectionHeader("Filters", filtersStatus(s), open == "filters") { toggle("filters") }
+                if (open == "filters") FiltersSection(s, extras, pageUrl, onAskOptions) { readUrl = it }
+                HorizontalDivider()
+                SectionHeader("Settings", settingsStatus(s), open == "settings") { toggle("settings") }
+                if (open == "settings") SettingsSection(s, extras)
+            }
         }
     }
     val reading = readUrl
@@ -207,7 +220,7 @@ private fun SearchSection(s: BuilderExtras, extras: BuilderExtrasModel) {
         val path = s.searchPath
         if (path == null) {
             Hint(
-                "Switch to Browse and search the site for \"$word\": the address of the results is recorded here. " +
+                "With nothing armed, search the site for \"$word\": the address of the results is recorded here. " +
                     "If the results show but nothing is recorded, this site searches without changing the address: " +
                     "not supported here yet.",
             )
@@ -233,7 +246,7 @@ private fun SearchSection(s: BuilderExtras, extras: BuilderExtrasModel) {
 private fun TabsSection(s: BuilderExtras, extras: BuilderExtrasModel, pageUrl: String?) {
     var newName by remember { mutableStateOf("") }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 12.dp)) {
-        Hint("Open the list on the site (Browse to move around), then \"Use this page\". An empty name keeps the app's own.")
+        Hint("Open the list on the site (nothing armed to move around), then \"Use this page\". An empty name keeps the app's own.")
         val rule = s.pageRule
         Hint(
             if (rule != null) {
@@ -347,8 +360,9 @@ private fun FiltersSection(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 12.dp)) {
         Hint(
-            "Pick a list on the site (its genres, its sort menu, its types) and its entries become a filter. Or switch " +
-                "to Browse and change a sort or a filter on the site: when the address changes, the Lab offers the changed part.",
+            "Pick a list on the site (its genres, its sort menu, its types) and its entries become a filter. A dropdown " +
+                "folds its entries away: open it first, then pick one entry. Or change a sort or a filter on the site " +
+                "with nothing armed: when the address changes, the Lab offers the changed part.",
         )
         if (s.groupMode) {
             Surface(
@@ -574,6 +588,163 @@ private fun CustomSettingEditor(rev: Int, index: Int, setting: ExtrasCustomSetti
         }
     }
 }
+
+// ---------- r102: menu hint and Learn this list ----------
+
+@Composable
+private fun MenuHintCard(onDismiss: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.tertiaryContainer,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 4.dp)) {
+            Text(
+                "That's the menu's button",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+            Text(
+                "That's the menu's button: open it (with nothing armed), then choose List for a filter and tap one entry.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+            Row {
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = onDismiss) { Text("OK") }
+            }
+        }
+    }
+}
+
+private fun learnDone(status: String): Boolean = status == "learned" || status == "nochange" || status == "filled" || status == "missed" || status == "missing"
+
+@Composable
+private fun LearnCard(group: LearnGroup, run: LearnRun?, extras: BuilderExtrasModel, siteUrl: String) {
+    var pause by remember { mutableStateOf(BuilderListReader.defaultPause()) }
+    fun seconds(v: Float): String = if (v == v.toInt().toFloat()) v.toInt().toString() else v.toString()
+    fun secondsMs(ms: Long): String = seconds(ms / 500L / 2f)
+    Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (group.hasLinks) "Check where each entry goes" else "Learn this list",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    "${group.name} · ${group.entries.size} entries",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Hint(
+                if (group.hasLinks) {
+                    "The Lab presses each entry for you in this page and writes down the address it really opens, then comes back."
+                } else {
+                    "These are buttons, not links, so the Lab can't see where they go. It presses each one for you in this " +
+                        "page and writes down the address it leads to, then comes back."
+                },
+            )
+            if (run == null) {
+                Text(
+                    "Pause between presses: ${seconds(pause.start)}–${seconds(pause.endInclusive)} s",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                RangeSlider(
+                    value = pause,
+                    onValueChange = { pause = it },
+                    valueRange = 0f..10f,
+                    // half-second stops, as in "Read the whole list"
+                    steps = 19,
+                )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Button(
+                        onClick = {
+                            extras.startLearn(
+                                (pause.start * 1000f).roundToLong(),
+                                (pause.endInclusive * 1000f).roundToLong(),
+                            )
+                        },
+                    ) {
+                        Icon(Icons.Outlined.TouchApp, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (group.hasLinks) "Check them" else "Learn this list")
+                    }
+                    TextButton(onClick = extras::dismissLearn) { Text("Not now") }
+                }
+            } else {
+                val shown = run.rows.filter { it.status != "waiting" }
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    shown.take(MAX_LEARN_ROWS).forEach { row -> LearnRowLine(row, group.pageUrl, siteUrl) }
+                    if (shown.size > MAX_LEARN_ROWS) Hint("… and ${shown.size - MAX_LEARN_ROWS} more")
+                }
+                val done = run.rows.count { learnDone(it.status) }
+                val total = run.rows.size.coerceAtLeast(1)
+                LinearProgressIndicator(
+                    progress = { done.toFloat() / total },
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                )
+                Text(
+                    "$done of ${run.rows.size} · pause ${secondsMs(run.pauseMinMs)}–${secondsMs(run.pauseMaxMs)} s between presses",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                val note = run.note ?: run.pattern?.let { "Pattern found: $it — the rest are filled in without pressing." }
+                if (note != null) {
+                    Text(
+                        note,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (run.pattern != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (run.running) OutlinedButton(onClick = extras::stopLearn) { Text("Stop") }
+                    Button(
+                        onClick = extras::makeLearnedFilter,
+                        enabled = run.rows.count { it.url != null || it.status == "nochange" } >= 2,
+                    ) {
+                        Text("Make \"${run.name}\" filter")
+                    }
+                    if (!run.running) TextButton(onClick = extras::dismissLearn) { Text("Close") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LearnRowLine(row: LearnRow, pageUrl: String, siteUrl: String) {
+    val url = row.url
+    val (mark, where) = when (row.status) {
+        "pressing" -> "…" to "pressing…"
+        "nochange" -> "–" to "no change (${BuilderExtrasLogic.relative(pageUrl, siteUrl)})"
+        "missed" -> "?" to "no address"
+        "missing" -> "✕" to "not found on the page" // r102 fix: never made the filter's "Any"
+        "filled" -> "✓" to (url?.let { BuilderExtrasLogic.relative(it, siteUrl) + " (filled in)" } ?: "")
+        else -> "✓" to (url?.let { BuilderExtrasLogic.relative(it, siteUrl) } ?: "")
+    }
+    Text(
+        "$mark ${row.text} → $where",
+        fontFamily = FontFamily.Monospace,
+        fontSize = 12.sp,
+        color = when (row.status) {
+            "pressing" -> MaterialTheme.colorScheme.primary
+            "nochange", "missed" -> MaterialTheme.colorScheme.onSurfaceVariant
+            "missing" -> MaterialTheme.colorScheme.error
+            else -> MaterialTheme.colorScheme.onSurface
+        },
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
+}
+
+private const val MAX_LEARN_ROWS = 12
 
 // ---------- small parts ----------
 

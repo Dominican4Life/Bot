@@ -1,4 +1,4 @@
-// @version 4
+// @version 5
 // Generic list template of the Source Lab, written for {{name}} ({{baseUrl}}) from what was tapped in Build by
 // tapping (or filled by hand). Lists are pages of ITEM cards, chapters / episodes are the links of CHAPTER on a
 // title page, pages are the IMAGE pictures of a chapter page, videos the VIDEO_FRAME of an episode page.
@@ -7,6 +7,9 @@
 // r101 (v4): the title page reads the Cover / Description / Tags / Author / Status tapped on it first, keeps the
 // list's cover when the page has none, skips the site-wide description and menu links; filters can change the list's
 // address itself (a genre page /genres/{value}) and sort the list ("sort" filters).
+// r102 (v5): the title page's rows tapped as Tags groups (Cast, Maker, Genres…) give "Cast: name" tags, which the
+// app shows grouped like E-Hentai's; rows set to Description add a "Release date: …" line under the description.
+// Tapping a grouped tag searches it in the source (a filter with that name and option when there is one).
 
 /*@part id="headers"*/
 // Headers and constants: the site as Referer on every picture; the selectors the builder derived (each with
@@ -36,6 +39,9 @@ var DESCRIPTION = "{{descriptionSelector}}";
 var TAGS = "{{tagsSelector}}";
 var AUTHOR = "{{authorSelector}}";
 var STATUS = "{{statusSelector}}";
+// r102: the title page's rows tapped as Tags groups: [{ name, selector, target }], target "tags" (genres "name: value"),
+// "description" (a "name: value, value" line under the description) or "both"; "[]" when none were tapped
+var TAG_GROUPS = JSON.parse("{{tagGroups}}" || "[]");
 // r100: "Lists and options" of Build by tapping: the names of the Popular / Latest buttons (empty = the app's own),
 // extra tabs [{ name, path }], search filters [{ key, name, type, mode, param, path, options, on }] and settings (the
 // getSourcePreferences format). Lists are JSON text; "[]" when nothing was recorded. (Not POPULAR_NAME / LATEST_NAME:
@@ -78,12 +84,53 @@ var extension = {
   // filter changes the list's address itself (path with {value}, e.g. /genres/{value}?page={page}): with no words
   // typed, the first path filter with a value (a sort only when no other has one) gives the address instead of
   // SEARCH_PATH; while searching for words, path filters are left out.
+  // r102 (v5): a grouped tag tapped on a title page arrives as "Group: tag" (Genres: Drama): when a filter is named
+  // like the group (or has it as key) and has an option labelled like the tag, that option is picked (no words);
+  // else only the tag's words are searched. (Every constant / helper is checked, so this part also runs in older
+  // sources.)
   search: async function (query, page, filters) {
+    var list = typeof FILTERS !== "undefined" && Array.isArray(FILTERS) ? FILTERS : [];
+    var groups = typeof TAG_GROUPS !== "undefined" && Array.isArray(TAG_GROUPS) ? TAG_GROUPS : [];
+    var valueOf = typeof filterValue === "function" ? filterValue : function (f, v) {
+      if (v === undefined || v === null) return "";
+      if (f.type === "checkbox") return v === true || v === "true" ? String(f.on || "1") : "";
+      if (typeof v === "object") {
+        var o = (f.options || [])[v.index];
+        v = v.value !== undefined && v.value !== null && v.value !== "" ? v.value : (o ? o.value : "");
+      }
+      return v === undefined || v === null ? "" : String(v).trim();
+    };
     var q = String(query || "").trim();
+    var tagged = /^([^:：]{1,40}?)\s*[:：]\s*(\S.*)$/.exec(q);
+    if (tagged) {
+      var ns = tagged[1].trim().toLowerCase();
+      var tag = tagged[2].trim();
+      var known = ns === "tags" || groups.some(function (g) { return g && String(g.name || "Tags").trim().toLowerCase() === ns; }) ||
+        list.some(function (f) { return String(f.name || "").trim().toLowerCase() === ns || String(f.key || "").toLowerCase() === ns; });
+      if (known) {
+        var hit = null;
+        list.forEach(function (f) {
+          if (hit || (f.type !== "select" && f.type !== "sort")) return;
+          if (String(f.name || "").trim().toLowerCase() !== ns && String(f.key || "").toLowerCase() !== ns) return;
+          (f.options || []).forEach(function (o, index) {
+            if (!hit && o && String(o.label || "").trim().toLowerCase() === tag.toLowerCase()) hit = { f: f, o: o, index: index };
+          });
+        });
+        if (hit) {
+          filters = Object.assign({}, filters || {});
+          filters[hit.f.key] = hit.f.type === "sort" ? { index: hit.index, value: hit.o.value, ascending: false } : hit.o.value;
+          q = "";
+          console.log("Tag " + tagged[1].trim() + ": " + tag + " → filter " + (hit.f.name || hit.f.key) + " = " + (hit.o.value || "(any)"));
+        } else {
+          q = tag;
+          console.log("Tag " + tagged[1].trim() + ": " + tag + " → no filter has it: searching \"" + tag + "\"");
+        }
+      }
+    }
     var chosen = [];
-    for (var i = 0; i < FILTERS.length; i++) {
-      var f = FILTERS[i];
-      var v = filterValue(f, filters ? filters[f.key] : undefined);
+    for (var i = 0; i < list.length; i++) {
+      var f = list[i];
+      var v = valueOf(f, filters ? filters[f.key] : undefined);
       if (v) chosen.push({ f: f, v: v });
     }
     var paths = chosen.filter(function (c) { return c.f.mode === "path" && c.f.path; });
@@ -112,7 +159,10 @@ var extension = {
   // TAGS, AUTHOR, STATUS). Else: the cover from og:image, a <video poster> or the player's poster, and no cover at
   // all when there is none (the list's cover stays); og:description unless it is the site's own slogan (the home
   // page's description, read once); genre / tag links outside the site's menus, without "Genres" / "Tags" words.
-  // Author and status only when tapped. (Every r101 constant is checked, so this part also runs in older sources.)
+  // Author and status only when tapped. r102 (v5): the rows tapped as Tags groups (TAG_GROUPS) come first: each
+  // value becomes the genre "Group: value" (the app groups them like E-Hentai's) and / or a "Group: a, b" line under
+  // the description; the other genres are then "Tags: value". (Every r101 / r102 constant is checked, so this part
+  // also runs in older sources.)
   getDetails: async function (url) {
     var doc = await host.parse(await get(url));
     var pickedCover = typeof DETAILS_COVER !== "undefined" ? DETAILS_COVER : "";
@@ -121,6 +171,8 @@ var extension = {
     var pickedTags = typeof TAGS !== "undefined" ? TAGS : "";
     var pickedAuthor = typeof AUTHOR !== "undefined" ? AUTHOR : "";
     var pickedStatus = typeof STATUS !== "undefined" ? STATUS : "";
+    var tagGroups = (typeof TAG_GROUPS !== "undefined" && Array.isArray(TAG_GROUPS) ? TAG_GROUPS : [])
+      .filter(function (g) { return g && g.selector; });
     function clean(t) { return String(t || "").replace(/\s+/g, " ").trim(); }
     function picture(u) {
       u = String(u || "").trim().split(/[\s,]+/)[0];
@@ -178,20 +230,51 @@ var extension = {
         else console.log("The page's description is the site's own slogan: left out");
       }
     }
-    if (description) out.description = description;
 
-    // Tags: the tapped ones, else genre / tag links outside the site's menus
+    // Tags: the tapped groups' rows, the tapped ones, else genre / tag links outside the site's menus
     var genres = [];
     var seenTag = {};
-    function addTag(t) {
+    function plainTag(t) {
       t = clean(t);
-      if (!t || t.length > 40 || /^(genres?|categor(y|ies)|tags?|keywords?|more|all|\+\d+)$/i.test(t)) return;
+      return !t || t.length > 40 || /^(genres?|categor(y|ies)|tags?|keywords?|more|all|\+\d+)$/i.test(t) ? "" : t;
+    }
+    function pushTag(t) {
       if (seenTag[t.toLowerCase()]) return;
       seenTag[t.toLowerCase()] = true;
       genres.push(t);
     }
+    // Genres are joined with ", " and split again by the app: a comma inside a grouped value would cut it in two
+    function noComma(t) { return t.replace(/\s*[,，]\s*/g, " ").trim(); }
+    function addTag(t) {
+      t = plainTag(t);
+      if (t && tagGroups.length) t = noComma(t);
+      if (t) pushTag(tagGroups.length ? "Tags: " + t : t);
+    }
+    var lines = [];
+    for (var gi = 0; gi < tagGroups.length; gi++) {
+      var group = tagGroups[gi];
+      var groupName = noComma(clean(group.name).replace(/\s*[:：]$/, "")) || "Tags";
+      var target = group.target === "description" || group.target === "both" ? group.target : "tags";
+      var label = new RegExp("^" + groupName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*[:：]\\s*", "i");
+      var values = [];
+      var seenValue = {};
+      try {
+        (await doc.select(group.selector, { html: false })).forEach(function (el) {
+          var t = clean(el.text).replace(label, "");
+          if (!t || seenValue[t.toLowerCase()]) return;
+          seenValue[t.toLowerCase()] = true;
+          values.push(t);
+        });
+      } catch (e) { console.log("Tags group " + groupName + " wasn't read: " + e.message); }
+      if (!values.length) continue;
+      if (target !== "description") values.forEach(function (t) { var v = noComma(plainTag(t)); if (v) pushTag(groupName + ": " + v); });
+      if (target !== "tags") lines.push(groupName + ": " + values.join(", "));
+    }
+    if (lines.length) description = description ? description + "\n\n" + lines.join("\n") : lines.join("\n");
+    if (description) out.description = description;
+    var fromGroups = genres.length;
     if (pickedTags) {
-      try { (await doc.select(pickedTags, { html: false })).forEach(function (a) { addTag(a.text); }); } catch (e) { genres = []; }
+      try { (await doc.select(pickedTags, { html: false })).forEach(function (a) { addTag(a.text); }); } catch (e) { genres = genres.slice(0, fromGroups); }
     }
     if (!genres.length) {
       var links = await doc.select("a[href*='/genre'], a[href*='/tag'], a[href*='/categor'], a[rel~=tag]", { html: false });

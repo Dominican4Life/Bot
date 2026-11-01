@@ -89,6 +89,7 @@ import eu.kanade.presentation.manga.components.MangaInfoBox
 import eu.kanade.presentation.manga.components.MangaToolbar
 import eu.kanade.presentation.manga.components.OutlinedButtonWithArrow
 import eu.kanade.presentation.manga.components.ScanlatorFilterDialog
+import eu.kanade.presentation.manga.components.SearchMetadataChips
 import eu.kanade.presentation.manga.components.getSwipeAction
 import eu.kanade.presentation.manga.components.swipeActionThreshold
 import eu.kanade.presentation.theme.CoverSeedTheme
@@ -927,7 +928,11 @@ private fun AnimeInfo(
                 context.toast(MR.strings.copied_to_clipboard_plain)
             },
             onEditNotes = actions.onEditNotes,
-            searchMetadataChips = null,
+            // KMK (r102): "ns:tag" genres (a JS source's grouped tags) show grouped like the manga screen's; tap = the
+            // source's search with the full "ns: tag", hold = global search with the tag text only
+            searchMetadataChips = remember(anime.source, anime.genre) {
+                SearchMetadataChips(null, anime.source, anime.genre?.filter { it.isNotBlank() })
+            },
             doSearch = { query, global -> if (global) actions.onGlobalSearch(query) else actions.onSearch(query) },
         )
         if (state.error != null) {

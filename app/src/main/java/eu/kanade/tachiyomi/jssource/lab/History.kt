@@ -113,6 +113,75 @@ internal object History {
     }
 
     /**
+     * KMK (r102): Save → "Update vN (current)": the current version's file is overwritten with [code] in place: same
+     * number, note "<its note> · updated", time now, +added −removed against the version listed before it, and its
+     * Test Run mark cleared (that run tested the old code; the next run marks it again). The source's own code was
+     * already written by the manager's save; only this bookkeeping differs from [append].
+     *
+     * Falls back to [append] with [fallbackNote] (a new version, as a plain Save) when there is no current version
+     * yet, or when the current one is the version the code was generated from (kept as written, never overwritten).
+     * Returns the version written and whether it was updated in place; null when the source's folder is gone.
+     */
+    @Synchronized
+    fun updateCurrent(key: String, code: String, json: Boolean, fallbackNote: String): Pair<LabVersion, Boolean>? {
+        val index = index(key)
+        val currentN = currentOf(index)
+        val current = index.versions.firstOrNull { it.n == currentN }
+        val blocked = updateBlockedReason(index)
+        if (current == null || blocked != null) {
+            val why = blocked ?: "no version yet"
+            AppLog.add('I', "lab", "$key: update in place not possible ($why): saving as a new version")
+            return append(key, code, json, fallbackNote)?.let { it to false }
+        }
+        val old = runCatching { versionFile(key, current.n, current.json).readText() }.getOrNull()
+        if (old == code && current.json == json) return current to true
+        val folder = dir(key)
+        // KMK: only next to an existing source (a sidecar never makes a source exist, C§4)
+        if (folder.parentFile?.isDirectory != true) return null
+        folder.mkdirs()
+        val position = index.versions.indexOfFirst { it.n == current.n }
+        val before = index.versions.getOrNull(position - 1)?.let { v ->
+            runCatching { versionFile(key, v.n, v.json).readText() }.getOrNull()
+        }
+        val (added, removed) = counts(before.orEmpty(), code)
+        versionFile(key, current.n, json).writeText(code)
+        // JS ↔ JSON (only possible while the code was a template): the old file's extension no longer applies
+        if (current.json != json) runCatching { versionFile(key, current.n, current.json).delete() }
+        val updated = current.copy(
+            time = System.currentTimeMillis(),
+            note = current.note.removeSuffix(UPDATED_SUFFIX) + UPDATED_SUFFIX,
+            added = added,
+            removed = removed,
+            testRunId = null,
+            json = json,
+        )
+        write(key, index.copy(versions = index.versions.map { if (it.n == current.n) updated else it }))
+        AppLog.add('I', "lab", "$key: history v${current.n} updated in place (+$added −$removed against the version before it)")
+        return updated to true
+    }
+
+    /**
+     * KMK (r102 fix): why "Update vN (current)" can't overwrite the current version, null when it can. Kept as written:
+     * the version the code was generated from, a "Baseline" (the original code of a hand-written / imported source),
+     * and any version that isn't the newest (after a Restore: overwriting it would rewrite the past). The split button
+     * shows the reason and [updateCurrent] falls back to a new version.
+     */
+    fun updateBlockedReason(index: LabHistoryIndex): String? {
+        val currentN = currentOf(index)
+        val current = index.versions.firstOrNull { it.n == currentN } ?: return "no version yet"
+        val newest = index.versions.lastOrNull()?.n
+        return when {
+            current.n == index.generatedFrom -> "v${current.n} is the version the code was generated from and is kept"
+            current.note.removeSuffix(UPDATED_SUFFIX) == "Baseline" -> "v${current.n} is the source's original code (Baseline) and is kept"
+            current.n != newest -> "v${current.n} was restored and isn't the newest version: it is kept"
+            else -> null
+        }
+    }
+
+    /** KMK (r102): what an in-place update adds to a version's note (once, however often it is updated) */
+    const val UPDATED_SUFFIX = " · updated"
+
+    /**
      * KMK (r98): a source saved before the Lab existed (or whose history was lost) gets its code as v1 "Baseline",
      * so every source shows a version to come back to. Nothing happens when the source already has a version.
      */

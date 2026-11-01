@@ -3,8 +3,10 @@ package eu.kanade.tachiyomi.jssource.lab
 import android.app.Application
 import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.jssource.HlsRelay
+import eu.kanade.tachiyomi.jssource.JsConsoleEntry
 import eu.kanade.tachiyomi.jssource.JsFilters
 import eu.kanade.tachiyomi.jssource.JsMapping
+import eu.kanade.tachiyomi.jssource.JsPreferences
 import eu.kanade.tachiyomi.jssource.JsRuntime
 import eu.kanade.tachiyomi.jssource.JsSourceManager
 import eu.kanade.tachiyomi.jssource.jsJson
@@ -16,11 +18,20 @@ import eu.kanade.tachiyomi.ui.codeeditor.SourceEditorScreenModel.Result
 import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import okhttp3.Headers
 import okhttp3.Request
@@ -67,22 +78,92 @@ internal object TestRuns {
 
     fun load(key: String, id: String): TestRun? = list(key).firstOrNull { it.id == id }
 
-    private fun write(run: TestRun) {
+    private fun write(run: TestRun, console: List<ConsoleRow>) {
         val folder = dir(run.key)
         if (folder.parentFile?.isDirectory != true) return
         folder.mkdirs()
         File(folder, "${run.id}.json").writeText(jsJson.encodeToString(TestRun.serializer(), run))
+        // KMK (r102): the console with times and request details beside the run (`<id>.console`, not `.json`, so
+        // list() never reads it as a run)
+        runCatching {
+            File(folder, "${run.id}$CONSOLE_SUFFIX")
+                .writeText(jsJson.encodeToString(ListSerializer(ConsoleRow.serializer()), console.takeLast(CONSOLE_KEEP)))
+        }
         folder.listFiles().orEmpty()
             .filter { it.isFile && it.name.endsWith(".json") }
             .sortedByDescending { it.name }
             .drop(KEEP)
             .forEach { runCatching { it.delete() } }
+        val kept = folder.listFiles().orEmpty().filter { it.isFile && it.name.endsWith(".json") }.map { it.name.removeSuffix(".json") }.toSet()
+        folder.listFiles().orEmpty()
+            .filter { it.isFile && it.name.endsWith(CONSOLE_SUFFIX) && it.name.removeSuffix(CONSOLE_SUFFIX) !in kept }
+            .forEach { runCatching { it.delete() } }
     }
+
+    // ---------- the console (r102) ----------
+
+    private const val CONSOLE_SUFFIX = ".console"
+    private const val CONSOLE_KEEP = 800
+
+    private val liveConsoles = MutableStateFlow<Map<String, LiveConsole>>(emptyMap())
+
+    /** The console of each source's newest Test Run in this session, by source key; it grows while a run runs */
+    val consoles: StateFlow<Map<String, LiveConsole>> = liveConsoles.asStateFlow()
+
+    /** The saved console of [run] (r102 and later), else its plain lines (older runs: no times, no details) */
+    fun loadConsole(run: TestRun): List<ConsoleRow> {
+        val saved = runCatching {
+            val file = File(dir(run.key), "${run.id}$CONSOLE_SUFFIX")
+            if (file.isFile) jsJson.decodeFromString(ListSerializer(ConsoleRow.serializer()), file.readText()) else null
+        }.getOrNull()
+        return saved ?: run.console.map(::plainRow)
+    }
+
+    private val PLAIN_LINE = Regex("""^\[(\w+)\](?:\[([^\]]*)\])?\s?(.*)$""", RegexOption.DOT_MATCHES_ALL)
+
+    /** `[net][popular] GET … -> 200 in 85ms` → a row without a time */
+    fun plainRow(line: String): ConsoleRow {
+        val m = PLAIN_LINE.find(line) ?: return ConsoleRow(-1, "I", "", line)
+        return ConsoleRow(-1, levelLetter(m.groupValues[1]), m.groupValues[2], m.groupValues[3])
+    }
+
+    private fun levelLetter(level: String): String = when (level) {
+        "error" -> "E"
+        "warn" -> "W"
+        "debug" -> "D"
+        "net" -> "N"
+        else -> "I"
+    }
+
+    private fun row(entry: JsConsoleEntry, startedAt: Long): ConsoleRow = ConsoleRow(
+        ms = (entry.at - startedAt).coerceAtLeast(0L),
+        level = levelLetter(entry.level),
+        step = entry.step.orEmpty(),
+        text = entry.text,
+        detail = entry.detail,
+    )
+
+    private fun addRow(key: String, token: Long, row: ConsoleRow) {
+        liveConsoles.update { all ->
+            val live = all[key]
+            if (live == null || live.token != token) all else all + (key to live.copy(rows = (live.rows + row).takeLast(CONSOLE_KEEP)))
+        }
+    }
+
+    /** A probe of the run itself (first image, each hoster's video) as a console row of [step] */
+    private fun requestRow(request: TestRequest, step: String, startedAt: Long): ConsoleRow = ConsoleRow(
+        ms = (System.currentTimeMillis() - startedAt).coerceAtLeast(0L),
+        level = "N",
+        step = step,
+        text = "${request.method} ${request.url} -> ${request.status ?: "null"} in ${request.ms}ms",
+        detail = request.error?.let { "Error: $it" },
+    )
 
     // ---------- the pipeline over a runtime ----------
 
     /**
-     * Tabs (page 1 each) → Popular → Latest → search → title → chapters → pages or hosters, each as a `Result` with
+     * Tabs (page 1 each) → Popular → Latest → search → filters → settings (r102, when the source has them) → title →
+     * chapters → pages or hosters, each as a `Result` with
      * its step id, the `[net]` lines it logged and the raw objects. [onRunning] gets the step's title before it
      * starts, [onResult] each result as it ends. The search word is [query], else the first title's first word.
      */
@@ -142,6 +223,13 @@ internal object TestRuns {
             skipped(StepId.SEARCH, "Search", "no title to search for")
         } else {
             step(StepId.SEARCH, "Search \"$word\"") { entries(rt.call("search", word, 1, emptyMap<String, Any>())) }
+        }
+        // KMK (r102): Filters (each filter's first value against the unfiltered first page) and Settings
+        if (meta?.flag("hasFilters") == true) {
+            step(STEP_FILTERS, "Filters") { filtersCheck(rt, lists) }
+        }
+        if (meta?.flag("hasPreferences") == true) {
+            step(STEP_SETTINGS, "Settings") { settingsCheck(rt) }
         }
         val entry = firstEntry ?: search.items.firstOrNull { it.kind == Kind.Entry }
         if (entry == null) {
@@ -275,6 +363,150 @@ internal object TestRuns {
 
     private fun JsonObject.flag(key: String): Boolean? = (this[key] as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull()
 
+    // ---------- Filters and Settings steps (r102) ----------
+
+    const val STEP_FILTERS = "filters"
+    const val STEP_SETTINGS = "settings"
+    private const val MAX_FILTERS = 5
+    private const val WORKS = "changes the list"
+    private const val NOTHING_TO_COMPARE = "nothing to compare with"
+    private const val SAME = "same as without it"
+    private const val FAILED = "failed: "
+    private const val PROBLEM = " · ! "
+
+    /** The values a filter is tried with: its first non-empty option (Sort: its first two), as search() gets them */
+    private fun tryValues(g: JsFilters.Group): List<Pair<String, JsonElement>> {
+        fun filled(o: JsFilters.Option): Boolean = when (val v = o.value) {
+            is JsonPrimitive -> !v.contentOrNull.isNullOrBlank()
+            is JsonNull -> false
+            else -> true
+        }
+        return when (g.type) {
+            JsFilters.Type.Select -> g.options.firstOrNull(::filled)?.let { listOf(it.label to it.value) }.orEmpty()
+            JsFilters.Type.MultiSelect, JsFilters.Type.AutoComplete ->
+                g.options.firstOrNull(::filled)?.let { listOf(it.label to JsonArray(listOf(it.value))) }.orEmpty()
+            JsFilters.Type.Checkbox -> listOf((if (g.defaultChecked) "off" else "on") to JsonPrimitive(!g.defaultChecked))
+            JsFilters.Type.TriState -> listOf("include" to JsonPrimitive(1))
+            JsFilters.Type.Sort -> g.options.take(2).mapIndexed { index, o ->
+                o.label to buildJsonObject {
+                    put("index", JsonPrimitive(index))
+                    put("value", o.value)
+                    put("ascending", JsonPrimitive(false))
+                }
+            }
+            else -> emptyList()
+        }
+    }
+
+    /** The addresses of a list search() returned; null when it threw (cancellation goes through) */
+    private suspend fun searchUrls(rt: JsRuntime, filters: Map<String, JsonElement>): Pair<List<String>?, String?> = try {
+        val list = (rt.call("search", "", 1, filters) as? JsonArray).orEmpty().mapNotNull { (it as? JsonObject)?.str("url") }
+        list to null
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Throwable) {
+        null to (e.message ?: e.toString()).lineSequence().firstOrNull().orEmpty().take(120)
+    }
+
+    /**
+     * Each filter (max 5) once with its first non-empty value, a Sort with its first two, through `search("", 1,
+     * { key: value })`; the titles count and whether the list differs from the unfiltered first page (Sort: from
+     * each other). One item per try; its subtitle carries the verdict [judge] reads.
+     */
+    private suspend fun filtersCheck(rt: JsRuntime, lists: List<Result>): Result {
+        val groups = JsFilters.flat(JsFilters.groups(rt.call("getFilters")))
+        val tried = groups.filter { tryValues(it).isNotEmpty() }.take(MAX_FILTERS)
+        if (tried.isEmpty()) {
+            return Result(
+                title = "",
+                ok = true,
+                millis = 0,
+                text = if (groups.isEmpty()) "getFilters returned no filters" else "${groups.size} filters, none with a value to try",
+            )
+        }
+        val (searched, _) = searchUrls(rt, emptyMap())
+        val base = searched?.takeIf { it.isNotEmpty() } ?: lists.firstOrNull { it.items.isNotEmpty() }?.items?.map { it.url }
+        val items = ArrayList<Item>()
+        tried.forEach { g ->
+            val values = tryValues(g)
+            val outcomes = values.map { (label, value) -> Triple(label, value, searchUrls(rt, mapOf(g.key to value))) }
+            outcomes.forEachIndexed { index, (label, _, outcome) ->
+                val (urls, error) = outcome
+                val against = if (g.type == JsFilters.Type.Sort && outcomes.size == 2) {
+                    outcomes[1 - index].third.first
+                } else {
+                    base
+                }
+                val verdict = when {
+                    urls == null -> FAILED + error.orEmpty()
+                    urls.isEmpty() -> "0 titles"
+                    against == null -> "${urls.size} titles · $NOTHING_TO_COMPARE"
+                    urls != against -> "${urls.size} titles · $WORKS"
+                    else -> "${urls.size} titles · $SAME"
+                }
+                AppLog.add('D', "lab", "Test Run filter ${g.name} = $label: $verdict")
+                items.add(Item(title = "${g.name} = $label", subtitle = verdict, kind = Kind.Other, url = ""))
+            }
+        }
+        return Result(title = "", ok = true, millis = 0, items = items, text = "${items.size} tries")
+    }
+
+    /** getSourcePreferences(): keys and defaults, and what the app can't use (no key, twice, bad default) */
+    private suspend fun settingsCheck(rt: JsRuntime): Result {
+        val raw = rt.call("getSourcePreferences")
+        val list = raw as? JsonArray ?: return Result("", false, 0, text = "getSourcePreferences didn't return a list")
+        val defs = JsPreferences.parse(raw)
+        val general = ArrayList<String>()
+        val nonObjects = list.count { it !is JsonObject }
+        if (nonObjects > 0) general.add("$nonObjects entries aren't objects")
+        val dropped = list.count { it is JsonObject } - defs.size
+        if (dropped > 0) general.add("$dropped without a key (not shown)")
+        val settings = defs.filter { it.type != JsPreferences.Type.Category && it.type != JsPreferences.Type.Info }
+        val twice = settings.groupBy { it.key }.filterValues { it.size > 1 }.keys
+        if (twice.isNotEmpty()) general.add("key used twice: ${twice.joinToString(", ")}")
+        val items = settings.map { def ->
+            val default = def.defaultValue
+            val text = when (default) {
+                null -> "none"
+                is JsonPrimitive -> default.contentOrNull ?: "null"
+                else -> default.toString().take(60)
+            }
+            val problem = when (def.type) {
+                JsPreferences.Type.List -> when {
+                    def.options.isEmpty() -> "a list with no options"
+                    default is JsonPrimitive && def.options.none { it.value == default.contentOrNull } ->
+                        "default \"$text\" isn't one of the options"
+                    else -> null
+                }
+                JsPreferences.Type.MultiList -> when {
+                    def.options.isEmpty() -> "a list with no options"
+                    default != null && default !is JsonArray -> "default isn't a list"
+                    else -> null
+                }
+                JsPreferences.Type.Switch ->
+                    if (default != null && (default as? JsonPrimitive)?.booleanOrNull == null) "default isn't true or false" else null
+                JsPreferences.Type.Slider -> def.slider?.let { sl ->
+                    val numbers = text.split('-').mapNotNull { it.trim().toIntOrNull() }
+                    if (default != null && (numbers.isEmpty() || numbers.any { it < sl.min || it > sl.max })) {
+                        "default $text is outside ${sl.min}–${sl.max}"
+                    } else {
+                        null
+                    }
+                }
+                else -> null
+            }
+            Item(
+                title = def.title.ifBlank { def.key },
+                subtitle = "${def.key} · ${def.type.name.lowercase()} · default $text" + (problem?.let { PROBLEM + it }.orEmpty()),
+                kind = Kind.Other,
+                url = "",
+            )
+        }
+        val text = "${settings.size} settings: ${settings.take(8).joinToString(", ") { it.key }}" +
+            (if (general.isNotEmpty()) PROBLEM + general.joinToString("; ") else "")
+        return Result(title = "", ok = true, millis = 0, items = items, text = text)
+    }
+
     // ---------- a full run ----------
 
     /**
@@ -296,75 +528,97 @@ internal object TestRuns {
         var running: TestStep? = null
         fun publish() = onProgress(steps + listOfNotNull(running))
         var effectiveQuery = query
-        pipeline(
-            rt = rt,
-            anime = anime,
-            query = query,
-            onRunning = { title ->
-                running = TestStep(id = "", name = title, status = StepStatus.Running, count = 0, ms = 0, evidence = "")
-                publish()
-            },
-            onResult = { result ->
-                if (result.step == StepId.SEARCH) effectiveQuery = result.title.substringAfter('"', "").substringBeforeLast('"', "")
-                steps.add(judge(result, anime))
-                running = null
-                publish()
-            },
-        )
-        // The image check (manga) or the video checks (anime), after the pipeline so the source's calls stay in order
-        val sourceHeaders = headers.toMutableMap()
-        if (sourceHeaders.keys.none { it.equals("Referer", ignoreCase = true) } && baseUrl.startsWith("http")) {
-            sourceHeaders["Referer"] = baseUrl.trimEnd('/') + "/"
-        }
-        if (!anime) {
-            val pagesIndex = steps.indexOfFirst { it.id == StepId.PAGES }
-            if (pagesIndex >= 0 && steps[pagesIndex].status == StepStatus.Green) {
-                running = steps[pagesIndex].copy(status = StepStatus.Running)
-                publish()
-                steps[pagesIndex] = withImageCheck(steps[pagesIndex], sourceHeaders)
-                running = null
-                publish()
+        val runId = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date(startedAt))
+        // KMK (r102): the Test Run console: every console line of this run, live, then saved beside the run
+        val token = System.nanoTime()
+        liveConsoles.update { it + (key to LiveConsole(key = key, token = token, running = true)) }
+        val sink: (JsConsoleEntry) -> Unit = { entry -> addRow(key, token, row(entry, startedAt)) }
+        rt.onConsole = sink
+        try {
+            pipeline(
+                rt = rt,
+                anime = anime,
+                query = query,
+                onRunning = { title ->
+                    running = TestStep(id = "", name = title, status = StepStatus.Running, count = 0, ms = 0, evidence = "")
+                    publish()
+                },
+                onResult = { result ->
+                    if (result.step == StepId.SEARCH) effectiveQuery = result.title.substringAfter('"', "").substringBeforeLast('"', "")
+                    steps.add(judge(result, anime))
+                    running = null
+                    publish()
+                },
+            )
+            // The image check (manga) or the video checks (anime), after the pipeline so the source's calls stay in order
+            val sourceHeaders = headers.toMutableMap()
+            if (sourceHeaders.keys.none { it.equals("Referer", ignoreCase = true) } && baseUrl.startsWith("http")) {
+                sourceHeaders["Referer"] = baseUrl.trimEnd('/') + "/"
             }
-        } else {
-            val hosters = steps.firstOrNull { it.id == StepId.HOSTERS }
-            if (hosters != null && hosters.status != StepStatus.Red && hosters.status != StepStatus.Skipped) {
-                running = TestStep(StepId.VIDEO, "Video", StepStatus.Running, 0, 0, "")
-                publish()
-                steps.add(videoStep(hosters, sourceHeaders))
-                running = null
-                publish()
-            } else if (hosters != null) {
-                steps.add(TestStep(StepId.VIDEO, "Video", StepStatus.Skipped, 0, 0, "no hoster to play"))
-                publish()
+            if (!anime) {
+                val pagesIndex = steps.indexOfFirst { it.id == StepId.PAGES }
+                if (pagesIndex >= 0 && steps[pagesIndex].status == StepStatus.Green) {
+                    running = steps[pagesIndex].copy(status = StepStatus.Running)
+                    publish()
+                    val before = steps[pagesIndex].requests.size
+                    steps[pagesIndex] = withImageCheck(steps[pagesIndex], sourceHeaders)
+                    steps[pagesIndex].requests.drop(before).forEach { addRow(key, token, requestRow(it, StepId.PAGES, startedAt)) }
+                    running = null
+                    publish()
+                }
+            } else {
+                val hosters = steps.firstOrNull { it.id == StepId.HOSTERS }
+                if (hosters != null && hosters.status != StepStatus.Red && hosters.status != StepStatus.Skipped) {
+                    running = TestStep(StepId.VIDEO, "Video", StepStatus.Running, 0, 0, "")
+                    publish()
+                    val video = videoStep(hosters, sourceHeaders)
+                    video.requests.forEach { addRow(key, token, requestRow(it, StepId.VIDEO, startedAt)) }
+                    steps.add(video)
+                    running = null
+                    publish()
+                } else if (hosters != null) {
+                    steps.add(TestStep(StepId.VIDEO, "Video", StepStatus.Skipped, 0, 0, "no hoster to play"))
+                    publish()
+                }
             }
+            val run = TestRun(
+                id = runId,
+                key = key,
+                startedAt = startedAt,
+                totalMs = System.currentTimeMillis() - startedAt,
+                query = effectiveQuery,
+                steps = steps,
+                console = rt.console.takeLast(200),
+                version = runCatching { History.latestVersion(key) }.getOrDefault(0),
+                rulesVersion = runCatching { Lint.rulesVersion() }.getOrNull(),
+                appRelease = BuildConfig.RELEASE_NUMBER,
+            )
+            val consoleRows = liveConsoles.value[key]?.takeIf { it.token == token }?.rows.orEmpty()
+            liveConsoles.update { all -> all[key]?.takeIf { it.token == token }?.let { all + (key to it.copy(runId = run.id, running = false)) } ?: all }
+            runCatching { write(run, consoleRows) }.onFailure { AppLog.add('W', "lab", "Couldn't save the Test Run of $key: ${it.message}") }
+            runCatching { History.noteTestRun(key, run.id) }
+            AppLog.add(
+                'I',
+                "lab",
+                "Test Run of $key: ${run.passed} of ${run.counted} passed in ${run.totalMs} ms (${run.worst.name.lowercase()})" +
+                    " · console ${consoleRows.size} lines",
+            )
+            run
+        } finally {
+            if (rt.onConsole === sink) rt.onConsole = null
+            liveConsoles.update { all -> all[key]?.takeIf { it.token == token && it.running }?.let { all + (key to it.copy(running = false)) } ?: all }
         }
-        val run = TestRun(
-            id = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date(startedAt)),
-            key = key,
-            startedAt = startedAt,
-            totalMs = System.currentTimeMillis() - startedAt,
-            query = effectiveQuery,
-            steps = steps,
-            console = rt.console.takeLast(200),
-            version = runCatching { History.latestVersion(key) }.getOrDefault(0),
-            rulesVersion = runCatching { Lint.rulesVersion() }.getOrNull(),
-            appRelease = BuildConfig.RELEASE_NUMBER,
-        )
-        runCatching { write(run) }.onFailure { AppLog.add('W', "lab", "Couldn't save the Test Run of $key: ${it.message}") }
-        runCatching { History.noteTestRun(key, run.id) }
-        AppLog.add(
-            'I',
-            "lab",
-            "Test Run of $key: ${run.passed} of ${run.counted} passed in ${run.totalMs} ms (${run.worst.name.lowercase()})",
-        )
-        run
     }
 
     /** One `Result` → one judged step (the thresholds of D§2.5) */
     private fun judge(result: Result, anime: Boolean): TestStep {
         val id = result.step.orEmpty()
         val name = stepName(id, result, anime)
-        val partIds = PartIndex.partsOfStep(id, anime)
+        val partIds = when (id) {
+            STEP_FILTERS -> listOf("getFilters", "search")
+            STEP_SETTINGS -> listOf("getSourcePreferences")
+            else -> PartIndex.partsOfStep(id, anime)
+        }
         val requests = result.requests.mapNotNull(::parseNetLine)
         val items = result.items.take(60).mapIndexed { index, item ->
             TestItem(
@@ -448,6 +702,34 @@ internal object TestRuns {
                     else -> step(StepStatus.Green, servers.size, servers.joinToString(" · "))
                 }
             }
+            id == STEP_FILTERS -> {
+                val verdicts = result.items.map { it.subtitle.orEmpty() }
+                val works = verdicts.count { WORKS in it || NOTHING_TO_COMPARE in it }
+                val failed = verdicts.count { it.startsWith(FAILED) }
+                val off = result.items.filter { item -> item.subtitle.orEmpty().let { WORKS !in it && NOTHING_TO_COMPARE !in it } }
+                    .take(2).joinToString(" · ") { "${it.title}: ${it.subtitle}" }
+                when {
+                    count == 0 -> step(StepStatus.Amber, 0, result.text.orEmpty())
+                    failed == count -> step(StepStatus.Red, 0, "every filter failed · ${off.take(160)}")
+                    works == count -> step(StepStatus.Green, works, "$works of $count tries change the list")
+                    else -> step(StepStatus.Amber, works, "$works of $count tries change the list · ${off.take(160)}")
+                }
+            }
+            id == STEP_SETTINGS -> {
+                val problems = result.items.filter { PROBLEM in it.subtitle.orEmpty() }
+                val general = result.text.orEmpty().substringAfter(PROBLEM, "")
+                when {
+                    count == 0 && general.isEmpty() -> step(StepStatus.Amber, 0, "getSourcePreferences returned no settings")
+                    problems.isNotEmpty() || general.isNotEmpty() -> step(
+                        StepStatus.Amber,
+                        count,
+                        (listOfNotNull(general.takeIf { it.isNotEmpty() }) +
+                            problems.take(3).map { "${it.title}: ${it.subtitle.orEmpty().substringAfter(PROBLEM)}" })
+                            .joinToString(" · "),
+                    )
+                    else -> step(StepStatus.Green, count, result.text.orEmpty().take(160))
+                }
+            }
             else -> step(StepStatus.Green, count, result.text.orEmpty().take(120))
         }
     }
@@ -461,6 +743,8 @@ internal object TestRuns {
         id == StepId.CHAPTERS -> if (anime) "Episodes" else "Chapters"
         id == StepId.PAGES -> "Pages"
         id == StepId.HOSTERS -> "Hosters"
+        id == STEP_FILTERS -> "Filters"
+        id == STEP_SETTINGS -> "Settings"
         else -> result.title
     }
 
@@ -665,3 +949,26 @@ internal object TestRuns {
         StepDiff(step.id, step.name, previous?.steps?.firstOrNull { it.id == step.id }, step)
     }
 }
+
+/**
+ * KMK (r102): one line of the Test Run console: [ms] since the run started (-1: an older run's line without a time),
+ * [level] E / W / I / D, or N for a request, the [step] id it belongs to ("" before the first step), its [text] and,
+ * for a request, its headers and a failed reply's first 2 KB ([detail]).
+ */
+@Serializable
+internal data class ConsoleRow(
+    val ms: Long,
+    val level: String,
+    val step: String,
+    val text: String,
+    val detail: String? = null,
+)
+
+/** KMK (r102): a source's newest Test Run console in this session; [token] tells runs apart, [runId] once saved */
+internal data class LiveConsole(
+    val key: String,
+    val token: Long,
+    val running: Boolean,
+    val runId: String? = null,
+    val rows: List<ConsoleRow> = emptyList(),
+)

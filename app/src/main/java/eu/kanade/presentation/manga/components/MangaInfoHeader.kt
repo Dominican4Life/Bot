@@ -389,6 +389,12 @@ fun ExpandableMangaDescription(
                 .clickableNoIndication { onExpanded(!expanded) },
         )
         val tags = tagsProvider()
+        // KMK (r102): plain "ns:tag" genres (grouped tags) are held for a global search with the tag text only; the
+        // collapsed row shows the raw genres, so they look up their hold search here. Metadata tags (E-Hentai…) have
+        // hold = their own search, unchanged.
+        val holdSearches = remember(searchMetadataChips) {
+            searchMetadataChips?.tags?.values?.flatten()?.associate { it.search to it.holdSearch }.orEmpty()
+        }
         if (!tags.isNullOrEmpty()) {
             Box(
                 modifier = Modifier
@@ -399,7 +405,7 @@ fun ExpandableMangaDescription(
             ) {
                 // KMK: tap a tag to search it in this source, hold it for a global search (no menu)
                 val onTagClick: (String) -> Unit = { onTagSearch(it) }
-                val onTagHold: (String) -> Unit = { doSearch(it, true) }
+                val onTagHold: (String) -> Unit = { doSearch(holdSearches[it] ?: it, true) }
                 // KMK (r87): double tap copies it (Copy tag had no way in since the tag menu went, e6daf49d)
                 val onTagDoubleTap: (String) -> Unit = { onCopyTagToClipboard(it) }
                 if (expanded) {
@@ -410,7 +416,8 @@ fun ExpandableMangaDescription(
                             onClick = onTagClick,
                             // KMK -->
                             pureDarkMode = pureDarkMode,
-                            onLongClick = onTagHold,
+                            // KMK (r102): NamespaceTags already hands over the hold search (tag text for "ns:tag")
+                            onLongClick = { doSearch(it, true) },
                             onDoubleClick = onTagDoubleTap,
                             // KMK <--
                         )

@@ -15,6 +15,9 @@ import kotlin.math.abs
  * @param nextLike rel=next, an aria-label saying next, or text starting with next / › / » / > / →
  * @param samples the first three look-alikes' texts
  * @param pageDate r101: the first date-looking text of the page ("Release date 2026-10-29"), "" when none
+ * @param rowLabel r102: the label of the row the element sits in ("Cast", "Release date"), "" when none
+ * @param rowValues r102: that row's first values (its chips' texts, or its text)
+ * @param rowChips r102: how many links / chips the row holds (0 = a plain text row)
  */
 internal data class PickInfo(
     val tag: String,
@@ -35,6 +38,9 @@ internal data class PickInfo(
     val nextLike: Boolean = false,
     val samples: List<String> = emptyList(),
     val pageDate: String = "",
+    val rowLabel: String = "",
+    val rowValues: List<String> = emptyList(),
+    val rowChips: Int = 0,
 )
 
 /**
@@ -47,6 +53,10 @@ internal data class PickInfo(
  * r101: the title page's own fields (Cover, Description, Tags, Author, Status: labels `bigCover`, `description`,
  * `tags`, `author`, `status`), and a hint on the title-page cards when no Date was picked but the page shows a
  * written date ("Tap the release date (e.g. in Details) as Date").
+ *
+ * r102: Tags in a labelled row (Cast, Maker, Release date…) are a group: checked for values, plain text rows are
+ * fine (they go to the description). A Video frame from an ad network ([AD_HOSTS], the list VideoFinder uses) is a
+ * Warn ("This frame is an ad (host), not the player").
  */
 internal object PickCheck {
     enum class Level { Ok, Warn, Info }
@@ -85,6 +95,13 @@ internal object PickCheck {
     val TITLE_FIELDS = listOf("bigCover", "description", "tags", "author", "status")
 
     private val PLAYER_TAGS = setOf("iframe", "video", "source", "embed", "object")
+
+    /** r102: ad / traffic networks that put frames over players (the same list as VideoFinder's) */
+    val AD_HOSTS = Regex(
+        "(?i)pnonolet|pemsrv|juicyads|exoclick|exosrv|trafficjunky|trafficstars|tsyndicate|adsterra|popads|" +
+            "propellerads|magsrv|realsrv|clickadu|hilltopads|adspyglass|ero-advertising|onclickads|a-ads\\.com|adnxs|" +
+            "doubleclick|googlesyndication",
+    )
 
     private val DATE = Regex(
         """(?i)(\d{1,4}[-/.]\d{1,2}([-/.]\d{1,4})?|\b(jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|june?|july?|aug(ust)?|sep(t(ember)?)?|oct(ober)?|nov(ember)?|dec(ember)?)\.?(\s|,|$)""" +
@@ -215,8 +232,19 @@ internal object PickCheck {
             }
             "video" -> {
                 val player = pick.tag in PLAYER_TAGS
+                // r102: an ad network's frame over the player (the owner's pnonolet.com pick)
+                val frameSrc = pick.attrs["src"]?.takeIf { it.isNotBlank() } ?: pick.attrs["data-src"].orEmpty()
+                val adHost = if (AD_HOSTS.containsMatchIn(frameSrc)) {
+                    resolve(pick.pageUrl, frameSrc)?.toHttpUrlOrNull()?.host ?: frameSrc.take(60)
+                } else {
+                    null
+                }
                 add(player, "player box (${pick.tag})", "not a player: try Up, or tap the video's edge")
-                if (player) {
+                if (adHost != null) {
+                    add(false, "", "an ad ($adHost)")
+                    level = Level.Warn
+                    title = "This frame is an ad ($adHost), not the player"
+                } else if (player) {
                     add(true, "${pick.count} on the page", "")
                     val src = pick.attrs["src"]?.takeIf { it.isNotBlank() && it != "about:blank" }
                         ?: pick.attrs["data-src"].orEmpty()
@@ -234,7 +262,12 @@ internal object PickCheck {
                     }
                 }
                 okBody = "A player box (${pick.tag}): the Lab opens this page in the hidden browser, presses Play and catches the video."
-                warnBody = "You tapped a <${pick.tag}>, not the player. Try Up, or tap the video's edge."
+                warnBody = when {
+                    adHost != null -> "This frame is an ad ($adHost), not the player — tap the video itself or use Down / Up."
+                    // r102 fix: the Info sentence above ("needs the hidden browser") was overwritten here
+                    level == Level.Info -> warnBody
+                    else -> "You tapped a <${pick.tag}>, not the player. Try Up, or tap the video's edge."
+                }
             }
             // r101: the title page's own fields
             "bigCover" -> {
@@ -253,7 +286,17 @@ internal object PickCheck {
                 okBody = "Reads as the description: “${pick.text.trim().take(60)}…”."
                 warnBody = youTapped + "Description is the paragraph about the title."
             }
-            "tags" -> {
+            "tags" -> if (pick.rowLabel.isNotBlank()) {
+                // r102: a row of the Details block: one group, named by its label
+                val values = pick.rowValues.filter { it.isNotBlank() }
+                add(true, "row “${pick.rowLabel}”", "")
+                add(values.isNotEmpty(), if (pick.rowChips > 0) "${pick.rowChips} ${if (pick.rowChips == 1) "value" else "values"}" else "text", "the row is empty")
+                okBody = "Group “${pick.rowLabel}”: ${values.take(4).joinToString(", ")}" +
+                    (if (values.size > 4) " …" else "") +
+                    (if (pick.rowChips > 0) " (shown as tags)." else " (a text row: added to the description).") +
+                    " Tap another row to add a group."
+                warnBody = youTapped + "The row “${pick.rowLabel}” shows nothing to read."
+            } else {
                 val shortTexts = pick.samples.filter { it.isNotBlank() }
                 val chips = if (pick.count >= 2) pick.count else pick.linkCount
                 add(chips >= 2, "$chips tags", if (chips == 1) "only one tag" else "no tags")

@@ -107,6 +107,8 @@ internal object Generator {
         "tagsSelector" to "",
         "authorSelector" to "",
         "statusSelector" to "",
+        // r102 (v5 grouped tags): JSON text list of the title page's Tags groups; "" = none (the template reads "[]")
+        "tagGroups" to "",
     )
 
     /** The parts that hold the identity block; dropping them would leave no `extension` */

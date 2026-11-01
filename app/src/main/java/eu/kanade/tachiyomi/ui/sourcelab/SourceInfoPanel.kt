@@ -20,6 +20,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.TouchApp
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -27,7 +29,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -75,7 +76,8 @@ private const val SOURCE_INFO_OPEN_KEY = "pref_lab_source_info_open"
 /**
  * The Source info panel. [onHide] draws the hide button (›) in the header (tablet); null in the phone's sheet.
  * The JS / JSON chips are offered only while the code is empty or an untouched template: once a source has its
- * own code the format is fixed (flipping it broke a JS source, r101).
+ * own code the format is fixed (flipping it broke a JS source, r101) and nothing about it is shown (r102).
+ * [onEditByTapping] (r102) draws "Edit by tapping" at the bottom for a saved source the Lab wrote.
  */
 @Composable
 internal fun SourceInfoPanel(
@@ -84,6 +86,7 @@ internal fun SourceInfoPanel(
     labState: SourceLabScreenModel.State,
     onHide: (() -> Unit)?,
     modifier: Modifier = Modifier,
+    onEditByTapping: (() -> Unit)? = null,
 ) {
     val navigator = LocalNavigator.currentOrThrow
     val context = LocalContext.current
@@ -102,7 +105,7 @@ internal fun SourceInfoPanel(
             ) {
                 Text("Source info", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Text(
-                    if (onHide != null) "Shown with the code · hide with ›" else "Name, addresses, kind and format",
+                    if (onHide != null) "Shown with the code · hide with ›" else "Name, addresses and kind",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -156,40 +159,15 @@ internal fun SourceInfoPanel(
             FilterChip(selected = editorState.anime, onClick = { editor.setAnime(true) }, label = { Text("Anime") })
         }
 
-        InfoLabel("Format")
+        // KMK (r102): the Format card is gone; the JS / JSON chips stay only while the code is empty or an untouched
+        // template (once a source has its own code the format is fixed and needs no card)
         val formatOpen = editorState.code.isBlank() || SourceTemplates.isTemplate(editorState.code)
         if (formatOpen) {
+            InfoLabel("Format")
             // Still an untouched template (or nothing): switching swaps the template, nothing is lost
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(selected = !editorState.json, onClick = { editor.setJson(false) }, label = { Text("JS extension") })
                 FilterChip(selected = editorState.json, onClick = { editor.setJson(true) }, label = { Text("JSON declarative") })
-            }
-            Text(
-                "Pick it before writing: it is fixed once the source has code. JSON declarative is a different, " +
-                    "simpler file format, not a second copy of this source.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        } else {
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-                    Text(
-                        if (editorState.json) "JSON declarative" else "JS extension",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text(
-                        "Fixed once a source has code. JSON declarative is a different, simpler file format for new " +
-                            "sources, not a second copy of this source.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
             }
         }
 
@@ -235,6 +213,24 @@ internal fun SourceInfoPanel(
                     }
                 }
             }
+        }
+        // KMK (r102): Edit by tapping, only for sources the builder wrote (generic-list): opens the builder on this source.
+        // Detected engines / imported / hand-written sources have lab meta too but no picks the builder could edit.
+        val labMeta = labState.source?.lab
+        val builtByBuilder = labMeta != null &&
+            (labMeta.engine == "generic-list" || labMeta.templateId?.startsWith("generic-list") == true)
+        if (onEditByTapping != null && editorState.saved && builtByBuilder) {
+            HorizontalDivider()
+            FilledTonalButton(onClick = onEditByTapping, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Outlined.TouchApp, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Edit by tapping")
+            }
+            Text(
+                "Opens the site with this source's picks; Save to this source there makes a new version.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         Spacer(Modifier.height(8.dp))
     }

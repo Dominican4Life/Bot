@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -23,7 +24,6 @@ import androidx.compose.material.icons.outlined.BugReport
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material3.Button
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -31,10 +31,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -45,19 +41,20 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.navigator.LocalNavigator
 import coil3.compose.AsyncImage
+import eu.kanade.presentation.util.isTabletUi
 import eu.kanade.tachiyomi.jssource.lab.StepStatus
 import eu.kanade.tachiyomi.jssource.lab.TestRuns
 import eu.kanade.tachiyomi.jssource.lab.TestStep
 import eu.kanade.tachiyomi.ui.anime.source.AnimeSourceScreen
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreen
-import eu.kanade.tachiyomi.ui.codeeditor.EditorTestPanel
 import eu.kanade.tachiyomi.ui.codeeditor.SourceEditorScreenModel
 import tachiyomi.domain.source.interactor.GetRemoteManga
 
 /**
  * KMK (r96): the Test pane (D§2.5): the Test Run as step rows (status, name, count, ms, one evidence line, a
  * timing bar relative to the slowest step), "What came back" (covers, first chapters, the video lines) and
- * "Against the previous run". The editor's manual tests and console sit behind the "Manual" chip.
+ * "Against the previous run". r102: the "Manual · Console" chip and pane are gone; the run's console is docked at
+ * the bottom ([TestConsole]) and the run has Filters and Settings steps.
  */
 @Composable
 internal fun TestPane(
@@ -69,28 +66,20 @@ internal fun TestPane(
     onQuery: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var manual by rememberSaveable { mutableStateOf(false) }
     val navigator = LocalNavigator.current
-    Column(modifier = modifier) {
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-        ) {
-            FilterChip(selected = !manual, onClick = { manual = false }, label = { Text("Test Run") })
-            FilterChip(selected = manual, onClick = { manual = true }, label = { Text("Manual · Console") })
-        }
-        HorizontalDivider()
-        if (manual) {
-            EditorTestPanel(state = editorState, model = editor, query = query, onQuery = onQuery, modifier = Modifier.fillMaxSize())
-        } else {
+    val tablet = isTabletUi()
+    BoxWithConstraints(modifier = modifier) {
+        val consoleHeight = maxHeight * 0.5f
+        Column(modifier = Modifier.fillMaxSize()) {
             val steps = if (state.running || state.runSteps.isNotEmpty()) state.runSteps else state.lastRun?.steps.orEmpty()
             val slowest = steps.maxOfOrNull { it.ms }?.coerceAtLeast(1L) ?: 1L
             val run = state.lastRun
             LazyColumn(
                 contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
             ) {
                 item(key = "query") {
                     OutlinedTextField(
@@ -185,6 +174,18 @@ internal fun TestPane(
                     }
                 }
             }
+            TestConsole(
+                sourceKey = state.key,
+                sourceName = editorState.name,
+                run = run,
+                steps = steps,
+                onRevealLine = { line ->
+                    model.revealLine(line)
+                    // the tablet shows the code beside this pane; the phone goes to the Code tab
+                    if (!tablet) model.setTab(LabTab.Code)
+                },
+                maxListHeight = consoleHeight,
+            )
         }
     }
 }
@@ -274,6 +275,8 @@ private fun countWords(step: TestStep): String = when (step.id) {
     "hosters" -> "${step.count} ${if (step.count == 1) "server" else "servers"}"
     "video" -> "${step.count} of ${step.items.size} played"
     "pages" -> "${step.count} pages"
+    TestRuns.STEP_FILTERS -> if (step.items.isEmpty()) "" else "${step.count} of ${step.items.size} change the list"
+    TestRuns.STEP_SETTINGS -> "${step.count} ${if (step.count == 1) "setting" else "settings"}"
     else -> "${step.count} titles"
 }
 

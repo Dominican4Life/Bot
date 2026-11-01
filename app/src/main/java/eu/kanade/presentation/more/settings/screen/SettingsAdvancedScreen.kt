@@ -46,6 +46,7 @@ import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.library.MetadataUpdateJob
 import eu.kanade.tachiyomi.data.updater.AppUpdateJob
+import eu.kanade.tachiyomi.jssource.JsDebugLogs
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.network.NetworkPreferences
 import eu.kanade.tachiyomi.network.PREF_DOH_360
@@ -64,6 +65,7 @@ import eu.kanade.tachiyomi.source.AndroidSourceManager
 import eu.kanade.tachiyomi.ui.more.OnboardingScreen
 import eu.kanade.tachiyomi.util.CrashLogUtil
 import eu.kanade.tachiyomi.util.storage.DiskUtil
+import eu.kanade.tachiyomi.util.system.AppLog
 import eu.kanade.tachiyomi.util.system.GLUtil
 import eu.kanade.tachiyomi.util.system.isDebugBuildType
 import eu.kanade.tachiyomi.util.system.isReleaseBuildType
@@ -509,6 +511,8 @@ object SettingsAdvancedScreen : SearchableSettings {
         val extensionInstallerPref = basePreferences.extensionInstaller()
         var shizukuMissing by rememberSaveable { mutableStateOf(false) }
         val trustExtension = remember { Injekt.get<TrustExtension>() }
+        // KMK (r102): the global switch for JS sources' console lines in Logs
+        val jsDebugLogs = remember { JsDebugLogs.preference() }
 
         if (shizukuMissing) {
             val dismiss = { shizukuMissing = false }
@@ -571,6 +575,18 @@ object SettingsAdvancedScreen : SearchableSettings {
                         context.toast(MR.strings.requires_app_restart)
                     },
                 ),
+                // KMK --> (r102)
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = jsDebugLogs,
+                    title = "JS sources: debug logs",
+                    subtitle = "Every console line of every JS source goes to Logs, tagged with the source. " +
+                        "Off: only warnings and errors.",
+                    onValueChanged = { on ->
+                        AppLog.add('I', "js", "JS sources: debug logs ${if (on) "on" else "off (warnings and errors only)"}")
+                        true
+                    },
+                ),
+                // KMK <--
             ),
         )
     }

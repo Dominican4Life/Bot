@@ -4,6 +4,8 @@ import android.app.Application
 import androidx.compose.runtime.Immutable
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
+import eu.kanade.tachiyomi.jssource.JsSourceInfo
+import eu.kanade.tachiyomi.jssource.JsSourceManager
 import eu.kanade.tachiyomi.jssource.VideoFinder
 import eu.kanade.tachiyomi.jssource.arr
 import eu.kanade.tachiyomi.jssource.bool
@@ -13,12 +15,18 @@ import eu.kanade.tachiyomi.jssource.lab.BuilderPick
 import eu.kanade.tachiyomi.jssource.lab.BuilderSelection
 import eu.kanade.tachiyomi.jssource.lab.Derive
 import eu.kanade.tachiyomi.jssource.lab.Detector
+import eu.kanade.tachiyomi.jssource.lab.ExplainFile
 import eu.kanade.tachiyomi.jssource.lab.Generator
+import eu.kanade.tachiyomi.jssource.lab.History
 import eu.kanade.tachiyomi.jssource.lab.LabHandoff
 import eu.kanade.tachiyomi.jssource.lab.LabMeta
+import eu.kanade.tachiyomi.jssource.lab.LabStore
+import eu.kanade.tachiyomi.jssource.lab.PartIndex
 import eu.kanade.tachiyomi.jssource.lab.PickCheck
 import eu.kanade.tachiyomi.jssource.lab.PickInfo
 import eu.kanade.tachiyomi.jssource.lab.Templates
+import eu.kanade.tachiyomi.jssource.lab.labMeta
+import eu.kanade.tachiyomi.jssource.lab.toJson
 import eu.kanade.tachiyomi.jssource.obj
 import eu.kanade.tachiyomi.jssource.str
 import eu.kanade.tachiyomi.util.system.AppLog
@@ -29,6 +37,10 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -55,9 +67,16 @@ import java.util.Locale
  * ([Derive.itemSuggestion], sent as `suggestSelector`), so it is always offered. The Next pick tells the extras its
  * address (`setNextHref`); the page's search form (`onSearchForm`) and group picks (`onGroupPicked`) go to the extras,
  * and the extras' `groupMode` is sent to the page whenever it changes (and after every injection, see BuilderScreen).
+ *
+ * r102: "Tapping for…" replaces Pick / Browse: [arm] a label (the page's next tap is a pick for it, then it disarms;
+ * Tags stays armed and each tap adds a [Derive.TagGroup]), nothing armed = the page is a browser and a long press
+ * gives a pending pick as before. The step follows the page ([followStep]: a page shaped like the Title / Chapter
+ * links, or the list page). Every label can be picked on any step. [editKey] = "Edit by tapping": the saved builder
+ * state (`LabMeta.picks` = `{ selection, builder }`, [builderState]) is restored, or for older sources the code's
+ * `var X = "…"` values are kept ([State.fromCode]); Save regenerates the template into the same source key.
  */
-internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean) :
-    StateScreenModel<BuilderScreenModel.State>(State(url = startUrl.orEmpty(), anime = anime)) {
+internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean, private val editKey: String? = null) :
+    StateScreenModel<BuilderScreenModel.State>(State(url = startUrl.orEmpty(), anime = anime, editKey = editKey)) {
 
     /** The three pages of the flow and the labels each offers */
     enum class Step(val number: Int, val title: String, val labels: List<String>) {
@@ -67,8 +86,9 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
         ChapterPage(3, "chapter page", listOf("image", "video")),
     }
 
-    /** What the picker script sent for one tap, before a label is given */
+    /** What the picker script sent for one tap, before a label is given (r102: serializable, kept for Edit by tapping) */
     @Immutable
+    @Serializable
     data class RawPick(
         val cssPath: String,
         val likeSelector: String,
@@ -94,6 +114,14 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
         val samples: List<String> = emptyList(),
         /** r101: the page's first date-looking text (the helper's "tap the release date as Date") */
         val pageDate: String = "",
+        // r102: the row the element sits in (picker.js `row`): its label, a Jsoup selector for its values, where they
+        // go ("tags" / "description"), the first values and how many links / chips it holds
+        val rowLabel: String = "",
+        val rowKind: String = "",
+        val rowSelector: String = "",
+        val rowTarget: String = "",
+        val rowValues: List<String> = emptyList(),
+        val rowChips: Int = 0,
     ) {
         fun info(): PickInfo = PickInfo(
             tag = tag,
@@ -114,6 +142,9 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
             nextLike = nextLike,
             samples = samples,
             pageDate = pageDate,
+            rowLabel = rowLabel,
+            rowValues = rowValues,
+            rowChips = rowChips,
         )
     }
 
@@ -132,9 +163,14 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
         val pageUrl: String? = null,             // what it shows now
         val canGoBack: Boolean = false,          // the WebView's history, for the Back / Forward buttons
         val canGoForward: Boolean = false,
-        /** Pick mode: every tap selects an element and nothing navigates; off = browse the site normally */
-        val pickMode: Boolean = true,
+        /**
+         * r102: "Tapping for…": the label the page's next tap is for (the page disarms itself after it, except Tags);
+         * null = nothing armed, the page works like a browser (a long press still gives a pending pick)
+         */
+        val armed: String? = null,
         val pickerScript: String? = null,
+        /** r102 (W2's learn list): `sourcelab/learn.js`, put on every page after picker.js; null when missing */
+        val learnScript: String? = null,
         val pending: RawPick? = null,
         val picks: List<Derive.Picked> = emptyList(),
         val selection: BuilderSelection? = null,
@@ -163,14 +199,38 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
         val nextLabel: String? = null,
         /** r100: "Test it now" on the Video pick */
         val videoTest: VideoTest? = null,
+        /** r102: the Details rows tapped as Tags, one group each (Derive writes them as `tagGroups`) */
+        val tagGroups: List<Derive.TagGroup> = emptyList(),
+        /** r102 fix: the tag groups' selectors in the order they were last tapped (Undo removes the last-tapped one) */
+        val tagTapOrder: List<String> = emptyList(),
+        /** r102: Edit by tapping: the saved source's key (Save writes into it), its name, and a banner line */
+        val editKey: String? = null,
+        val editName: String? = null,
+        val banner: String? = null,
+        /**
+         * r102: values read from an older source's code (`var ITEM = "…"` → itemSelector …), used for every label not
+         * tapped again (its row says "from the code")
+         */
+        val fromCode: Map<String, String> = emptyMap(),
     ) {
         val site: String get() = (pageUrl ?: loadUrl ?: url).let { Detector.normalize(it) }
         val host: String get() = site.removePrefix("https://").removePrefix("http://")
         fun pick(label: String): Derive.Picked? = picks.lastOrNull { it.pick.label == label }
         val labels: List<String> get() = if (step == Step.ChapterPage) listOf(if (anime) "video" else "image") else step.labels
+
+        /** r102: every label of every step, in the chooser's order (any of them can be picked on any page) */
+        val allLabels: List<String> get() = Step.ListPage.labels + Step.TitlePage.labels + listOf(if (anime) "video" else "image")
+
+        /** r102: [label] has a value: picked, or (Edit by tapping, older source) read from the code */
+        fun done(label: String): Boolean = pick(label) != null || fromCodeOnly(label) || (label == "tags" && tagGroups.isNotEmpty())
+
+        /** r102: [label] is taken from the code (not tapped again) */
+        fun fromCodeOnly(label: String): Boolean = pick(label) == null && codeKeys(label).any { fromCode[it]?.isNotBlank() == true }
     }
 
     private val context get() = Injekt.get<Application>()
+
+    private val manager: JsSourceManager by lazy { Injekt.get<JsSourceManager>() }
 
     /** r100 (W3): Search / Tabs / Filters / Settings, recorded while the owner browses the site */
     val extras = BuilderExtrasModel()
@@ -186,13 +246,25 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
         pageScriptFlow.tryEmit("if (window.__labPicker) { $script }")
     }
 
+    /** r102: a script for the page as is (no picker check): W2's learn list through `extras.runInPage` */
+    private fun pageRaw(script: String) {
+        if (!pageScriptFlow.tryEmit(script)) AppLog.add('W', "lab", "Builder: a page script was dropped (queue full)")
+    }
+
     init {
         screenModelScope.launchIO {
             val script = runCatching { context.assets.open("sourcelab/picker.js").bufferedReader().use { it.readText() } }
                 .onFailure { AppLog.add('E', "lab", "picker.js not read: ${it.message}") }
                 .getOrNull()
-            mutableState.update { it.copy(pickerScript = script) }
+            // r102 (W2): learn.js presses a list's entries for "Learn this list"; put on every page after picker.js
+            val learn = runCatching { context.assets.open("sourcelab/learn.js").bufferedReader().use { it.readText() } }
+                .onFailure { AppLog.add('W', "lab", "learn.js not read: ${it.message}") }
+                .getOrNull()
+            mutableState.update { it.copy(pickerScript = script, learnScript = learn) }
         }
+        // r102 (W2): the extras push scripts into the page (learn.js's press) through the same ordered flow
+        extras.runInPage = { script -> pageRaw(script) }
+        if (editKey != null) screenModelScope.launchIO { loadForEdit(editKey) }
         if (!startUrl.isNullOrBlank()) load(startUrl)
         // r101 (W4's "Pick a list on the site"): the page's group mode follows the extras' state
         screenModelScope.launchIO {
@@ -242,14 +314,35 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
         }
     }
 
-    /** From the WebView: the page finished loading, or its history changed (an in-page navigation too) */
-    fun onPageLoaded(url: String?, canGoBack: Boolean, canGoForward: Boolean) {
+    override fun onDispose() {
+        extras.runInPage = null
+        runCatching { extras.dispose() }.onFailure { AppLog.add('W', "lab", "extras: not disposed: ${it.message}") }
+        super.onDispose()
+    }
+
+    /**
+     * From the WebView: the page finished loading, or its history changed (an in-page navigation too). r102: [url] is
+     * the WebView's own current address (BuilderScreen passes `view.url`), so the bar shows the page after Back too;
+     * the extras hear every address (`onPageUrl`, W2's learn list) and the step follows the page ([followStep]).
+     */
+    fun onPageLoaded(url: String?, canGoBack: Boolean, canGoForward: Boolean, finished: Boolean = false) {
         mutableState.update {
             it.copy(pageUrl = url ?: it.pageUrl, url = url ?: it.url, canGoBack = canGoBack, canGoForward = canGoForward)
         }
         // r100 (W3): a search / filter change shows in the address
         runCatching { extras.onPageLoaded(url) }
             .onFailure { AppLog.add('W', "lab", "extras: page not read: ${it.message}") }
+        if (url != null) {
+            runCatching { extras.onPageUrl(url) }
+                .onFailure { AppLog.add('W', "lab", "extras: address not passed on: ${it.message}") }
+            // r102 fix: learning presses only on a page that finished loading (not on its first history event)
+            if (finished) {
+                runCatching { extras.onPageFinished(url) }
+                    .onFailure { AppLog.add('W', "lab", "extras: page finish not passed on: ${it.message}") }
+            }
+        }
+        runCatching { followStep(url) }
+            .onFailure { AppLog.add('W', "lab", "Builder: step not followed: ${it.message}") }
     }
 
     /** r100 (W3): picker.js's optionsFor answer (LabPicker.options or the console's LABOPTS line) */
@@ -273,26 +366,56 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
     }
 
     /**
-     * KMK (r97): the WebView's own Back (or a link) brought an earlier step's page back: the step follows, so the
-     * labels offered are that page's (the list page → step 1, the title page → step 2 while on step 3).
+     * KMK (r97): the WebView's own Back (or a link) brought an earlier step's page back: the step follows. r102: any
+     * page ([followStep]): opening a title in the site moves to the title page step (the owner's run stayed on
+     * "home page · step 1" after opening a title, so only list labels were offered).
      */
-    fun syncStepWithUrl(url: String?) {
-        val shown = url?.substringBefore('#')?.trimEnd('/') ?: return
+    fun syncStepWithUrl(url: String?) = followStep(url)
+
+    /**
+     * r102: the step this page looks like: the list page (where the list labels were tapped, the start address, or
+     * the recorded Popular / Latest / tab paths), a chapter (the shape of the Chapter pick's links), or a title (the
+     * shape of the Title / Item links, e.g. `/en/v/…`). Moves the step when it differs; never back from the video step
+     * of an only-episode title (that step runs on the title page itself).
+     */
+    fun followStep(url: String?) {
+        val shown = url?.let { norm(it) }?.takeIf { it.startsWith("http") } ?: return
         val s = state.value
-        fun pageOf(step: Step): String? =
-            s.picks.firstOrNull { it.pick.label in step.labels }?.pick?.pageUrl?.substringBefore('#')?.trimEnd('/')
-        val listPage = pageOf(Step.ListPage) ?: startUrl?.trim()?.substringBefore('#')?.trimEnd('/')
-        val target = when {
-            s.step != Step.ListPage && listPage != null && shown == listPage -> Step.ListPage
-            // r99: with "only episode" the video step runs on the title page itself, so that page is no way back
-            s.step == Step.ChapterPage && !s.singleEpisode && shown == pageOf(Step.TitlePage) -> Step.TitlePage
-            else -> return
-        }
+        val target = stepFor(shown, s) ?: return
+        if (target == s.step) return
+        if (s.singleEpisode && s.step == Step.ChapterPage && target == Step.TitlePage) return
+        AppLog.add('D', "lab", "Builder: page looks like the ${target.title}, step moved (${s.step.number} → ${target.number}) · $shown")
         mutableState.update { it.copy(step = target, pending = null, helperFor = null, suggestion = null, relabel = null) }
     }
 
-    /** Pick mode (taps select, nothing navigates) or browse mode (the site works as usual) */
-    fun setPickMode(pick: Boolean) = mutableState.update { it.copy(pickMode = pick, pending = if (pick) it.pending else null) }
+    private fun stepFor(shown: String, s: State): Step? {
+        val shownUrl = shown.toHttpUrlOrNull() ?: return null
+        val path = shownUrl.encodedPath.trimEnd('/')
+        fun pagesOf(step: Step): Set<String> =
+            s.picks.filter { it.pick.label in step.labels }.map { norm(it.pick.pageUrl) }.filter { it.isNotBlank() }.toSet()
+        val listPages = pagesOf(Step.ListPage) + listOfNotNull(startUrl?.let { norm(it) })
+        if (shown in listPages) return Step.ListPage
+        // The list page with a filter or page number in its query (?year=2025)
+        if (listPages.any { it.toHttpUrlOrNull()?.encodedPath?.trimEnd('/') == path }) return Step.ListPage
+        val titlePages = pagesOf(Step.TitlePage)
+        if (shown in titlePages) return Step.TitlePage
+        if (shown in pagesOf(Step.ChapterPage)) return Step.ChapterPage
+        // The recorded list paths (Popular, Latest, tabs): the part before {page} / the query
+        val ex = runCatching { extras.state.value }.getOrNull()
+        val listPaths = listOfNotNull(ex?.popularPath, ex?.latestPath) + ex?.tabs.orEmpty().map { it.path }
+        if (listPaths.any { listPathMatches(it, path) }) return Step.ListPage
+        val chapterLike = looksLike(path, s.pick("chapter")?.hrefs.orEmpty())
+        val titleLike = looksLikeTitle(path, (s.pick("title") ?: s.pick("item"))?.hrefs.orEmpty())
+        return when {
+            chapterLike && titleLike -> when (s.step) {
+                Step.TitlePage, Step.ChapterPage -> null // the same shape: stay where the owner is
+                Step.ListPage -> Step.TitlePage
+            }
+            chapterLike -> Step.ChapterPage
+            titleLike -> Step.TitlePage
+            else -> null
+        }
+    }
 
     /**
      * From the picker script: one tap, as JSON. Through the `LabPicker` bridge (a WebView thread) or, r98, through
@@ -300,10 +423,6 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
      * (`D lab picker tap …`), so a Log without these lines means the page never reached the app.
      */
     fun onPick(json: String, viaConsole: Boolean = false) {
-        if (!state.value.pickMode) {
-            AppLog.add('D', "lab", "picker tap ignored: Browse mode")
-            return
-        }
         val o = runCatching { jsJson.parseToJsonElement(json) as? JsonObject }.getOrNull()
         if (o == null) {
             AppLog.add('W', "lab", "picker tap not understood (${json.length} chars${if (viaConsole) ", console" else ""})")
@@ -330,6 +449,12 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
             nextLike = o.bool("nextLike") ?: false,
             samples = o.arr("samples")?.mapNotNull { (it as? JsonPrimitive)?.content }.orEmpty(),
             pageDate = o.str("pageDate").orEmpty(),
+            rowLabel = o.str("rowLabel").orEmpty(),
+            rowKind = o.obj("row")?.str("kind").orEmpty(),
+            rowSelector = o.obj("row")?.str("selector").orEmpty(),
+            rowTarget = o.obj("row")?.str("target").orEmpty(),
+            rowValues = o.obj("row")?.arr("values")?.mapNotNull { (it as? JsonPrimitive)?.content }.orEmpty(),
+            rowChips = o.obj("row")?.int("chips") ?: 0,
         )
         // r100: the helper's suggestion is shown by its card, never taken as a tap waiting for a label
         if (raw.via == "suggest") {
@@ -351,8 +476,38 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
             applyLabel(relabel, raw)
             return
         }
+        // r102: "Tapping for…": the tap was for an armed label; the page has disarmed itself (Tags stays armed)
+        val armedFor = o.str("armed")?.takeIf { it.isNotBlank() && raw.via == "tap" }
+        if (armedFor != null && armedFor in state.value.allLabels) {
+            if (armedFor != "tags") mutableState.update { it.copy(armed = null) }
+            AppLog.add('D', "lab", "Builder: tap for $armedFor${if (raw.rowLabel.isNotBlank()) " · row \"${raw.rowLabel}\"" else ""}")
+            applyLabel(armedFor, raw)
+            return
+        }
         mutableState.update { it.copy(pending = raw, relabel = null, helperFor = null, suggestion = null) }
     }
+
+    /**
+     * r102: "Tapping for…": [label] = the page's next tap is a pick for it (Tags: every tap, until tapped off);
+     * null = nothing armed (the page is a browser; a long press still picks). Arming ends "List for a filter".
+     * BuilderScreen sends the state to the page (`__labPicker.arm`) whenever it changes and after every injection.
+     */
+    fun arm(label: String?) {
+        val s = state.value
+        val next = label?.takeIf { it in s.allLabels }
+        if (next != null && runCatching { extras.state.value.groupMode }.getOrDefault(false)) extras.setGroupMode(false)
+        mutableState.update { it.copy(armed = next, pending = if (next != null) null else it.pending) }
+        if (s.armed != next) AppLog.add('D', "lab", "Builder: tapping for ${next ?: "nothing (the page works as a browser)"}")
+    }
+
+    /** r102: the "List for a filter" chip: nothing armed, the next tap picks a whole list (W2's group pick) */
+    fun toggleListForFilter() {
+        val on = !runCatching { extras.state.value.groupMode }.getOrDefault(false)
+        if (on) mutableState.update { it.copy(armed = null, pending = null) }
+        extras.setGroupMode(on)
+    }
+
+    fun dismissBanner() = mutableState.update { it.copy(banner = null) }
 
     private fun onSuggestion(raw: RawPick, forLabel: String, none: Boolean) {
         val s = state.value
@@ -369,6 +524,7 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
 
     fun onPickerLog(text: String) {
         AppLog.add('D', "lab", "picker $text")
+        if (text.startsWith("learn:")) runCatching { extras.onLearnLog(text) } // r102 fix: learn.js's press outcome
         // r100 fix pass: picker.js logs "up: …" / "down: …" only when it can't move (a move sends a pick instead):
         // the helper's Up / Down then has nothing to re-label, so the next real tap isn't labelled by surprise
         if ((text.startsWith("up: ") || text.startsWith("down: ")) && state.value.relabel != null) {
@@ -404,10 +560,16 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
             hrefs = raw.hrefs,
             attrsAllHttp = raw.attrsAllHttp,
         )
+        // r102: Tags is a group per Details row (Cast, Maker…); a tap outside a labelled row is a "Tags" group once
+        // groups exist, else r101's single tags selector
+        val group = if (label == "tags") tagGroupOf(raw, state.value.tagGroups.isNotEmpty()) else null
         mutableState.update { s ->
             s.copy(
                 picks = s.picks.filter { it.pick.label != label } + picked,
                 raws = s.raws + (label to raw),
+                tagGroups = if (group != null) withGroup(s.tagGroups, group) else s.tagGroups,
+                tagTapOrder = if (group != null) s.tagTapOrder.filter { it != group.selector } + group.selector else s.tagTapOrder,
+                fromCode = s.fromCode - codeKeys(label),
                 pending = null,
                 helperFor = if (s.helper) label else null,
                 suggestion = null,
@@ -418,6 +580,9 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
         }
         rederive()
         AppLog.add('I', "lab", "Builder: $label = ${raw.likeSelector} (${raw.count} like it) on ${raw.pageUrl}")
+        if (group != null) {
+            AppLog.add('I', "lab", "Builder: tags group \"${group.name}\" = ${group.selector} (${group.target}; ${group.values.take(3).joinToString(", ")})")
+        }
         // r101: the Next link's address tells the extras how this site numbers its pages (page=2, /page/2 …)
         if (label == "next") {
             // The tapped link's own href first: hrefs[0] is the first look-alike (page 1 of a numbered pager)
@@ -473,6 +638,65 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
         return runCatching { Derive.itemSuggestion(title, cover) }.getOrNull()
     }
 
+    /** r102: the group a Tags tap makes: its row (picker.js), else (when groups exist) the tapped tags as "Tags" */
+    private fun tagGroupOf(raw: RawPick, groupsExist: Boolean): Derive.TagGroup? {
+        if (raw.rowSelector.isNotBlank()) {
+            return Derive.TagGroup(
+                name = raw.rowLabel.ifBlank { "Tags" },
+                selector = raw.rowSelector,
+                target = if (raw.rowTarget == "description") "description" else "tags",
+                values = raw.rowValues,
+            )
+        }
+        if (!groupsExist) return null
+        val one = raw.tag == "a" || raw.count >= 2
+        val selector = Derive.clean(if (one) raw.likeSelector else "${raw.cssPath.ifBlank { raw.likeSelector }} a").first
+        return Derive.TagGroup(name = "Tags", selector = selector, target = "tags", values = raw.samples)
+    }
+
+    /** r102: re-tapping the same row (same name or selector) replaces its group */
+    private fun withGroup(groups: List<Derive.TagGroup>, group: Derive.TagGroup): List<Derive.TagGroup> {
+        val i = groups.indexOfFirst { it.selector == group.selector || it.name.equals(group.name, ignoreCase = true) }
+        if (i < 0) return groups + group
+        // The owner's name and target for that row stay; the values are the new tap's
+        return groups.toMutableList().also { it[i] = group.copy(name = groups[i].name, target = groups[i].target) }
+    }
+
+    /** r102: the Tags card's ⋮ → Rename */
+    fun renameTagGroup(index: Int, name: String) {
+        val clean = name.trim().replace(":", "").take(30)
+        if (clean.isEmpty()) return
+        mutableState.update { s ->
+            s.copy(tagGroups = s.tagGroups.mapIndexed { i, g -> if (i == index) g.copy(name = clean) else g })
+        }
+        AppLog.add('D', "lab", "Builder: tags group ${index + 1} renamed \"$clean\"")
+        rederive()
+    }
+
+    /** r102: the Tags card's ⋮ → Remove (the last one gone = no Tags pick) */
+    fun removeTagGroup(index: Int) {
+        val s = state.value
+        val gone = s.tagGroups.getOrNull(index) ?: return
+        val left = s.tagGroups.filterIndexed { i, _ -> i != index }
+        AppLog.add('D', "lab", "Builder: tags group \"${gone.name}\" removed")
+        if (left.isEmpty() && s.raws["tags"]?.rowSelector?.isNotBlank() == true) {
+            removePick("tags")
+        } else {
+            mutableState.update { it.copy(tagGroups = left) }
+            rederive()
+        }
+    }
+
+    /** r102: the Tags card's target chips: "tags", "description" or "both" */
+    fun setTagGroupTarget(index: Int, target: String) {
+        val t = target.takeIf { it == "description" || it == "both" } ?: "tags"
+        mutableState.update { s ->
+            s.copy(tagGroups = s.tagGroups.mapIndexed { i, g -> if (i == index) g.copy(target = t) else g })
+        }
+        AppLog.add('D', "lab", "Builder: tags group ${index + 1} → $t")
+        rederive()
+    }
+
     fun dismissPending() = mutableState.update { it.copy(pending = null) }
 
     fun removePick(label: String) {
@@ -480,6 +704,8 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
             s.copy(
                 picks = s.picks.filter { it.pick.label != label },
                 raws = s.raws - label,
+                tagGroups = if (label == "tags") emptyList() else s.tagGroups,
+                fromCode = s.fromCode - codeKeys(label),
                 helperFor = s.helperFor?.takeIf { it != label },
                 suggestion = if (s.helperFor == label) null else s.suggestion,
                 videoTest = if (label == "video") null else s.videoTest,
@@ -493,12 +719,20 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
         mutableState.update { s ->
             if (s.pending != null) {
                 s.copy(pending = null)
+            } else if (s.picks.lastOrNull()?.pick?.label == "tags" && s.tagGroups.size > 1) {
+                // r102: Tags: the last group goes, the others stay. r102 fix: the last-tapped one (a re-tapped row
+                // keeps its place in the list), else the last in the list
+                val lastTapped = s.tagTapOrder.lastOrNull { sel -> s.tagGroups.any { it.selector == sel } }
+                val at = lastTapped?.let { sel -> s.tagGroups.indexOfLast { it.selector == sel } } ?: -1
+                val left = if (at >= 0) s.tagGroups.filterIndexed { i, _ -> i != at } else s.tagGroups.dropLast(1)
+                s.copy(tagGroups = left, tagTapOrder = s.tagTapOrder.filter { it != lastTapped })
             } else {
                 val picks = s.picks.dropLast(1)
                 val kept = picks.map { it.pick.label }.toSet()
                 s.copy(
                     picks = picks,
                     raws = s.raws.filterKeys { it in kept },
+                    tagGroups = if ("tags" in kept) s.tagGroups else emptyList(),
                     helperFor = s.helperFor?.takeIf { it in kept },
                     suggestion = if (s.helperFor?.let { it in kept } == true) s.suggestion else null,
                 )
@@ -611,7 +845,7 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
      */
     fun nextUnpicked(s: State = state.value): String? =
         s.labels.firstOrNull { label ->
-            s.pick(label) == null && !(label == "chapter" && s.singleEpisode) && label !in optionalLabels
+            !s.done(label) && !(label == "chapter" && s.singleEpisode) && label !in optionalLabels
         }
 
     /** "Next: open a title" / "Next: open a chapter": the first link of the pick that leads there */
@@ -662,7 +896,325 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
 
     fun clearError() = mutableState.update { it.copy(error = null) }
 
+    // ---------- r102: Edit by tapping ----------
+
+    /**
+     * The builder's own state for `LabMeta.picks`: `{ "selection": BuilderSelection, "builder": { version, raws, picks,
+     * singleEpisode, anime, json, tagGroups, extras, fromCode } }` (r96–r101 stored the selection alone; [loadForEdit]
+     * reads both shapes).
+     */
+    private fun builderState(s: State, selection: BuilderSelection): JsonElement {
+        val extrasSnapshot = runCatching { extras.snapshot() }
+            .onFailure { AppLog.add('W', "lab", "Builder: lists and options not kept for editing: ${it.message}") }
+            .getOrNull()
+        val builder = LinkedHashMap<String, JsonElement>()
+        builder["version"] = JsonPrimitive(1)
+        builder["raws"] = JsonObject(s.raws.mapValues { jsJson.encodeToJsonElement(RawPick.serializer(), it.value) })
+        builder["picks"] = JsonArray(s.picks.map { jsJson.encodeToJsonElement(Derive.Picked.serializer(), it) })
+        builder["singleEpisode"] = JsonPrimitive(s.singleEpisode)
+        builder["anime"] = JsonPrimitive(s.anime)
+        builder["json"] = JsonPrimitive(s.json)
+        builder["tagGroups"] = JsonArray(s.tagGroups.map { jsJson.encodeToJsonElement(Derive.TagGroup.serializer(), it) })
+        if (extrasSnapshot != null) builder["extras"] = extrasSnapshot
+        if (s.fromCode.isNotEmpty()) builder["fromCode"] = JsonObject(s.fromCode.mapValues { JsonPrimitive(it.value) })
+        return JsonObject(
+            mapOf(
+                "selection" to jsJson.encodeToJsonElement(BuilderSelection.serializer(), selection),
+                "builder" to JsonObject(builder),
+            ),
+        )
+    }
+
+    /**
+     * Opens [key] for editing: its saved builder state (picks, tag groups, lists and options) when it has one; else the
+     * r96–r101 selection's picks (no page facts) and the code's `var X = "…"` values, said in the banner.
+     */
+    private fun loadForEdit(key: String) {
+        val info = manager.get(key)
+        if (info == null) {
+            AppLog.add('W', "lab", "Builder: edit $key: the source is gone")
+            mutableState.update { it.copy(banner = "This source is gone: what you pick here is written as a new source.", editKey = null) }
+            return
+        }
+        val code = runCatching { manager.code(key) }.getOrNull().orEmpty()
+        val stored = info.labMeta?.picks
+        val obj = stored as? JsonObject
+        val builder = obj?.obj("builder")
+        val banner: String
+        if (builder != null) {
+            val raws = builder.obj("raws")?.mapNotNull { (label, el) ->
+                runCatching { label to jsJson.decodeFromJsonElement(RawPick.serializer(), el) }.getOrNull()
+            }?.toMap().orEmpty()
+            val picks = builder.arr("picks")?.mapNotNull { el ->
+                runCatching { jsJson.decodeFromJsonElement(Derive.Picked.serializer(), el) }.getOrNull()
+            }.orEmpty()
+            val groups = builder.arr("tagGroups")?.mapNotNull { el ->
+                runCatching { jsJson.decodeFromJsonElement(Derive.TagGroup.serializer(), el) }.getOrNull()
+            }.orEmpty()
+            val fromCode = builder.obj("fromCode")?.mapNotNull { (k, v) -> (v as? JsonPrimitive)?.content?.let { k to it } }?.toMap().orEmpty()
+            builder["extras"]?.let { snapshot ->
+                runCatching { extras.restore(snapshot) }
+                    .onFailure { AppLog.add('W', "lab", "Builder: lists and options not restored: ${it.message}") }
+            }
+            mutableState.update {
+                it.copy(
+                    raws = raws,
+                    picks = picks,
+                    tagGroups = groups,
+                    fromCode = fromCode,
+                    singleEpisode = builder.bool("singleEpisode") ?: false,
+                    anime = builder.bool("anime") ?: info.anime,
+                    json = builder.bool("json") ?: info.json,
+                )
+            }
+            banner = if (editedByHand(key, code)) {
+                // r102 fix: Save to this source regenerates from the picks: the hand edits would go (History keeps them)
+                AppLog.add('I', "lab", "Builder: edit ${info.name} ($key): its code was edited by hand after it was built")
+                "This source was edited by hand after it was built; Save to this source rewrites it from your picks " +
+                    "(the current code stays in History)"
+            } else {
+                "Editing ${info.name}: your ${picks.size} picks${if (groups.isNotEmpty()) ", ${groups.size} tag groups" else ""} " +
+                    "and lists are back. Change what's wrong, then Save to this source."
+            }
+            AppLog.add('I', "lab", "Builder: edit ${info.name} ($key): builder state restored (${picks.size} picks, ${groups.size} tag groups)")
+        } else {
+            val selection = (obj?.get("selection") ?: stored)?.let { el ->
+                runCatching { jsJson.decodeFromJsonElement(BuilderSelection.serializer(), el) }.getOrNull()
+            }
+            // The code is what runs now (maybe edited by hand since): its values win; the r96–r101 picks (no page
+            // facts) come back only for labels the code doesn't give (a JSON source: all of them)
+            val fromCode = if (info.json) emptyMap() else codeValues(code)
+            val given = fromCode.filterValues { it.isNotBlank() }.keys.mapNotNull { labelOfKey(it) }.toSet()
+            val picks = selection?.picks.orEmpty().filter { it.label !in given }.map { p ->
+                Derive.Picked(pick = p, likeSelector = p.cssPath.replace(POSITION, ""), hrefs = emptyList(), attrsAllHttp = emptyList())
+            }
+            val kept = fromCode
+            val single = fromCode["singleEpisode"] == "true"
+            mutableState.update {
+                it.copy(picks = picks, fromCode = kept, singleEpisode = single, anime = info.anime, json = info.json)
+            }
+            banner = when {
+                picks.isNotEmpty() && kept.isNotEmpty() ->
+                    "Editing ${info.name}, made before the builder kept its taps: ${picks.size} picks are back without their page facts, " +
+                        "the rest is read from its code (rows say “from the code”). Tap a label again to change it."
+                picks.isNotEmpty() ->
+                    "Editing ${info.name}: ${picks.size} picks are back without their page facts. Tap a label again to change it."
+                kept.isNotEmpty() ->
+                    "Editing ${info.name}: its values were read from its code (rows say “from the code”). Tap a label again to change it."
+                else -> "Editing ${info.name}: nothing could be read from it. Pick what it needs, then Save to this source."
+            }
+            AppLog.add(
+                'I',
+                "lab",
+                "Builder: edit ${info.name} ($key): no builder state; ${picks.size} saved picks, ${kept.size} values from the code (${kept.keys.joinToString(", ")})",
+            )
+        }
+        mutableState.update { it.copy(editName = info.name, banner = banner) }
+        rederive()
+    }
+
+    /**
+     * r102 fix: whether [code] (the source's code now) differs from what the builder last wrote from the saved state:
+     * the newest History version the builder (or a template update) wrote — note "Generated from …", "Edited by
+     * tapping" or "Updated template …" — holds the code that state generated. Its code differing from [code], or that
+     * version updated in place since, means hand edits. No such version left (history lost): not said.
+     */
+    private fun editedByHand(key: String, code: String): Boolean = runCatching {
+        val index = History.index(key)
+        val built = index.versions.lastOrNull { v ->
+            val note = v.note.removeSuffix(History.UPDATED_SUFFIX)
+            note.startsWith("Generated from") || note == "Edited by tapping" || note.startsWith("Updated template")
+        } ?: return@runCatching false
+        if (built.note.endsWith(History.UPDATED_SUFFIX)) return@runCatching true
+        val builtCode = History.code(key, built.n) ?: return@runCatching false
+        builtCode.trimEnd() != code.trimEnd()
+    }.getOrDefault(false)
+
+    /**
+     * Save to this source: the regenerated code under the same key (a new History version; the id, library and
+     * downloads stay), keeping the source's own `id` line and its name, language and icon.
+     */
+    private suspend fun saveInto(info: JsSourceInfo, generated: eu.kanade.tachiyomi.jssource.lab.GeneratedSource) {
+        var code = generated.code
+        info.customId?.let { code = LabStore.injectId(code, generated.json, it) }
+        val saved = manager.save(
+            key = info.key,
+            code = code,
+            json = generated.json,
+            animeHint = generated.animeHint,
+            overrides = JsSourceInfo(
+                key = info.key,
+                name = info.name,
+                lang = info.lang,
+                iconUrl = info.iconUrl,
+                baseUrl = info.baseUrl,
+                lab = generated.lab.toJson(),
+            ),
+            note = "Edited by tapping",
+        )
+        if (generated.explain.isNotEmpty()) {
+            runCatching {
+                LabStore.writeExplain(
+                    info.key,
+                    ExplainFile(
+                        entries = PartIndex.of(code, generated.json, generated.explain),
+                        templateId = generated.lab.templateId,
+                        templateVersion = generated.lab.templateVersion,
+                    ),
+                )
+            }.onFailure { AppLog.add('W', "lab", "Builder: explain.json of ${info.key} not written: ${it.message}") }
+        }
+        LabStore.invalidate(info.key)
+        if (info.customId != null && saved.customId != info.customId) {
+            AppLog.add('W', "lab", "Builder: ${info.name} had id ${info.customId}, the saved code has ${saved.customId}")
+        }
+        AppLog.add('I', "lab", "Builder: edited ${saved.name} (${info.key})")
+    }
+
     companion object {
+        /** r102: placeholder ← the generic-list code's `var NAME` (what an older source's code tells the builder) */
+        val CODE_VARS: Map<String, String> = linkedMapOf(
+            "POPULAR_PATH" to "popularPath",
+            "LATEST_PATH" to "latestPath",
+            "SEARCH_PATH" to "searchPath",
+            "ITEM" to "itemSelector",
+            "TITLE" to "titleSelector",
+            "COVER" to "coverSelector",
+            "COVER_ATTR" to "coverAttr",
+            "NEXT" to "nextSelector",
+            "CHAPTER" to "chapterSelector",
+            "CHAPTER_DATE" to "dateSelector",
+            "SINGLE_EPISODE" to "singleEpisode",
+            "EPISODE_NUMBER" to "numberSelector",
+            "IMAGE" to "imageSelector",
+            "IMAGE_ATTR" to "imageAttr",
+            "VIDEO_FRAME" to "videoFrame",
+            "DETAILS_COVER" to "detailsCover",
+            "DETAILS_COVER_ATTR" to "detailsCoverAttr",
+            "DESCRIPTION" to "descriptionSelector",
+            "TAGS" to "tagsSelector",
+            "AUTHOR" to "authorSelector",
+            "STATUS" to "statusSelector",
+            "TAB_POPULAR_NAME" to "tabPopularName",
+            "TAB_LATEST_NAME" to "tabLatestName",
+            "TABS" to "tabsList",
+            "FILTERS" to "filtersList",
+            "SETTINGS" to "settingsList",
+            "TAG_GROUPS" to "tagGroups",
+        )
+
+        /** r102: values that are lists / names (not a label's): kept when the extras recorded nothing for them */
+        val LIST_KEYS = setOf("tabPopularName", "tabLatestName", "tabsList", "filtersList", "settingsList")
+
+        /** r102: the placeholders each label gives (the first is the one its row checks) */
+        private val LABEL_KEYS: Map<String, List<String>> = mapOf(
+            "item" to listOf("itemSelector"),
+            "title" to listOf("titleSelector"),
+            "cover" to listOf("coverSelector", "coverAttr"),
+            "next" to listOf("nextSelector"),
+            "chapter" to listOf("chapterSelector"),
+            "date" to listOf("dateSelector"),
+            "number" to listOf("numberSelector"),
+            "image" to listOf("imageSelector", "imageAttr"),
+            "video" to listOf("videoFrame"),
+            "bigCover" to listOf("detailsCover", "detailsCoverAttr"),
+            "description" to listOf("descriptionSelector"),
+            "tags" to listOf("tagsSelector", "tagGroups"),
+            "author" to listOf("authorSelector"),
+            "status" to listOf("statusSelector"),
+        )
+
+        fun codeKey(label: String): String? = LABEL_KEYS[label]?.firstOrNull()
+
+        fun codeKeys(label: String): List<String> = LABEL_KEYS[label].orEmpty()
+
+        fun labelOfKey(key: String): String? = LABEL_KEYS.entries.firstOrNull { key in it.value }?.key
+
+        private val POSITION = Regex(""":nth-of-type\(\d+\)""")
+
+        // No braces in these patterns (ICU): `var NAME = "…";` and `var NAME = JSON.parse("…" || "[]");`
+        private val STRING_VAR = Regex("""(?m)^var ([A-Z_]+) = "((?:[^"\\]|\\.)*)"""")
+        private val JSON_VAR = Regex("""(?m)^var ([A-Z_]+) = JSON\.parse\("((?:[^"\\]|\\.)*)"""")
+
+        /**
+         * r102: an older generic-list source's values from its code (`var ITEM = "div.card";` → itemSelector), the
+         * string literals read back as JSON strings (the Generator writes only \\ and \" escapes)
+         */
+        fun codeValues(code: String): Map<String, String> {
+            val out = LinkedHashMap<String, String>()
+            fun read(raw: String): String =
+                runCatching { jsJson.decodeFromString(String.serializer(), "\"$raw\"") }.getOrDefault(raw)
+            for (m in JSON_VAR.findAll(code)) {
+                val key = CODE_VARS[m.groupValues[1]] ?: continue
+                out[key] = read(m.groupValues[2])
+            }
+            for (m in STRING_VAR.findAll(code)) {
+                val key = CODE_VARS[m.groupValues[1]] ?: continue
+                if (key !in out) out[key] = read(m.groupValues[2])
+            }
+            // Only real values: a `{{…}}` left in an untouched template is no value
+            return out.filterValues { !it.contains("{{") }
+        }
+
+        /** r102: an address without its #fragment and trailing slash, for comparing pages */
+        fun norm(url: String): String = url.trim().substringBefore('#').trimEnd('/')
+
+        /**
+         * r102: [path] (a page's path) has the shape of [hrefs]' paths: the same number of segments and the same
+         * segments before the last (`/en/v/…`), or one of them exactly
+         */
+        fun looksLike(path: String, hrefs: List<String>): Boolean {
+            val page = path.trim('/').split('/')
+            if (page.isEmpty() || page.first().isEmpty()) return false
+            return hrefs.asSequence().mapNotNull { it.toHttpUrlOrNull()?.encodedPath?.trim('/')?.split('/') }
+                .filter { it.isNotEmpty() && it.first().isNotEmpty() }
+                .take(30)
+                .any { h -> h == page || (h.size >= 2 && h.size == page.size && h.dropLast(1) == page.dropLast(1)) }
+        }
+
+        /**
+         * r102 fix: [looksLike] for a Title page, stricter: list pages beside the titles (`/en/new`, `/en/release` next
+         * to `/en/abc-123`) mustn't move the step. The page is one of the hrefs, or has their shape and its last segment
+         * looks like a slug (a digit or a hyphen in it), or that segment's letter/digit shape is exactly the last
+         * segment's shape of ≥ 2 hrefs (`naruto` among `bleach`, `one`… on a site whose title slugs are one word)
+         */
+        fun looksLikeTitle(path: String, hrefs: List<String>): Boolean {
+            if (!looksLike(path, hrefs)) return false
+            val page = path.trim('/').split('/')
+            val paths = hrefs.asSequence().mapNotNull { it.toHttpUrlOrNull()?.encodedPath?.trim('/')?.split('/') }
+                .filter { it.isNotEmpty() && it.first().isNotEmpty() }
+                .take(30)
+                .toList()
+            if (paths.any { it == page }) return true
+            val last = page.last()
+            if (last.any { it.isDigit() } || '-' in last) return true
+            val shape = segmentShape(last)
+            return paths.count { it.size == page.size && it.dropLast(1) == page.dropLast(1) && segmentShape(it.last()) == shape } >= 2
+        }
+
+        /** r102 fix: a path segment's shape: letters → a, digits → 9, runs collapsed (`abc-123` → `a-9`) */
+        fun segmentShape(segment: String): String {
+            val out = StringBuilder()
+            for (c in segment) {
+                val k = when {
+                    c.isLetter() -> 'a'
+                    c.isDigit() -> '9'
+                    else -> c
+                }
+                if (out.isEmpty() || out.last() != k || (k != 'a' && k != '9')) out.append(k)
+            }
+            return out.toString()
+        }
+
+        /** r102: a recorded list path (`/en/hot?page={page}`, maybe a full address) is this page's [path] */
+        fun listPathMatches(listPath: String, path: String): Boolean {
+            val p = listPath.trim()
+            if (p.isEmpty()) return false
+            val pathOnly = (p.toHttpUrlOrNull()?.encodedPath ?: p.substringBefore('?')).substringBefore('{').trimEnd('/')
+            if (pathOnly.isEmpty()) return false
+            return if ('{' in p.substringBefore('?')) path.startsWith(pathOnly) else path == pathOnly
+        }
+
         /** r101: labels nothing needs (the title page's own fields; the template has a fallback for each) */
         val optionalLabels: Set<String> = PickCheck.TITLE_FIELDS.toSet()
 
@@ -672,11 +1224,28 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
 
     private fun rederive() {
         val s = state.value
-        val selection = runCatching { Derive.derive(s.site, s.anime, s.picks, s.singleEpisode) }
+        val selection = runCatching { withCode(Derive.derive(s.site, s.anime, s.picks, s.singleEpisode, s.tagGroups), s) }
             .onFailure { AppLog.add('W', "lab", "Derive failed: ${it.message}") }
             .getOrNull()
         mutableState.update { it.copy(selection = selection) }
         recheck()
+    }
+
+    /** r102: Edit by tapping on an older source: the code's values for every label not tapped again */
+    private fun withCode(selection: BuilderSelection, s: State): BuilderSelection {
+        if (s.fromCode.isEmpty()) return selection
+        // The list paths only while no list label was tapped again here (then Derive reads them from that page)
+        val listTapped = Step.ListPage.labels.any { it in s.raws }
+        val kept = s.fromCode.filter { (key, value) ->
+            value.isNotBlank() && key !in LIST_KEYS && key != "singleEpisode" &&
+                (labelOfKey(key)?.let { s.pick(it) == null } ?: !listTapped) &&
+                !(s.tagGroups.isNotEmpty() && (key == "tagsSelector" || key == "tagGroups"))
+        }
+        if (kept.isEmpty()) return selection
+        return selection.copy(
+            derived = selection.derived + kept,
+            reasons = selection.reasons + kept.mapValues { "from the source's code (not tapped again)" },
+        )
     }
 
     /** r100: the helper's verdict on every labelled pick (they depend on each other: Title vs Item counts …) */
@@ -695,7 +1264,7 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
     /** Done: the generic-list template filled with the derived values, handed to Half A */
     fun write() {
         val s = state.value
-        val selection = s.selection ?: Derive.derive(s.site, s.anime, s.picks, s.singleEpisode)
+        val selection = s.selection ?: withCode(Derive.derive(s.site, s.anime, s.picks, s.singleEpisode, s.tagGroups), s)
         // r99: the JSON format has no way to say "the title page is the one episode": written as JS then
         // r99 fix: nor "no chapter link was picked" (its empty CHAPTER selector would fail without saying why): JS too,
         // whose getChapterList throws the clear error
@@ -703,13 +1272,19 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
         // r100 (W3): tabs, filters, settings and a recorded search exist only in the JS template
         val extrasUsed = runCatching { extras.used }.getOrDefault(false)
         // r101: the title page's own fields (Cover, Description, Tags, Author, Status) are read only by the JS template
-        val detailsPicked = s.picks.any { it.pick.label in optionalLabels }
+        val detailsPicked = s.picks.any { it.pick.label in optionalLabels } || s.tagGroups.isNotEmpty() ||
+            s.fromCode.any { (k, v) -> v.isNotBlank() && labelOfKey(k)?.let { l -> l in optionalLabels } == true }
         val json = s.json && !s.singleEpisode && !noChapter && !extrasUsed && !detailsPicked
         if (s.json && detailsPicked) AppLog.add('I', "lab", "Builder: title page fields picked: written as JS (the JSON format reads only og:image / the meta description)")
         if (s.json && extrasUsed) AppLog.add('I', "lab", "Builder: lists and options set: written as JS (the JSON format has no tabs, filters or settings)")
         if (s.json && s.singleEpisode) AppLog.add('I', "lab", "Builder: only-episode source written as JS (the JSON format lists episodes from links)")
         if (s.json && noChapter) AppLog.add('I', "lab", "Builder: no chapter link picked: written as JS (its chapter list says to tap one)")
-        mutableState.update { it.copy(busy = "Writing the source…", error = null) }
+        val editing = s.editKey?.let { key -> runCatching { manager.get(key) }.getOrNull() }
+        if (s.editKey != null && editing == null) {
+            mutableState.update { it.copy(error = "The source being edited is gone: nothing was saved") }
+            return
+        }
+        mutableState.update { it.copy(busy = if (editing != null) "Saving to ${editing.name}…" else "Writing the source…", error = null) }
         screenModelScope.launchIO {
             try {
                 val generated = withIOContext {
@@ -717,18 +1292,32 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
                         ?: throw IllegalStateException("The generic-list template is missing from the app")
                     val host = s.host
                     val values = LinkedHashMap<String, String>()
-                    values["name"] = host.removePrefix("www.").substringBefore('.').replaceFirstChar { it.uppercase() }
-                    values["lang"] = "en"
-                    values["baseUrl"] = s.site
-                    values["iconUrl"] = "https://www.google.com/s2/favicons?domain=$host&sz=128"
+                    values["name"] = editing?.name ?: host.removePrefix("www.").substringBefore('.').replaceFirstChar { it.uppercase() }
+                    values["lang"] = editing?.lang?.ifBlank { null } ?: "en"
+                    values["baseUrl"] = editing?.baseUrl?.ifBlank { null } ?: s.site
+                    values["iconUrl"] = editing?.iconUrl?.ifBlank { null } ?: "https://www.google.com/s2/favicons?domain=$host&sz=128"
                     values.putAll(selection.derived)
                     // r100 (W3): recorded search / tab paths override Derive's guesses; tabs, filters, settings
-                    values.putAll(extras.templateValues(s.site))
-                    val lab = LabMeta(
+                    // r102: an older source's own lists / names stay when nothing was recorded for them here
+                    val extraValues = extras.templateValues(s.site)
+                    extraValues.forEach { (k, v) ->
+                        val code = s.fromCode[k]
+                        if ((v.isBlank() || v == "[]") && !code.isNullOrBlank()) values[k] = code else values[k] = v
+                    }
+                    // r102 fix: as in withCode, the code's list paths only while no list label was tapped again
+                    // here (then Derive's paths from that page stay; the code's fill only what Derive left empty)
+                    val listTapped = Step.ListPage.labels.any { it in s.raws }
+                    listOf("popularPath", "latestPath", "searchPath").forEach { k ->
+                        if (k in extraValues || (listTapped && !selection.derived[k].isNullOrBlank())) return@forEach
+                        s.fromCode[k]?.takeIf { it.isNotBlank() }?.let { values[k] = it }
+                    }
+                    LIST_KEYS.forEach { k -> if (k !in values) s.fromCode[k]?.takeIf { it.isNotBlank() }?.let { values[k] = it } }
+                    val lab = (editing?.labMeta ?: LabMeta()).copy(
                         engine = "generic-list",
                         templateId = template.id,
                         templateVersion = template.version,
-                        picks = jsJson.encodeToJsonElement(BuilderSelection.serializer(), selection),
+                        // r102: the selection and the builder's own state (Edit by tapping restores it)
+                        picks = builderState(s, selection),
                         detectedAt = System.currentTimeMillis(),
                         siteUrl = s.site,
                     )
@@ -746,6 +1335,11 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
                         },
                         anime = s.anime,
                     )
+                }
+                if (editing != null) {
+                    saveInto(editing, generated)
+                    mutableState.update { it.copy(busy = null, delivered = true) }
+                    return@launchIO
                 }
                 LabHandoff.deliver(generated)
                 AppLog.add('I', "lab", "Built by tapping on ${s.host}: ${s.picks.size} picks, ${selection.derived.size} values derived")

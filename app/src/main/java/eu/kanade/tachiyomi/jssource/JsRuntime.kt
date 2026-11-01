@@ -89,9 +89,19 @@ class JsRuntime private constructor(
     // KMK <--
 
     /** Lines from console.log and requests, for the editor's Console */
-    val console: List<String> get() = host.console.toList()
+    val console: List<String> get() = synchronized(host.console) { host.console.map { it.line } }
 
-    fun clearConsole() = host.console.clear()
+    // KMK (r102): the same lines with their time and, for a test copy's requests, the headers / failed body
+    val consoleEntries: List<JsConsoleEntry> get() = synchronized(host.console) { host.console.toList() }
+
+    fun clearConsole() = synchronized(host.console) { host.console.clear() }
+
+    /** KMK (r102): told of every console line as it is written (the Source Lab's Test Run console) */
+    var onConsole: ((JsConsoleEntry) -> Unit)?
+        get() = host.onConsole
+        set(value) {
+            host.onConsole = value
+        }
 
     // KMK (r96): the Source Lab's Test Run names the step it is on; console lines then read `[net][popular] …`
     var stepTag: String?
@@ -343,7 +353,11 @@ class JsRuntime private constructor(
 
         /** KMK: lets go of the parsed pages (the runtime shutting down) */
         fun clearPages() = pages.clear()
-        val console = ArrayDeque<String>()
+        val console = ArrayDeque<JsConsoleEntry>()
+
+        // KMK (r102): see JsRuntime.onConsole
+        @Volatile
+        var onConsole: ((JsConsoleEntry) -> Unit)? = null
         var rateLimitMs: Long = 0L
         private var lastRequestAt = 0L
 
@@ -366,18 +380,44 @@ class JsRuntime private constructor(
                 .build()
         }
 
-        fun log(level: String, text: String) {
+        fun log(level: String, text: String, detail: String? = null) {
+            val entry = JsConsoleEntry(System.currentTimeMillis(), level, stepTag, text, detail)
             synchronized(console) {
-                console.addLast("[$level]${stepTag?.let { "[$it]" }.orEmpty()} $text")
+                console.addLast(entry)
                 while (console.size > 500) console.removeFirst()
             }
+            runCatching { onConsole?.invoke(entry) }
             val l = when (level) {
                 "error" -> 'E'
                 "warn" -> 'W'
                 "debug" -> 'D'
                 else -> 'I'
             }
-            AppLog.add(l, tag, text)
+            // KMK (r102): the global "JS sources: debug logs" switch; warnings and errors always reach Logs
+            if (l == 'W' || l == 'E' || JsDebugLogs.enabled()) AppLog.add(l, tag, text)
+        }
+
+        /** KMK (r102): what a test copy's request sent and got, for the Test Run console (cookies hidden) */
+        private fun netDetail(sent: Map<String, String>, received: Headers?, failedBody: String?): String = buildString {
+            append("Request headers\n")
+            sent.forEach { (k, v) -> append("  ").append(k).append(": ").append(hideSecret(k, v)).append('\n') }
+            if (received != null) {
+                append("Response headers\n")
+                received.names().forEach { name ->
+                    append("  ").append(name).append(": ")
+                        .append(hideSecret(name, received.values(name).joinToString(", "))).append('\n')
+                }
+            }
+            if (failedBody != null) append("Body (first 2 KB)\n").append(failedBody)
+        }.take(8_000)
+
+        private fun hideSecret(name: String, value: String): String {
+            val n = name.lowercase()
+            return if (n == "cookie" || n == "set-cookie" || n == "authorization" || n == "proxy-authorization") {
+                "<set>"
+            } else {
+                value.take(300)
+            }
         }
 
         suspend fun handle(channel: String, payloadJson: String): String {
@@ -532,7 +572,9 @@ class JsRuntime private constructor(
                     else -> mapOf("error" to "Unknown host call \"$channel\"")
                 }
             } catch (e: Throwable) {
-                if (channel == "fetchUrl") log("warn", "fetch failed: ${e.message}")
+                if (channel == "fetchUrl") {
+                    log("warn", "fetch failed: ${e.message}", payload.str("url")?.let { "Address: $it" })
+                }
                 mapOf("error" to (e.message ?: e.toString()))
             }
             return result.toJsonElement().toString()
@@ -585,7 +627,11 @@ class JsRuntime private constructor(
             val plainHeaders = headers.build().toMultimap().mapValues { it.value.firstOrNull().orEmpty() }
             suspend fun viaBrowser(): Map<String, Any?> {
                 val result = JsBrowserFetch.fetch(context, url, method, plainHeaders, body, binary)
-                if (testing) log("net", "$method $url -> ${result["statusCode"]} (through the browser)")
+                if (testing) {
+                    val code = (result["statusCode"] as? Number)?.toInt() ?: result["statusCode"]?.toString()?.toIntOrNull()
+                    val failed = if (code == null || code >= 400) (result["body"] as? String)?.take(2048) else null
+                    log("net", "$method $url -> ${result["statusCode"]} (through the browser)", netDetail(plainHeaders, null, failed))
+                }
                 return result
             }
             // Binary replies (images, archives) never go through the browser page
@@ -599,11 +645,22 @@ class JsRuntime private constructor(
                 .build()
             val plain = client.newCall(request).execute().use { response ->
                 val took = System.currentTimeMillis() - started
-                if (testing) log("net", "$method $url -> ${response.code} in ${took}ms")
+                // KMK (r102): logged after the body is read, so a failed request's first 2 KB go with its line
+                val read = runCatching { response.body.bytes() }
+                if (testing) {
+                    val failed = if (response.code >= 400) {
+                        read.getOrNull()?.let { b ->
+                            String(b, 0, minOf(b.size, 2048), response.body.contentType()?.charset() ?: Charsets.UTF_8)
+                        }
+                    } else {
+                        null
+                    }
+                    log("net", "$method $url -> ${response.code} in ${took}ms", netDetail(plainHeaders, response.headers, failed))
+                }
                 val responseHeaders = response.headers.names().associate { name ->
                     name.lowercase() to response.headers.values(name).joinToString(",")
                 }
-                val bytes = response.body.bytes()
+                val bytes = read.getOrThrow()
                 val text = if (binary) "" else String(bytes, response.body.contentType()?.charset() ?: Charsets.UTF_8)
                 if (!binary && origin != null &&
                     JsBrowserFetch.isChallenge(response.code, response.header("Server"), text)
@@ -801,4 +858,19 @@ class JsRuntime private constructor(
             })()
         """.trimIndent()
     }
+}
+
+/**
+ * KMK (r102): one console line of a runtime: when it was written, its level (log, info, debug, warn, error, net),
+ * the Test Run step it belongs to, its text and, for a test copy's request, the headers and a failed reply's body.
+ */
+data class JsConsoleEntry(
+    val at: Long,
+    val level: String,
+    val step: String?,
+    val text: String,
+    val detail: String? = null,
+) {
+    /** The editor's form: `[net][popular] GET … -> 200 in 85ms` */
+    val line: String get() = "[$level]${step?.let { "[$it]" }.orEmpty()} $text"
 }

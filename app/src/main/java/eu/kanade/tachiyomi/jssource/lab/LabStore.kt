@@ -131,6 +131,7 @@ internal object LabStore {
      */
     fun onSaved(info: JsSourceInfo, code: String, note: String? = null) {
         // r98: a Restore's save carries RESTORE_NOTE + n: the version becomes current, no new version is added
+        // r102: a Save with UPDATE_NOTE overwrites the current version in place (see History.updateCurrent)
         val restored = note?.takeIf { it.startsWith(RESTORE_NOTE) }?.removePrefix(RESTORE_NOTE)?.toIntOrNull()
         if (restored != null) {
             // r98 fix: the version may have gone between the Restore and this save (trimmed or deleted): then the
@@ -139,6 +140,11 @@ internal object LabStore {
                 AppLog.add('W', "lab", "${info.name}: v$restored is gone, marking the version with the same code current")
                 History.markCurrentByCode(info.key, code, info.json, "Restored v$restored")
             }
+        } else if (note?.startsWith(UPDATE_NOTE) == true) {
+            // KMK (r102): Save → "Update vN (current)": the current version is overwritten in place (History falls
+            // back to a new version when there is none or it is the generated one); the inner note is the fallback's
+            val inner = note.orEmpty().removePrefix(UPDATE_NOTE).ifBlank { "Saved" }
+            History.updateCurrent(info.key, code, info.json, inner)
         } else {
             History.append(info.key, code, info.json, note ?: "Saved")
         }
@@ -219,6 +225,13 @@ internal object LabStore {
      * appending one (r98). It travels with the call, like every History note (r96: no shared pending field).
      */
     const val RESTORE_NOTE = "\u0000restore:"
+
+    /**
+     * KMK (r102): the note prefix of a Save → "Update vN (current)": [onSaved] overwrites the current History version
+     * in place instead of appending one ([History.updateCurrent]); what follows the prefix is the note used when it
+     * has to fall back to a new version. Travels with the call like [RESTORE_NOTE].
+     */
+    const val UPDATE_NOTE = "\u0000update:"
 
     private const val BASELINE_SETTLE_MS = 30_000L
 

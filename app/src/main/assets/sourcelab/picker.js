@@ -47,12 +47,38 @@
 // .suggestSelector(css, label): the app's own suggestion (the Item derived from the Title and Cover picks), outlined
 // and sent back like suggest(). (4) Every pick carries pageDate: the first date-looking text of the page ("Release
 // date 2026-10-29"), so the app can say "tap the release date as Date".
+//
+// r102 ("Tapping for…", the owner's tablet run: the Pick / Browse switch kept him on step 1's labels, and a tap on a
+// dropdown's button picked the 4 buttons): (1) window.__labPicker.arm(label | null). Armed = the next tap is a pick
+// for that label (never navigates, the r99 rules), sent with `armed: label`, then the page disarms itself, except
+// "tags", which stays armed until the app disarms it (each tap adds a group). Nothing armed = the page is a normal
+// browser (links, menus, scrolling), and a long press (≥ 500 ms without moving) on an element picks it (via "hold":
+// the app's label chips then name it); the click that follows a long press is swallowed. setMode("pick" | "browse")
+// stays for old callers: "pick" = armed for anything and never disarms (the r96–r101 behaviour, which is also the
+// default when the app put no `window.__labArmed` before this script). (2) Every pick carries its row: rowLabel (the
+// dt of its dd, the th / first cell of its td, a label / strong / b / span[class*=label|key|title] before it in its
+// row; ≤ 30 characters, colon stripped) and row { kind, label, selector (a Jsoup selector for the row's values, by
+// the label's text), target ("tags" when the row holds links / chips, else "description"), values, chips }.
+// (3) A group pick carries `opener` (the css path of the dropdown button that opens the list: aria-controls, else
+// the nearest preceding / ancestor-sibling element with aria-haspopup / aria-expanded / a select|dropdown|toggle
+// class) and `tappedOpener` (the tapped entry is itself a menu's button). (4) Video: ad-network iframes (pnonolet,
+// exoclick, …) are never the Video pick or suggestion: the real player under or near the tap is used.
 (function () {
   var TOKEN = "";
   try {
     TOKEN = String(window.__labToken || "");
     delete window.__labToken;
   } catch (e0) { /* nothing */ }
+  // r102: what the app had armed when it injected this script (a label, or null = nothing); absent = old callers
+  var ARMED_INIT;
+  var ARMED_GIVEN = false;
+  try {
+    if (Object.prototype.hasOwnProperty.call(window, "__labArmed")) {
+      ARMED_GIVEN = true;
+      ARMED_INIT = window.__labArmed;
+      delete window.__labArmed;
+    }
+  } catch (eArm) { /* nothing */ }
 
   function bridgeHas(name) {
     try {
@@ -109,6 +135,8 @@
   if (window.__labPicker) {
     // Same window (an SPA route change, or the app injecting again): the listeners are still attached
     ensureStyle();
+    // r102: the app's armed label follows into the same window
+    if (ARMED_GIVEN && window.__labPicker.arm) { try { window.__labPicker.arm(ARMED_INIT); } catch (eA) { /* nothing */ } }
     applyModeClass(window.__labPicker.mode);
     send("log", "already on " + location.href + " (" + window.__labPicker.mode + ")");
     // r101: an in-page route change may bring another search box
@@ -117,6 +145,15 @@
   }
   ensureStyle();
   var mode = "pick";
+  // r102: the label the next tap is for (null with mode "pick" = old callers: every tap picks, nothing disarms);
+  // sticky = stays armed after a pick (Tags, and the old pick mode)
+  var armed = null;
+  var sticky = true;
+  if (ARMED_GIVEN) {
+    armed = ARMED_INIT ? String(ARMED_INIT) : null;
+    mode = armed ? "pick" : "browse";
+    sticky = armed === "tags";
+  }
   applyModeClass(mode);
 
   var GENERATED = /^(css|sc|jss|emotion)-[a-z0-9]{4,}$|^[A-Za-z]+_[A-Za-z0-9]{5,}$|^_[a-z0-9]{5,}$/;
@@ -129,6 +166,9 @@
       if (!c || c.indexOf("__lab-") === 0) continue;
       if (/[^A-Za-z0-9_-]/.test(c)) continue;
       if (/^(active|hover|selected|current|lazy|loaded|loading|visible|hidden)$/.test(c)) continue;
+      // r102 fix: state a menu / tab has only while open or touched (an opener tapped open, a hovered chip): a path
+      // with it matches nothing on the next load (likeSelector, items[].path and opener all come from here)
+      if (/^(open|opened|show|shown|focus|focused|expanded|is-[A-Za-z0-9_-]+|has-[A-Za-z0-9_-]+)$/.test(c)) continue;
       list.push(c);
     }
     return list;
@@ -165,6 +205,32 @@
     // r99: never a bare tag (`a` ×109 matched every link of the page): a classless element right under body
     // keeps body in front of it
     if (parts.length === 1 && /^[a-z0-9]+(:nth-of-type\(\d+\))?$/.test(parts[0])) parts.unshift("body");
+    return parts.join(" > ");
+  }
+
+  // r102: one element exactly (positions on every segment that has same-tag siblings): the dropdown button learn.js
+  // clicks, where the class path alone would match every menu's button
+  function exactPath(el) {
+    var parts = [];
+    var node = el;
+    while (node && node.tagName && !/^(body|html)$/i.test(node.tagName) && parts.length < 10) {
+      var seg = segment(node);
+      if (seg.charAt(0) !== "#" && seg.indexOf(":nth-of-type(") < 0 && node.parentElement) {
+        var same = 0;
+        var index = 0;
+        for (var i = 0; i < node.parentElement.children.length; i++) {
+          if (node.parentElement.children[i].tagName === node.tagName) {
+            same++;
+            if (node.parentElement.children[i] === node) index = same;
+          }
+        }
+        if (same > 1) seg += ":nth-of-type(" + index + ")";
+      }
+      parts.unshift(seg);
+      if (seg.charAt(0) === "#") break;
+      node = node.parentElement;
+    }
+    if (parts.length && parts[0].charAt(0) !== "#" && node && /^body$/i.test(node.tagName)) parts.unshift("body");
     return parts.join(" > ");
   }
 
@@ -316,7 +382,12 @@
       if (st) samples.push(st);
     }
     var r = el.getBoundingClientRect();
+    var row = null;
+    try { row = rowInfo(el); } catch (eRow) { row = null; }
     return {
+      // r102: the row the element sits in (Details "Cast  [Reina Ohara]") and its own label; "" / null when none
+      rowLabel: row ? row.label : "",
+      row: row,
       imgCount: countIn(el, PICTURE),
       linkCount: countIn(el, "a[href]"),
       textLen: String(el.textContent || "").replace(/\s+/g, " ").trim().length,
@@ -376,6 +447,137 @@
     } catch (e) { /* no tree walker */ }
     pageDateCache = { url: location.href, value: (labelled || found).slice(0, 80) };
     return pageDateCache.value;
+  }
+
+  // ---------- r102: the row a pick sits in (a Details block: "Cast  [Reina Ohara]", "Release date  2026-10-29") ----------
+
+  function textOf(el) { return String((el && el.textContent) || "").replace(/\s+/g, " ").trim(); }
+
+  // The row's label as the app names the group: ≤ 30 characters, the colon at its end dropped; "" when not a label
+  function cleanRowLabel(t) {
+    t = String(t || "").replace(/\s+/g, " ").trim().replace(/\s*[:\uff1a]\s*$/, "").trim();
+    return t && t.length <= 30 ? t : "";
+  }
+
+  // A label element before the values: label / strong / b / dt / th, a span / div / p whose class says label / key /
+  // title / name, or a short text ending in ":" with no link in it
+  function labelLike(el) {
+    if (!el || el.nodeType !== 1 || el.id === "__lab-badge") return false;
+    var tag = el.tagName.toLowerCase();
+    if (/^(label|strong|b|dt|th)$/.test(tag)) return true;
+    if (tag === "span" || tag === "div" || tag === "p" || tag === "em" || tag === "small") {
+      if (el.querySelector("a[href]")) return false;
+      if (/label|key|title|name|head/i.test(String(el.getAttribute("class") || ""))) return true;
+      if (/:\s*$/.test(textOf(el))) return true;
+    }
+    return false;
+  }
+
+  // The label as a Jsoup regex for :matches (whole text): regex characters become "." (they can't break the
+  // selector's parentheses), spaces \s+, an optional colon at the end
+  function labelRegex(label) {
+    var body = String(label).replace(/[\\^$*+?()\[\]{}|"',;]/g, ".").replace(/\s+/g, "\\s+");
+    // r102 fix: the full-width colon first: a class starting "[:" reads as a POSIX set to ICU (Android's regex)
+    return "^\\s*" + body + "\\s*[\uff1a:]?\\s*$";
+  }
+
+  var CHIP_CLASS = /chip|tag|badge|pill|genre|cast|actor|actress|model|studio|maker|categor/i;
+
+  // The values of a row: its links, else elements whose class says chip / tag / badge…; [] = a plain text row
+  function chipsIn(nodes, exclude) {
+    var links = [];
+    var classed = [];
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i];
+      if (!n || n.nodeType !== 1 || n === exclude) continue;
+      var found = n.matches && n.matches("a[href]") ? [n] : Array.prototype.slice.call(n.querySelectorAll("a[href]"));
+      for (var f = 0; f < found.length; f++) if (textOf(found[f])) links.push(found[f]);
+      var all = [n].concat(Array.prototype.slice.call(n.querySelectorAll("*")));
+      for (var c = 0; c < all.length && classed.length < 200; c++) {
+        if (all[c] !== exclude && CHIP_CLASS.test(String(all[c].getAttribute("class") || "")) && textOf(all[c]) && !all[c].querySelector("[class]")) classed.push(all[c]);
+      }
+    }
+    return links.length ? links : classed;
+  }
+
+  function rowResult(kind, labelEl, label, base, siblingBase, chips, plainText) {
+    var values = [];
+    var seen = {};
+    for (var i = 0; i < chips.length && values.length < 8; i++) {
+      var t = textOf(chips[i]).slice(0, 60);
+      if (t && !seen[t]) { seen[t] = true; values.push(t); }
+    }
+    var selector;
+    if (chips.length) {
+      var chipSeg = likeSelector(segment(chips[0]));
+      if (chipSeg.charAt(0) === "#") chipSeg = chips[0].tagName.toLowerCase();
+      selector = siblingBase ? siblingBase + " ~ " + chipSeg + ", " + siblingBase + " ~ * " + chipSeg : base + " " + chipSeg;
+    } else {
+      selector = base;
+      var t2 = String(plainText || "").replace(/\s+/g, " ").trim().slice(0, 80);
+      if (t2) values.push(t2);
+    }
+    return {
+      kind: kind,
+      label: label,
+      selector: selector,
+      target: chips.length ? "tags" : "description",
+      values: values,
+      chips: chips.length,
+      labelPath: pathOf(labelEl),
+    };
+  }
+
+  // The row [el] sits in and its label: dd ← its dt, td ← the row's th (or first cell), else a label element before
+  // it in its parent (up to 4 levels up). Null when there is none.
+  function rowInfo(el) {
+    if (!el || !el.closest) return null;
+    var dd = el.closest("dd");
+    if (dd) {
+      var dt = dd.previousElementSibling;
+      while (dt && dt.tagName.toLowerCase() === "dd") dt = dt.previousElementSibling;
+      var dl = dt && dt.tagName.toLowerCase() === "dt" ? cleanRowLabel(textOf(dt)) : "";
+      if (dl) return rowResult("dl", dt, dl, "dt:matches(" + labelRegex(dl) + ") + dd", null, chipsIn([dd], null), textOf(dd));
+    }
+    var cell = el.closest("td");
+    if (cell && cell.parentElement) {
+      var tr = cell.parentElement;
+      var head = null;
+      for (var i = 0; i < tr.children.length; i++) {
+        var ch = tr.children[i];
+        if (ch === cell) break;
+        if (/^(th|td)$/i.test(ch.tagName)) { head = ch; break; }
+      }
+      var tl = head ? cleanRowLabel(textOf(head)) : "";
+      if (tl) {
+        var htag = head.tagName.toLowerCase();
+        return rowResult("table", head, tl, htag + ":matches(" + labelRegex(tl) + ") ~ td", null, chipsIn([cell], null), textOf(cell));
+      }
+    }
+    var node = el;
+    for (var level = 0; level < 4 && node && node.parentElement; level++, node = node.parentElement) {
+      var parent = node.parentElement;
+      if (/^(body|html)$/i.test(parent.tagName)) break;
+      var sib = node.previousElementSibling;
+      for (var hop = 0; sib && hop < 6; hop++, sib = sib.previousElementSibling) {
+        if (!labelLike(sib)) continue;
+        var gl = cleanRowLabel(textOf(sib));
+        if (!gl) break;
+        // The values: the label's later siblings (and what they hold)
+        var after = [];
+        for (var n = sib.nextElementSibling; n; n = n.nextElementSibling) after.push(n);
+        var labSeg = likeSelector(segment(sib));
+        var sibBase = labSeg + ":matches(" + labelRegex(gl) + ")";
+        var chips = chipsIn(after, sib);
+        if (chips.length) return rowResult("row", sib, gl, sibBase, sibBase, chips, "");
+        // Plain text: the next element when there is one, else the row itself (its text then starts with the label)
+        var rest = textOf(parent).replace(textOf(sib), "").trim();
+        var base = after.length ? sibBase + " + " + likeSelector(segment(after[0])) : likeSelector(pathOf(parent));
+        if (after.length && after[0].id) base = sibBase + " + " + after[0].tagName.toLowerCase();
+        return rowResult("row", sib, gl, base, null, [], after.length ? textOf(after[0]) : rest);
+      }
+    }
+    return null;
   }
 
   // src / href as the browser resolves them (an absolute address even when the attribute is relative)
@@ -489,21 +691,48 @@
 
   var current = null;
 
-  function pickElement(el, via, note) {
+  // [forLabel]: r102, the label the pick is for (armed), sent as `armed`
+  function pickElement(el, via, note, forLabel) {
     current = el;
     var count = mark(el);
-    showBadge("Picked " + shortName(pathOf(el)) + " ×" + count + (note ? " (" + note + ")" : "") + " — now tap a label in the app");
+    showBadge("Picked " + shortName(pathOf(el)) + " ×" + count + (note ? " (" + note + ")" : "") +
+      (forLabel ? " as " + forLabel : " — now tap a label in the app"));
     try {
       var d = describe(el, via);
       // r99 fix: a pick that only a skipped element gave says so in its text (the hint shows the snippet)
       if (note) d.snippet = ("[" + note + "] " + d.snippet).trim().slice(0, 100);
+      if (forLabel) d.armed = forLabel;
       send("pick", JSON.stringify(d));
     } catch (e) {
       send("log", "pick failed: " + e.message);
     }
   }
 
-  function pickAt(x, y, target) {
+  // ---------- r102: ad-network frames are never the player ----------
+
+  var AD_HOSTS = /pnonolet|pemsrv|juicyads|exoclick|exosrv|trafficjunky|trafficstars|tsyndicate|adsterra|popads|propellerads|magsrv|realsrv|clickadu|hilltopads|adspyglass|ero-advertising|onclickads|a-ads\.com|adnxs|doubleclick|googlesyndication/i;
+  function adHost(el) {
+    if (!el || !el.getAttribute || !/^(iframe|embed|object)$/i.test(el.tagName)) return "";
+    var src = el.getAttribute("src") || el.getAttribute("data-src") || el.getAttribute("data") || "";
+    if (!AD_HOSTS.test(src)) return "";
+    try { return new URL(src, location.href).host; } catch (e) { return src.slice(0, 60); }
+  }
+  function playerOk(el) { return !!el && /^(iframe|video|embed|object)$/i.test(el.tagName) && !adHost(el); }
+
+  // A Video tap that landed on an ad frame: the real player under the finger, else the largest one on the page
+  function realPlayerAt(x, y, adEl) {
+    var stack = [];
+    try { stack = document.elementsFromPoint(x, y) || []; } catch (e) { stack = []; }
+    for (var i = 0; i < stack.length; i++) if (stack[i] !== adEl && playerOk(stack[i])) return stack[i];
+    for (var j = 0; j < stack.length; j++) {
+      if (stack[j] === adEl || !stack[j].querySelectorAll || /^(html|body)$/i.test(stack[j].tagName)) continue;
+      var inside = largest(Array.prototype.slice.call(stack[j].querySelectorAll("iframe, video")).filter(playerOk));
+      if (inside) return inside;
+    }
+    return largest(queryAll("iframe, video").filter(playerOk));
+  }
+
+  function pickAt(x, y, target, via) {
     var found = resolveAt(x, y, target);
     var el = found.el;
     if (!el || !el.tagName) return;
@@ -527,7 +756,34 @@
       if (inner && el.children.length === 1) el = inner;
       else if (link && String(el.textContent || "").trim().length > 0 && String(el.textContent || "").trim() === String(link.textContent || "").trim()) el = link;
     }
-    pickElement(el, "tap", note);
+    var forLabel = via === "hold" ? null : armed;
+    // r102: an ad network's frame over the player is not the Video
+    if (forLabel === "video" && adHost(el)) {
+      var real = realPlayerAt(x, y, el);
+      send("log", "tap: " + adHost(el) + " is an ad frame; " + (real ? "using " + shortName(pathOf(real)) : "no other player found"));
+      if (real) el = real;
+    }
+    pickElement(el, via || "tap", note, forLabel);
+    // r102: an armed label takes one tap, then the page is a browser again (Tags stays armed)
+    if (forLabel && !sticky) {
+      setArmed(null);
+      swallowUntil = Date.now() + 700; // a late click of the same tap must not open the link now
+
+      send("log", "picked for " + forLabel + "; nothing armed now");
+    }
+  }
+
+  // r102: arms [label] (taps pick, nothing navigates) or nothing (null: the page is a normal browser + long press)
+  function setArmed(label) {
+    armed = label ? String(label) : null;
+    sticky = armed === "tags";
+    mode = armed ? "pick" : "browse";
+    if (window.__labPicker) {
+      window.__labPicker.mode = mode;
+      window.__labPicker.armed = armed;
+    }
+    applyModeClass(groupOn ? "pick" : mode);
+    cancelHold();
   }
 
   // The first child worth picking: shown, and with text or a picture (Down)
@@ -808,14 +1064,15 @@
     return best;
   }
 
+  // r102: never an ad network's frame (playerOk)
   function findVideo() {
     var node = current;
-    if (node && /^(iframe|video)$/i.test(node.tagName)) return node;
+    if (node && /^(iframe|video)$/i.test(node.tagName) && playerOk(node)) return node;
     for (var level = 0; node && level < 4 && !/^(html|body)$/i.test(node.tagName); level++, node = node.parentElement) {
-      var inside = largest(Array.prototype.slice.call(node.querySelectorAll("iframe, video")));
+      var inside = largest(Array.prototype.slice.call(node.querySelectorAll("iframe, video")).filter(playerOk));
       if (inside) return inside;
     }
-    return largest(queryAll("iframe, video"));
+    return largest(queryAll("iframe, video").filter(playerOk));
   }
 
   // r101: title-page fields. Outside the site's menus and the page's edges
@@ -999,6 +1256,69 @@
     return "";
   }
 
+  // r102: what opens a dropdown: an ARIA popup / expanded toggle, a select|dropdown|toggle class, a <summary>
+  var ARROW_END = /[▾▼⌄⏷▿∨˅]\s*$/;
+  function openerLike(n) {
+    if (!n || n.nodeType !== 1 || n.id === "__lab-badge") return false;
+    // "selected" / "is-selected" are an entry's state, not a select box
+    var cls = String(n.getAttribute("class") || "").replace(/(^|\s)(is-)?selected(?=\s|$)/g, " ");
+    try { if (n.matches("[aria-haspopup], [aria-expanded], summary")) return true; } catch (e) { /* nothing */ }
+    if (/dropdown|toggle|select/i.test(cls)) return true;
+    var tag = n.tagName.toLowerCase();
+    return (tag === "button" || n.getAttribute("role") === "button") && (ARROW_END.test(textOf(n)) || textOf(n).length <= 30);
+  }
+
+  // A clickable opener inside [n] that is not around [entry] (n itself when it holds no entry)
+  function openerWithin(n, entry) {
+    if (n.contains(entry)) {
+      for (var i = 0; i < n.children.length; i++) {
+        var c = n.children[i];
+        if (!c.contains(entry) && (openerLike(c) || /^(a|button|span|div)$/i.test(c.tagName)) && textOf(c) && textOf(c).length <= 40) return c;
+      }
+      return null;
+    }
+    return n;
+  }
+
+  // The element that opens the list holding [entry]: aria-controls pointing at the list (or one of its boxes), else
+  // the nearest earlier sibling of the list box (or of a box around it, 5 levels) that looks like an opener, else an
+  // opener-looking box around the list (its first child that isn't the list)
+  function openerOf(entry, listBox) {
+    var start = listBox || entry.parentElement;
+    var node = start;
+    for (var level = 0; node && level < 5 && !/^(body|html)$/i.test(node.tagName); level++, node = node.parentElement) {
+      if (node.id) {
+        var q = null;
+        try { q = document.querySelector("[aria-controls~=\"" + (window.CSS && CSS.escape ? CSS.escape(node.id) : node.id) + "\"]"); } catch (e) { q = null; }
+        if (q && !q.contains(entry)) return q;
+      }
+    }
+    node = start;
+    for (var up = 0; node && up < 5 && !/^(body|html)$/i.test(node.tagName); up++, node = node.parentElement) {
+      var prev = node.previousElementSibling;
+      for (var hop = 0; prev && hop < 3; hop++, prev = prev.previousElementSibling) {
+        if (openerLike(prev) && !prev.contains(entry)) return prev;
+        var inner = prev.querySelector ? prev.querySelector("[aria-haspopup], [aria-expanded]") : null;
+        if (inner && !inner.contains(entry)) return inner;
+      }
+      if (node !== start && openerLike(node) && node.contains(entry)) {
+        var own = openerWithin(node, entry);
+        if (own) return own;
+      }
+    }
+    return null;
+  }
+
+  // The tapped entry is a menu's own button ("Year: All ▾"): ARIA popup / expanded, an arrow at its end, or the next
+  // element is a hidden box of two or more entries
+  function isMenuButton(entry) {
+    if (entry.matches && entry.matches("[aria-haspopup], [aria-expanded]")) return true;
+    if (ARROW_END.test(textOf(entry))) return true;
+    var next = entry.nextElementSibling;
+    if (next && !shown(next) && next.querySelectorAll("a[href], button, li, [role=option], [role=menuitem]").length >= 2) return true;
+    return false;
+  }
+
   function groupPick(el) {
     clearMarks();
     var entry = groupEntry(el);
@@ -1014,6 +1334,8 @@
       var key = (it.href || "") + "|" + (it.value === undefined ? "" : it.value) + "|" + it.text;
       if (seen[key] || (!it.text && !it.href && it.value === undefined)) return;
       seen[key] = true;
+      // r102: the entry's exact place, so learn.js can press this one (W2)
+      try { if (!isSelect) it.path = exactPath(member); } catch (ePath) { /* nothing */ }
       items.push(it);
       members.push(member);
     }
@@ -1027,16 +1349,23 @@
     // The tapped entry's own list (the nearest element holding two or more of them), for a menu whose submenus
     // share one look
     var sameList = [];
+    var listBox = null;
     if (!isSelect) {
       var box = entry.parentElement;
       for (var level = 0; box && level < 4 && !/^(body|html)$/i.test(box.tagName); level++, box = box.parentElement) {
         var inBox = members.filter(function (m) { return box.contains(m); });
         if (inBox.length >= 2) {
           for (var s = 0; s < inBox.length; s++) sameList.push(itemOf(inBox[s]));
+          listBox = box;
           break;
         }
       }
     }
+    // r102: the dropdown's button (learn.js clicks it before pressing an entry), and whether the tap was on one
+    var openerEl = null;
+    try { openerEl = isSelect ? null : openerOf(entry, listBox); } catch (eOp) { openerEl = null; }
+    var tappedOpener = false;
+    try { tappedOpener = !isSelect && isMenuButton(entry); } catch (eTo) { tappedOpener = false; }
     for (var p = 0; p < members.length; p++) paintSuggestion(members[p]);
     var tapped = itemOf(entry);
     var out = {
@@ -1048,8 +1377,15 @@
       isSelect: isSelect,
       heading: headingOf(entry),
       sameList: sameList,
+      // r102: the css path of the button that opens this list ("" when none was found), and the tap was on a
+      // menu's button itself (its look-alikes are the other menus' buttons, not the menu's entries)
+      opener: openerEl ? exactPath(openerEl) : "",
+      openerText: openerEl ? snippetOf(openerEl) : "",
+      tappedOpener: tappedOpener,
     };
     if (isSelect) out.name = entry.getAttribute("name") || "";
+    if (openerEl) send("log", "group opener " + exactPath(openerEl) + " · \"" + snippetOf(openerEl) + "\"");
+    if (tappedOpener) send("log", "group pick: the tapped entry is a menu's button");
     showBadge("List picked: " + items.length + " entries (dashed green) — see the app");
     send("group", JSON.stringify(out));
     send("log", "group pick " + shortName(path) + " ×" + items.length + (isSelect ? " (select)" : "") + " · \"" + tapped.text.slice(0, 40) + "\"");
@@ -1114,7 +1450,75 @@
     pickAt(event.clientX, event.clientY, targetOf(event));
   }
 
+  // ---------- r102: nothing armed: a long press picks (the page is a browser otherwise) ----------
+
+  var HOLD_MS = 500;
+  var hold = null;             // { x, y, target, timer, fired }
+  var swallowUntil = 0;        // the click (touchend, contextmenu) that ends a long-press pick is swallowed
+
+  function cancelHold() {
+    if (hold && hold.timer) clearTimeout(hold.timer);
+    hold = null;
+  }
+  function onHoldDown(event) {
+    if (taking()) return;
+    if (event.isPrimary === false || (event.pointerType === "mouse" && event.button !== 0)) { cancelHold(); return; }
+    cancelHold();
+    swallowUntil = 0; // r102 fix: a new press never inherits an old swallow window
+    var h = { x: event.clientX, y: event.clientY, target: targetOf(event), timer: 0, fired: false };
+    h.timer = setTimeout(function () {
+      if (hold !== h || taking()) return;
+      h.fired = true; // swallowing() holds while the finger is down (hold.fired), then a short while for its click
+      send("log", "long press: picked (nothing armed)");
+      try { pickAt(h.x, h.y, h.target, "hold"); } catch (e) { send("log", "long press pick failed: " + e.message); }
+    }, HOLD_MS);
+    hold = h;
+  }
+  function onHoldMove(event) {
+    if (!hold || hold.fired) return;
+    if (Math.abs(event.clientX - hold.x) > MOVE_SLOP || Math.abs(event.clientY - hold.y) > MOVE_SLOP) cancelHold();
+  }
+  function onHoldUp(event) {
+    if (!hold) return;
+    if (hold.fired) {
+      // The finger lifts after the pick: no click, no link
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      hold = null;
+      swallowUntil = Date.now() + 700;
+      return;
+    }
+    cancelHold();
+  }
+  function swallowing() { return (hold !== null && hold.fired) || Date.now() < swallowUntil; }
+
   var ACTIVE = { capture: true, passive: false };
+  window.addEventListener("pointerdown", onHoldDown, true);
+  window.addEventListener("pointermove", onHoldMove, true);
+  window.addEventListener("pointerup", onHoldUp, ACTIVE);
+  window.addEventListener("pointercancel", function () {
+    if (!hold) return;
+    if (hold.fired) {
+      // r102 fix: the long press turned into a scroll: no pointerup will come, so end the swallow shortly
+      hold = null;
+      swallowUntil = Date.now() + 700;
+      return;
+    }
+    cancelHold();
+  }, true);
+  window.addEventListener("touchend", function (ev) {
+    // A touch's click is synthesised after touchend: cancelling it here keeps a long-pressed link from opening
+    if (!taking() && swallowing()) { ev.preventDefault(); ev.stopImmediatePropagation(); }
+  }, ACTIVE);
+  window.addEventListener("contextmenu", function (ev) {
+    if (taking() || hold || swallowing()) ev.preventDefault();
+  }, ACTIVE);
+  window.addEventListener("click", function (ev) {
+    if (taking() || !swallowing()) return;
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+    swallowUntil = 0;
+  }, ACTIVE);
   window.addEventListener("touchstart", onTouchStart, ACTIVE);
   window.addEventListener("touchmove", onTouchMove, { capture: true, passive: true });
   window.addEventListener("touchend", onTouchEnd, ACTIVE);
@@ -1141,14 +1545,35 @@
   })(window.open);
 
   window.__labPicker = {
+    // r102: learn.js logs through this when the LabPicker bridge isn't visible (the token-carrying console line)
+    log: function (text) { send("log", String(text)); },
     mode: mode,
+    armed: armed,
+    // Old callers (r96–r101): "pick" = every tap picks and nothing disarms; "browse" = nothing armed, marks cleared
     setMode: function (m) {
+      setArmed(null);
       mode = m === "browse" ? "browse" : "pick";
+      sticky = true;
       window.__labPicker.mode = mode;
       applyModeClass(mode);
       if (mode === "browse") { clearMarks(); current = null; }
       send("log", "mode " + mode + " on " + location.href);
       return mode;
+    },
+    // r102: "Tapping for…": [label] = the next tap picks for it (Tags: every tap until disarmed); null = nothing
+    // armed (a normal browser; a long press picks). The pick's outlines stay when disarming.
+    arm: function (label) {
+      var was = armed;
+      setArmed(label || null);
+      if (was === armed) return armed || "none"; // the same again (re-injection, the app's echo): nothing to redo
+      if (armed) {
+        clearSuggestion();
+        showBadge("Tapping for " + armed + (sticky ? ": tap each row, then tap Tags again in the app to stop" : ": tap it on the page"));
+      } else if (was) {
+        showBadge(null);
+      }
+      send("log", "armed " + (armed || "nothing") + " on " + location.href);
+      return armed || "none";
     },
     // Keeps the outline on the elements already labelled (called by the app after a label is given)
     keep: function (selector) {
@@ -1168,14 +1593,14 @@
     // r99: Up / Down from the app's hint bar: the parent, or the first child with text or a picture
     // r100 fix pass: every "can't move" answer is also logged as "up: …" / "down: …" (the app clears its re-label)
     up: function () {
-      if (mode !== "pick" || !current) { send("log", "up: nothing picked to move from"); return "none"; }
+      if (!current) { send("log", "up: nothing picked to move from"); return "none"; }
       var p = current.parentElement;
       if (!p || /^(body|html)$/i.test(p.tagName)) { send("log", "up: already at the top"); return "top"; }
       pickElement(p, "up");
       return pathOf(p);
     },
     down: function () {
-      if (mode !== "pick" || !current) { send("log", "down: nothing picked to move from"); return "none"; }
+      if (!current) { send("log", "down: nothing picked to move from"); return "none"; }
       var c = firstMeaningfulChild(current);
       if (!c) { send("log", "down: " + shortName(pathOf(current)) + " has no child with text or a picture"); return "none"; }
       pickElement(c, "down");
@@ -1201,7 +1626,8 @@
       clearSuggestion();
       var el = null;
       try { el = FINDERS[label] ? FINDERS[label]() : null; } catch (e) { send("log", "suggest " + label + " failed: " + e.message); }
-      if (el && current && likeSelector(pathOf(el)) === likeSelector(pathOf(current))) el = null; // that is the pick itself
+      // that is the pick itself (r102: unless the pick was an ad frame and this is the real player)
+      if (el && current && likeSelector(pathOf(el)) === likeSelector(pathOf(current)) && (el === current || !adHost(current))) el = null;
       if (!el) {
         send("pick", JSON.stringify({ via: "suggest", forLabel: label, none: true, pageUrl: location.href }));
         return "none";

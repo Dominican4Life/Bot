@@ -52,6 +52,14 @@ data class DisplayTag(
     val text: String,
     val search: String,
     val border: Int?,
+    // KMK -->
+    /**
+     * KMK (r102): what holding the tag searches globally. For plain "ns:tag" genres (a JS source's grouped tags,
+     * "Cast: Aoi Sora") only the tag text, since other sources don't know the group; [search] keeps the full
+     * "ns: tag" for the source's own search, which maps it. Metadata tags (E-Hentai…) keep their wrapped [search].
+     */
+    val holdSearch: String = search,
+    // KMK <--
 )
 
 @Immutable
@@ -92,7 +100,9 @@ value class SearchMetadataChips(
                     tags
                         .map { tag ->
                             val index = tag.indexOf(':')
-                            DisplayTag(tag.substring(0, index).trim(), tag.substring(index + 1).trim(), tag, null)
+                            // KMK (r102): hold = a global search for the tag text only
+                            val text = tag.substring(index + 1).trim()
+                            DisplayTag(tag.substring(0, index).trim(), text, tag, null, holdSearch = text.ifEmpty { tag })
                         }
                         .groupBy {
                             it.namespace.orEmpty()
@@ -133,14 +143,14 @@ fun NamespaceTags(
                     modifier = Modifier.padding(start = 8.dp, end = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    tags.forEach { (_, text, search, border) ->
+                    tags.forEach { (_, text, search, border, holdSearch) ->
                         val borderDp = border?.dp
                         TagsChip(
                             modifier = Modifier.padding(vertical = 4.dp),
                             text = text,
                             onClick = { onClick(search) },
                             // KMK -->
-                            onLongClick = onLongClick?.let { { it(search) } },
+                            onLongClick = onLongClick?.let { { it(holdSearch) } },
                             onDoubleClick = onDoubleClick?.let { { it(text) } },
                             // KMK <--
                             border = borderDp?.let {

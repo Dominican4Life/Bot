@@ -1,6 +1,6 @@
 ---
-version: 13
-# Komikku Source Lab rules file, v13: the ultimate guide (built in from r100). Body: sections 1–12 below, written for this fork.
+version: 14
+# Komikku Source Lab rules file, v14: the ultimate guide (built in from r102; v13 was r100). Body: sections 1–12 below, written for this fork.
 # Machine rules first; `check` is one of regex-in-code, selector-pattern, result-field,
 # compare-saved-chapter-urls, header-present, response-status, render-option, or text (read only).
 # `applies` tags this build computes: manga, anime, js, json, api, madara, cloudflare, apk-port, videos, all.
@@ -126,8 +126,8 @@ rules:
     severity: info
     check: text
     section: "11.6"
-    title: console.log lines reach the Logs screen
-    fix: "Take debug prints out before saving; every console line goes to Logs under js:<name>."
+    title: console.log lines reach the Logs screen (while the global switch is on)
+    fix: "Every console line goes to Logs under js:<name> while Settings › Advanced › JS sources: debug logs is on (the default); off, only warnings and errors do. Keep prints short and useful; no need for a debug setting of your own."
   - id: tabs-not-needed
     severity: info
     check: text
@@ -203,15 +203,6 @@ rules:
     title: A status written as a fixed word
     fix: "status: \"Completed\" on every entry shows a badge on every cover. Map the site's own words, and leave status out when the site has none."
     params: { pattern: '\bstatus\s*:\s*["''](?:Completed|Complete|Ongoing|Finished|Airing|completed|ongoing)["'']\s*,?\s*(?://.*)?$' }
-    applies: [js]
-  - id: console-log-unguarded
-    severity: info
-    check: regex-in-code
-    section: "11.6"
-    title: A console.log that always runs
-    fix: "Every console line goes to the Logs screen in normal use. Route prints through a debug(label, data) helper that checks the Debug switch or host.isTesting; keep plain console.log for real failures."
-    snippet: "async function debug(label, data) { var on = await host.preference.get(\"debug\"); if (!(on === true || on === \"true\") && !host.isTesting) return; console.log(\"🐞 \" + label + \": \" + (typeof data === \"string\" ? data : JSON.stringify(data)).slice(0, 1500)); }"
-    params: { pattern: '^\s*console\.log\(', unless: '🐞|debug|isTesting|trace|fail|error|warn|couldn|answered' }
     applies: [js]
   - id: descramble-unsupported
     severity: warn
@@ -394,6 +385,17 @@ rules:
     snippet: "var TAB_POPULAR_NAME = \"Trending\"; /* … */ popularName: TAB_POPULAR_NAME || undefined,"
     params: { pattern: '^\s*(?:var|let|const)\s+(?:POPULAR_NAME|LATEST_NAME)\b' }
     applies: [js]
+
+  # ---------- new in v14 (r102) ----------
+  - id: ad-frame-not-player
+    severity: warn
+    check: regex-in-code
+    section: "6.8"
+    title: An ad network's frame used as the video player
+    fix: "Frames from ad and traffic networks sit over or beside the player on many video sites; they are ads, never the video. Point the video frame at the real player and skip ad hosts (iframe:not([src*='exoclick'])…, or a list of ad hosts the code leaves out). host.findVideo already skips them."
+    snippet: "var AD_HOSTS = /exoclick|exosrv|juicyads|trafficjunky|trafficstars|tsyndicate|magsrv|realsrv|adsterra|popads|doubleclick|googlesyndication/i; frames = frames.filter(function (f) { return !AD_HOSTS.test(f.src || ''); });"
+    params: { pattern: '(?:iframe|frame|player|embed|video)[^;]*?(?:pnonolet|pemsrv|juicyads|exoclick|exosrv|trafficjunky|trafficstars|tsyndicate|adsterra|popads|propellerads|magsrv|realsrv|clickadu|hilltopads|adspyglass|ero-advertising|onclickads|a-ads\.com|adnxs|doubleclick|googlesyndication)', unless: 'skip|ignore|block|exclude|AD_HOST|adHost|isAd|notAd|:not\(|\.test\(|!\s*/', flags: i }
+    applies: [anime, videos]
 
   # ---------- text rules (read when the tags match) ----------
   - id: madara-ajax-headers
@@ -763,6 +765,14 @@ rules:
     section: "12"
     title: Run the checklist in section 12 before saving
     fix: "Lists, page 2, covers, a two-word search, a title, its chapters with numbers and dates, one chapter's pages or one episode's videos that play, no errors in the console, no {placeholder} left, Lint clean or ignored on purpose."
+  # ---------- softened in v14: the app's global debug switch replaces a source's own (kept last, read rarely) ----------
+  - id: console-log-unguarded
+    severity: info
+    check: text
+    section: "11.6"
+    title: console.log needs no guard of its own (the app has a global debug switch)
+    fix: "Since r102 the app decides: Settings › Advanced › JS sources: debug logs (on by default) sends every console line to Logs; off, only console.warn / console.error do. Log each step with console.log, use console.warn / console.error for real problems, slice big data to about 1,500 characters. A source's own Debug setting is no longer needed (an old one still works)."
+    applies: [js]
 ---
 # The ultimate guide to sources for this app
 
@@ -896,6 +906,8 @@ Words the app understands: ongoing, publishing, releasing, airing; complete, com
 ### 3.3 Authors, artists, genres
 
 `author` and `artist` are separate fields; several names go in one text joined with `", "`. Genres are a list of text (a single text also works). Read them inside the title's block, not the whole page (1.11). Don't fold the status or the type ("Manhwa") into the genres unless the site does. Labels and values: for "Status: Ongoing" rows use `div.info-row:contains(Status) span`, not row counting.
+
+**Grouped tags.** A genre written `"Group: value"` (`"Cast: Jane Doe"`, `"Maker: Studio X"`) is shown by the app under its group, like E-Hentai's namespaces: the group's name on the left, its values as chips on the right. Tapping such a tag searches the source with the whole `"Group: value"` (map it to a filter in `search` when a filter has that name and option, else search the value's words); a long press searches every source for the value alone. When you group some genres, group all of them (others as `"Tags: …"`), or the ungrouped ones sit apart. The builder's **Tags** label does this for you (11.8): each row you tap (`dt`/`dd`, `th`/`td`, a label and its links) becomes a group in `tagGroups`, sent to the genres, the description, or both.
 
 ### 3.4 Covers
 
@@ -1039,6 +1051,12 @@ Video servers almost always check `Referer` and sometimes `Origin`, set to the *
 - **Still parse first when you can.** When the plain page or the embed has the address (6.1), reading it is faster than a hidden browser. Call `host.findVideo` only in `getVideoList` (it costs a browser each time), and never cache what it found (6.6).
 - **Templates.** generic-list v3 and anime-player v2 call it in their Videos part; a source made from an older version gets **Update** in the Lab editor's strip, which replaces only the Videos part and keeps the old code in History (`video-iframe-src-only` finds the old part).
 
+### 6.8 Ad frames over the player
+
+- **What you see.** Many video sites, adult ones above all, put `iframe`s from ad and traffic networks over or beside the player: hosts such as pnonolet, pemsrv, juicyads, exoclick, exosrv, trafficjunky, trafficstars, tsyndicate, adsterra, popads, propellerads, magsrv, realsrv, clickadu, hilltopads, adspyglass, ero-advertising, onclickads, a-ads.com, adnxs, doubleclick and googlesyndication. Their frame is often the largest one, or the first `iframe` on the page, so a tap or a plain `iframe` selector lands on it.
+- **They are ads, never the video.** A video-frame selector or an extractor must skip them: narrow the selector to the player's own box (`#player iframe`, `div.video-container iframe`), add `:not([src*='exoclick'])` and the like, or filter the frames with a list of ad hosts. Never treat an ad frame's address as a hoster.
+- **What the app does.** `host.findVideo` skips these hosts (from r102) when it picks frames to play or open; the builder warns when a **Video** pick is one of their frames. Lint's `ad-frame-not-player` flags code that points the player at one of them.
+
 ## 7. Bot checks
 
 ### 7.1 Recognising a check
@@ -1154,7 +1172,7 @@ The runtime holds a lock per call: **one call at a time per source**, so a slow 
 
 ### 11.1 Test Run steps
 
-**Run all** on the Test pane (or the nightly Re-test) runs: page 1 of each tab catalog (in Browse order) → Popular → Latest → search (the Test box, else the first title's first word of 3+ letters) → the first title's details (`getDetails` when the source has it) → its chapters or episodes → the first chapter's pages or the first episode's hosters. Each step gets its `[net]` lines (method, address, status, time, `BROWSER` when the hidden browser sent it), its `[warn]`/`[error]` lines and the first 60 objects as returned. Judgements: entries without `url`, or more than 20 % without a cover, turn a list step **Amber**; the title is Green with 6 of 8 fields; chapters are Green when every one has a number and a date; hosters are grouped by `server`. Then the probes: the first page image is fetched with HEAD (GET `Range: bytes=0-0` on 405), 403/404 → Amber, and once more without a Referer so the evidence says whether the Referer is what the server refuses; each hoster's first video is fetched for 2 KB (HLS through the relay) and counts as played when it starts with `#EXTM3U`, `ftyp`/`moov`, the MKV or MPEG magic, or has a `video/*` type. The run is saved only at the end; Lint runs after it. **Make sure you're testing the new code**: after pasting, check something only the new version has before running (one "fix" report was byte-for-byte the old one). Copy test addresses from the Test tab one at a time (two pasted together give a 404).
+**Run all** on the Test pane (or the nightly Re-test) runs: page 1 of each tab catalog (in Browse order) → Popular → Latest → search (the Test box, else the first title's first word of 3+ letters) → **Filters** (when the source has `getFilters`: up to 5 filters, each once with its first non-empty value through `search("", 1, { key: value })`, a Sort with its first two options; the step says how many titles came back and whether the list differs from the unfiltered first page, a Sort's two options from each other) → **Settings** (when it has `getSourcePreferences`: the keys and defaults, flagging entries without a key, keys used twice, a list without options or a default that isn't one of them, a switch whose default isn't true/false) → the first title's details (`getDetails` when the source has it) → its chapters or episodes → the first chapter's pages or the first episode's hosters. Each step gets its `[net]` lines (method, address, status, time, `BROWSER` when the hidden browser sent it), its `[warn]`/`[error]` lines and the first 60 objects as returned. Judgements: entries without `url`, or more than 20 % without a cover, turn a list step **Amber**; the title is Green with 6 of 8 fields; chapters are Green when every one has a number and a date; hosters are grouped by `server`. Then the probes: the first page image is fetched with HEAD (GET `Range: bytes=0-0` on 405), 403/404 → Amber, and once more without a Referer so the evidence says whether the Referer is what the server refuses; each hoster's first video is fetched for 2 KB (HLS through the relay) and counts as played when it starts with `#EXTM3U`, `ftyp`/`moov`, the MKV or MPEG magic, or has a `video/*` type. The run is saved only at the end; Lint runs after it. **The console** under the steps (tap its header to open it) holds every line of the run, live while it runs, grouped by step, each with its time since the start and its level (E red, W amber, I normal, D grey, requests as `GET /path → 200 · 340 ms`; tap a request for its headers and, when it failed, the first 2 KB of the reply; tap an error with `source.js:N` to open that line). Chips filter Errors / Warnings / Network / Logs, the box searches, **Copy** takes the lines shown and **Share** sends the whole console as a .txt. **Make sure you're testing the new code**: after pasting, check something only the new version has before running (one "fix" report was byte-for-byte the old one). Copy test addresses from the Test tab one at a time (two pasted together give a 404).
 
 ### 11.2 What each red step usually means
 
@@ -1192,7 +1210,7 @@ A `[net] … -> 200` line followed by an error means the site answered fine and 
 
 ### 11.4 Lint and this rules file
 
-Lint runs after every save and Test Run, never blocking either, with the machine rules of this file against the code and the last run. Seven check kinds: `regex-in-code` (a pattern per line, with `unless`, `near`, `part`, `flags: i`), `selector-pattern` (over string literals that look like selectors), `result-field` (`kind`: relative-url, same-status, date-zero, server-path, field-missing; over the last run's objects, optionally one `step`), `compare-saved-chapter-urls` (the run's chapters against the library's rows of the same title; silent under 3 matches, so it mostly speaks for titles you have in the library), `header-present` (`on`: videos | images), `response-status` (a code in the run's requests, unless the code matches `unless`), `render-option` (an option on `host.render` when the run met a bot check, or always with `always: true`). `check: text` rules are listed "to read" (the first three) when their `applies` tags match the source. **Tags this build computes:** `manga` or `anime`; `js` or `json`; `api` when the code has `/api/`, `/wp-json/`, `application/json` or `JSON.parse`; `madara` for `madara`, `wp-manga`, `manga_load_more` or `wp-admin/admin-ajax`; `cloudflare` when the last run met a browser retry or "bot check" in the console; `apk-port` for a source with an `id` line or imported from an extension; `videos`; `all`. Other tags in this file (`mangathemesia`, `mangareader`, `foolslide`, `keyoapp`, `wordpress`, `nextjs`, `hls`, `extractors`) are for reading and always sit next to a computed one. **Apply** changes the code in the editor only when the rule's `find` occurs exactly once in the finding's part; you still save. **Ignore** hides a rule per source. `getComments` / `getChapterComments` exist in the API but no Kotlin code calls them yet; `descramble`, novel `text` pages and `early` aren't supported (guide 08 §7.6). Rules file: **Source Lab › Rules file › Update from file** imports a file whose `version` is higher than the current one (a parse error names the line and keeps the old file); **Versions › Roll back** returns to an earlier import or to the built-in file (version 13 from r100). The Versions list shows which file is current; after importing a file, roll back to the built-in one to use a newer built-in.
+Lint runs after every save and Test Run, never blocking either, with the machine rules of this file against the code and the last run. Seven check kinds: `regex-in-code` (a pattern per line, with `unless`, `near`, `part`, `flags: i`), `selector-pattern` (over string literals that look like selectors), `result-field` (`kind`: relative-url, same-status, date-zero, server-path, field-missing; over the last run's objects, optionally one `step`), `compare-saved-chapter-urls` (the run's chapters against the library's rows of the same title; silent under 3 matches, so it mostly speaks for titles you have in the library), `header-present` (`on`: videos | images), `response-status` (a code in the run's requests, unless the code matches `unless`), `render-option` (an option on `host.render` when the run met a bot check, or always with `always: true`). `check: text` rules are listed "to read" (the first three) when their `applies` tags match the source. **Tags this build computes:** `manga` or `anime`; `js` or `json`; `api` when the code has `/api/`, `/wp-json/`, `application/json` or `JSON.parse`; `madara` for `madara`, `wp-manga`, `manga_load_more` or `wp-admin/admin-ajax`; `cloudflare` when the last run met a browser retry or "bot check" in the console; `apk-port` for a source with an `id` line or imported from an extension; `videos`; `all`. Other tags in this file (`mangathemesia`, `mangareader`, `foolslide`, `keyoapp`, `wordpress`, `nextjs`, `hls`, `extractors`) are for reading and always sit next to a computed one. **Apply** changes the code in the editor only when the rule's `find` occurs exactly once in the finding's part; you still save. **Ignore** hides a rule per source. `getComments` / `getChapterComments` exist in the API but no Kotlin code calls them yet; `descramble`, novel `text` pages and `early` aren't supported (guide 08 §7.6). Rules file: **Source Lab › Rules file › Update from file** imports a file whose `version` is higher than the current one (a parse error names the line and keeps the old file); **Versions › Roll back** returns to an earlier import or to the built-in file (version 14 from r102). The Versions list shows which file is current; after importing a file, roll back to the built-in one to use a newer built-in.
 
 ### 11.5 Issue Report
 
@@ -1200,7 +1218,7 @@ Lint runs after every save and Test Run, never blocking either, with the machine
 
 ### 11.6 Debug logs
 
-Every `console.log` goes to the Logs screen under `js:<name>` in normal use. Don't write a separate test run or a Debug tab; add a switch `{ key: "debug", title: "🐞 Debug log", type: "switch", defaultValue: false }` and a `debug(label, data)` helper that logs only when it's on or `host.isTesting`, and call it at each step: list page and count, details, pages found, every step of finding a video. Slice data to 1,500 characters. Keep plain `console.log` for real failures only. The editor's Console shows each request with its status and time and has copy and share buttons.
+One switch for every source: **Settings › Advanced › JS sources: debug logs** (on by default). On, every console line of every JS / JSON source goes to the Logs screen under `js:<name>`; off, only `console.warn` and `console.error` (and the app's own errors) do. So a source needs no Debug setting of its own and no `debug()` helper: log each step with `console.log` (list page and count, details, pages found, every step of finding a video), use `console.warn` / `console.error` for real problems, and slice data to about 1,500 characters. Don't write a separate test run or a Debug tab. An older source's own Debug switch still works; it just isn't needed. The Test Run's console (11.1) shows the same lines with times, request details and copy / share.
 
 ### 11.7 Reading errors and catches
 
@@ -1211,7 +1229,11 @@ Line numbers match your file. A `[net] … -> 200` then an error is a parsing bu
 - **Read the helper after every tap.** Each pick is checked at once: ✓ (looks right), ! (doesn't look like that label) or i (needs something, such as a player for the hidden browser). The card lists what passed and what didn't, with sample texts. Keep **Check each pick** on.
 - **Taps land on things you didn't mean.** Invisible full-page overlay links (ad layers), sticky headers, the site's menus and heading bars sit over or around the content and catch the tap. Use **Up** / **Down** to move the pick to the parent or child (it keeps its label and is checked again), or **Use suggestion** for the boxes the helper outlines with a dashed line.
 - **The Item is the repeated card**: the smallest element that repeats (3 or more on the page) and holds both the title's link and its cover. Not a heading bar such as "New Releases", not the list's wrapper, not one link. Title and Cover should then count about as many as Items (within a fifth).
-- **Next** is one link to page 2 on the same site; **Chapter** links repeat and differ (a title that is its own only episode uses the single-episode switch); **Video** is the `iframe` or `video`, not the play button over it.
+- **Next** is one link to page 2 on the same site; **Chapter** links repeat and differ (a title that is its own only episode uses the single-episode switch); **Video** is the `iframe` or `video`, not the play button over it, and never an ad network's frame (6.8).
+- **Tapping for…** (from r102). The row under the address bar lists every label by page (List page, Title page, Episode/Chapter page, List for a filter). With nothing chosen the page works like a normal browser (scroll, open menus, follow links); tap a label to arm it, and the next tap on the page is that pick, never a navigation. A long press still picks without arming. The step follows the page you're on (a title's address → Title page), so open a title in the site itself and its labels are there.
+- **Tags in groups.** **Tags** stays armed: each row you tap on the title page (Cast, Maker, Genres, Release date…) becomes a group named after the row's own label, its values going to the tags, the description or both (rows of plain text such as a date go to the description). Re-tapping a row replaces its group; rename or remove one in the Tags card. The source writes them as `"Group: value"` genres (3.3) from `tagGroups`.
+- **Learn this list.** For a filter menu whose entries are buttons without links (a year or type dropdown the site's script runs), pick the list with **List for a filter**, then **Learn this list**: the builder presses each entry on the list page (opening the menu first), waits for the address to change and records it, with a short random pause between presses; after three it looks for the pattern (a query value or path part equal to the entry's text) and fills in the rest. An entry that changes nothing (like "All") becomes the filter's "Any". Tap the entries, not the menu's own button.
+- **Edit by tapping.** A source made by the builder opens again in it from Source info › **Edit by tapping**, with its picks restored (older sources: what can be read from the code's settings at the top); **Save to this source** writes a new History version under the same key, so the library and downloads keep it.
 
 ## 12. Checklist before saving
 
@@ -1242,7 +1264,7 @@ Line numbers match your file. A `[net] … -> 200` then an error is a parsing bu
 
 ### 12.4 Code and Lab
 
-- [ ] The console shows no errors; no unguarded `console.log`; no `this.baseUrl`, `setTimeout`, `eval`, own `Accept-Encoding` (9.2, 8.3, 8.4).
+- [ ] The Test Run console shows no errors (the global debug switch decides whether `console.log` reaches Logs, 11.6); no `this.baseUrl`, `setTimeout`, `eval`, own `Accept-Encoding` (9.2, 8.3, 8.4).
 - [ ] No own `User-Agent` or `host.render` `userAgent` on a Cloudflare site (7.3).
 - [ ] `rateLimitMs` set when the site answered 429; `retry` on 503 (8.1, 8.2).
 - [ ] Lint is clean, or each finding was ignored on purpose (11.4).

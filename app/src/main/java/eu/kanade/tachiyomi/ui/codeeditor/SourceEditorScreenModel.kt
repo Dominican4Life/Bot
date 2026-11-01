@@ -313,9 +313,22 @@ class SourceEditorScreenModel(
 
     // Saving
 
-    fun save() {
+    /**
+     * KMK (r102): [inPlace] true = "Update vN (current)" (the current History version is overwritten, no new
+     * version), false = "Save as vN+1"; either choice is remembered ([saveModePreference]). Null (the header's main
+     * action) uses the remembered choice; the unsaved-changes dialogs' Save always adds a new version. A source not
+     * saved yet always gets its
+     * first version. The source's file is written the same way in both cases; only History differs (LabStore).
+     */
+    fun save(inPlace: Boolean? = null, rememberChoice: Boolean = true) {
         val s = state.value
-        val note = saveNote // KMK (r96)
+        val pref = saveModePreference()
+        // r102 fix: the unsaved-changes dialogs pass inPlace = false without remembering it (not the owner's choice)
+        if (inPlace != null && rememberChoice) pref.set(if (inPlace) SAVE_MODE_UPDATE else SAVE_MODE_NEW)
+        val update = s.saved && (inPlace ?: (pref.get() == SAVE_MODE_UPDATE))
+        val ownNote = saveNote // KMK (r96)
+        val note = if (update) eu.kanade.tachiyomi.jssource.lab.LabStore.UPDATE_NOTE + ownNote.orEmpty() else ownNote
+        if (update) AppLog.add('D', "lab", "Saving ${s.name.ifBlank { s.key }}: update the current version in place")
         screenModelScope.launchIO {
             mutableState.update { it.copy(running = "Saving") }
             // KMK (r99): the source's download folder is linked to its id before the save, so a new `name` can't
@@ -339,7 +352,7 @@ class SourceEditorScreenModel(
                     note = note,
                 )
             }.onSuccess { info ->
-                if (saveNote == note) saveNote = null // KMK (r96): used; a note set meanwhile stays for the next save
+                if (saveNote == ownNote) saveNote = null // KMK (r96): used; a note set meanwhile stays for the next save
                 // KMK (r99): renamed: say where its downloads stay (shown after the "Saved" snackbar)
                 if (before != null && before.id == info.id && before.name.trim() != info.name.trim()) {
                     if (keptFolder != null) {
@@ -719,4 +732,32 @@ class SourceEditorScreenModel(
 
     /** KMK: the id this source's settings are kept under (its own `id`, once saved with one) */
     fun sourceId(key: String): Long = manager.idOf(key)
+
+    // KMK --> (r102)
+    /**
+     * The saved code changed outside the editor (Edit by tapping saved the source from the builder): reopens it, so
+     * the editor never holds the old code and a later Save can't write it back. Nothing happens while there are
+     * unsaved edits, a run or save is going on, or the code on disk is what the editor shows. Returns whether it
+     * reopened.
+     */
+    fun reloadIfChangedOnDisk(): Boolean {
+        val s = state.value
+        if (!s.saved || s.dirty || s.running != null) return false
+        val code = manager.code(s.key) ?: return false
+        if (code == s.code) return false
+        AppLog.add('I', "lab", "${s.name.ifBlank { s.key }}: its code was saved elsewhere, reopened in the editor")
+        open(s.key)
+        return true
+    }
+
+    companion object {
+        /** Save's remembered choice: [SAVE_MODE_UPDATE] ("Update vN (current)") or [SAVE_MODE_NEW] ("Save as vN+1") */
+        const val SAVE_MODE_KEY = "pref_lab_save_mode"
+        const val SAVE_MODE_UPDATE = "update"
+        const val SAVE_MODE_NEW = "new"
+
+        fun saveModePreference(): tachiyomi.core.common.preference.Preference<String> =
+            Injekt.get<tachiyomi.core.common.preference.PreferenceStore>().getString(SAVE_MODE_KEY, SAVE_MODE_NEW)
+    }
+    // KMK <--
 }
