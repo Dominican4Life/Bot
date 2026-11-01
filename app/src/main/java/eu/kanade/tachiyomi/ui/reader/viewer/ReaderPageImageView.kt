@@ -37,6 +37,7 @@ import com.github.chrisbanes.photoview.PhotoView
 import eu.kanade.domain.base.BasePreferences
 import eu.kanade.tachiyomi.data.coil.cropBorders
 import eu.kanade.tachiyomi.data.coil.customDecoder
+import eu.kanade.tachiyomi.diagnostics.ReaderTrace
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences.LandscapeZoomScaleType
 import eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonSubsamplingImageView
 import eu.kanade.tachiyomi.util.system.animatorDurationScale
@@ -84,7 +85,24 @@ open class ReaderPageImageView @JvmOverloads constructor(
     open fun onImageLoaded() {
         onImageLoaded?.invoke()
         background = pageBackground
+        // KMK (r97) -->
+        // Diagnostics reader trace: decode time and size (one volatile read when off)
+        if (decodeStartedNs != 0L && ReaderTrace.wanted()) {
+            val ms = (System.nanoTime() - decodeStartedNs) / 1_000_000
+            val view = pageView
+            val w = (view as? SubsamplingScaleImageView)?.sWidth ?: (view as? AppCompatImageView)?.drawable?.intrinsicWidth ?: 0
+            val h = (view as? SubsamplingScaleImageView)?.sHeight ?: (view as? AppCompatImageView)?.drawable?.intrinsicHeight ?: 0
+            ReaderTrace.decoded(ms, w, h, decodeAnimated)
+        }
+        decodeStartedNs = 0L
+        // KMK <--
     }
+
+    // KMK (r97) -->
+    /** When setImage was called, for the decode time; 0 between images */
+    private var decodeStartedNs = 0L
+    private var decodeAnimated = false
+    // KMK <--
 
     @CallSuper
     open fun onImageLoadError(error: Throwable?) {
@@ -155,6 +173,9 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
     fun setImage(drawable: Drawable, config: Config) {
         this.config = config
+        // KMK (r97)
+        decodeStartedNs = System.nanoTime()
+        decodeAnimated = drawable is Animatable
         if (drawable is Animatable) {
             prepareAnimatedImageView()
             setAnimatedImage(drawable, config)
@@ -166,6 +187,9 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
     fun setImage(source: BufferedSource, isAnimated: Boolean, config: Config) {
         this.config = config
+        // KMK (r97)
+        decodeStartedNs = System.nanoTime()
+        decodeAnimated = isAnimated
         if (isAnimated) {
             prepareAnimatedImageView()
             setAnimatedImage(source, config)

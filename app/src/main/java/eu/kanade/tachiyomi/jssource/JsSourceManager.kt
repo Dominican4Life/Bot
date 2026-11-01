@@ -465,6 +465,41 @@ class JsSourceManager(private val context: Application) {
         }
     }
 
+    // KMK (r97) -->
+    /**
+     * Diagnostics: one row per running source (memory through tryLock, pages, busy). Under [runtimeLock] so a
+     * runtime can't be removed mid-read; `runCatching` per runtime (one being closed throws).
+     */
+    internal suspend fun liveStats(): List<eu.kanade.tachiyomi.diagnostics.JsEngineRow> = runtimeLock.withLock {
+        runtimes.entries.mapIndexedNotNull { i, (key, runtime) ->
+            runCatching {
+                val bytes = runtime.memoryBytes() ?: 0L
+                val (pages, _, _) = runtime.pageStats()
+                eu.kanade.tachiyomi.diagnostics.JsEngineRow(
+                    key = key,
+                    name = get(key)?.name ?: key,
+                    mb = bytes / (1024f * 1024f),
+                    pages = pages,
+                    busy = runtime.isBusy,
+                    stale = runtime.memoryStale,
+                    color = eu.kanade.tachiyomi.diagnostics.ColorKey.entries[i % 6],
+                )
+            }.getOrNull()
+        }
+    }
+
+    /** Diagnostics: closes the runtimes that are idle and haven't been called for 10 minutes; returns how many */
+    suspend fun closeIdle(): Int {
+        val cutoff = System.currentTimeMillis() - 10 * 60_000L
+        val closed = runtimeLock.withLock {
+            val idle = runtimes.filterValues { !it.isBusy && it.lastCallAt in 1 until cutoff }.keys.toList()
+            idle.mapNotNull { runtimes.remove(it) }
+        }
+        closed.forEach { runCatching { it.close() } }
+        return closed.size
+    }
+    // KMK <--
+
     /** The running source for [info], started on first use and kept */
     suspend fun runtime(info: JsSourceInfo): JsRuntime = runtimeLock.withLock {
         runtimes[info.key] ?: run {

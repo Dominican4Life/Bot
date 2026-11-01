@@ -146,8 +146,45 @@ internal object ApkImport {
 
     // ---------- the import ----------
 
-    /** Reads the APK and writes the source; runs on IO (zip and dex reads) */
+    /**
+     * Reads the APK and writes the source; runs on IO (zip and dex reads). A failure is rethrown as an
+     * [IllegalStateException] whose message names the real exception, its message, its cause and the first frame
+     * (and is logged W `lab`): r96 showed only "eu.kanade.tachiyomi.jssource.lab.Templates", a NoClassDefFoundError's
+     * bare message, which said nothing about why (an ICU-invalid regex in that object's init).
+     */
     fun import(context: Context, row: ExtensionSourceRow): ImportResult {
+        try {
+            return importUnchecked(context, row)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            val described = describe(e)
+            AppLog.add('W', "lab", "Import from ${row.pkgName} failed: $described")
+            throw IllegalStateException(described, e)
+        }
+    }
+
+    /** "NoClassDefFoundError: …Templates (cause: PatternSyntaxException: …) at Templates.<clinit>(Templates.kt:26)" */
+    fun describe(e: Throwable): String = buildString {
+        append(e.javaClass.simpleName.ifBlank { e.javaClass.name })
+        e.message?.takeIf { it.isNotBlank() }?.let { append(": ").append(it.lineSequence().first().take(300)) }
+        var cause = e.cause
+        var depth = 0
+        while (cause != null && cause !== e && depth < 3) {
+            append(" (cause: ").append(cause.javaClass.simpleName)
+            cause.message?.takeIf { it.isNotBlank() }?.let { append(": ").append(it.lineSequence().first().take(200)) }
+            append(")")
+            cause = cause.cause
+            depth++
+        }
+        val frame = (e.cause?.stackTrace ?: e.stackTrace)?.firstOrNull { "eu.kanade" in it.className } ?: e.stackTrace?.firstOrNull()
+        if (frame != null) {
+            append(" at ").append(frame.className.substringAfterLast('.')).append('.').append(frame.methodName)
+            append('(').append(frame.fileName ?: "?").append(':').append(frame.lineNumber).append(')')
+        }
+    }
+
+    private fun importUnchecked(context: Context, row: ExtensionSourceRow): ImportResult {
         val facts = readApk(context, row.pkgName, row.anime, row.baseUrl)
         val theme = facts.theme
         val templateId = when {

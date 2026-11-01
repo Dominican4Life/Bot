@@ -535,7 +535,16 @@ class ReaderViewModel @JvmOverloads constructor(
         page: Int? = null,
         // SY <--
     ): ViewerChapters {
+        // KMK (r97): Perfetto "chapter-open": from here until the first page is Ready (nanoseconds when no trace records)
+        val openSpan = eu.kanade.tachiyomi.diagnostics.Perf.tracedAsync("chapter-open", chapter.chapter.id.toInt())
         loader.loadChapter(chapter /* SY --> */, page/* SY <-- */)
+        viewModelScope.launch {
+            runCatching {
+                val first = chapter.pages?.firstOrNull { it.status != Page.State.Ready } ?: chapter.pages?.firstOrNull()
+                first?.statusFlow?.first { it == Page.State.Ready || it is Page.State.Error }
+            }
+            openSpan.end()
+        }
 
         val chapterPos = chapterList.indexOf(chapter)
         val newChapters = ViewerChapters(

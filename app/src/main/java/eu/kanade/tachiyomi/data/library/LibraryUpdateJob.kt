@@ -29,9 +29,12 @@ import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.data.sync.SyncDataJob
 import eu.kanade.tachiyomi.data.track.TrackStatus
 import eu.kanade.tachiyomi.data.track.TrackerManager
+import eu.kanade.tachiyomi.diagnostics.Health
+import eu.kanade.tachiyomi.diagnostics.HealthKind
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
 import eu.kanade.tachiyomi.util.PauseBetweenTitles
+import eu.kanade.tachiyomi.util.system.AppLog
 import eu.kanade.tachiyomi.util.system.isConnectedToWifi
 import eu.kanade.tachiyomi.util.system.isRunning
 import eu.kanade.tachiyomi.util.system.setForegroundSafely
@@ -188,12 +191,14 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
 
         return withIOContext {
             try {
-                when (target) {
-                    Target.CHAPTERS -> updateChapterList()
-                    // SY -->
-                    Target.SYNC_FOLLOWS -> syncFollows()
-                    Target.PUSH_FAVORITES -> pushFavorites()
-                    // SY <--
+                eu.kanade.tachiyomi.diagnostics.Perf.traced("library-update") { // KMK (r97): Perfetto section
+                    when (target) {
+                        Target.CHAPTERS -> updateChapterList()
+                        // SY -->
+                        Target.SYNC_FOLLOWS -> syncFollows()
+                        Target.PUSH_FAVORITES -> pushFavorites()
+                        // SY <--
+                    }
                 }
                 Result.success()
             } catch (e: Exception) {
@@ -527,6 +532,22 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
                 failedUpdates.size,
             )
         }
+        // KMK (r97) -->
+        // Diagnostics: one line with a structured tail and a Health event (UPDATE dot on the 7-day strip)
+        val checked = progressCount.load()
+        AppLog.add(
+            'I', "LibraryUpdateJob",
+            "Library update: $checked checked, ${newUpdates.size} with new chapters, ${failedUpdates.size} failed",
+            "count" to checked, "job" to "library-update",
+        )
+        runCatching {
+            Health.event(
+                if (failedUpdates.isEmpty()) HealthKind.UPDATE_OK else HealthKind.UPDATE_FAILED,
+                if (failedUpdates.isEmpty()) "Library update" else "Library update: ${failedUpdates.size} failed",
+                "$checked checked · ${newUpdates.size} with new chapters · ${failedUpdates.size} failed",
+            )
+        }
+        // KMK <--
     }
 
     private fun downloadChapters(manga: Manga, chapters: List<Chapter>) {
@@ -692,7 +713,19 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
             completed.load(),
             mangaToUpdate.size,
         )
+        // KMK (r97): the Diagnostics Live tab's "Running now" row reads it from WorkManager (at most once a second:
+        // every setProgress is a WorkManager DB write)
+        val now = System.currentTimeMillis()
+        val done = completed.load()
+        if (now - lastDiagProgressAt >= 1_000L || done >= mangaToUpdate.size) {
+            lastDiagProgressAt = now
+            runCatching { setProgress(workDataOf("done" to done, "total" to mangaToUpdate.size)) }
+        }
     }
+
+    // KMK (r97): epoch ms of the last setProgress above
+    @Volatile
+    private var lastDiagProgressAt = 0L
 
     // KMK -->
     private suspend fun clearErrorFromDB(mangaId: Long) {

@@ -11,7 +11,9 @@ import eu.kanade.tachiyomi.util.system.AppLog
  */
 internal object Generator {
 
-    private val PLACEHOLDER = Regex("""\{\{([A-Za-z0-9_]+)}}""")
+    // Both braces escaped: Android's java.util.regex is ICU, which refuses a bare `}` (U_REGEX_RULE_SYNTAX); an
+    // unescaped one here made this object's init throw, and every later use `NoClassDefFoundError: …Generator`
+    private val PLACEHOLDER = Regex("""\{\{([A-Za-z0-9_]+)\}\}""")
 
     /**
      * @param values placeholder → value; the sidecar's defaults fill what is missing

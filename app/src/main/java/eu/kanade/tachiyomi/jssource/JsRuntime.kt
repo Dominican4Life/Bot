@@ -4,7 +4,11 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.dokar.quickjs.QuickJs
 import com.dokar.quickjs.binding.AsyncFunctionBinding
+import eu.kanade.tachiyomi.diagnostics.JsTrace
+import eu.kanade.tachiyomi.diagnostics.JsTraceEvent
+import eu.kanade.tachiyomi.diagnostics.Perf
 import eu.kanade.tachiyomi.network.NetworkHelper
+import eu.kanade.tachiyomi.network.SourceTag
 import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -45,6 +49,44 @@ class JsRuntime private constructor(
 ) {
 
     private val mutex = Mutex()
+
+    // KMK (r97) -->
+    /** QuickJS memory in use: taken only when no call holds the engine (tryLock), else the last figure */
+    @Volatile
+    private var lastMemory: Long = 0L
+
+    /** True when the last [memoryBytes] figure is from an earlier read because the runtime was busy */
+    @Volatile
+    var memoryStale: Boolean = false
+        private set
+
+    fun memoryBytes(): Long? {
+        if (!mutex.tryLock()) {
+            memoryStale = true
+            return lastMemory.takeIf { it > 0L }
+        }
+        try {
+            memoryStale = false
+            lastMemory = qjs.memoryUsage.memoryUsedSize
+            return lastMemory
+        } catch (e: Throwable) {
+            return lastMemory.takeIf { it > 0L }
+        } finally {
+            mutex.unlock()
+        }
+    }
+
+    /** Parsed pages kept, their text bytes and a rough DOM size */
+    fun pageStats(): Triple<Int, Long, Long> = host.pageStats()
+
+    /** A call is running */
+    val isBusy: Boolean get() = mutex.isLocked
+
+    /** When [call] last ran (epoch ms); 0 = never */
+    @Volatile
+    var lastCallAt: Long = 0L
+        private set
+    // KMK <--
 
     /** Lines from console.log and requests, for the editor's Console */
     val console: List<String> get() = host.console.toList()
@@ -88,8 +130,20 @@ class JsRuntime private constructor(
               return JSON.stringify(result === undefined ? null : result);
             })()
         """.trimIndent()
+        // KMK (r97) -->
+        // Diagnostics: the js trace / probes (one volatile read when off), a Perfetto section around the call
+        lastCallAt = System.currentTimeMillis()
+        val traced = JsTrace.wanted()
+        val startedNs = if (traced) System.nanoTime() else 0L
+        val memBefore = if (traced) runCatching { qjs.memoryUsage.memoryUsedSize }.getOrDefault(0L) else 0L
+        val pagesBefore = if (traced) host.pagesParsed.get() else 0
+        val callsBefore = if (traced) host.hostCalls.get() else 0
+        if (traced) JsTrace.before(host.sourceName, method, argList.take(120))
+        // KMK <--
         val text = try {
-            withContext(Dispatchers.Default) { watchdog.guard { qjs.evaluate<String?>(code, "<$method>") } }
+            Perf.traced({ "js:${host.sourceName}.$method" }) { // the name is built only while a trace records
+                withContext(Dispatchers.Default) { watchdog.guard { qjs.evaluate<String?>(code, "<$method>") } }
+            }
         } catch (e: Throwable) {
             // The caller stopped waiting (e.g. the user left Browse): let the cancellation through instead of
             // turning it into a source error, which was logged as "getLatest failed: Job was cancelled"
@@ -99,10 +153,84 @@ class JsRuntime private constructor(
             if ("__NOT_IMPLEMENTED__" in message) throw NotImplementedError("This source has no $method")
             host.log("error", "$method failed: $message")
             runCatching { host.health?.error(method, message) } // KMK (r96): Source Lab health counters
+            // KMK (r97) -->
+            if (traced) {
+                JsTrace.after(
+                    traceEvent(method, argList, startedNs, memBefore, pagesBefore, callsBefore, null, message),
+                )
+            }
+            // KMK <--
             throw JsException(message.substringBefore("\n    at ").ifBlank { e.toString() }, e)
         }
+        // KMK (r97) -->
+        if (traced) JsTrace.after(traceEvent(method, argList, startedNs, memBefore, pagesBefore, callsBefore, text, null))
+        // KMK <--
         jsJson.parseToJsonElement(text ?: "null")
     }
+
+    // KMK (r97) -->
+    /** One js trace record for a call that just ended (under the mutex, so memoryUsage needs no tryLock) */
+    private fun traceEvent(
+        method: String,
+        argList: String,
+        startedNs: Long,
+        memBefore: Long,
+        pagesBefore: Int,
+        callsBefore: Int,
+        result: String?,
+        error: String?,
+    ): JsTraceEvent {
+        // Items of a top-level array, counted with a small scanner (not a second JSON parse of a result that can be MBs)
+        val items = result?.let { r -> countTopLevelItems(r) } ?: -1
+        return JsTraceEvent(
+            t = System.currentTimeMillis(),
+            source = host.sourceName,
+            fn = method,
+            args = argList.take(120),
+            ms = (System.nanoTime() - startedNs) / 1_000_000,
+            hostCalls = host.hostCalls.get() - callsBefore,
+            pagesParsed = host.pagesParsed.get() - pagesBefore,
+            parseMs = host.parseNanos.getAndSet(0L) / 1_000_000,
+            memBefore = memBefore,
+            memAfter = runCatching { qjs.memoryUsage.memoryUsedSize }.getOrDefault(0L).also { lastMemory = it },
+            items = items,
+            error = error?.substringBefore("\n    at "),
+            jsStack = error?.lines()?.filter { it.trimStart().startsWith("at ") }?.take(6).orEmpty(),
+        )
+    }
+
+    /** Elements of a top-level JSON array in [json], or -1 when it isn't one; one pass, no allocation */
+    private fun countTopLevelItems(json: String): Int {
+        var i = 0
+        val n = json.length
+        while (i < n && json[i].isWhitespace()) i++
+        if (i >= n || json[i] != '[') return -1
+        var depth = 0
+        var count = 0
+        var inString = false
+        var sawValue = false
+        while (i < n) {
+            val c = json[i]
+            if (inString) {
+                if (c == '\\') i++ else if (c == '"') inString = false
+            } else {
+                when (c) {
+                    '"' -> { inString = true; if (depth == 1) sawValue = true }
+                    '[', '{' -> { if (depth == 1) sawValue = true; depth++ }
+                    ']', '}' -> {
+                        depth--
+                        if (depth == 0) return if (sawValue) count + 1 else count
+                    }
+                    ',' -> if (depth == 1) { count++; sawValue = false }
+                    ' ', '\n', '\r', '\t' -> Unit
+                    else -> if (depth == 1) sawValue = true
+                }
+            }
+            i++
+        }
+        return -1
+    }
+    // KMK <--
 
     fun close() {
         runCatching { qjs.close() }
@@ -194,9 +322,24 @@ class JsRuntime private constructor(
         storageDir: File,
         private val preferences: SharedPreferences,
         val testing: Boolean,
+        // KMK (r97): who this runtime is, for the Diagnostics network attribution (SourceTag on every request)
+        val sourceId: Long = 0L,
+        val key: String? = null,
     ) {
         private val network: NetworkHelper by injectLazy()
         private val pages = JsHtmlPages()
+
+        // KMK (r97) -->
+        /** The source's name (the tag without its `js:` prefix) */
+        val sourceName: String get() = tag.removePrefix("js:")
+
+        /** Pages parsed, host calls answered and time spent parsing, for the js trace */
+        val pagesParsed = AtomicInteger(0)
+        val hostCalls = AtomicInteger(0)
+        val parseNanos = java.util.concurrent.atomic.AtomicLong(0L)
+
+        fun pageStats(): Triple<Int, Long, Long> = pages.stats()
+        // KMK <--
 
         /** KMK: lets go of the parsed pages (the runtime shutting down) */
         fun clearPages() = pages.clear()
@@ -238,13 +381,21 @@ class JsRuntime private constructor(
         }
 
         suspend fun handle(channel: String, payloadJson: String): String {
+            hostCalls.incrementAndGet() // KMK (r97)
             val payload = runCatching { jsJson.parseToJsonElement(payloadJson) as? JsonObject }.getOrNull()
                 ?: JsonObject(emptyMap())
             val result: Any? = try {
                 when (channel) {
                     "fetchUrl" -> fetch(payload)
                     "queryHtml" -> pages.query(payload.str("html").orEmpty(), payload.str("selector").orEmpty())
-                    "parseHtml" -> mapOf("id" to pages.parse(payload.str("html").orEmpty()))
+                    "parseHtml" -> {
+                        // KMK (r97): counted and timed for the js trace
+                        val t0 = System.nanoTime()
+                        val id = pages.parse(payload.str("html").orEmpty())
+                        pagesParsed.incrementAndGet()
+                        parseNanos.addAndGet(System.nanoTime() - t0)
+                        mapOf("id" to id)
+                    }
                     "selectHtml" -> pages.select(
                         pageId = payload.int("page") ?: 0,
                         from = payload.int("from"),
@@ -436,7 +587,9 @@ class JsRuntime private constructor(
             }
 
             val started = System.currentTimeMillis()
-            val request = Request.Builder().url(url).headers(headers.build()).method(method, requestBody).build()
+            val request = Request.Builder().url(url).headers(headers.build()).method(method, requestBody)
+                .tag(SourceTag::class.java, SourceTag(sourceId, sourceName, key)) // KMK (r97): Diagnostics attribution
+                .build()
             val plain = client.newCall(request).execute().use { response ->
                 val took = System.currentTimeMillis() - started
                 if (testing) log("net", "$method $url -> ${response.code} in ${took}ms")
@@ -477,7 +630,7 @@ class JsRuntime private constructor(
          * so it is loaded here, before the engine's own classes look for their native methods.
          */
         @Synchronized
-        private fun loadNativeLibrary() {
+        internal fun loadNativeLibrary() { // KMK (r97): internal, the Diagnostics probe runtime loads it too
             if (nativeLoaded) return
             System.loadLibrary("quickjskt")
             nativeLoaded = true
@@ -527,6 +680,9 @@ class JsRuntime private constructor(
                     JsPreferences.of(context, sourceId)
                 },
                 testing = testing,
+                // KMK (r97)
+                sourceId = sourceId,
+                key = key,
             )
             // KMK (r96): only the real source counts towards its health (not the editor's test copy, a probe, the
             // describe run of a save or the tag suggestions)

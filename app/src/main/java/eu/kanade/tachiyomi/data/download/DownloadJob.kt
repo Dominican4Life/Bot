@@ -85,6 +85,16 @@ class DownloadJob(private val context: Context, workerParams: WorkerParameters) 
             active = !isStopped && downloadManager.isRunning && networkCheck
         }
 
+        // KMK (r97): the downloader stopped on the network rule: a Health event (DOWNLOAD dot on the 7-day strip)
+        if (!networkCheck && !isStopped) {
+            runCatching {
+                eu.kanade.tachiyomi.diagnostics.Health.event(
+                    eu.kanade.tachiyomi.diagnostics.HealthKind.DOWNLOAD_ERROR, "Download stopped",
+                    "network rule (offline or Wi-Fi only)",
+                )
+            }
+        }
+
         return Result.success()
     }
 

@@ -23,7 +23,10 @@ internal object Templates {
     private const val EXPLAIN_SUFFIX = ".explain.json"
 
     /** The placeholders a template text asks for, in order of first appearance, without duplicates */
-    private val PLACEHOLDER = Regex("""\{\{([A-Za-z0-9_]+)}}""")
+    // Both braces escaped: Android's java.util.regex is ICU, which refuses a bare `}` (U_REGEX_RULE_SYNTAX). The
+    // r96 build had `}}`: this object's init threw PatternSyntaxException (swallowed by the first caller's
+    // runCatching) and every later use got `NoClassDefFoundError: eu.kanade.tachiyomi.jssource.lab.Templates`
+    private val PLACEHOLDER = Regex("""\{\{([A-Za-z0-9_]+)\}\}""")
 
     /** Which method parts a source needs to start (the contract script of JsRuntime); never dropped */
     val REQUIRED_PARTS = setOf("search", "getPopular", "getLatest", "getChapterList")

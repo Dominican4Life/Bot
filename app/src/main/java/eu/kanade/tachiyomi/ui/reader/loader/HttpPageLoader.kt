@@ -219,21 +219,26 @@ internal class HttpPageLoader(
      */
     private suspend fun internalLoadPage(page: ReaderPage) {
         try {
-            if (page.imageUrl.isNullOrEmpty()) {
-                page.status = Page.State.LoadPage
-                page.imageUrl = source.getImageUrl(page)
-            }
-            val imageUrl = page.imageUrl!!
+            // KMK (r97): one Diagnostics reader-trace record per fetch (cache hit when nothing was downloaded)
+            var downloaded = false
+            traceLoad(page, "Http", cacheHit = { !downloaded }) {
+                if (page.imageUrl.isNullOrEmpty()) {
+                    page.status = Page.State.LoadPage
+                    page.imageUrl = source.getImageUrl(page)
+                }
+                val imageUrl = page.imageUrl!!
 
-            // KMK: a page a Browse/library preview panel already downloaded is copied, not downloaded again
-            if (!chapterCache.isImageInCache(imageUrl) && !reuseFromPreview(page, imageUrl)) {
-                page.status = Page.State.DownloadImage
-                val imageResponse = source.getImage(page, dataSaver)
-                chapterCache.putImageToCache(imageUrl, imageResponse)
-            }
+                // KMK: a page a Browse/library preview panel already downloaded is copied, not downloaded again
+                if (!chapterCache.isImageInCache(imageUrl) && !reuseFromPreview(page, imageUrl)) {
+                    page.status = Page.State.DownloadImage
+                    downloaded = true
+                    val imageResponse = source.getImage(page, dataSaver)
+                    chapterCache.putImageToCache(imageUrl, imageResponse)
+                }
 
-            page.stream = { chapterCache.getImageFile(imageUrl).inputStream() }
-            page.status = Page.State.Ready
+                page.stream = { chapterCache.getImageFile(imageUrl).inputStream() }
+                page.status = Page.State.Ready
+            }
         } catch (e: Throwable) {
             page.status = Page.State.Error(e)
             if (e is CancellationException) {

@@ -106,6 +106,10 @@ class AndroidDatabaseHandler(
     }
 
     private suspend fun <T> dispatch(inTransaction: Boolean, block: suspend Database.() -> T): T {
+        // KMK (r97) -->
+        DbStats.queries.incrementAndGet()
+        if (inTransaction) DbStats.transactions.incrementAndGet()
+        // KMK <--
         // Create a transaction if needed and run the calling block inside it.
         if (inTransaction) {
             return withTransaction { block(db) }

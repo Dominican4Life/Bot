@@ -155,7 +155,8 @@ object HomeScreen : Screen() {
                                 )
                                 androidx.compose.material3.NavigationRailItem(
                                     selected = false,
-                                    onClick = { navigator.push(eu.kanade.tachiyomi.ui.logs.LogsScreen()) },
+                                    // KMK (r97): the bug button keeps its label and opens Diagnostics
+                                    onClick = { navigator.push(eu.kanade.tachiyomi.ui.diagnostics.DiagnosticsScreen()) },
                                     icon = {
                                         androidx.compose.material3.Icon(
                                             imageVector = androidx.compose.material.icons.Icons.Outlined.BugReport,

@@ -33,7 +33,7 @@ import uy.kohesive.injekt.api.get
  * pick so the reasons are shown live. Done → the generic-list template filled with the derived values, handed to
  * Half A through LabHandoff with the picks in `LabMeta.picks`.
  */
-internal class BuilderScreenModel(startUrl: String?, anime: Boolean) :
+internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean) :
     StateScreenModel<BuilderScreenModel.State>(State(url = startUrl.orEmpty(), anime = anime)) {
 
     /** The three pages of the flow and the labels each offers */
@@ -67,6 +67,10 @@ internal class BuilderScreenModel(startUrl: String?, anime: Boolean) :
         val loadUrl: String? = null,             // what the WebView should show; loadTick changes on every request
         val loadTick: Int = 0,
         val pageUrl: String? = null,             // what it shows now
+        val canGoBack: Boolean = false,          // the WebView's history, for the Back / Forward buttons
+        val canGoForward: Boolean = false,
+        /** Pick mode: every tap selects an element and nothing navigates; off = browse the site normally */
+        val pickMode: Boolean = true,
         val pickerScript: String? = null,
         val pending: RawPick? = null,
         val picks: List<Derive.Picked> = emptyList(),
@@ -110,13 +114,37 @@ internal class BuilderScreenModel(startUrl: String?, anime: Boolean) :
         mutableState.update { it.copy(url = target, loadUrl = target, loadTick = it.loadTick + 1, pending = null, error = null) }
     }
 
-    /** From the WebView: the page finished loading */
-    fun onPageLoaded(url: String?) {
-        if (url != null) mutableState.update { it.copy(pageUrl = url) }
+    /** From the WebView: the page finished loading, or its history changed (an in-page navigation too) */
+    fun onPageLoaded(url: String?, canGoBack: Boolean, canGoForward: Boolean) {
+        mutableState.update {
+            it.copy(pageUrl = url ?: it.pageUrl, url = url ?: it.url, canGoBack = canGoBack, canGoForward = canGoForward)
+        }
     }
+
+    /**
+     * KMK (r97): the WebView's own Back (or a link) brought an earlier step's page back: the step follows, so the
+     * labels offered are that page's (the list page → step 1, the title page → step 2 while on step 3).
+     */
+    fun syncStepWithUrl(url: String?) {
+        val shown = url?.substringBefore('#')?.trimEnd('/') ?: return
+        val s = state.value
+        fun pageOf(step: Step): String? =
+            s.picks.firstOrNull { it.pick.label in step.labels }?.pick?.pageUrl?.substringBefore('#')?.trimEnd('/')
+        val listPage = pageOf(Step.ListPage) ?: startUrl?.trim()?.substringBefore('#')?.trimEnd('/')
+        val target = when {
+            s.step != Step.ListPage && listPage != null && shown == listPage -> Step.ListPage
+            s.step == Step.ChapterPage && shown == pageOf(Step.TitlePage) -> Step.TitlePage
+            else -> return
+        }
+        mutableState.update { it.copy(step = target, pending = null) }
+    }
+
+    /** Pick mode (taps select, nothing navigates) or browse mode (the site works as usual) */
+    fun setPickMode(pick: Boolean) = mutableState.update { it.copy(pickMode = pick, pending = if (pick) it.pending else null) }
 
     /** From the picker script (a WebView thread): one tap, as JSON */
     fun onPick(json: String) {
+        if (!state.value.pickMode) return
         val o = runCatching { jsJson.parseToJsonElement(json) as? JsonObject }.getOrNull() ?: return
         val raw = RawPick(
             cssPath = o.str("cssPath").orEmpty(),

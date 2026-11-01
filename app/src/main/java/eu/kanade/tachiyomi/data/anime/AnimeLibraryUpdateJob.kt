@@ -128,6 +128,7 @@ class AnimeLibraryUpdateJob(
 
         showProgress(0, favorites.size, null)
         try {
+            eu.kanade.tachiyomi.diagnostics.Perf.traced("library-update:anime") { // KMK (r97): Perfetto section
             coroutineScope {
                 favorites.groupBy { it.source }.values.map { animes ->
                     async {
@@ -167,6 +168,7 @@ class AnimeLibraryUpdateJob(
                     }
                 }.awaitAll()
             }
+            } // KMK (r97)
         } finally {
             context.cancelNotification(Notifications.ID_ANIME_LIBRARY_PROGRESS)
         }
@@ -176,6 +178,18 @@ class AnimeLibraryUpdateJob(
             "Anime update: $checked checked, $skipped skipped, ${noSource.get()} without their source, " +
                 "${noEpisodes.get()} with no episodes from the source, ${failed.size} failed, " +
                 "${updated.size} with new episodes"
+        }
+        // KMK (r97): a Health event (UPDATE dot on the Diagnostics 7-day strip)
+        runCatching {
+            eu.kanade.tachiyomi.diagnostics.Health.event(
+                if (failed.isEmpty()) {
+                    eu.kanade.tachiyomi.diagnostics.HealthKind.UPDATE_OK
+                } else {
+                    eu.kanade.tachiyomi.diagnostics.HealthKind.UPDATE_FAILED
+                },
+                if (failed.isEmpty()) "Anime library update" else "Anime library update: ${failed.size} failed",
+                "$checked checked · ${updated.size} with new episodes · ${failed.size} failed",
+            )
         }
         if (updated.isNotEmpty()) {
             showNewEpisodes(updated.sortedBy { it.first.title.lowercase() }, failed.size)
@@ -243,7 +257,18 @@ class AnimeLibraryUpdateJob(
 
     private fun showProgress(current: Int, total: Int, title: String?) {
         context.notify(Notifications.ID_ANIME_LIBRARY_PROGRESS, progressNotification(current, total, title))
+        // KMK (r97): the Diagnostics Live tab's "Running now" row reads it from WorkManager (at most once a second:
+        // every setProgress is a WorkManager DB write)
+        val now = System.currentTimeMillis()
+        if (now - lastDiagProgressAt >= 1_000L || current >= total) {
+            lastDiagProgressAt = now
+            runCatching { setProgressAsync(workDataOf("done" to current, "total" to total)) }
+        }
     }
+
+    // KMK (r97): epoch ms of the last setProgressAsync above
+    @Volatile
+    private var lastDiagProgressAt = 0L
 
     private fun progressNotification(current: Int, total: Int, title: String?) =
         context.notificationBuilder(Notifications.CHANNEL_LIBRARY_PROGRESS) {

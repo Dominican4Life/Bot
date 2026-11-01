@@ -4,6 +4,11 @@ import android.content.Context
 import android.os.Build
 import com.elvishew.xlog.LogLevel
 import com.elvishew.xlog.printer.Printer
+import eu.kanade.tachiyomi.diagnostics.DiagBudget
+import eu.kanade.tachiyomi.diagnostics.DiagCategory
+import eu.kanade.tachiyomi.diagnostics.DiagPaths
+import eu.kanade.tachiyomi.diagnostics.DiagRing
+import eu.kanade.tachiyomi.diagnostics.LogCapture
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -68,6 +73,16 @@ object AppLog {
 
     fun init(context: Context) {
         sessionStart = System.currentTimeMillis()
+        // KMK (r97) -->
+        // Capture levels (the gate in add) are read before the first line; the ring mirror is mapped (a stat and an
+        // mmap, no read) so every line of this run lands in it from the start line on
+        LogCapture.init(context)
+        ring = DiagRing.open(
+            File(context.cacheDir, DiagPaths.LOG_RING),
+            DiagBudget.LOG_RING_BYTES,
+            sessionStart = sessionStart,
+        )
+        // KMK <--
         val dir = File(context.filesDir, "app_log").apply { mkdirs() }
         val logFile = File(dir, "log.txt")
         // KMK: only a stat on the main thread; reading and trimming happen in the writer below. The stat comes before
@@ -137,7 +152,109 @@ object AppLog {
             "start ${context.packageName} ${appVersion(context)} on Android ${Build.VERSION.RELEASE} " +
                 "(SDK ${Build.VERSION.SDK_INT}), ${Build.MANUFACTURER} ${Build.MODEL}",
         )
+        // KMK (r97) -->
+        // One line that says the mirror ring works and what it kept (counted off the main thread)
+        ring?.let { r ->
+            scope.launch {
+                val previous = runCatching {
+                    var n = 0
+                    r.forEachLine { line ->
+                        val time = line.substringBefore('\t').toLongOrNull() ?: Long.MAX_VALUE
+                        if (time < sessionStart) n++
+                    }
+                    n
+                }.getOrDefault(0)
+                add('I', "diag", "Log ring opened: ${"%,d".format(previous)} lines from the previous run")
+            }
+        } ?: add('W', "diag", "Log ring couldn't be opened: lines of this run won't survive a process kill")
+        // KMK <--
     }
+
+    // KMK (r97) -->
+    /** The memory-mapped mirror of every line (survives a process kill); null when it couldn't be mapped */
+    internal var ring: DiagRing? = null
+        private set
+
+    /**
+     * A line with a structured tail: ` · k=v k=v` after the message (design §8). Values with spaces are URL-encoded
+     * so the tail stays one token per field; null values are left out.
+     */
+    fun add(level: Char, tag: String, message: String, vararg fields: Pair<String, Any?>) {
+        if (fields.isEmpty()) return add(level, tag, message)
+        val tail = buildString {
+            for ((k, v) in fields) {
+                if (v == null) continue
+                append(if (isEmpty()) " · " else " ")
+                append(k).append('=')
+                val s = v.toString()
+                val spaced = s.any { it == ' ' || it == '\t' || it == '\n' }
+                append(if (spaced) java.net.URLEncoder.encode(s, "UTF-8") else s)
+            }
+        }
+        add(level, tag, message + tail)
+    }
+
+    /** A Verbose line whose text is only built while [category] is Verbose */
+    internal inline fun v(category: DiagCategory, tag: String, message: () -> String) {
+        if (LogCapture.isVerbose(category)) add('V', tag, message())
+    }
+
+    /** A Verbose line with a structured tail, both built only while [category] is Verbose */
+    internal inline fun vFields(
+        category: DiagCategory,
+        tag: String,
+        message: () -> Pair<String, Array<Pair<String, Any?>>>,
+    ) {
+        if (LogCapture.isVerbose(category)) {
+            val (text, fields) = message()
+            add('V', tag, text, *fields)
+        }
+    }
+
+    /** `=== MARK: note ===` (or `=== MARK ===`), the owner's anchor in the log */
+    fun mark(note: String?) {
+        val text = note?.trim().orEmpty()
+        add('I', "app", if (text.isEmpty()) "=== MARK ===" else "=== MARK: $text ===")
+    }
+
+    /** The `key=value` tail of a message (after the last ` · `), empty when there is none */
+    fun fieldsOf(message: String): Map<String, String> {
+        val at = message.lastIndexOf(" · ")
+        if (at < 0) return emptyMap()
+        val tail = message.substring(at + 3)
+        if (tail.isEmpty() || tail.none { it == '=' }) return emptyMap()
+        val out = LinkedHashMap<String, String>()
+        for (token in tail.split(' ')) {
+            val eq = token.indexOf('=')
+            if (eq <= 0) return emptyMap() // not a field tail after all (a sentence with " · " in it)
+            val key = token.substring(0, eq)
+            if (key.any { !(it.isLetterOrDigit() || it == '_') }) return emptyMap()
+            out[key] = token.substring(eq + 1)
+        }
+        return out
+    }
+
+    /** Lines newer than [time] (inclusive), oldest first */
+    fun linesSince(time: Long): List<Line> = synchronized(lines) { lines.filter { it.time >= time } }
+
+    /** The newest [n] lines that pass [filter], oldest first; walks back from the end and stops at [n] */
+    fun lastLines(n: Int, filter: (Line) -> Boolean): List<Line> = synchronized(lines) {
+        val out = ArrayList<Line>(n)
+        var i = lines.size - 1
+        while (i >= 0 && out.size < n) {
+            val line = lines[i]
+            if (filter(line)) out.add(line)
+            i--
+        }
+        out.reverse()
+        out
+    }
+
+    /** Lines in [from, to], oldest first */
+    fun linesBetween(from: Long, to: Long): List<Line> = synchronized(lines) {
+        lines.filter { it.time in from..to }
+    }
+    // KMK <--
 
     /** Lock for the log file: the writer, trimming, clear and the direct E lines */
     private val fileLock = Any()
@@ -207,14 +324,22 @@ object AppLog {
     }.getOrNull().orEmpty()
 
     fun add(level: Char, tag: String, message: String) {
+        // KMK (r97): the capture gate (design §3.2): V only while the tag's category is Verbose, D/I not while it
+        // is Off; W/E always. One hash lookup and two volatile reads
+        val category = LogCapture.categoryOf(tag)
+        if (level == 'V' && !LogCapture.isVerbose(category)) return
+        if ((level == 'D' || level == 'I') && LogCapture.isOff(category)) return
         val text = message.trimEnd().let {
             if (it.length > MAX_MESSAGE_CHARS) it.take(MAX_MESSAGE_CHARS) + " …" else it
         }
         val line = Line(System.currentTimeMillis(), level, tag.ifBlank { "app" }, text)
+        // KMK (r97): encoded once; the file queue takes the String, the ring its bytes
+        val encoded = encode(line)
         synchronized(lines) {
             lines.addLast(line)
             while (lines.size > MAX_LINES) lines.removeFirst()
         }
+        ring?.append(encoded.toByteArray(Charsets.UTF_8)) // KMK (r97): the mirror ring
         if (level == 'E' && pendingClears.get() == 0) {
             // A crash may end the process before the writer runs: write problems right away (through the open
             // stream when there is one, after what it buffered, so the file keeps its order)
@@ -223,18 +348,19 @@ object AppLog {
                     synchronized(fileLock) {
                         val o = out
                         if (o != null) {
-                            o.write(encode(line))
+                            o.write(encoded)
                             o.flush()
                         } else {
-                            f.appendText(encode(line))
+                            f.appendText(encoded)
                         }
                     }
                 }
             }
         } else {
-            pending.trySend(encode(line))
+            pending.trySend(encoded)
         }
         _version.value++
+        LogCapture.onAdded(level) // KMK (r97): recording line count, floating bubble badge
     }
 
     fun snapshot(): List<Line> = synchronized(lines) { lines.toList() }
@@ -285,7 +411,9 @@ object AppLog {
 
     /** Receives everything logged with logcat { } */
     class Logger : LogcatLogger {
-        override fun isLoggable(priority: LogPriority): Boolean = priority >= LogPriority.DEBUG
+        // KMK (r97): VERBOSE reaches the gate only while a category is Verbose (the lambda isn't built otherwise)
+        override fun isLoggable(priority: LogPriority): Boolean =
+            priority >= (if (LogCapture.anyVerbose) LogPriority.VERBOSE else LogPriority.DEBUG)
 
         override fun log(priority: LogPriority, tag: String, message: String) {
             val level = when (priority) {

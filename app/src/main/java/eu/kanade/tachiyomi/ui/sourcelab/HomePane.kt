@@ -37,11 +37,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import eu.kanade.tachiyomi.jssource.lab.ApkImport
 import eu.kanade.tachiyomi.jssource.lab.HealthState
 import eu.kanade.tachiyomi.jssource.lab.LabSource
 import eu.kanade.tachiyomi.jssource.lab.LabTemplate
 import eu.kanade.tachiyomi.jssource.lab.StepStatus
 import eu.kanade.tachiyomi.jssource.lab.Templates
+import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -62,7 +64,11 @@ internal fun HomePane(
     // Template files are read from storage: off the main thread, like every other sidecar read
     val templates by produceState(initialValue = emptyList<Pair<LabSource, LabTemplate>>() to 0, state.sources) {
         value = withContext(Dispatchers.IO) {
-            val stale = runCatching { Templates.staleSources(state.sources) }.getOrDefault(emptyList())
+            // Logged, not only swallowed: in r96 this was the first use of `Templates`, and its init failure
+            // (an ICU-invalid regex) vanished here, leaving every later use a bare NoClassDefFoundError
+            val stale = runCatching { Templates.staleSources(state.sources) }
+                .onFailure { AppLog.add('W', "lab", "Templates not read on Home: ${ApkImport.describe(it)}") }
+                .getOrDefault(emptyList())
             stale to runCatching { Templates.list().size }.getOrDefault(0)
         }
     }

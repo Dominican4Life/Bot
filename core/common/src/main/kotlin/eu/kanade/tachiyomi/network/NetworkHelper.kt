@@ -66,19 +66,49 @@ import kotlin.random.Random
             // KMK: each request in the in-app Logs screen (r95: unless tagged NoNetLog, as HLS stream pieces are)
             .addInterceptor { chain ->
                 val request = chain.request()
-                if (request.tag(NoNetLog::class.java) != null) return@addInterceptor chain.proceed(request)
+                // KMK (r97) -->
+                // Diagnostics: byte counters, per-source attribution, the net trace and the probes hang off
+                // NetworkHooks. NoNetLog requests (HLS pieces) skip the Logs line but still reach onCall.
+                val hooks = NetworkHooks.listener
+                val quiet = request.tag(NoNetLog::class.java) != null
+                if (quiet && hooks == null) return@addInterceptor chain.proceed(request)
+                val tag = request.tag(SourceTag::class.java)
+                // Every hook call is guarded: an engine bug must never break a request (r97 fix pass).
+                if (hooks != null) NetworkHooks.guarded(Unit) { hooks.beforeProceed(tag, request) }
+                // KMK <--
                 val started = System.nanoTime()
                 try {
-                    val response = chain.proceed(request)
+                    var response = chain.proceed(request)
                     val ms = (System.nanoTime() - started) / 1_000_000
-                    logcat.logcat("net", if (response.isSuccessful) logcat.LogPriority.DEBUG else logcat.LogPriority.WARN) {
-                        "${request.method} ${request.url} -> ${response.code} in $ms ms"
+                    // KMK (r97) -->
+                    if (hooks != null) {
+                        // afterResponse first (a probe may replace the body), then the counting wrapper, so a
+                        // replaced body never closes a CountingBody and the record is finished once, complete.
+                        response = NetworkHooks.guarded(response) { hooks.afterResponse(tag, request, response) }
+                        if (NetworkHooks.guarded(false) { hooks.bodyCounter() }) {
+                            response = NetworkHooks.guarded(response) { hooks.wrapBody(tag, response) }
+                        }
                     }
+                    if (!quiet) {
+                        // KMK <--
+                        logcat.logcat("net", if (response.isSuccessful) logcat.LogPriority.DEBUG else logcat.LogPriority.WARN) {
+                            "${request.method} ${request.url} -> ${response.code} in $ms ms"
+                        }
+                    }
+                    if (hooks != null) NetworkHooks.guarded(Unit) { hooks.onCall(tag, request, response, null, ms) } // KMK (r97)
                     response
                 } catch (e: java.io.IOException) {
-                    logcat.logcat("net", logcat.LogPriority.WARN) {
-                        "${request.method} ${request.url} failed: ${e.javaClass.simpleName}: ${e.message}"
+                    if (!quiet) { // KMK (r97)
+                        logcat.logcat("net", logcat.LogPriority.WARN) {
+                            "${request.method} ${request.url} failed: ${e.javaClass.simpleName}: ${e.message}"
+                        }
                     }
+                    // KMK (r97) -->
+                    if (hooks != null) {
+                        val failedMs = (System.nanoTime() - started) / 1_000_000
+                        NetworkHooks.guarded(Unit) { hooks.onCall(tag, request, null, e, failedMs) }
+                    }
+                    // KMK <--
                     throw e
                 }
             }

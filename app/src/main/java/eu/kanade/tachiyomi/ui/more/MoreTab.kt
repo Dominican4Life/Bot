@@ -26,10 +26,10 @@ import eu.kanade.presentation.util.Tab
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.ui.category.CategoryScreen
+import eu.kanade.tachiyomi.ui.diagnostics.DiagnosticsScreen
 import eu.kanade.tachiyomi.ui.download.DownloadQueueScreen
 import eu.kanade.tachiyomi.ui.history.HistoryTab
 import eu.kanade.tachiyomi.ui.libraryUpdateError.LibraryUpdateErrorScreen
-import eu.kanade.tachiyomi.ui.logs.LogsScreen
 import eu.kanade.tachiyomi.ui.pairsync.PairSyncDialog
 import eu.kanade.tachiyomi.ui.pairsync.PairSyncPopup
 import eu.kanade.tachiyomi.ui.setting.PlayerSettingsScreen
@@ -109,7 +109,8 @@ data object MoreTab : Tab {
             // KMK -->
             onClickLibraryUpdateErrors = { navigator.push(LibraryUpdateErrorScreen()) },
             // Logs was only on the tablet navigation rail; this opens the same screen on phones too
-            onClickLogs = { navigator.push(LogsScreen()) },
+            // KMK (r97): the row keeps its "Logs" title and opens Diagnostics (last tab, or Log on a new problem)
+            onClickLogs = { navigator.push(DiagnosticsScreen()) },
             onClickPairSync = { showPairSync = true },
             // KMK <--
         )

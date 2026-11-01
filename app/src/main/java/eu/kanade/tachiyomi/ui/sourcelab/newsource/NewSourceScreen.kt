@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.sourcelab.newsource
 
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -107,6 +108,8 @@ internal class NewSourceScreen(private val kindHint: Boolean? = null) : Screen()
         LaunchedEffect(state.delivered) {
             if (state.delivered) navigator.popUntil { it !is LabFlowScreen }
         }
+        // The system Back does what the bar's arrow does: a detection result goes back to the entry page first
+        BackHandler(enabled = state.phase != NewSourceScreenModel.Phase.Entry) { model.backToEntry() }
 
         val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
             if (uri != null) model.importFile(uri)

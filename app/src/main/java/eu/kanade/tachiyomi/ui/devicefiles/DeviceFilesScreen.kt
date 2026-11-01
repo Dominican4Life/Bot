@@ -40,12 +40,15 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.DeleteForever
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.MusicNote
+import androidx.compose.material.icons.outlined.RestoreFromTrash
 import androidx.compose.material.icons.outlined.SdCard
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.SelectAll
@@ -63,6 +66,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -73,6 +80,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -101,6 +109,7 @@ import eu.kanade.tachiyomi.devicefiles.DeviceFile
 import eu.kanade.tachiyomi.devicefiles.DeviceFilesOpener
 import eu.kanade.tachiyomi.devicefiles.DeviceFilesPreferences
 import eu.kanade.tachiyomi.devicefiles.DeviceFilesRepository
+import eu.kanade.tachiyomi.devicefiles.DeviceFilesTrash
 import eu.kanade.tachiyomi.devicefiles.FileCategory
 import eu.kanade.tachiyomi.devicefiles.FileKind
 import eu.kanade.tachiyomi.devicefiles.FileSort
@@ -126,8 +135,14 @@ class DeviceFilesScreen(val where: String = "") : Screen() {
 
         // Back from the system settings (after allowing access) or from the player: the files may have changed
         var resumed by remember { mutableStateOf(false) }
+        // KMK (r97): counts resumes, so a list page drops its selection (a row long-pressed by accident before
+        // leaving the app would otherwise sit in the next delete)
+        var resumeTick by remember { mutableIntStateOf(0) }
         LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-            if (resumed) model.refresh()
+            if (resumed) {
+                model.refresh()
+                resumeTick++
+            }
             resumed = true
         }
         val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
@@ -146,10 +161,10 @@ class DeviceFilesScreen(val where: String = "") : Screen() {
             }
         }
 
-        if (location == FilesLocation.Home) {
-            HomePage(model, navigator, askForAccess)
-        } else {
-            ListPage(model, location, navigator, askForAccess)
+        when (location) {
+            FilesLocation.Home -> HomePage(model, navigator, askForAccess)
+            FilesLocation.Recover -> RecoverPage(navigator)
+            else -> ListPage(model, location, navigator, askForAccess, resumeTick)
         }
     }
 }
@@ -173,7 +188,9 @@ private fun HomePage(model: DeviceFilesScreenModel, navigator: Navigator, askFor
     var settings by remember { mutableStateOf(false) }
     val prefs = DeviceFilesPreferences.instance
     val favourites by prefs.favourites.collectPreference()
-    val actions = rememberFileActionsState(model)
+    val trashEnabled by prefs.trashEnabled.collectPreference()
+    val snackbar = remember { SnackbarHostState() }
+    val actions = rememberFileActionsState(model, snackbar)
 
     BackHandler(enabled = query != null) {
         query = null
@@ -181,6 +198,8 @@ private fun HomePage(model: DeviceFilesScreenModel, navigator: Navigator, askFor
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
+        bottomBar = { state.progress?.let { ProgressBanner(it, Modifier.fillMaxWidth()) } },
         topBar = {
             TopAppBar(
                 navigationIcon = {
@@ -290,6 +309,16 @@ private fun HomePage(model: DeviceFilesScreenModel, navigator: Navigator, askFor
                     tint = Color(0xFFF2B01E),
                 ) { navigator.openLocation(FilesLocation.Favourites) }
             }
+            if (trashEnabled || state.trashCount > 0) {
+                item(key = "trash") {
+                    CollectionTile(
+                        title = "Trash",
+                        subtitle = state.trashCount.let { if (it == 1) "1 item" else "$it items" },
+                        icon = Icons.Outlined.Delete,
+                        tint = FileKind.Other.tint(),
+                    ) { navigator.openLocation(FilesLocation.Trash) }
+                }
+            }
             item(span = full) { SectionHeader("Storage devices") }
             items(state.roots, key = { "root-" + it.path }, span = { GridItemSpan(maxLineSpan) }) { root ->
                 StorageCard(root) { navigator.openLocation(FilesLocation.Folder(root.path)) }
@@ -305,10 +334,17 @@ private fun HomePage(model: DeviceFilesScreenModel, navigator: Navigator, askFor
     }
 
     if (settings) {
-        FilesSettingsDialog(onDismiss = {
-            settings = false
-            model.refresh()
-        })
+        FilesSettingsDialog(
+            onDismiss = {
+                settings = false
+                model.refresh()
+            },
+            onEmptyTrash = { model.emptyTrash() },
+            onRecover = {
+                settings = false
+                navigator.openLocation(FilesLocation.Recover)
+            },
+        )
     }
     actions.Dialogs()
 }
@@ -441,6 +477,7 @@ private fun ListPage(
     location: FilesLocation,
     navigator: Navigator,
     askForAccess: () -> Unit,
+    resumeTick: Int,
 ) {
     val context = LocalContext.current
     val state by model.state.collectAsState()
@@ -450,10 +487,17 @@ private fun ListPage(
     val sortName by prefs.sort.collectPreference()
     val descending by prefs.sortDescending.collectPreference()
     val sort = remember(sortName) { runCatching { FileSort.valueOf(sortName) }.getOrDefault(FileSort.Name) }
-    val actions = rememberFileActionsState(model)
+    val snackbar = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+    val actions = rememberFileActionsState(model, snackbar)
     var filter by remember { mutableStateOf<String?>(null) }
     var settings by remember { mutableStateOf(false) }
     val selection = remember { mutableStateListOf<String>() }
+    // KMK (r97): a selection never outlives the page it was made on or a trip out of the app
+    LaunchedEffect(location, resumeTick) { selection.clear() }
+    val inTrash = location == FilesLocation.Trash
+    var trashMenu by remember { mutableStateOf(false) }
+    var confirmEmpty by remember { mutableStateOf(false) }
     val mediaCategory = (location as? FilesLocation.Category)?.category?.takeIf {
         it == FileCategory.Images || it == FileCategory.Videos || it == FileCategory.Audio
     }
@@ -464,12 +508,14 @@ private fun ListPage(
         is FilesLocation.Folder -> state.rootLabel(location.path) ?: location.path.substringAfterLast('/')
         FilesLocation.Favourites -> "Favourites"
         FilesLocation.Recent -> "Recent files"
+        FilesLocation.Trash -> "Trash"
+        FilesLocation.Recover -> "Recover deleted files"
         FilesLocation.Home -> "Device files"
     }
-    // Recent files stay newest first; everything else follows the sort setting
+    // Recent files and the trash stay newest first; everything else follows the sort setting
     val shown = remember(state.files, sort, descending, filter, location) {
         val matching = state.files.filter { filter.isNullOrBlank() || it.name.contains(filter!!.trim(), ignoreCase = true) }
-        if (location == FilesLocation.Recent) matching else DeviceFilesRepository.sorted(matching, sort, descending)
+        if (location == FilesLocation.Recent || inTrash) matching else DeviceFilesRepository.sorted(matching, sort, descending)
     }
     val albums = remember(state.albums, filter) {
         state.albums.filter { filter.isNullOrBlank() || it.folder.name.contains(filter!!.trim(), ignoreCase = true) }
@@ -482,13 +528,48 @@ private fun ListPage(
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
+        bottomBar = { state.progress?.let { ProgressBanner(it, Modifier.fillMaxWidth()) } },
         topBar = {
-            if (selecting) {
+            if (selecting && inTrash) {
+                // KMK (r97): the trash's own toolbar: put back, or delete for good
                 TopAppBar(
                     navigationIcon = {
                         IconButton(onClick = { selection.clear() }) { Icon(Icons.Outlined.Close, contentDescription = "Cancel") }
                     },
                     title = { Text("${selection.size} selected") },
+                    actions = {
+                        IconButton(onClick = {
+                            selection.clear()
+                            selection.addAll(shown.map { it.path })
+                        }) { Icon(Icons.Outlined.SelectAll, contentDescription = "Select all") }
+                        IconButton(onClick = { actions.run(FileAction.Restore, selectedFiles) { selection.clear() } }) {
+                            Icon(Icons.Outlined.RestoreFromTrash, contentDescription = "Restore")
+                        }
+                        IconButton(onClick = { actions.run(FileAction.DeleteForever, selectedFiles) { selection.clear() } }) {
+                            Icon(Icons.Outlined.DeleteForever, contentDescription = "Delete forever")
+                        }
+                    },
+                )
+            } else if (selecting) {
+                TopAppBar(
+                    navigationIcon = {
+                        IconButton(onClick = { selection.clear() }) { Icon(Icons.Outlined.Close, contentDescription = "Cancel") }
+                    },
+                    // KMK (r97): the names travel with the count, so an accidental extra row is seen before Delete
+                    title = {
+                        Column {
+                            Text("${selection.size} selected", maxLines = 1)
+                            Text(
+                                selectedFiles.take(3).joinToString(", ") { it.name } +
+                                    (if (selectedFiles.size > 3) " and ${selectedFiles.size - 3} more" else ""),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    },
                     actions = {
                         IconButton(onClick = {
                             selection.clear()
@@ -543,15 +624,44 @@ private fun ListPage(
                         if (filter == null) {
                             IconButton(onClick = { filter = "" }) { Icon(Icons.Outlined.Search, contentDescription = "Search") }
                         }
-                        IconButton(onClick = { prefs.gridView.set(!grid) }) {
-                            Icon(
-                                if (grid) Icons.AutoMirrored.Outlined.ViewList else Icons.Outlined.GridView,
-                                contentDescription = if (grid) "List view" else "Grid view",
-                            )
+                        if (!inTrash) {
+                            IconButton(onClick = { prefs.gridView.set(!grid) }) {
+                                Icon(
+                                    if (grid) Icons.AutoMirrored.Outlined.ViewList else Icons.Outlined.GridView,
+                                    contentDescription = if (grid) "List view" else "Grid view",
+                                )
+                            }
                         }
-                        if (location != FilesLocation.Recent) SortMenu(sort, descending)
-                        IconButton(onClick = { settings = true }) {
-                            Icon(Icons.Outlined.Settings, contentDescription = "Settings")
+                        if (location != FilesLocation.Recent && !inTrash) SortMenu(sort, descending)
+                        if (inTrash) {
+                            Box {
+                                IconButton(onClick = { trashMenu = true }) {
+                                    Icon(Icons.Outlined.MoreVert, contentDescription = "More")
+                                }
+                                DropdownMenu(expanded = trashMenu, onDismissRequest = { trashMenu = false }) {
+                                    DropdownMenuItem(
+                                        text = { Text("Empty trash") },
+                                        leadingIcon = { Icon(Icons.Outlined.DeleteForever, contentDescription = null) },
+                                        enabled = shown.isNotEmpty(),
+                                        onClick = {
+                                            trashMenu = false
+                                            confirmEmpty = true
+                                        },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Recover deleted files") },
+                                        leadingIcon = { Icon(Icons.Outlined.RestoreFromTrash, contentDescription = null) },
+                                        onClick = {
+                                            trashMenu = false
+                                            navigator.openLocation(FilesLocation.Recover)
+                                        },
+                                    )
+                                }
+                            }
+                        } else {
+                            IconButton(onClick = { settings = true }) {
+                                Icon(Icons.Outlined.Settings, contentDescription = "Settings")
+                            }
                         }
                     },
                 )
@@ -598,6 +708,8 @@ private fun ListPage(
                         when {
                             !filter.isNullOrBlank() -> "Nothing matches \"$filter\""
                             location == FilesLocation.Favourites -> "Star files and folders from their ⋮ menu to keep them here"
+                            inTrash -> "Trash is empty. Deleted files wait here for " +
+                                "${DeviceFilesPreferences.instance.trashDays.get()} days before they're gone for good."
                             location is FilesLocation.Folder -> "This folder is empty"
                             else -> "No files"
                         },
@@ -609,6 +721,9 @@ private fun ListPage(
                     val onClick: (DeviceFile) -> Unit = { file ->
                         if (selecting) {
                             if (file.path in selection) selection.remove(file.path) else selection.add(file.path)
+                        } else if (inTrash && file.isDirectory) {
+                            // a trashed folder isn't browsed in place: restore it first
+                            actions.run(FileAction.Info, listOf(file))
                         } else {
                             actions.open(file, navigator)
                         }
@@ -616,7 +731,7 @@ private fun ListPage(
                     val onLongClick: (DeviceFile) -> Unit = { file ->
                         if (file.path in selection) selection.remove(file.path) else selection.add(file.path)
                     }
-                    if (grid) {
+                    if (grid && !inTrash) {
                         LazyVerticalGrid(
                             columns = GridCells.Adaptive(130.dp),
                             contentPadding = PaddingValues(12.dp),
@@ -645,11 +760,17 @@ private fun ListPage(
                                     onClick = { onClick(file) },
                                     onLongClick = { onLongClick(file) },
                                     onAction = { actions.run(it, listOf(file)) },
-                                    subtitle = if (location is FilesLocation.Folder) {
-                                        null
-                                    } else {
-                                        subtitleOf(context, file) + " · " + file.parent.substringAfterLast('/')
+                                    subtitle = when {
+                                        location is FilesLocation.Folder -> null
+                                        // the trash row: where it was, and when it was deleted
+                                        inTrash -> {
+                                            val from = model.trashEntryOf(file)?.originalParent ?: file.parent
+                                            (if (file.isDirectory) "Folder" else formatSize(context, file.size)) +
+                                                " · deleted ${formatDate(file.modified)} · from ${from.substringAfterLast('/')}"
+                                        }
+                                        else -> subtitleOf(context, file) + " · " + file.parent.substringAfterLast('/')
                                     },
+                                    inTrash = inTrash,
                                 )
                             }
                         }
@@ -660,10 +781,26 @@ private fun ListPage(
     }
 
     if (settings) {
-        FilesSettingsDialog(onDismiss = {
-            settings = false
-            model.refresh()
-        })
+        FilesSettingsDialog(
+            onDismiss = {
+                settings = false
+                model.refresh()
+            },
+            onEmptyTrash = { model.emptyTrash() },
+            onRecover = {
+                settings = false
+                navigator.openLocation(FilesLocation.Recover)
+            },
+        )
+    }
+    if (confirmEmpty) {
+        EmptyTrashDialog(state.trash.size, state.trash.sumOf { it.size }, onDismiss = { confirmEmpty = false }) {
+            confirmEmpty = false
+            scope.launch {
+                val done = model.emptyTrash()
+                context.toast(if (done == 1) "Deleted 1 item" else "Deleted $done items")
+            }
+        }
     }
     actions.Dialogs()
 }
@@ -755,10 +892,18 @@ private class FileActionsState(
     private val model: DeviceFilesScreenModel,
     private val context: android.content.Context,
     private val scope: kotlinx.coroutines.CoroutineScope,
+    /** KMK (r97): where "Moved to trash · Undo" shows */
+    private val snackbar: SnackbarHostState,
 ) {
     var renaming by mutableStateOf<DeviceFile?>(null)
     var deleting by mutableStateOf<List<DeviceFile>?>(null)
+
+    /** KMK (r97): true when the pending delete skips the trash (Delete forever, or the trash is off) */
+    var deletingForever by mutableStateOf(false)
     var info by mutableStateOf<DeviceFile?>(null)
+
+    /** KMK (r97): restores that found a file at the original path */
+    var conflicts by mutableStateOf<List<DeviceFilesTrash.Entry>?>(null)
     private var afterDelete: (() -> Unit)? = null
 
     fun open(file: DeviceFile, navigator: Navigator) {
@@ -778,9 +923,27 @@ private class FileActionsState(
             FileAction.Rename -> renaming = files.first()
             FileAction.Delete -> {
                 afterDelete = onDone
+                deletingForever = !DeviceFilesPreferences.instance.trashEnabled.get()
                 deleting = files
             }
             FileAction.Info -> info = files.first()
+            // KMK (r97): the Trash page
+            FileAction.Restore -> {
+                val entries = files.mapNotNull(model::trashEntryOf)
+                scope.launch {
+                    val outcome = model.restore(entries)
+                    onDone?.invoke()
+                    if (outcome.conflicts.isNotEmpty()) conflicts = outcome.conflicts
+                    if (outcome.restored > 0 || outcome.conflicts.isEmpty()) {
+                        context.toast(if (outcome.restored == 1) "Restored 1 item" else "Restored ${outcome.restored} items")
+                    }
+                }
+            }
+            FileAction.DeleteForever -> {
+                afterDelete = onDone
+                deletingForever = true
+                deleting = files
+            }
         }
     }
 
@@ -798,24 +961,69 @@ private class FileActionsState(
             }
         }
         deleting?.let { files ->
-            DeleteDialog(files, onDismiss = { deleting = null }) {
+            val forever = deletingForever
+            val inTrash = files.all { model.trashEntryOf(it) != null }
+            DeleteDialog(files, toTrash = !forever, onDismiss = { deleting = null }) {
                 deleting = null
                 scope.launch {
-                    val done = model.delete(files)
-                    // KMK: says what did go, since part of a selection (or of a folder) may be gone already
-                    if (done < files.size) context.toast("Deleted $done of ${files.size}")
-                    afterDelete?.invoke()
-                    afterDelete = null
+                    if (inTrash) {
+                        // rows of the Trash page: delete the entries, not paths inside the bin by hand
+                        val entries = files.mapNotNull(model::trashEntryOf)
+                        val done = model.deleteForever(entries)
+                        afterDelete?.invoke()
+                        afterDelete = null
+                        if (done < files.size) context.toast("Deleted $done of ${files.size}")
+                    } else {
+                        val outcome = model.delete(files, forever)
+                        afterDelete?.invoke()
+                        afterDelete = null
+                        report(outcome)
+                    }
+                }
+            }
+        }
+        conflicts?.let { entries ->
+            RestoreConflictDialog(entries, onDismiss = { conflicts = null }) {
+                conflicts = null
+                scope.launch {
+                    val outcome = model.restore(entries, asCopy = true)
+                    context.toast(if (outcome.restored == 1) "Restored 1 item as a copy" else "Restored ${outcome.restored} items as copies")
                 }
             }
         }
         info?.let { InfoDialog(it, onDismiss = { info = null }) }
     }
+
+    /** KMK (r97): what a delete did: refused rows, how many went, and Undo for what went to the trash */
+    private suspend fun report(outcome: DeviceFilesScreenModel.DeleteOutcome) {
+        if (outcome.refused.isNotEmpty()) {
+            context.toast(
+                "Not deleted: ${outcome.refused.take(2).joinToString(", ")}" +
+                    (if (outcome.refused.size > 2) " and ${outcome.refused.size - 2} more" else "") +
+                    " – listed as a file but it's a folder. Open its folder to delete it.",
+                android.widget.Toast.LENGTH_LONG,
+            )
+        }
+        val trashed = outcome.trashed
+        if (trashed.isNotEmpty()) {
+            val text = (if (trashed.size == 1) "Moved ${trashed.first().name} to trash" else "Moved ${trashed.size} items to trash") +
+                (if (outcome.deleted < outcome.total) " (${outcome.total - outcome.deleted} not)" else "")
+            val result = snackbar.showSnackbar(text, actionLabel = "Undo", duration = SnackbarDuration.Long)
+            if (result == SnackbarResult.ActionPerformed) {
+                val back = model.restore(trashed)
+                if (back.conflicts.isNotEmpty()) conflicts = back.conflicts
+                context.toast(if (back.restored == 1) "Restored 1 item" else "Restored ${back.restored} items")
+            }
+        } else if (outcome.deleted < outcome.total) {
+            // KMK: says what did go, since part of a selection (or of a folder) may be gone already
+            context.toast("Deleted ${outcome.deleted} of ${outcome.total}")
+        }
+    }
 }
 
 @Composable
-private fun rememberFileActionsState(model: DeviceFilesScreenModel): FileActionsState {
+private fun rememberFileActionsState(model: DeviceFilesScreenModel, snackbar: SnackbarHostState): FileActionsState {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    return remember(model) { FileActionsState(model, context, scope) }
+    return remember(model, snackbar) { FileActionsState(model, context, scope, snackbar) }
 }

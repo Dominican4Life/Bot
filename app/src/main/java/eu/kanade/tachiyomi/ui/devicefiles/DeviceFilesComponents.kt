@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Android
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.DeleteForever
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Image
@@ -53,9 +54,11 @@ import androidx.compose.material.icons.outlined.InsertDriveFile
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.MusicNote
+import androidx.compose.material.icons.outlined.RestoreFromTrash
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -70,9 +73,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -93,9 +98,12 @@ import androidx.core.graphics.drawable.toBitmap
 import coil3.compose.AsyncImage
 import eu.kanade.tachiyomi.devicefiles.DeviceFile
 import eu.kanade.tachiyomi.devicefiles.DeviceFilesPreferences
+import eu.kanade.tachiyomi.devicefiles.DeviceFilesTrash
 import eu.kanade.tachiyomi.devicefiles.FileKind
 import eu.kanade.tachiyomi.devicefiles.FileSort
+import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import tachiyomi.presentation.core.util.collectAsState
 import java.io.File
@@ -262,9 +270,19 @@ enum class FileAction(val title: String, val icon: ImageVector) {
     Rename("Rename", Icons.Outlined.Edit),
     Delete("Delete", Icons.Outlined.Delete),
     Info("File info", Icons.Outlined.Info),
+
+    // KMK (r97): the Trash page
+    Restore("Restore", Icons.Outlined.RestoreFromTrash),
+    DeleteForever("Delete forever", Icons.Outlined.DeleteForever),
 }
 
-fun actionsFor(file: DeviceFile, favourite: Boolean): List<FileAction> = buildList {
+fun actionsFor(file: DeviceFile, favourite: Boolean, inTrash: Boolean = false): List<FileAction> = buildList {
+    if (inTrash) {
+        add(FileAction.Restore)
+        add(FileAction.DeleteForever)
+        add(FileAction.Info)
+        return@buildList
+    }
     if (!file.isDirectory) {
         add(FileAction.OpenWith)
         add(FileAction.Share)
@@ -276,14 +294,14 @@ fun actionsFor(file: DeviceFile, favourite: Boolean): List<FileAction> = buildLi
 }
 
 @Composable
-private fun ActionsMenu(file: DeviceFile, favourite: Boolean, onAction: (FileAction) -> Unit) {
+private fun ActionsMenu(file: DeviceFile, favourite: Boolean, inTrash: Boolean, onAction: (FileAction) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
         IconButton(onClick = { open = true }) {
             Icon(Icons.Outlined.MoreVert, contentDescription = "More")
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            actionsFor(file, favourite).forEach { action ->
+            actionsFor(file, favourite, inTrash).forEach { action ->
                 DropdownMenuItem(
                     text = { Text(action.title) },
                     leadingIcon = { Icon(action.icon, contentDescription = null) },
@@ -308,6 +326,8 @@ fun FileRow(
     onLongClick: () -> Unit,
     onAction: (FileAction) -> Unit,
     subtitle: String? = null,
+    /** KMK (r97): a Trash page row: Restore / Delete forever instead of the usual menu */
+    inTrash: Boolean = false,
 ) {
     val context = LocalContext.current
     Row(
@@ -358,7 +378,7 @@ fun FileRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        if (!selecting) ActionsMenu(file, favourite, onAction) else Spacer(Modifier.width(48.dp))
+        if (!selecting) ActionsMenu(file, favourite, inTrash, onAction) else Spacer(Modifier.width(48.dp))
     }
 }
 
@@ -478,28 +498,142 @@ fun RenameDialog(file: DeviceFile, onDismiss: () -> Unit, onRename: (String) -> 
     )
 }
 
+/**
+ * KMK (r97): names what goes (the first few, then "and N more") and says where: the trash bin, or gone for good.
+ * The old "Delete 2 items?" hid a row that was in the selection by accident.
+ */
 @Composable
-fun DeleteDialog(files: List<DeviceFile>, onDismiss: () -> Unit, onDelete: () -> Unit) {
+fun DeleteDialog(files: List<DeviceFile>, toTrash: Boolean, onDismiss: () -> Unit, onDelete: () -> Unit) {
     val folders = files.count { it.isDirectory }
+    val verb = if (toTrash) "Move to trash" else "Delete forever"
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (files.size == 1) "Delete ${files.first().name}?" else "Delete ${files.size} items?") },
-        text = {
+        title = {
             Text(
-                buildString {
-                    append("This permanently deletes ")
-                    append(if (files.size == 1) "it" else "them")
-                    append(" from the device")
-                    if (folders > 0) append(", with everything inside the ${if (folders == 1) "folder" else "folders"}")
-                    append(".")
+                when {
+                    files.size == 1 -> "$verb: ${files.first().name}?"
+                    else -> "$verb ${files.size} items?"
                 },
             )
         },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (files.size > 1) {
+                    Column {
+                        files.take(NAMED_IN_DIALOG).forEach { f ->
+                            Text(
+                                (if (f.isDirectory) "\uD83D\uDCC1 " else "") + f.name,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        if (files.size > NAMED_IN_DIALOG) {
+                            Text(
+                                "and ${files.size - NAMED_IN_DIALOG} more",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+                Text(
+                    buildString {
+                        val them = if (files.size == 1) "it" else "them"
+                        if (toTrash) {
+                            append("This moves $them to this app's trash bin on the same storage")
+                        } else {
+                            append("This permanently deletes $them from the device")
+                        }
+                        if (folders > 0) {
+                            append(", with everything inside the ${if (folders == 1) "folder" else "folders"}")
+                        }
+                        append(".")
+                        if (toTrash) {
+                            val days = DeviceFilesPreferences.instance.trashDays.get()
+                            append(" Restore from Trash within $days days; after that ${if (files.size == 1) "it's" else "they're"} gone.")
+                        } else {
+                            append(" There is no undo.")
+                        }
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+        },
         confirmButton = {
-            TextButton(onClick = onDelete) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+            TextButton(onClick = onDelete) {
+                Text(if (toTrash) "Move to trash" else "Delete forever", color = MaterialTheme.colorScheme.error)
+            }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+}
+
+private const val NAMED_IN_DIALOG = 6
+
+/** KMK (r97): a restore found something at the original path */
+@Composable
+fun RestoreConflictDialog(entries: List<DeviceFilesTrash.Entry>, onDismiss: () -> Unit, onRestoreAsCopy: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (entries.size == 1) "Already exists" else "${entries.size} already exist") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                entries.take(NAMED_IN_DIALOG).forEach { e ->
+                    Text(e.original, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+                if (entries.size > NAMED_IN_DIALOG) Text("and ${entries.size - NAMED_IN_DIALOG} more")
+                Text(
+                    "Another file is at the original place. Restore next to it as \"name (2)\"? The file there is left as it is.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = onRestoreAsCopy) { Text("Restore as copy") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Keep in trash") } },
+    )
+}
+
+/** KMK (r97): confirms emptying the trash */
+@Composable
+fun EmptyTrashDialog(count: Int, size: Long, onDismiss: () -> Unit, onEmpty: () -> Unit) {
+    val context = LocalContext.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Empty trash?") },
+        text = {
+            Text(
+                "This permanently deletes ${if (count == 1) "1 item" else "$count items"} (${formatSize(context, size)}). " +
+                    "There is no undo.",
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onEmpty, enabled = count > 0) {
+                Text("Delete forever", color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+/** KMK (r97): "Deleting… n of N" while a delete, shred or empty runs */
+@Composable
+fun ProgressBanner(progress: Pair<Int, Int>, modifier: Modifier = Modifier) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.inverseSurface,
+        contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+        modifier = modifier.padding(16.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            CircularProgressIndicator(
+                Modifier.size(18.dp),
+                strokeWidth = 2.dp,
+                color = MaterialTheme.colorScheme.inverseOnSurface,
+            )
+            Text("Deleting… ${progress.first} of ${progress.second}", modifier = Modifier.padding(start = 12.dp))
+        }
+    }
 }
 
 @Composable
@@ -541,9 +675,17 @@ fun InfoDialog(file: DeviceFile, onDismiss: () -> Unit) {
     )
 }
 
-/** Device files' settings: what shows, how lists are sorted and laid out, and where files open */
+/**
+ * Device files' settings: what shows, how lists are sorted and laid out, where files open, and (r97) how deleting
+ * works. [onEmptyTrash] runs the confirmed empty; [onRecover] opens the Recover page.
+ */
 @Composable
-fun FilesSettingsDialog(onDismiss: () -> Unit) {
+fun FilesSettingsDialog(
+    onDismiss: () -> Unit,
+    onEmptyTrash: (suspend () -> Int)? = null,
+    onRecover: (() -> Unit)? = null,
+) {
+    val context = LocalContext.current
     val prefs = DeviceFilesPreferences.instance
     val showHidden by prefs.showHidden.collectAsState()
     val showRecent by prefs.showRecent.collectAsState()
@@ -552,6 +694,15 @@ fun FilesSettingsDialog(onDismiss: () -> Unit) {
     val descending by prefs.sortDescending.collectAsState()
     val playInApp by prefs.playVideosInApp.collectAsState()
     val readInApp by prefs.readComicsInApp.collectAsState()
+    val trashEnabled by prefs.trashEnabled.collectAsState()
+    val trashDays by prefs.trashDays.collectAsState()
+    val shred by prefs.shredEnabled.collectAsState()
+    var emptied by remember { mutableIntStateOf(0) }
+    val totals by produceState<Pair<Int, Long>?>(null, emptied) {
+        value = withContext(Dispatchers.IO) { runCatching { DeviceFilesTrash.totals(context) }.getOrNull() }
+    }
+    var confirmEmpty by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Device files settings") },
@@ -596,10 +747,98 @@ fun FilesSettingsDialog(onDismiss: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp),
                 )
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                SettingsLabel("Deleting")
+                SwitchRow(
+                    "Trash bin",
+                    "Delete moves files to a hidden .komikku-trash folder on the same storage, so a wrong delete can be undone",
+                    trashEnabled,
+                ) { prefs.trashEnabled.set(it) }
+                if (trashEnabled) {
+                    TrashDaysRow(trashDays) { prefs.trashDays.set(it) }
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Empty trash now", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                totals?.let { (count, size) ->
+                                    if (count == 0) "Trash is empty" else "$count items · ${formatSize(context, size)}"
+                                } ?: "…",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        TextButton(
+                            onClick = { confirmEmpty = true },
+                            enabled = onEmptyTrash != null && (totals?.first ?: 0) > 0,
+                        ) { Text("Empty") }
+                    }
+                }
+                SwitchRow("Overwrite before deleting (best effort)", "Only on Delete forever and Empty trash", shred) {
+                    prefs.shredEnabled.set(it)
+                }
+                Text(
+                    "Writes random bytes over the file first. Flash storage and the storage layer decide where bytes land, " +
+                        "so this is a best effort; a normal delete is already unreadable without this phone's encryption keys. " +
+                        "Files over 2 GB are only deleted.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+                if (onRecover != null) {
+                    TextButton(onClick = onRecover, modifier = Modifier.padding(top = 4.dp)) {
+                        Icon(Icons.Outlined.RestoreFromTrash, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Text("Recover deleted files", modifier = Modifier.padding(start = 8.dp))
+                    }
+                }
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
     )
+    if (confirmEmpty) {
+        val (count, size) = totals ?: (0 to 0L)
+        EmptyTrashDialog(count, size, onDismiss = { confirmEmpty = false }) {
+            confirmEmpty = false
+            scope.launch {
+                val done = onEmptyTrash?.invoke() ?: 0
+                context.toast(if (done == 1) "Deleted 1 item" else "Deleted $done items")
+                emptied++
+            }
+        }
+    }
+}
+
+/** How long trashed files are kept: a few fixed choices */
+@Composable
+private fun TrashDaysRow(days: Int, onChange: (Int) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().clickable { open = true }.padding(vertical = 6.dp),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Keep for", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "Older items are deleted for good when Device files opens",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Box {
+            TextButton(onClick = { open = true }) { Text("$days days") }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                listOf(1, 7, 14, 30, 60, 90).forEach { d ->
+                    DropdownMenuItem(
+                        text = { Text(if (d == 1) "1 day" else "$d days") },
+                        leadingIcon = { RadioButton(selected = d == days, onClick = null) },
+                        onClick = {
+                            onChange(d)
+                            open = false
+                        },
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable

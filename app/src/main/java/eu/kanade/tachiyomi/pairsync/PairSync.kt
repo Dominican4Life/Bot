@@ -12,6 +12,9 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import eu.kanade.tachiyomi.diagnostics.Health
+import eu.kanade.tachiyomi.diagnostics.HealthKind
+import eu.kanade.tachiyomi.diagnostics.SyncTrace
 import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -643,7 +646,29 @@ object PairSync {
             true
         }
         if (changed && phase != SyncPhase.Idle) startService()
+        // KMK (r97) -->
+        // Diagnostics sync trace: the phase and the time since the last one (one volatile read when off)
+        if (changed) {
+            val now = System.currentTimeMillis()
+            val since = if (lastPhaseAt == 0L) 0L else now - lastPhaseAt
+            lastPhaseAt = now
+            SyncTrace.phase(phase.name, since, _status.value.peerAddress)
+            AppLog.v(eu.kanade.tachiyomi.diagnostics.DiagCategory.SYNC, "sync") {
+                "phase ${phase.name} · peer=${_status.value.peerAddress ?: "-"} duration_ms=$since"
+            }
+        }
+        // KMK <--
     }
+
+    // KMK (r97) -->
+    @Volatile
+    private var lastPhaseAt = 0L
+
+    /** A finished sync: a Health event (SYNC dot on the Diagnostics 7-day strip) */
+    private fun syncedEvent(name: String, summary: String) {
+        runCatching { Health.event(HealthKind.SYNC_OK, "Pair sync with $name", summary.take(300)) }
+    }
+    // KMK <--
 
     /** Moves the progress bar, every [PROGRESS_STEP] bytes; KMK (r90): not for frames under [minTotal] */
     private fun progress(sending: Boolean, minTotal: Long = 0L): (Long, Long) -> Unit {
@@ -712,6 +737,8 @@ object PairSync {
         if (runId != id) return
         // KMK (r91): the VPN message was logged already in this sync: not twice
         log(if (error == PairSyncWifi.VPN_TEXT && vpnSaidRun == id) text.removeSuffix(": $error") else text)
+        // KMK (r97): a Health event (SYNC dot on the Diagnostics 7-day strip)
+        runCatching { Health.event(HealthKind.SYNC_FAILED, "Pair sync failed", text) }
         _status.update {
             it.copy(
                 lastError = error,
@@ -1198,6 +1225,7 @@ object PairSync {
                     ),
                 )
                 log("Synced with $name over ${via.label}: $summary")
+                syncedEvent(name, summary.toString()) // KMK (r97)
                 summary.extrasSkipped?.let { log(it) }
             }
             // KMK (r92): then covers and downloads, this device first (it sent its library first too)
@@ -1946,6 +1974,7 @@ object PairSync {
                             ),
                         )
                         log("Synced with ${peer.name} over ${via.label}: $summary")
+                        syncedEvent(peer.name, summary.toString()) // KMK (r97)
                         summary.extrasSkipped?.let { log(it) }
                     }
                     // KMK (r92): then covers and downloads, the other device first
@@ -2747,7 +2776,10 @@ object PairSync {
                         journal.reposAnime,
                     )
                 }
-                val result = PairSyncData.import(received, ::log, show)
+                // KMK (r97): Perfetto section around the merge
+                val result = eu.kanade.tachiyomi.diagnostics.Perf.traced("sync-apply:library") {
+                    PairSyncData.import(received, ::log, show)
+                }
                 // KMK (r91): what it really sent is what it sends, until the next live check
                 received.sentRows?.let { seen(journal.peerAddress, it, it.isEmpty(), live = null) }
                 result
@@ -2778,7 +2810,9 @@ object PairSync {
                 reposAdded = journal.appliedReposAdded,
             )
         }
-        val applied = PairSyncExtras.applyStaged(stage.dir, journal.items, show)
+        val applied = eu.kanade.tachiyomi.diagnostics.Perf.traced("sync-apply:extras") { // KMK (r97)
+            PairSyncExtras.applyStaged(stage.dir, journal.items, show)
+        }
         summary = summary.copy(
             sentManga = journal.sentManga,
             sentAnime = journal.sentAnime,
@@ -2812,6 +2846,7 @@ object PairSync {
                 ),
             )
             log("Synced with $name over ${via.label}: $summary")
+            syncedEvent(name, summary.toString()) // KMK (r97)
             summary.extrasSkipped?.let { log(it) }
         }
         stage.delete()
@@ -3854,7 +3889,20 @@ object PairSync {
             }
         }
 
-        fun send(data: ByteArray, progress: ((Long, Long) -> Unit)? = null) = write(encrypt(key, data), progress)
+        fun send(data: ByteArray, progress: ((Long, Long) -> Unit)? = null) {
+            // KMK (r97): Diagnostics sync trace (one volatile read when off)
+            val t0 = System.nanoTime()
+            write(encrypt(key, data), progress)
+            if (SyncTrace.wanted()) {
+                SyncTrace.frame(
+                    _status.value.phase.name, "send", frameTypeOf(data), data.size.toLong(),
+                    (System.nanoTime() - t0) / 1_000_000, _status.value.peerAddress,
+                )
+            }
+        }
+
+        // KMK (r97): json or binary, from the first byte (for the trace record only)
+        private fun frameTypeOf(data: ByteArray): String = if (data.firstOrNull() == '{'.code.toByte()) "json" else "binary"
 
         /** KMK (r92): the first [length] bytes of [data] as one frame (a file's piece, not copied first) */
         fun sendPart(data: ByteArray, length: Int) = write(encrypt(key, data, length), null)
@@ -3896,7 +3944,18 @@ object PairSync {
         /** Decrypts a frame read with [readBody] */
         fun open(frame: ByteArray): ByteArray = decrypt(key, frame)
 
-        fun receive(progress: ((Long, Long) -> Unit)? = null): ByteArray = decrypt(key, readFrame(progress))
+        fun receive(progress: ((Long, Long) -> Unit)? = null): ByteArray {
+            // KMK (r97): Diagnostics sync trace (one volatile read when off)
+            val t0 = System.nanoTime()
+            val data = decrypt(key, readFrame(progress))
+            if (SyncTrace.wanted()) {
+                SyncTrace.frame(
+                    _status.value.phase.name, "receive", frameTypeOf(data), data.size.toLong(),
+                    (System.nanoTime() - t0) / 1_000_000, _status.value.peerAddress,
+                )
+            }
+            return data
+        }
 
         fun sendJson(message: JsonObject) = send(message.toString().toByteArray())
 

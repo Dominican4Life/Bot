@@ -283,9 +283,9 @@ internal class JsHtmlPages(private val maxPages: Int = 24) {
         idByHtml.clear()
     }
 
-    /** Pages kept, their page text in bytes, and a rough size of their parsed DOM (r95) */
+    /** Pages kept, their page text in bytes, and a rough size of their parsed DOM (r95; KMK r97: read by Diagnostics) */
     @Synchronized
-    private fun stats(): Triple<Int, Long, Long> = Triple(
+    internal fun stats(): Triple<Int, Long, Long> = Triple(
         pages.size,
         pages.values.sumOf { it.html.length.toLong() * 2 },
         pages.values.sumOf { it.elementCount.toLong() * DOM_BYTES_PER_ELEMENT },

@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.sourcelab
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -145,6 +146,23 @@ internal class SourceLabScreen(
             onDeleted = { model.open(null) },
         )
 
+        // Whether this screen has shown Home: a source opened from Browse (key given, Home never shown) has nothing
+        // of the Lab below it, so Back leaves; after Home was shown, Back from a source returns to Home
+        var visitedHome by rememberSaveable { mutableStateOf(sourceKey == null) }
+        LaunchedEffect(state.key) { if (state.key == null) visitedHome = true }
+        // Home from an open source, through the unsaved-changes dialog (Save / Discard / Cancel); on Discard the
+        // editor drops the edits now, so Home doesn't ask about them a second time
+        val goHome: () -> Unit = {
+            actions.askBeforeReplacing("Going to the source list") {
+                val s = editor.state.value
+                if (s.dirty) {
+                    if (s.saved) editor.open(s.key) else editor.newSource(s.json, s.anime)
+                }
+                railDest = RailDest.Sources
+                if (model.state.value.key != null) model.open(null)
+            }
+        }
+
         val openSource: (String, LabTab) -> Unit = { key, tab ->
             val name = editor.savedName(key)
             actions.askBeforeReplacing("Opening ${name ?: "another source"}") {
@@ -169,19 +187,20 @@ internal class SourceLabScreen(
                 navigator.push(LabFlowScreenFactory.newSource(null))
             }
         }
+        // Back inside the Lab: Templates → what was behind it; a source opened from Home → Home (phone and tablet
+        // alike; r96 had `!tablet` here, so the tablet always left); a source opened from Browse, or Home → the caller
+        val backInsideLab = railDest != RailDest.Sources || (state.key != null && visitedHome)
         fun back() {
-            if (railDest != RailDest.Sources) {
-                railDest = RailDest.Sources
-                return
+            when {
+                railDest != RailDest.Sources -> railDest = RailDest.Sources
+                state.key != null && visitedHome -> goHome()
+                else -> actions.leave()
             }
-            // A source opened from Browse (the Lab's Home isn't below it): back leaves, like any screen
-            val openedFromOutside = sourceKey != null && state.key == sourceKey
-            if (state.key != null && !tablet && !editorState.dirty && !openedFromOutside) {
-                model.open(null)
-                return
-            }
-            actions.leave()
         }
+        // The system Back too: without this it popped the screen (Browse) from a source opened on Home. Declared
+        // after EditorDialogs' dirty handler so it wins while enabled; the Code tab's find bar, declared later, wins
+        // over both while open
+        BackHandler(enabled = backInsideLab) { back() }
 
         Scaffold(
             snackbarHost = { SnackbarHost(snackbar) },
@@ -200,12 +219,7 @@ internal class SourceLabScreen(
                     LabRail(
                         state = state,
                         dest = railDest,
-                        onSources = {
-                            actions.askBeforeReplacing("Going to the source list") {
-                                railDest = RailDest.Sources
-                                if (state.key != null) model.open(null)
-                            }
-                        },
+                        onSources = goHome,
                         onNewSource = newSource,
                         onRules = { navigator.push(RulesScreen()) },
                         onTemplates = { railDest = RailDest.Templates },
@@ -545,7 +559,10 @@ private fun LabRail(
             label = { Text("Re-test all") },
         )
         if (state.key != null && dest == RailDest.Sources) {
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp, horizontal = 12.dp))
+            // A fixed width, never fillMaxWidth: the rail's Column is wrap-content (`widthIn(min = 80.dp)`) and is
+            // measured with the whole screen as its max, so a fillMaxWidth divider (M3's default) grew the rail to
+            // the full width and the content Column next to it got 0 dp (r96: empty panes once a source opened)
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp).width(56.dp))
             LabTab.entries.forEach { tab ->
                 NavigationRailItem(
                     selected = state.tab == tab,

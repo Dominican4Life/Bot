@@ -247,6 +247,13 @@ object Notifications {
                     setShowBadge(false)
                 },
                 // SY <--
+                // KMK (r97) -->
+                // Diagnostics: the recording notification, "report ready", repeated stalls
+                buildNotificationChannel(eu.kanade.tachiyomi.diagnostics.DiagActions.CHANNEL, IMPORTANCE_LOW) {
+                    setName("Diagnostics")
+                    setShowBadge(false)
+                },
+                // KMK <--
             ),
         )
     }

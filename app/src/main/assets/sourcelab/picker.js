@@ -4,17 +4,43 @@
 //   { cssPath, tag, attrs, text, count, sameParentCount, hrefs, attrsAllHttp, pageUrl }
 // Nothing is guessed here: cssPath is the tag and classes of the element and its parents (nth-child only where
 // an element has no class), count is how many elements the document holds for that path.
+//
+// Modes (r96 fix): "pick" (default) swallows every tap before the site sees it, so nothing navigates or opens;
+// "browse" leaves the page alone so a title page can be opened by hand. The app switches with
+// window.__labPicker.setMode("pick" | "browse"). Injected again after every page load and on in-page (SPA)
+// navigations, so it has to be idempotent: a second run only puts the style back and re-applies the mode.
 (function () {
-  if (window.__labPicker) return;
-
   var STYLE_ID = "__lab-picker-style";
-  var style = document.createElement("style");
-  style.id = STYLE_ID;
-  style.textContent =
+  var STYLE_TEXT =
     ".__lab-like{outline:2px dashed #7aa2ff !important;outline-offset:1px !important}" +
     ".__lab-picked{outline:3px solid #2962ff !important;outline-offset:1px !important}" +
-    ".__lab-kept{outline:2px solid #4cd3c2 !important;outline-offset:-1px !important}";
-  (document.head || document.documentElement).appendChild(style);
+    ".__lab-kept{outline:2px solid #4cd3c2 !important;outline-offset:-1px !important}" +
+    "html.__lab-picking a,html.__lab-picking a *,html.__lab-picking button,html.__lab-picking [role=button]{cursor:crosshair !important}";
+
+  function ensureStyle() {
+    if (document.getElementById(STYLE_ID)) return;
+    var style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = STYLE_TEXT;
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  function applyModeClass(mode) {
+    var root = document.documentElement;
+    if (!root) return;
+    if (mode === "pick") root.classList.add("__lab-picking"); else root.classList.remove("__lab-picking");
+  }
+
+  if (window.__labPicker) {
+    // Same window (an SPA route change, or the app injecting again): the listeners are still attached
+    ensureStyle();
+    applyModeClass(window.__labPicker.mode);
+    if (window.LabPicker && window.LabPicker.log) window.LabPicker.log("picker already on " + location.href + " (" + window.__labPicker.mode + ")");
+    return;
+  }
+  ensureStyle();
+  var mode = "pick";
+  applyModeClass(mode);
 
   var GENERATED = /^(css|sc|jss|emotion)-[a-z0-9]{4,}$|^[A-Za-z]+_[A-Za-z0-9]{5,}$|^_[a-z0-9]{5,}$/;
 
@@ -149,11 +175,14 @@
   }
 
   function onTap(event) {
+    if (mode !== "pick") return;
     var el = event.target;
     if (!el || !el.tagName) return;
-    if (el.tagName.toLowerCase() === "html" || el.tagName.toLowerCase() === "body") return;
+    // The default action (following the link, submitting) and the site's own handlers are stopped even for a
+    // tap on the background, so picking mode never navigates
     event.preventDefault();
     event.stopPropagation();
+    if (el.tagName.toLowerCase() === "html" || el.tagName.toLowerCase() === "body") return;
     // A tap on text inside a link or an image's wrapper means the link or the image
     if (el.tagName.toLowerCase() !== "a" && el.tagName.toLowerCase() !== "img" && el.tagName.toLowerCase() !== "iframe" && el.tagName.toLowerCase() !== "video") {
       var inner = el.querySelector("img, iframe, video");
@@ -169,10 +198,39 @@
     }
   }
 
+  // In pick mode the site's handlers never see the tap: the touch / pointer / mouse phases are stopped at the
+  // document in the capture phase (Android fires them before the click, and sites open lightboxes or route
+  // from them), without preventDefault, so scrolling and the browser's synthesized click still happen; that
+  // click is then taken by onTap, which prevents the link's own navigation.
+  function swallow(event) {
+    if (mode !== "pick") return;
+    event.stopPropagation();
+  }
+  var EARLY = ["pointerdown", "pointerup", "mousedown", "mouseup", "touchstart", "touchend"];
+  for (var e = 0; e < EARLY.length; e++) document.addEventListener(EARLY[e], swallow, true);
+  // auxclick: a stylus button or long press on some keyboards; dblclick: a second quick tap
   document.addEventListener("click", onTap, true);
-  document.addEventListener("submit", function (e) { e.preventDefault(); }, true);
+  document.addEventListener("auxclick", onTap, true);
+  document.addEventListener("dblclick", function (ev) { if (mode === "pick") { ev.preventDefault(); ev.stopPropagation(); } }, true);
+  document.addEventListener("submit", function (ev) { if (mode === "pick") ev.preventDefault(); }, true);
+  // A link opened through a JS handler we didn't catch (window.open from a window-level listener): kept inside
+  window.open = (function (original) {
+    return function (url) {
+      if (mode === "pick") return null;
+      return original ? original.apply(window, arguments) : null;
+    };
+  })(window.open);
 
   window.__labPicker = {
+    mode: mode,
+    setMode: function (m) {
+      mode = m === "browse" ? "browse" : "pick";
+      window.__labPicker.mode = mode;
+      applyModeClass(mode);
+      if (mode === "browse") clearMarks();
+      if (window.LabPicker && window.LabPicker.log) window.LabPicker.log("picker mode " + mode + " on " + location.href);
+      return mode;
+    },
     // Keeps the outline on the elements already labelled (called by the app after a label is given)
     keep: function (selector) {
       var els = queryAll(selector);
@@ -186,5 +244,5 @@
     },
     count: function (selector) { return queryAll(selector).length; },
   };
-  if (window.LabPicker && window.LabPicker.log) window.LabPicker.log("picker ready on " + location.href);
+  if (window.LabPicker && window.LabPicker.log) window.LabPicker.log("picker ready (" + mode + ") on " + location.href);
 })();

@@ -125,6 +125,16 @@ class DeviceFilesPreferences(store: PreferenceStore) {
     /** History shows only what was played or read from Device files */
     val historyDeviceOnly = store.getBoolean("history_device_files_only", false)
 
+    // KMK (r97): deleting
+    /** Delete moves to `<storage>/.komikku-trash/` instead of removing the file */
+    val trashEnabled = store.getBoolean("device_files_trash", true)
+
+    /** Days a trashed file is kept before it's deleted for good */
+    val trashDays = store.getInt("device_files_trash_days", 30)
+
+    /** Overwrite a file's bytes before a delete-forever (best effort on flash storage) */
+    val shredEnabled = store.getBoolean("device_files_shred", false)
+
     fun sortOrder(): FileSort = runCatching { FileSort.valueOf(sort.get()) }.getOrDefault(FileSort.Name)
 
     fun isFavourite(path: String): Boolean = path in favourites.get()
@@ -198,6 +208,8 @@ object DeviceFilesRepository {
                 while (cursor.moveToNext() && out.size < limit) {
                     val path = cursor.getString(dataCol) ?: continue
                     if (!showHidden && "/." in path) continue
+                    // KMK (r97): the trash bin's contents only show on the Trash page
+                    if (DeviceFilesTrash.isTrashPath(path)) continue
                     out += DeviceFile(
                         path = path,
                         name = path.substringAfterLast('/'),
@@ -208,7 +220,24 @@ object DeviceFilesRepository {
                 }
             }
         }
-        return out
+        // KMK (r97): the index can hold a path whose letter case no longer matches the file (after a case-only
+        // rename, until the scan lands). Shared storage ignores case, so `exists()` is true for that stale row and
+        // deleting it deletes the real file. Only rows whose exact name is in their folder's listing stay.
+        return existingByExactName(out)
+    }
+
+    /**
+     * KMK (r97): keeps the rows whose exact-case name is in their parent folder's listing. Each parent is listed
+     * once per call. A folder that can't be listed (gone, or not readable) keeps its rows unchanged.
+     */
+    fun existingByExactName(files: List<DeviceFile>): List<DeviceFile> {
+        if (files.isEmpty()) return files
+        val unlistable = HashSet<String>()
+        val listings = HashMap<String, Set<String>>()
+        return files.filter { f ->
+            val names = listings.getOrPut(f.parent) { File(f.parent).list()?.toHashSet() ?: unlistable }
+            names === unlistable || f.name in names
+        }
     }
 
     fun summary(context: Context, category: FileCategory, showHidden: Boolean): CategorySummary {
@@ -223,12 +252,9 @@ object DeviceFilesRepository {
                 val dataCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATA)
                 val sizeCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.SIZE)
                 while (cursor.moveToNext()) {
-                    if (!showHidden) {
-                        val path = cursor.getString(dataCol) ?: continue
-                        if ("/." in path) continue
-                    } else if (cursor.isNull(dataCol)) {
-                        continue
-                    }
+                    val path = cursor.getString(dataCol) ?: continue
+                    if (!showHidden && "/." in path) continue
+                    if (DeviceFilesTrash.isTrashPath(path)) continue
                     count++
                     size += cursor.getLong(sizeCol)
                 }
@@ -277,15 +303,18 @@ object DeviceFilesRepository {
             showHidden = showHidden,
         )
         // KMK: plus files the media index doesn't know yet
-        val known = fromIndex.mapTo(HashSet()) { it.path }
+        // KMK (r97): keyed without letter case. Shared storage ignores case, so two spellings of one path are one
+        // file, and listing both gave a second row whose delete removed the file the other row showed
+        val known = fromIndex.mapTo(HashSet()) { it.path.lowercase() }
         val walked = runCatching { walkSearch(context, text, showHidden, limit = 500, isCancelled) }
             .getOrDefault(emptyList())
-        return fromIndex + walked.filter { it.path !in known }.take((500 - fromIndex.size).coerceAtLeast(0))
+        return fromIndex + walked.filter { known.add(it.path.lowercase()) }.take((500 - fromIndex.size).coerceAtLeast(0))
     }
 
     // KMK: the entries are read several at a time (a folder of ~2,300 items took over ten seconds one by one)
     fun list(dir: File, showHidden: Boolean): List<DeviceFile> {
-        val files = dir.listFiles().orEmpty().filter { showHidden || !it.name.startsWith(".") }
+        val files = dir.listFiles().orEmpty()
+            .filter { (showHidden || !it.name.startsWith(".")) && it.name != DeviceFilesTrash.DIR_NAME }
         if (files.size < PARALLEL_FROM) return files.map { DeviceFile.of(it, countChildren = true) }
         return runBlocking(Dispatchers.IO.limitedParallelism(LIST_THREADS)) {
             files.map { async { DeviceFile.of(it, countChildren = true) } }.awaitAll()
@@ -314,6 +343,7 @@ object DeviceFilesRepository {
                 if (found.size >= limit || System.currentTimeMillis() >= deadline || isCancelled()) break
                 val name = child.name
                 if (!showHidden && name.startsWith(".")) continue
+                if (name == DeviceFilesTrash.DIR_NAME) continue
                 if (child.isDirectory) {
                     // app-private data: not readable, and huge
                     if (!(name == "data" || name == "obb") || dir.name != "Android") pending.addLast(child)

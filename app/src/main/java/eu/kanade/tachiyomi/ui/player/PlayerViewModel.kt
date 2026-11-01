@@ -50,7 +50,6 @@ import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.data.anime.Anime
 import eu.kanade.tachiyomi.data.anime.AnimePrefs
 import eu.kanade.tachiyomi.data.anime.AnimeRepository
-import eu.kanade.tachiyomi.data.anime.Episode as DomainEpisode
 import eu.kanade.tachiyomi.data.anime.download.AnimeDownloadManager
 import eu.kanade.tachiyomi.data.filler.AnimeFillerListFetcher
 import eu.kanade.tachiyomi.data.saver.Image
@@ -145,6 +144,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.cancellation.CancellationException
+import eu.kanade.tachiyomi.data.anime.Episode as DomainEpisode
 
 class PlayerViewModel @JvmOverloads constructor(
     private val context: Application,
@@ -358,6 +358,81 @@ class PlayerViewModel @JvmOverloads constructor(
     // ANZ -->
     val seeking: kotlinx.coroutines.flow.StateFlow<Boolean?> = mpv.propFlow<Boolean>("seeking")
     // ANZ <--
+
+    // KMK (r97) -->
+    // Diagnostics: buffering / seek start–end records and a 1 s poll of the mpv figures, launched only while the
+    // player trace is on or the Live page shows the player (combine of the two flows), so a playback with the
+    // Diagnostics screen closed and the trace off costs nothing here
+    init {
+        viewModelScope.launch {
+            combine(
+                eu.kanade.tachiyomi.diagnostics.Traces.playerFlow,
+                eu.kanade.tachiyomi.diagnostics.LiveSampler.playerVisibleFlow,
+            ) { trace, visible -> trace || visible }
+                .collectLatest { on ->
+                    if (!on) {
+                        eu.kanade.tachiyomi.diagnostics.PlayerTrace.closed()
+                        return@collectLatest
+                    }
+                    coroutineScope {
+                        launch { collectEdges(pausedForCache, "BUFFER_START", "BUFFER_END") }
+                        launch { collectEdges(seeking, "SEEK_START", "SEEK_END") }
+                        while (true) {
+                            runCatching { eu.kanade.tachiyomi.diagnostics.PlayerTrace.poll(playerLive()) }
+                            delay(1_000L)
+                        }
+                    }
+                }
+        }
+    }
+
+    /** start/end records of a boolean mpv property, with the time the true phase took */
+    private suspend fun collectEdges(flow: kotlinx.coroutines.flow.StateFlow<Boolean?>, start: String, end: String) {
+        var since = 0L
+        flow.collect { value ->
+            val now = System.currentTimeMillis()
+            if (value == true && since == 0L) {
+                since = now
+                eu.kanade.tachiyomi.diagnostics.PlayerTrace.event(traceEvent(start, 0L))
+            } else if (value != true && since != 0L) {
+                eu.kanade.tachiyomi.diagnostics.PlayerTrace.event(traceEvent(end, now - since))
+                since = 0L
+            }
+        }
+    }
+
+    private fun traceEvent(name: String, ms: Long) = eu.kanade.tachiyomi.diagnostics.PlayerTraceEvent(
+        t = System.currentTimeMillis(),
+        event = name,
+        posS = pos.value?.toFloat() ?: 0f,
+        demuxerCacheS = demuxerCacheTime.value ?: 0f,
+        pausedForCache = pausedForCache.value ?: false,
+        dropped = mpv.getPropertyInt("frame-drop-count")?.toLong() ?: 0L,
+        ms = ms,
+    )
+
+    /** The Live page's Player figures (cheap JNI property gets) */
+    private fun playerLive() = eu.kanade.tachiyomi.diagnostics.PlayerLive(
+        title = mediaTitle.value.ifEmpty { currentAnime.value?.title ?: "" },
+        source = currentSource.value?.name,
+        posS = pos.value ?: 0,
+        durationS = duration.value ?: 0,
+        demuxerCacheS = demuxerCacheTime.value ?: 0f,
+        pausedForCache = pausedForCache.value ?: false,
+        seeking = seeking.value ?: false,
+        droppedFrames = mpv.getPropertyInt("frame-drop-count")?.toLong() ?: 0L,
+        vcodec = mpv.getPropertyString("video-codec"),
+        acodec = mpv.getPropertyString("audio-codec"),
+        hwdec = mpv.getPropertyString("hwdec-current"),
+        width = mpv.getPropertyInt("video-params/w") ?: 0,
+        height = mpv.getPropertyInt("video-params/h") ?: 0,
+        fps = mpv.getPropertyDouble("estimated-vf-fps")?.toFloat() ?: 0f,
+        relayServed = eu.kanade.tachiyomi.diagnostics.HlsTrace.served.get().toInt(),
+        relayBytes = eu.kanade.tachiyomi.diagnostics.HlsTrace.bytes.get(),
+        relayErrors = eu.kanade.tachiyomi.diagnostics.HlsTrace.errors.get().toInt(),
+        lastHosterSteps = eu.kanade.tachiyomi.diagnostics.HosterTrace.lastSteps(),
+    )
+    // KMK <--
     val isLoadingTracks = MutableStateFlow(false)
 
     private val _thumbnailImage = MutableStateFlow<ImageBitmap?>(null)
@@ -1515,6 +1590,8 @@ class PlayerViewModel @JvmOverloads constructor(
         // (e.g. config changes), otherwise a recreated activity gets a dead MPV instance.
         mpv.close()
         // ANK <--
+        // KMK (r97): the Diagnostics Live Player page empties (the END_FILE path doesn't run when the player is closed)
+        runCatching { eu.kanade.tachiyomi.diagnostics.PlayerTrace.closed() }
     }
 
     fun updateCastProgress(position: Float) {
@@ -1964,6 +2041,8 @@ class PlayerViewModel @JvmOverloads constructor(
         // KMK: loads for the previous list stop writing from here on
         val generation = hosterGeneration.incrementAndGet()
         val presplit = presplitHosters
+        // KMK (r97): Diagnostics hoster trace: the hoster list is in hand
+        eu.kanade.tachiyomi.diagnostics.HosterTrace.step("hosterList", source.name, null, 0L, hosterList.size, null)
 
         _hosterList.update { _ -> hosterList }
         _hosterExpandedList.update { _ ->
@@ -2004,10 +2083,18 @@ class PlayerViewModel @JvmOverloads constructor(
                     hosterList.mapIndexed { hosterIdx, hoster ->
                         async {
                             // KMK: preloaded videos were already split, so they aren't split a second time
+                            val hosterStartedNs = System.nanoTime() // KMK (r97)
                             val hosterState = EpisodeLoader.loadHosterVideos(
                                 source,
                                 hoster,
                                 alreadySplit = presplit.any { it === hoster },
+                            )
+                            // KMK (r97): Diagnostics hoster trace (one volatile read when off)
+                            eu.kanade.tachiyomi.diagnostics.HosterTrace.step(
+                                "videoList", source.name, hoster.hosterName,
+                                (System.nanoTime() - hosterStartedNs) / 1_000_000,
+                                (hosterState as? HosterState.Ready)?.videoList?.size ?: 0,
+                                if (hosterState is HosterState.Error) "failed" else null,
                             )
                             if (hosterGeneration.get() != generation) return@async
 
@@ -2196,6 +2283,10 @@ class PlayerViewModel @JvmOverloads constructor(
     ): Boolean {
         if (hosterGeneration.get() != generation) return false
         val selectedHosterState = (_hosterState.value.getOrNull(hosterIndex) as? HosterState.Ready) ?: return false
+        // KMK (r97): Diagnostics hoster trace: the quality that was chosen
+        eu.kanade.tachiyomi.diagnostics.HosterTrace.step(
+            "chosen", source?.name, selectedHosterState.name, 0L, videoIndex + 1, null,
+        )
         // KMK -->
         // Buffer handoff: switching quality/server in the middle of an episode keeps the position and pause state
         val isHandoff = isMidEpisodeSwitch()

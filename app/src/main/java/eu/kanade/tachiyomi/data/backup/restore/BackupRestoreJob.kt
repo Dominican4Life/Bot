@@ -56,6 +56,12 @@ class BackupRestoreJob(private val context: Context, workerParams: WorkerParamet
 
         return try {
             BackupRestorer(context, notifier, isSync).restore(uri, options)
+            // KMK (r97): a Health event (RESTORE dot on the Diagnostics 7-day strip)
+            runCatching {
+                eu.kanade.tachiyomi.diagnostics.Health.event(
+                    eu.kanade.tachiyomi.diagnostics.HealthKind.RESTORE_OK, "Restore", "finished",
+                )
+            }
             Result.success()
         } catch (e: Exception) {
             if (e is CancellationException) {
@@ -64,6 +70,14 @@ class BackupRestoreJob(private val context: Context, workerParams: WorkerParamet
             } else {
                 logcat(LogPriority.ERROR, e)
                 notifier.showRestoreError(e.message)
+                // KMK (r97)
+                runCatching {
+                    eu.kanade.tachiyomi.diagnostics.Health.event(
+                        eu.kanade.tachiyomi.diagnostics.HealthKind.RESTORE_FAILED,
+                        "Restore failed",
+                        e.message ?: e.javaClass.simpleName,
+                    )
+                }
                 Result.failure()
             }
         } finally {

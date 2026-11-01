@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.jssource
 
 import android.net.Uri
+import eu.kanade.tachiyomi.diagnostics.HlsTrace
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.network.NoNetLog
 import eu.kanade.tachiyomi.util.system.AppLog
@@ -134,11 +135,17 @@ object HlsRelay {
                 .apply { range?.takeIf { kind == "p" && it.isNotEmpty() }?.let { header("Range", it) } }
                 .apply { if (kind == "s") tag(NoNetLog::class.java, NoNetLog) }
                 .build()
+            // KMK (r97): Diagnostics player trace: one record per served playlist / piece (timer, bytes, status)
+            val traceKind = if (kind == "p") "playlist" else "segment"
+            val traceHost = if (HlsTrace.wanted()) target.toHttpUrlOrNull()?.host ?: "?" else "" // parsed only when used
+            val traceStart = System.nanoTime()
+            var traceRetries = 0
             var call = try {
                 execute(request, stream = true)
             } catch (e: java.io.IOException) {
                 AppLog.add('W', "hls", "Couldn't reach ${target.toHttpUrlOrNull()?.host ?: target}: ${e.message}")
                 respond(out, 502, "text/plain", ByteArray(0))
+                HlsTrace.piece(traceKind, traceHost, (System.nanoTime() - traceStart) / 1_000_000, 0L, 0, error = e.message)
                 return
             }
             // KMK: pieces kept on another site (some hosts put them on image servers) may refuse the source's
@@ -150,6 +157,7 @@ object HlsRelay {
                     headers["User-Agent"]?.let { add("User-Agent", it) }
                     add("Accept", "*/*")
                 }.build()
+                traceRetries = 1 // KMK (r97)
                 call = try {
                     execute(
                         Request.Builder().url(target).headers(plain).tag(NoNetLog::class.java, NoNetLog).build(),
@@ -158,6 +166,7 @@ object HlsRelay {
                 } catch (e: java.io.IOException) {
                     AppLog.add('W', "hls", "Couldn't reach ${target.toHttpUrlOrNull()?.host ?: target}: ${e.message}")
                     respond(out, 502, "text/plain", ByteArray(0))
+                    HlsTrace.piece(traceKind, traceHost, (System.nanoTime() - traceStart) / 1_000_000, 0L, 0, traceRetries, error = e.message)
                     return
                 }
                 AppLog.add(
@@ -168,39 +177,57 @@ object HlsRelay {
                         ": ${target.toHttpUrlOrNull()?.host ?: target}",
                 )
             }
-            call.use { response ->
-                if (!response.isSuccessful) {
-                    if (kind == "p") AppLog.add('W', "hls", "Playlist answered ${response.code}: ${target.toHttpUrlOrNull()?.host ?: target}")
-                    respond(out, response.code, "text/plain", ByteArray(0))
-                    return
-                }
-                // KMK: "m3u8" only in the query (`video.mp4?fallback=m3u8`) also comes here as a playlist: unless the
-                // answer is one (its type, or #EXTM3U at the start), it's passed through as it is, never read whole
-                if (kind == "p" && !isPlaylist(response)) {
-                    passThrough(out, response)
-                    return
-                }
-                // KMK (r95): a piece is decided from its first bytes. Only a playlist in disguise or a piece with a
-                // picture glued in front is read whole; everything else is streamed through as it arrives (before,
-                // every piece was read whole, copied into a String to test for #EXTM3U, and copied again)
-                val head = if (kind == "p") ByteArray(0) else runCatching { response.peekBody(16).bytes() }.getOrDefault(ByteArray(0))
-                val headText = String(head, Charsets.UTF_8).trimStart('\uFEFF', ' ', '\t', '\r', '\n')
-                when {
-                    kind == "p" || headText.startsWith("#EXTM3U") -> {
-                        val text = runCatching { String(response.body.bytes(), Charsets.UTF_8) }.getOrDefault("")
-                        val finalUrl = response.request.url.toString()
-                        respond(out, 200, "application/vnd.apple.mpegurl", rewrite(id, finalUrl, text).toByteArray())
+            // KMK (r97): what the trace record says about this piece, filled in below
+            var traceStatus = 0
+            var traceBytes = 0L
+            var traceRewritten = false
+            var traceStripped = false
+            try {
+                call.use { response ->
+                    traceStatus = response.code
+                    traceBytes = response.body.contentLength().coerceAtLeast(0L)
+                    if (!response.isSuccessful) {
+                        if (kind == "p") AppLog.add('W', "hls", "Playlist answered ${response.code}: ${target.toHttpUrlOrNull()?.host ?: target}")
+                        respond(out, response.code, "text/plain", ByteArray(0))
+                        return
                     }
-                    looksLikeImage(head) -> {
-                        val bytes = response.body.bytes()
-                        val cleaned = stripFakeImage(bytes)
-                        if (cleaned.size != bytes.size) {
-                            AppLog.add('D', "hls", "Removed a ${bytes.size - cleaned.size}-byte fake picture header from a stream piece")
+                    // KMK: "m3u8" only in the query (`video.mp4?fallback=m3u8`) also comes here as a playlist: unless the
+                    // answer is one (its type, or #EXTM3U at the start), it's passed through as it is, never read whole
+                    if (kind == "p" && !isPlaylist(response)) {
+                        passThrough(out, response)
+                        return
+                    }
+                    // KMK (r95): a piece is decided from its first bytes. Only a playlist in disguise or a piece with a
+                    // picture glued in front is read whole; everything else is streamed through as it arrives (before,
+                    // every piece was read whole, copied into a String to test for #EXTM3U, and copied again)
+                    val head = if (kind == "p") ByteArray(0) else runCatching { response.peekBody(16).bytes() }.getOrDefault(ByteArray(0))
+                    val headText = String(head, Charsets.UTF_8).trimStart('\uFEFF', ' ', '\t', '\r', '\n')
+                    when {
+                        kind == "p" || headText.startsWith("#EXTM3U") -> {
+                            val text = runCatching { String(response.body.bytes(), Charsets.UTF_8) }.getOrDefault("")
+                            val finalUrl = response.request.url.toString()
+                            traceBytes = text.length.toLong()
+                            traceRewritten = true
+                            respond(out, 200, "application/vnd.apple.mpegurl", rewrite(id, finalUrl, text).toByteArray())
                         }
-                        respond(out, 200, "video/mp2t", cleaned)
+                        looksLikeImage(head) -> {
+                            val bytes = response.body.bytes()
+                            val cleaned = stripFakeImage(bytes)
+                            if (cleaned.size != bytes.size) {
+                                AppLog.add('D', "hls", "Removed a ${bytes.size - cleaned.size}-byte fake picture header from a stream piece")
+                                traceStripped = true
+                            }
+                            traceBytes = bytes.size.toLong()
+                            respond(out, 200, "video/mp2t", cleaned)
+                        }
+                        else -> passThrough(out, response, contentType = "video/mp2t")
                     }
-                    else -> passThrough(out, response, contentType = "video/mp2t")
                 }
+            } finally {
+                HlsTrace.piece(
+                    traceKind, traceHost, (System.nanoTime() - traceStart) / 1_000_000, traceBytes, traceStatus,
+                    traceRetries, traceRewritten, traceStripped,
+                )
             }
         }
     }

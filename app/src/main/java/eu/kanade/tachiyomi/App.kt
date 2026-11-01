@@ -160,6 +160,10 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
 
         // KMK: in-app log, before anything else logs
         eu.kanade.tachiyomi.util.system.AppLog.init(this)
+        // KMK (r97) -->
+        // Diagnostics engine: the Live/Health/Capture screens' data, watchdogs, previous-run reader
+        eu.kanade.tachiyomi.diagnostics.DiagnosticsEngine.install(this)
+        // KMK <--
         setupExhLogging() // EXH logging
         if (!LogcatLogger.isInstalled) {
             val minLogPriority = when {
@@ -359,6 +363,11 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
         SecureActivityDelegate.onApplicationStopped()
         // KMK (r95): the Logs file is written through a buffer; a backgrounded process may be killed any time
         eu.kanade.tachiyomi.util.system.AppLog.flush()
+        // KMK (r97) -->
+        // Diagnostics: flush the rings, stop the samplers
+        (eu.kanade.tachiyomi.diagnostics.Diag.engine as? eu.kanade.tachiyomi.diagnostics.DiagnosticsEngine)
+            ?.onBackground()
+        // KMK <--
     }
 
     override fun getPackageName(): String {

@@ -345,6 +345,11 @@ class MainActivity : BaseActivity() {
                                     .background(MaterialTheme.colorScheme.surfaceContainer),
                             )
                         }
+
+                        // KMK (r97) -->
+                        // The Diagnostics floating log window, above every screen; composes nothing while hidden
+                        eu.kanade.tachiyomi.ui.diagnostics.FloatingLogHost()
+                        // KMK <--
                     }
                 }
 
@@ -688,6 +693,20 @@ class MainActivity : BaseActivity() {
             eu.kanade.tachiyomi.pairsync.PairSyncService.ACTION_OPEN -> {
                 if (!eu.kanade.tachiyomi.ui.pairsync.PairSyncPopup.isOpen.value) navigator.popUntilRoot()
                 eu.kanade.tachiyomi.ui.pairsync.PairSyncPopup.requestOpen()
+                null
+            }
+            // KMK (r97): a Diagnostics notification or the tile: open the screen on the asked tab (a second open
+            // replaces the one already on top instead of stacking)
+            eu.kanade.tachiyomi.diagnostics.DiagActions.OPEN -> {
+                val tab = intent.getStringExtra(eu.kanade.tachiyomi.diagnostics.DiagActions.EXTRA_TAB)
+                    ?.let { name -> eu.kanade.tachiyomi.diagnostics.DiagTab.entries.firstOrNull { it.name == name } }
+                val probeId = intent.getStringExtra(eu.kanade.tachiyomi.diagnostics.DiagActions.EXTRA_PROBE_ID)
+                val screen = eu.kanade.tachiyomi.ui.diagnostics.DiagnosticsScreen(tab, probeId)
+                if (navigator.lastItem is eu.kanade.tachiyomi.ui.diagnostics.DiagnosticsScreen) {
+                    navigator.replace(screen)
+                } else {
+                    navigator.push(screen)
+                }
                 null
             }
             // KMK <--

@@ -190,6 +190,7 @@ Where the fork actually deviates, and what to do about it:
 - **Tags in use**:
   - Explicit `AppLog.add` tags: `net` (D, via logcat), `hls`, `js`, `extensions`, `Sideload`, `botcheck`, `anilist`, `Memory` (`MemoryLog.kt`, including "Memory low … cleared …" W lines), `Restore`, `sync`, `reader`, `app` (the `start app.komikku.beta 1.14.1-10873 on Android … (SDK …), <maker> <model>` line at each launch).
   - JS sources log through `JsRuntime.kt:142` with their own tags.
+- **r97 — Diagnostics**: `AppLog.add` now starts with the capture gate (`V` only while the tag's category is Verbose, `D`/`I` not while it is Off, W/E always; Normal is unchanged), every line is mirrored into the 4 MB `cacheDir/diag/log.ring`, and new lines may carry a ` · key=value` tail (`AppLog.add(level, tag, message, vararg fields)`, `AppLog.v(category, tag) { }`). The categories, traces, recording, probes and the report are described in README "Changes in r97 › Diagnostics engine (E)"; the screens in "Diagnostics UI (F)". The Logs screen is now the Log tab of Diagnostics.
 - Mihon's `verboseLogging` preference is **commented out** in Komikku (`NetworkPreferences`). Ported Aniyomi code that calls `networkPreferences.verboseLogging()` won't compile (7d617511). Use `EHLogLevel.isExtraLogging()` instead.
 
 ### Networking basics

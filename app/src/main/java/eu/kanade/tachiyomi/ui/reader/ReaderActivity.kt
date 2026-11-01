@@ -397,6 +397,10 @@ class ReaderActivity : BaseActivity() {
                     onClickPage = this@ReaderActivity::moveToPageIndex,
                 )
                 // KMK <--
+                // KMK (r97) -->
+                // The Diagnostics floating log window over the reader; composes nothing while hidden
+                eu.kanade.tachiyomi.ui.diagnostics.FloatingLogHost()
+                // KMK <--
             }
 
             // KMK -->

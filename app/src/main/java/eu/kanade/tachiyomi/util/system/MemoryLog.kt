@@ -4,6 +4,10 @@ import android.app.Application
 import android.os.Debug
 import coil3.imageLoader
 import eu.kanade.tachiyomi.data.cache.CoverFolders
+import eu.kanade.tachiyomi.diagnostics.Health
+import eu.kanade.tachiyomi.diagnostics.HealthKind
+import eu.kanade.tachiyomi.diagnostics.LiveSampler
+import eu.kanade.tachiyomi.diagnostics.LogCapture
 import eu.kanade.tachiyomi.jssource.JsSourceManager
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseTabCache
 import kotlinx.coroutines.CoroutineScope
@@ -41,15 +45,38 @@ object MemoryLog {
             // reach about 75 % before it collects), so a trim needs two high samples in a row and a cooldown
             var highSamples = 0
             var lastTrimAt = 0L
+            var detailAt = 0L
+            var lastImagesMb = 0L
+            var lastJsMb = 0f
             while (true) {
                 delay(SAMPLE_MS)
                 runCatching {
                     val (used, max) = usage()
                     val now = System.currentTimeMillis()
+                    // KMK (r97): the coarse memory rings of the Diagnostics Live tab (24 h / 7 d) are fed from here, so
+                    // they exist without the screen open: heap, images, JS (tryLock) and native, one float each.
+                    // The Coil size and the JS runtimes' memory are read every minute unless a Diagnostics strip or
+                    // the Live page is open (then every tick; the full sampler usually covers it anyway).
+                    runCatching {
+                        if (LiveSampler.wantsMemoryDetail() || now - detailAt >= 60_000L) {
+                            detailAt = now
+                            lastImagesMb = (Injekt.get<Application>().imageLoader.memoryCache?.size ?: 0L) / MB
+                            lastJsMb = Injekt.get<JsSourceManager>().liveStats().sumOf { it.mb.toDouble() }.toFloat()
+                        }
+                        LiveSampler.memoryTick(used, lastImagesMb, lastJsMb, nativeMb())
+                    }
+                    // KMK (r97): cadence from the Capture tab's sampling slider (0.25 s → a line every 10 s, 30 s →
+                    // every 2 min) and every 10 s while a recording runs; Normal keeps the minute
+                    val everyMs = when {
+                        LogCapture.recording.value != null -> SAMPLE_MS
+                        LogCapture.sampleMs <= 250L -> SAMPLE_MS
+                        LogCapture.sampleMs >= 30_000L -> 2 * EVERY_MS
+                        else -> EVERY_MS
+                    }
                     // Every minute, and every 10 seconds while memory climbs fast or is high
                     val climbing = used - lastLogged >= CLIMB_MB
                     val high = used * 100 / max.coerceAtLeast(1) >= HIGH_PERCENT
-                    if (now - lastLineAt >= EVERY_MS || climbing || high) {
+                    if (now - lastLineAt >= everyMs || climbing || high) {
                         line(if (climbing) "climbing +${used - lastLogged} MB" else null)
                         lastLineAt = now
                         lastLogged = used
@@ -97,39 +124,85 @@ object MemoryLog {
     }
 
     /** Java heap in use and its limit, in MB. Bitmaps and the JS engines live in the native heap, see [nativeMb] */
-    private fun usage(): Pair<Long, Long> {
+    internal fun usage(): Pair<Long, Long> {
         val runtime = Runtime.getRuntime()
         return (runtime.totalMemory() - runtime.freeMemory()) / MB to runtime.maxMemory() / MB
     }
 
     /** KMK (r95): the native heap (bitmap pixels, QuickJS, decoders), which the Java figures leave out */
-    private fun nativeMb(): Long = Debug.getNativeHeapAllocatedSize() / MB
+    internal fun nativeMb(): Long = Debug.getNativeHeapAllocatedSize() / MB
 
     private fun line(event: String?) {
         val (used, max) = usage()
         val level = if (used * 100 / max.coerceAtLeast(1) >= 75) 'W' else 'I'
+        val native = nativeMb()
+        // KMK (r97): the text is unchanged; the structured tail (used_mb= max_mb= native_mb= screen=) is new
         AppLog.add(
             level,
             "Memory",
             "$used / $max MB in use (screen: $currentScreen${event?.let { ", $it" } ?: ""})" +
-                " · native ${nativeMb()} MB · " + caches(),
+                " · native $native MB · " + caches(),
+            "used_mb" to used,
+            "max_mb" to max,
+            "native_mb" to native,
+            "screen" to currentScreen,
         )
     }
 
-    private fun caches(): String = buildList {
+    // KMK (r97) -->
+    /** What the app's own caches hold (the figures behind the Memory line, read by the Diagnostics Memory page too) */
+    data class CacheStats(
+        val imagesBytes: Long = 0L,
+        val imagesMaxBytes: Long = 0L,
+        val browseTabs: Int = 0,
+        val folderListings: Int = 0,
+        val jsRunning: Int = 0,
+        val jsPages: Int = 0,
+        val jsPageTextBytes: Long = 0L,
+        val jsDomBytes: Long = 0L,
+        val animatedTiles: Int = 0,
+        /** Which figures could be read (a missing one is left out of the line, as before) */
+        val hasImages: Boolean = false,
+        val hasBrowseTabs: Boolean = false,
+        val hasListings: Boolean = false,
+        val hasJsRunning: Boolean = false,
+        val hasJsPages: Boolean = false,
+        val hasTiles: Boolean = false,
+    )
+
+    fun cacheStats(): CacheStats {
+        var s = CacheStats()
         runCatching {
             val cache = Injekt.get<Application>().imageLoader.memoryCache
-            if (cache != null) add("images ${cache.size / MB}/${cache.maxSize / MB} MB")
+            if (cache != null) s = s.copy(imagesBytes = cache.size, imagesMaxBytes = cache.maxSize, hasImages = true)
         }
-        runCatching { add("Browse tabs ${BrowseTabCache.size}") }
-        runCatching { add("folder listings ${CoverFolders.listingCount}") }
-        runCatching { add("JS sources running ${Injekt.get<JsSourceManager>().runningCount}") }
+        runCatching { s = s.copy(browseTabs = BrowseTabCache.size, hasBrowseTabs = true) }
+        runCatching { s = s.copy(folderListings = CoverFolders.listingCount, hasListings = true) }
+        runCatching { s = s.copy(jsRunning = Injekt.get<JsSourceManager>().runningCount, hasJsRunning = true) }
         runCatching {
             val (pages, bytes, dom) = eu.kanade.tachiyomi.jssource.JsHtmlPages.totalsWithDom()
-            add("JS parsed pages $pages (page text ${bytes / MB} MB, DOM about ${dom / MB} MB)")
+            s = s.copy(jsPages = pages, jsPageTextBytes = bytes, jsDomBytes = dom, hasJsPages = true)
         }
-        runCatching { add("animated tiles ${eu.kanade.presentation.components.AnimatedTiles.count.get()}") }
-    }.joinToString(", ")
+        runCatching {
+            s = s.copy(animatedTiles = eu.kanade.presentation.components.AnimatedTiles.count.get(), hasTiles = true)
+        }
+        return s
+    }
+    // KMK <--
+
+    /** The same string as before r97, built on top of [cacheStats] */
+    private fun caches(): String = cacheStats().let { s ->
+        buildList {
+            if (s.hasImages) add("images ${s.imagesBytes / MB}/${s.imagesMaxBytes / MB} MB")
+            if (s.hasBrowseTabs) add("Browse tabs ${s.browseTabs}")
+            if (s.hasListings) add("folder listings ${s.folderListings}")
+            if (s.hasJsRunning) add("JS sources running ${s.jsRunning}")
+            if (s.hasJsPages) {
+                add("JS parsed pages ${s.jsPages} (page text ${s.jsPageTextBytes / MB} MB, DOM about ${s.jsDomBytes / MB} MB)")
+            }
+            if (s.hasTiles) add("animated tiles ${s.animatedTiles}")
+        }.joinToString(", ")
+    }
 
     /**
      * Memory running low: let go of what can be loaded again. KMK (r95): no forced System.gc() any more (ART
@@ -141,13 +214,24 @@ object MemoryLog {
         runCatching { BrowseTabCache.trim(keep = 2) }
         runCatching { CoverFolders.dropListings() }
         val jsPages = runCatching { eu.kanade.tachiyomi.jssource.JsHtmlPages.clearAll() }.getOrDefault(0)
-        AppLog.add(
-            'W',
-            "Memory",
-            "Memory low ($used / $max MB, native ${nativeMb()} MB): cleared images in memory, older Browse tabs, " +
-                "folder listings and $jsPages JS parsed pages",
-        )
+        val text = "Memory low ($used / $max MB, native ${nativeMb()} MB): cleared images in memory, older Browse tabs, " +
+            "folder listings and $jsPages JS parsed pages"
+        AppLog.add('W', "Memory", text)
+        // KMK (r97): a Health event (TRIM dot on the 7-day strip) and the Memory page's "last trim"
+        runCatching { Health.event(HealthKind.TRIM, "Memory low, caches cleared", text) }
+        runCatching { LiveSampler.noteTrim(text) }
     }
+
+    // KMK (r97) -->
+    /** "Trim now" / "free memory" on the Diagnostics screen: the same trim, with its result as text */
+    fun trimNow(): String {
+        val (used, max) = usage()
+        val before = used
+        trim(used, max)
+        val (after, _) = usage()
+        return "Freed caches: $before → $after MB in use (ART collects the rest on its own)"
+    }
+    // KMK <--
 
     /** A readable name from a screen's key ("Screen#…#AnimeSourceScreen", or a class name) */
     fun nameOf(key: String): String = key.substringAfterLast('#').substringAfterLast('.')

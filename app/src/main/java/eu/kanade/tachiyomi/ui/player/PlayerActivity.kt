@@ -77,6 +77,9 @@ import eu.kanade.tachiyomi.animesource.model.SerializableHoster.Companion.serial
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.data.torrentServer.service.TorrentServerService
+import eu.kanade.tachiyomi.diagnostics.Perf
+import eu.kanade.tachiyomi.diagnostics.PlayerTrace
+import eu.kanade.tachiyomi.diagnostics.PlayerTraceEvent
 import eu.kanade.tachiyomi.torrentServer.TorrentServerApi
 import eu.kanade.tachiyomi.torrentServer.TorrentServerUtils
 import eu.kanade.tachiyomi.ui.base.activity.BaseActivity
@@ -262,6 +265,8 @@ class PlayerActivity : BaseActivity() {
             viewModel.updateIsLoadingHosters(false)
 
             // ANZ -->
+            episodeSpan?.end() // KMK (r97): Perfetto "episode-start" from here to FILE_LOADED
+            episodeSpan = Perf.tracedAsync("episode-start", 1)
             viewModel.loadHosters(
                 source = viewModel.currentSource.value!!,
                 hosterList = initResult.first.hosterList ?: emptyList(),
@@ -273,6 +278,38 @@ class PlayerActivity : BaseActivity() {
 
         setIntent(intent)
     }
+
+    // KMK (r97) -->
+    /** The open Perfetto section from loadHosters to the first FILE_LOADED */
+    @Volatile
+    private var episodeSpan: Perf.Span? = null
+
+    /** One Diagnostics player-trace record for an mpv event (nothing is built while the trace and probes are off) */
+    private fun traceEvent(name: String, detail: String? = null) {
+        if (!eu.kanade.tachiyomi.diagnostics.Traces.player &&
+            eu.kanade.tachiyomi.diagnostics.ProbeRuntime.mask and
+            eu.kanade.tachiyomi.diagnostics.ProbeHook.PLAYER_EVENT.mask == 0
+        ) {
+            return
+        }
+        PlayerTrace.event(
+            PlayerTraceEvent(
+                t = System.currentTimeMillis(),
+                event = name,
+                posS = viewModel.pos.value?.toFloat() ?: 0f,
+                demuxerCacheS = viewModel.demuxerCacheTime.value ?: 0f,
+                pausedForCache = viewModel.pausedForCache.value ?: false,
+                dropped = viewModel.mpv.getPropertyInt("frame-drop-count")?.toLong() ?: 0L,
+                vcodec = viewModel.mpv.getPropertyString("video-codec"),
+                acodec = viewModel.mpv.getPropertyString("audio-codec"),
+                hwdec = viewModel.mpv.getPropertyString("hwdec-current"),
+                width = viewModel.mpv.getPropertyInt("video-params/w") ?: 0,
+                height = viewModel.mpv.getPropertyInt("video-params/h") ?: 0,
+                detail = detail,
+            ),
+        )
+    }
+    // KMK <--
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -403,6 +440,10 @@ class PlayerActivity : BaseActivity() {
                         onBackPress = { backPressed() },
                         // ANZ <--
                     )
+                    // KMK (r97) -->
+                    // The Diagnostics floating log window over the player; composes nothing while hidden; hidden in PiP
+                    eu.kanade.tachiyomi.ui.diagnostics.FloatingLogHost(hidden = pipMode.collectAsState().value)
+                    // KMK <--
                 }
             }
         }
@@ -857,10 +898,16 @@ class PlayerActivity : BaseActivity() {
         if (player.isExiting) return
         when (eventId) {
             MPV.mpvEvent.MPV_EVENT_FILE_LOADED -> {
+                // KMK (r97) -->
+                episodeSpan?.end()
+                episodeSpan = null
+                traceEvent("FILE_LOADED")
+                // KMK <--
                 viewModel.viewModelScope.launchIO { fileLoaded() }
             }
             MPV.mpvEvent.MPV_EVENT_PLAYBACK_RESTART -> {
                 player.isExiting = false
+                traceEvent("PLAYBACK_RESTART") // KMK (r97)
                 // ANZ -->
                 viewModel.restoreAspectRatio()
                 // ANZ <--
@@ -872,6 +919,7 @@ class PlayerActivity : BaseActivity() {
                     "End of file: ${node.asMap()?.entries?.joinToString { "${it.key}=${it.value.asString() ?: it.value}" }}",
                 )
                 // KMK <--
+                traceEvent("END_FILE", node.asMap()?.get("file_error")?.asString()) // KMK (r97)
                 val errorNode = node.asMap()?.get("file_error") ?: return
                 var errorMessage = errorNode.asString() ?: "Error: File ended"
 
@@ -950,8 +998,12 @@ class PlayerActivity : BaseActivity() {
         return builder.build()
     }
 
+    // KMK (r97): PiP as a flow, for the floating log window (isInPictureInPictureMode isn't observable from Compose)
+    private val pipMode = kotlinx.coroutines.flow.MutableStateFlow(false)
+
     @SuppressLint("UnspecifiedRegisterReceiverFlag")
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        pipMode.value = isInPictureInPictureMode // KMK (r97)
         // ANZ -->
         // Latch that we entered PiP. Whether leaving it was a dismissal or an expand is decided in
         // onStop()/onResume(), because this callback's ordering against them is not guaranteed.

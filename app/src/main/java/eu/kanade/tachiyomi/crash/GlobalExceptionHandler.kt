@@ -31,6 +31,16 @@ class GlobalExceptionHandler private constructor(
 
     override fun uncaughtException(thread: Thread, exception: Throwable) {
         logcat(priority = LogPriority.ERROR, throwable = exception)
+        // KMK (r97): a Health event (CRASH dot on the Diagnostics 7-day strip) with the first frames
+        runCatching {
+            eu.kanade.tachiyomi.diagnostics.Health.event(
+                eu.kanade.tachiyomi.diagnostics.HealthKind.CRASH,
+                "Crash: ${exception.javaClass.simpleName}",
+                (exception.message ?: "") + "\n" + exception.stackTrace.take(6).joinToString("\n") { "  at $it" } +
+                    " · thread ${thread.name}",
+            )
+            eu.kanade.tachiyomi.util.system.AppLog.flush()
+        }
         launchActivity(applicationContext, activityToBeLaunched, exception)
         defaultHandler.uncaughtException(thread, exception)
     }
