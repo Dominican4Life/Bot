@@ -156,6 +156,8 @@ The manga side has upstream's `PreferenceRestorer.restoreCategoriesPreference`, 
 
 **Source folder matching** (r63, 355d9ef8, `SourceFolders`): a folder belongs to a source when `rank()` is 0 (exact `Name (EN)`), 1 (same name, another tag that fits the source: its language, its base language, `ALL` for all/multi, `JS`/`JSON` for JS sources) or 2 (Android's numbered copy `" (1)"`). `findOrCreate` is `synchronized`, so two downloads can't both create a folder (this used to make "Hiperdex (EN) (1)"). `DownloadCache` merges titles from every matching folder of a source, the best folder winning. `DownloadManager.renameSource` leaves a folder alone if it already matches the new source.
 
+**Folders follow the source id** (r99, `SourceFolderLinks`): `filesDir/download_source_folders.json` links each source id to its folders (manga and anime). Lookup: linked folders first, then the exact name, then `SourceFolders.match`; new downloads go into the first linked folder, so renaming a source (a JS source's `name`) never hides its downloads. Links are seeded from today's name rules, recovered once per source (name ± " JS", older names from the Source Lab history, ≥ 3 library titles), and never moved, merged or deleted. Not in backups. Details in the README's r99 section.
+
 **Download of one chapter** (`Downloader.downloadChapter`):
 1. Page list (re-indexed), then `download.hasVideos = any page is ReaderVideos.isVideo(url)`, `videoProgressFlow = 0`.
 2. Pictures are downloaded, `parallelPageLimit` at a time, into `<chapter>_tmp`. `notifier.onProgressChange` runs per page.

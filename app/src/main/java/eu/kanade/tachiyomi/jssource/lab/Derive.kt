@@ -6,6 +6,13 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
  * KMK (r96, Source Lab): what "Build by tapping" decides from the picks, with one reason per decision (D§2.4).
  * Pure functions over the picks, so the same taps always give the same selectors. Every derived key has a
  * sentence in [BuilderSelection.reasons]; the keys are the generic-list template's placeholders.
+ *
+ * r99 (owner's 123av run): the Item pick was a dropdown option (`button.sel__opt.is-on`) and the source listed
+ * nothing; NEXT came out as a bare `a`; CHAPTER defaulted to `a[href*='chapter']` with nothing picked. Now ITEM is
+ * always an element that holds the title link (and the cover): a tapped Item that doesn't is replaced by the
+ * smallest common ancestor of the Title and Cover picks, with a `warning…` entry the panel shows; NEXT comes from
+ * the pager around the tapped link; CHAPTER is empty (the part is "not written") when no chapter was tapped; and
+ * [singleEpisode] makes the title page its own only episode (Date / Number read on that page).
  */
 internal object Derive {
 
@@ -25,7 +32,7 @@ internal object Derive {
     /** Embed hosts the anime templates can read through the hidden browser */
     val KNOWN_PLAYER_HOSTS = listOf("streamwish", "filemoon", "vidstream", "vidsrc", "wish", "moon", "dood", "mp4upload", "vidhide", "voe")
 
-    fun derive(siteUrl: String, anime: Boolean, picks: List<Picked>): BuilderSelection {
+    fun derive(siteUrl: String, anime: Boolean, picks: List<Picked>, singleEpisode: Boolean = false): BuilderSelection {
         val derived = LinkedHashMap<String, String>()
         val reasons = LinkedHashMap<String, String>()
         fun put(key: String, value: String, reason: String) {
@@ -43,24 +50,79 @@ internal object Derive {
         val image = byLabel["image"]?.lastOrNull()
         val video = byLabel["video"]?.lastOrNull()
 
-        // Item selector: the tapped card, else the smallest ancestor the title and cover share
+        // Item selector: the smallest element that holds the title link and the cover on every card. A tapped Item
+        // is kept only when it holds them (its segment is on their paths); else the derived one is used, with a warning.
+        // r99 fix: compared on the full paths (classes, and positions of classless elements), so two different
+        // `div`s no longer count as the same element
+        val titlePath = title?.let { fullPath(it) }
+        val coverPath = cover?.let { fullPath(it) }
+        // (full segment, the path it was found on, why)
+        val derivedItem: Triple<String, String, String>? = when {
+            titlePath != null && coverPath != null -> commonAncestor(titlePath, coverPath)?.let {
+                Triple(it, titlePath, "the smallest element that holds both the title link and the cover you tapped")
+            } ?: parentOf(titlePath).takeIf { it.isNotBlank() }?.let {
+                Triple(lastSegment(it), titlePath, "the element around the title link (the title and cover paths share no element: tap a whole card to be sure)")
+            }
+            titlePath != null -> parentOf(titlePath).takeIf { it.isNotBlank() }?.let {
+                Triple(lastSegment(it), titlePath, "the element around the title link; tap a cover too so the Lab finds the whole card")
+            }
+            coverPath != null -> parentOf(coverPath).takeIf { it.isNotBlank() }?.let {
+                Triple(lastSegment(it), coverPath, "the element around the cover; tap the title link too so the Lab finds the whole card")
+            }
+            else -> null
+        }
+        // r99 fix: a bare div / li / span with no class or id on it or the two elements above it matches far more
+        // than the cards (every div of the page): not trusted over a tapped Item
+        val derivedGeneric = derivedItem != null && isVague(derivedItem.first, derivedItem.second)
         val itemSelector: String
+        val tappedItem = item?.let { clean(lastSegment(it.likeSelector)) }
+        val tappedFull = item?.let { lastSegment(fullPath(it)) }
+        val checks = listOfNotNull(titlePath, coverPath)
+        val itemHolds = tappedFull != null && checks.isNotEmpty() && checks.all { holds(tappedFull, it) }
+        // The tapped Item is at least the same kind of element as one around the title / cover (maybe another card)
+        val itemLikeHolds = tappedFull != null && checks.isNotEmpty() &&
+            checks.all { path -> segments(path).any { likeSegment(it) == likeSegment(tappedFull) } }
         when {
-            item != null -> {
-                val (sel, why) = clean(lastSegment(item.likeSelector))
-                itemSelector = sel
-                put("itemSelector", sel, "the card you tapped, ${item.pick.count} like it on the page$why")
+            tappedItem != null && itemHolds -> {
+                itemSelector = tappedItem.first
+                put("itemSelector", itemSelector, "the card you tapped, ${item!!.pick.count} like it on the page; it holds the ${if (cover != null) "title link and the cover" else "title link"}${tappedItem.second}")
             }
-            title != null && cover != null -> {
-                val common = commonPrefix(title.likeSelector, cover.likeSelector)
-                val (sel, why) = clean(lastSegment(common.ifBlank { parentOf(title.likeSelector) }))
-                itemSelector = sel
-                put("itemSelector", sel, "the smallest element that holds both the title link and the cover you tapped$why")
+            tappedItem != null && derivedGeneric && itemLikeHolds -> {
+                itemSelector = tappedItem.first
+                val vague = likeSegment(derivedItem!!.first)
+                put(
+                    "warningItem",
+                    "Item: the card found from the title is a bare <$vague> — using ${tappedItem.first} as tapped",
+                    "the element around the title link and cover is <$vague> with no class or id on it or the two elements above it, which would match far more than the cards; the Item you tapped is used instead. Check the list shows one entry per card, else tap the whole card again.",
+                )
+                put("itemSelector", itemSelector, "the card you tapped, ${item!!.pick.count} like it on the page${tappedItem.second}")
             }
-            title != null -> {
-                val (sel, why) = clean(lastSegment(parentOf(title.likeSelector)))
+            derivedItem != null -> {
+                val (sel, why) = clean(likeSegment(derivedItem.first))
                 itemSelector = sel
-                put("itemSelector", sel, "the element around the title link; tap a whole card to be sure$why")
+                if (tappedItem != null) {
+                    val missing = listOfNotNull(
+                        titlePath?.takeIf { !holds(tappedFull!!, it) }?.let { "the title" },
+                        coverPath?.takeIf { !holds(tappedFull!!, it) }?.let { "the cover" },
+                    ).joinToString(" or ")
+                    put(
+                        "warningItem",
+                        "Item doesn't contain $missing — using $sel instead",
+                        "the Item you tapped (${tappedItem.first}) is not around $missing on the page: a card must hold its title link, so the derived card is used. Tap the whole card again if this one is wrong." +
+                            (if (derivedGeneric) " The derived <$sel> has no class or id near it and may match more than the cards." else ""),
+                    )
+                } else if (derivedGeneric) {
+                    put(
+                        "warningItem",
+                        "Item is a bare <$sel> — tap the whole card",
+                        "the element around the title link has no class or id on it or the two elements above it, so <$sel> may match far more than the cards. Tap the whole card as Item so the Lab can use it.",
+                    )
+                }
+                put("itemSelector", sel, derivedItem.third + why)
+            }
+            tappedItem != null -> {
+                itemSelector = tappedItem.first
+                put("itemSelector", itemSelector, "the card you tapped, ${item!!.pick.count} like it on the page; tap its title link so the Lab can check it holds one${tappedItem.second}")
             }
             else -> {
                 itemSelector = "article"
@@ -92,13 +154,15 @@ internal object Derive {
         }
 
         // Paging and the list paths
-        val listUrl = (item ?: title ?: cover)?.pick?.pageUrl ?: siteUrl
+        // r99: the title link's page first (a wrong Item pick may come from anywhere)
+        val listUrl = (title ?: item ?: cover)?.pick?.pageUrl ?: siteUrl
         val (popularPath, pagingWhy) = pagePattern(listUrl, next)
         put("popularPath", popularPath, pagingWhy)
         put("latestPath", popularPath, "the same list as Popular; change it when the site has a latest page")
         put("searchPath", "/search?q={q}&page={page}", "a guess: no search was tapped; /?s={q} on WordPress sites")
         if (next != null) {
-            put("nextSelector", lastSegment(next.likeSelector), "the next-page link you tapped")
+            val (sel, why) = nextSelector(next)
+            put("nextSelector", sel, why)
         }
 
         // URL pattern of the titles
@@ -108,21 +172,40 @@ internal object Derive {
         }
 
         // Chapters
-        if (chapter != null) {
+        if (singleEpisode) {
+            put("singleEpisode", "true", "you said the title page is the only episode: getChapterList returns that page as episode 1, and the video is read on it")
+        } else {
+            put("singleEpisode", "false", "episodes are the chapter links of the title page")
+        }
+        if (singleEpisode) {
+            put("chapterSelector", "", "only episode: no chapter links are read")
+        } else if (chapter != null) {
             val (sel, why) = clean(toLink(chapter.likeSelector))
             put("chapterSelector", sel, "the chapter link you tapped, ${chapter.pick.count} like it on the title page$why")
             if (chapter.hrefs.isNotEmpty()) {
                 put("chapterUrlPattern", urlPattern(chapter.hrefs), "the common shape of the ${chapter.hrefs.size} chapter addresses")
             }
         } else {
-            put("chapterSelector", "a[href*='chapter']", "no chapter tapped: links whose address says chapter")
+            put("chapterSelector", "", "no chapter link tapped: the episodes part is not written until you tap one (or say the title page is the only episode)")
         }
-        if (date != null) {
+        if (singleEpisode) {
+            // On the title page itself: the exact element tapped (with its positions), read once
+            if (date != null) {
+                put("dateSelector", pageSelector(date), "the date you tapped on the title page, read once for its only episode (datetime, title or text)")
+            } else {
+                put("dateSelector", "", "no date tapped: the only episode has no date")
+            }
+            if (number != null) {
+                put("numberSelector", pageSelector(number), "the number you tapped on the title page; the code reads its last number (1 when it has none)")
+            } else {
+                put("numberSelector", "", "no number tapped: the only episode is number 1")
+            }
+        } else if (date != null) {
             put("dateSelector", relative(date.likeSelector, derived["chapterSelector"].orEmpty()), "the date you tapped, read inside each chapter row (datetime, title or text)")
         } else {
             put("dateSelector", "time", "no date tapped: a <time> element when the row has one")
         }
-        if (number != null) {
+        if (!singleEpisode && number != null) {
             put("numberSelector", relative(number.likeSelector, derived["chapterSelector"].orEmpty()), "the number you tapped; the code reads the last number in the link text")
         }
 
@@ -145,6 +228,14 @@ internal object Derive {
             val host = src.toHttpUrlOrNull()?.host ?: src.removePrefix("//").substringBefore('/')
             val frame = if (tag == "video" || tag == "source") "video source, video[src]" else lastSegment(video.likeSelector)
             put("videoFrame", frame, "the player you tapped ($tag)")
+            // r99: the 123av run labelled a text block (div.watch__headinfo) as the player
+            if (tag != "video" && tag != "source" && tag != "iframe" && tag != "embed" && tag != "object") {
+                put(
+                    "warningVideo",
+                    "Video frame is a <$tag>, not a player",
+                    "the code reads src / data-src of the frame; a <$tag> has none. Tap the player again, or use Up / Down in the hint until it says iframe or video",
+                )
+            }
             val known = tag == "video" || tag == "source" || KNOWN_PLAYER_HOSTS.any { it in host }
             if (known) {
                 put("videoNote", "Player host $host is one the hidden browser reads.", "a known embed host: the .m3u8 it loads is caught")
@@ -176,6 +267,85 @@ internal object Derive {
     }
 
     fun lastSegment(path: String): String = path.split(" > ").last().trim()
+
+    /**
+     * r99: true when [path] (an ancestor chain, a pick's full css path) passes through [item] (a full segment): the
+     * item holds that element. r99 fix: whole segments only, classes and positions included (`div:nth-of-type(2)`
+     * is not `div:nth-of-type(1)`, and `div` is not `div.card`)
+     */
+    fun holds(item: String, path: String): Boolean = segments(path).any { it == item.trim() }
+
+    /**
+     * r99: the smallest element both chains pass through: the deepest segment of [a] (its own element excluded)
+     * that is also a segment of [b] above its element. Matched by whole segment (r99 fix: classes, and the position
+     * of a classless element, included), so paths cut at different heights still meet
+     * (`div.grid > div.card > div.card__body > h3 > a` and `div.card > div.card__poster > a > img` → `div.card`)
+     * but two different classless `div`s don't. Pass the picks' full css paths; [likeSegment] gives the selector.
+     */
+    fun commonAncestor(a: String, b: String): String? {
+        val x = segments(a).dropLast(1)
+        val y = segments(b).dropLast(1).toSet()
+        return x.lastOrNull { it in y && it != "body" }
+    }
+
+    private val POSITION = Regex(""":nth-of-type\(\d+\)""")
+
+    private fun segments(path: String): List<String> = path.split(" > ").map { it.trim() }
+
+    /** A segment without its position: what "every card like it" means */
+    fun likeSegment(segment: String): String = segment.replace(POSITION, "").trim()
+
+    /** A pick's full path (positions of classless elements kept), else its like selector */
+    private fun fullPath(p: Picked): String = p.pick.cssPath.ifBlank { p.likeSelector }
+
+    private val GENERIC_TAGS = setOf("div", "li", "span")
+
+    /** r99 fix: [segment] is a bare div / li / span and neither it nor the two segments above it on [path] has a class or id */
+    private fun isVague(segment: String, path: String): Boolean {
+        if (likeSegment(segment) !in GENERIC_TAGS) return false
+        val all = segments(path)
+        val i = all.indexOfLast { it == segment.trim() }
+        if (i < 0) return true
+        return all.subList(maxOf(0, i - 2), i + 1).none { it.contains('.') || it.startsWith("#") }
+    }
+
+    /** r99: an element of a page read once (not per row): its exact path, positions kept */
+    private fun pageSelector(p: Picked): String =
+        p.pick.cssPath.ifBlank { p.likeSelector } // "body > " kept: without it a path can be a bare tag
+
+    /**
+     * r99: the next-page link, never a bare `a` (r98 wrote `a`, which is every link of the page): inside the pager
+     * that holds the tapped link (the nearest ancestor with a class or id, one that says pag/nav first), by
+     * `rel=next`, its aria-label, its words ("Next", "›", "»"), or for a page number the numbered links (page N+1
+     * is what POPULAR_PATH's {page} asks for).
+     */
+    fun nextSelector(next: Picked): Pair<String, String> {
+        val segments = next.likeSelector.split(" > ").map { it.trim() }
+        val ancestors = segments.dropLast(1).filter { it.contains('.') || it.startsWith("#") }
+        val container = ancestors.lastOrNull { Regex("(?i)pag|nav").containsMatchIn(it) } ?: ancestors.lastOrNull()
+        val own = lastSegment(next.likeSelector).replace(Regex(""":nth-of-type\(\d+\)"""), "").ifBlank { "a" }
+        val element = own
+        val prefix = container?.let { "$it " }.orEmpty()
+        val rel = next.pick.attrs["rel"].orEmpty()
+        val aria = next.pick.attrs["aria-label"].orEmpty()
+        val text = next.pick.text.trim()
+        return when {
+            rel.split(' ').any { it.equals("next", true) } ->
+                "$prefix$element[rel~=next]" to "the next-page link you tapped has rel=next${container?.let { ", inside $it" }.orEmpty()}"
+            aria.isNotBlank() && aria.length <= 40 && !aria.contains('"') ->
+                "$prefix$element[aria-label=\"$aria\"]" to "the next-page link you tapped, by its label \"$aria\"${container?.let { ", inside $it" }.orEmpty()}"
+            Regex("""(?i)^(next|next page|›|»|→|older)$""").matches(text) || (Regex("""(?i)\bnext\b""").containsMatchIn(text) && text.length <= 20) ->
+                "$prefix$element:containsOwn(${text.replace(")", "").replace("(", "")})" to "the next-page link you tapped, by its words \"$text\"${container?.let { ", inside $it" }.orEmpty()}"
+            Regex("""^\d+$""").matches(text) && container != null ->
+                "$container $element:matchesOwn(^\\s*\\d+\\s*\$)" to "you tapped page $text of the numbered pager $container: page N+1 is the next one ({page} in the list path)"
+            container != null ->
+                "$container $element" to "the links of the pager $container around the link you tapped"
+            element != "a" && element.contains('.') ->
+                element to "the next-page link you tapped (no pager element around it was found)"
+            else ->
+                "a[rel~=next]" to "the tapped link had no class and no pager around it: a bare `a` would be every link, so rel=next is used"
+        }
+    }
 
     fun parentOf(path: String): String = path.split(" > ").dropLast(1).joinToString(" > ")
 

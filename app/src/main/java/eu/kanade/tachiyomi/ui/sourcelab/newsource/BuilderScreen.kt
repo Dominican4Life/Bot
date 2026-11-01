@@ -31,6 +31,8 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.ArrowForward
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.automirrored.outlined.Undo
+import androidx.compose.material.icons.outlined.ArrowDownward
+import androidx.compose.material.icons.outlined.ArrowUpward
 import androidx.compose.material.icons.outlined.CheckBox
 import androidx.compose.material.icons.outlined.CheckBoxOutlineBlank
 import androidx.compose.material.icons.outlined.Close
@@ -48,6 +50,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -185,7 +188,7 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
             topBar = {
                 AppBar(
                     title = "Build by tapping",
-                    subtitle = "${state.host} · ${state.step.title} · step ${state.step.number} of 3",
+                    subtitle = "${state.host} · ${stepTitle(state)} · step ${state.step.number} of 3",
                     navigateUp = {
                         if (state.step != BuilderScreenModel.Step.ListPage) model.previousStep() else navigator.pop()
                         Unit
@@ -233,7 +236,11 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
                 )
                 UrlRow(state, model, holder)
-                PickHint(state, model)
+                // r99: Up / Down move the pick on the page; picker.js sends the new element back as a pick
+                PickHint(state, model) { direction ->
+                    holder[0]?.evaluateJavascript("window.__labPicker && window.__labPicker.$direction()", null)
+                    Unit
+                }
                 if (tablet) {
                     Row(modifier = Modifier.fillMaxSize()) {
                         WebCard(
@@ -315,7 +322,7 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
      * covered the page and its outlines.
      */
     @Composable
-    private fun PickHint(state: BuilderScreenModel.State, model: BuilderScreenModel) {
+    private fun PickHint(state: BuilderScreenModel.State, model: BuilderScreenModel, refine: (String) -> Unit) {
         val pending = state.pending ?: return
         Surface(
             shape = RoundedCornerShape(12.dp),
@@ -331,14 +338,28 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (pending.text.isNotBlank()) {
+                // r99: what the element shows (text or alt, 60 characters) and how many match, so a wrong element
+                // (an invisible link, a menu) is seen before it is labelled; Up / Down to adjust
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Text(
-                        "\"${pending.text.take(80)}\"",
+                        (if (pending.snippet.isNotBlank()) "\"${pending.snippet}\"" else "(no text)") +
+                            " · ${pending.count} ${if (pending.count == 1) "match" else "matches"}",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onPrimaryContainer,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
                     )
+                    TextButton(onClick = { refine("up") }) {
+                        Icon(Icons.Outlined.ArrowUpward, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Up")
+                    }
+                    TextButton(onClick = { refine("down") }) {
+                        Icon(Icons.Outlined.ArrowDownward, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Down")
+                    }
                 }
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -490,6 +511,7 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
                             text = when {
                                 choosable -> "tap here: it is the ${labelName(label).lowercase()}"
                                 pick != null -> pick.likeSelector.substringAfterLast(" > ") + " · ${pick.pick.count}"
+                                state.singleEpisode && label == "chapter" -> "not needed: this page is the episode"
                                 here -> "tap it on the page"
                                 label in BuilderScreenModel.Step.TitlePage.labels -> "open a title to pick it"
                                 else -> "open a chapter to pick it"
@@ -509,6 +531,33 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
                     }
                     HorizontalDivider()
                 }
+                // r99: a title page that is its own only episode (one video per page, no episode list)
+                if (state.step == BuilderScreenModel.Step.TitlePage || state.singleEpisode) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { model.setSingleEpisode(!state.singleEpisode) }
+                            .padding(top = 10.dp, bottom = 4.dp),
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("This page is the only episode", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                if (state.singleEpisode) {
+                                    "No chapter link needed: Date / Number are read on this page, and the video frame is picked on it next" +
+                                        if (state.json) ". Written as JS (the JSON format lists episodes from links)." else "."
+                                } else {
+                                    "Turn on when the title has one video and no episode list"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Switch(checked = state.singleEpisode, onCheckedChange = model::setSingleEpisode)
+                    }
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 12.dp)) {
                     FilterChip(selected = !state.anime, onClick = { model.setAnime(false) }, label = { Text("Manga") })
                     FilterChip(selected = state.anime, onClick = { model.setAnime(true) }, label = { Text("Anime") })
@@ -523,7 +572,7 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
                         Text(
                             when (state.step) {
                                 BuilderScreenModel.Step.ListPage -> "Next: open a title"
-                                BuilderScreenModel.Step.TitlePage -> "Next: open a chapter"
+                                BuilderScreenModel.Step.TitlePage -> if (state.singleEpisode) "Next: pick the video here" else "Next: open a chapter"
                                 BuilderScreenModel.Step.ChapterPage -> "Write the source"
                             },
                         )
@@ -557,11 +606,25 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
                         modifier = Modifier.padding(top = 6.dp),
                     )
                 } else {
-                    selection.derived.forEach { (key, value) ->
+                    // r99: `warning…` entries (an Item that doesn't hold the title, a player that isn't one) first, in red
+                    val (warnings, values) = selection.derived.entries.partition { it.key.startsWith("warning") }
+                    warnings.forEach { (key, value) ->
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Text(value, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onErrorContainer)
+                                Text(selection.reasons[key].orEmpty(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
+                            }
+                        }
+                    }
+                    values.forEach { (key, value) ->
                         Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
                             Row {
                                 Text(key, style = MaterialTheme.typography.labelLarge, modifier = Modifier.width(120.dp))
-                                Text(value, fontFamily = FontFamily.Monospace, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                                Text(value.ifEmpty { "(none)" }, fontFamily = FontFamily.Monospace, fontSize = 12.sp, modifier = Modifier.weight(1f))
                             }
                             Text(
                                 selection.reasons[key].orEmpty(),
@@ -581,6 +644,10 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
         const val PICK_PREFIX = "LABPICK:"
         const val LOG_PREFIX = "LABLOG:"
     }
+
+    /** r99: the step's page; the video step of an only-episode title is that title page */
+    private fun stepTitle(state: BuilderScreenModel.State): String =
+        if (state.step == BuilderScreenModel.Step.ChapterPage && state.singleEpisode) "title page (the only episode)" else state.step.title
 
     private fun labelName(label: String): String = when (label) {
         "item" -> "Item"

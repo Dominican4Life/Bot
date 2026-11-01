@@ -63,6 +63,9 @@ class AnimeExtensionManager(
         .map { it.values.toList() }
         .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
+    /** KMK (r99): the installed extensions now (the flow above can lag a moment behind [isInitialized]) */
+    fun installedNow(): List<AnimeExtension> = installedExtensionMapFlow.value.values.toList()
+
     private val availableExtensionMapFlow = MutableStateFlow(emptyMap<String, Extension.Available>())
     /** KMK: the packages the repos offer, as last read */
     fun availableNow(): List<Extension.Available> = availableExtensionMapFlow.value.values.toList()

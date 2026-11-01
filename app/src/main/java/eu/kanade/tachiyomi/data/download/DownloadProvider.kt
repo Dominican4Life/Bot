@@ -88,7 +88,14 @@ class DownloadProvider(
         val sourceDirName = getSourceDirName(source)
         // KMK: the manga's folder wherever it already is, else the source's existing folder, else a new one
         findMangaDir(mangaTitle, source)?.let { return Result.success(it) }
-        val sourceDir = SourceFolders.findOrCreate(downloadsDir, sourceDirName, sourceMatch(source))
+        // KMK (r99): the folder linked to the source's id comes first, so a renamed source keeps its folder
+        val sourceDir = SourceFolderLinks.existing(SourceFolderLinks.Kind.MANGA, source.id, downloadsDir).firstOrNull()
+            ?: SourceFolders.findOrCreate(downloadsDir, sourceDirName, sourceMatch(source))
+        // Linked only when it is named exactly after the source: a folder found by the looser name rules may be
+        // another source's (seeding links those, after checking every known source)
+        if (sourceDir != null && !source.isLocal() && sourceDir.name.equals(sourceDirName, ignoreCase = true)) {
+            SourceFolderLinks.link(SourceFolderLinks.Kind.MANGA, source.id, sourceDir.name)
+        }
         if (sourceDir == null) {
             val displayablePath = downloadsDir.displayablePath + "/$sourceDirName"
             logcat(LogPriority.ERROR) { "Failed to create source download directory: $displayablePath" }
@@ -128,23 +135,36 @@ class DownloadProvider(
     // KMK -->
     /** What counts as this source's folder: today's name, the same source under another tag, numbered copies */
     fun sourceMatch(source: Source): SourceFolders.Match {
-        val ascii = libraryPreferences.disallowNonAsciiFilenames().get()
         return SourceFolders.match(
             exact = getSourceDirName(source),
-            baseName = DiskUtil.buildValidFilename(source.name, disallowNonAscii = ascii),
+            baseName = validFolderName(source.name),
             lang = source.lang,
             js = source is eu.kanade.tachiyomi.jssource.JsMangaSource,
         )
     }
 
-    /** Every download folder of [source], best first */
+    /** KMK (r99): [name] made safe for a folder name, with the non-ASCII setting */
+    fun validFolderName(name: String): String =
+        DiskUtil.buildValidFilename(name, disallowNonAscii = libraryPreferences.disallowNonAsciiFilenames().get())
+
+    /**
+     * Every download folder of [source], best first. KMK (r99): (a) the folders linked to its id
+     * ([SourceFolderLinks]), (b) today's exact name, (c) what [SourceFolders] matches by name. One listing.
+     */
     fun findSourceDirs(source: Source): List<UniFile> {
         if (source.isLocal()) return listOfNotNull(storageManager.getLocalSourceDirectory())
         val dir = downloadsDir ?: return emptyList()
-        dir.findFile(getSourceDirName(source))?.takeIf { it.isDirectory }?.let { exact ->
-            return listOf(exact) + SourceFolders.find(dir, sourceMatch(source)).filter { it.name != exact.name }
-        }
-        return SourceFolders.find(dir, sourceMatch(source))
+        val children = dir.listFiles().orEmpty().filter { it.isDirectory && !it.name.isNullOrBlank() }
+        val linked = SourceFolderLinks.existing(SourceFolderLinks.Kind.MANGA, source.id, children)
+        val exactName = getSourceDirName(source)
+        val exact = children.firstOrNull { it.name == exactName }
+            ?: children.firstOrNull { it.name.equals(exactName, ignoreCase = true) }
+        val match = sourceMatch(source)
+        val matched = children
+            .mapNotNull { child -> match.rank(child.name!!)?.let { child to it } }
+            .sortedBy { it.second }
+            .map { it.first }
+        return (linked + listOfNotNull(exact) + matched).distinctBy { it.name }
     }
     // KMK <--
 

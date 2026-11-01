@@ -795,80 +795,94 @@ private fun ExtensionImportDialog(
 ) {
     val g = result.generated
     val facts = result.facts
+    // KMK (r99): the actions sit in their own column under the scrolling text, inside the dialog's text slot. In
+    // r98 Record and convert was the last thing of the scrolling text (cut off at 460 dp on the tablet) and the
+    // three text buttons in the dialog's own row ("GitHub · Cancel · Template only") were all that showed. Now the
+    // text takes what is left (weight(1f, fill = false)) and the buttons always show: the primary full width, the
+    // secondary outlined full width, GitHub / Cancel as text buttons at the end.
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (result.themeRecognised) "Imported from the extension" else "Custom extension") },
         text = {
-            Column(modifier = Modifier.verticalScroll(rememberScrollState()).heightIn(max = 460.dp)) {
-                if (!result.themeRecognised) {
+            Column {
+                Column(modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+                    if (!result.themeRecognised) {
+                        Text(
+                            text = if (result.themeKnown) {
+                                "The extension is built on ${facts.theme}, which the Lab knows but has no template for. It kept the id, name and URL and used the closest template; the parts that read pages are marked not written."
+                            } else if (facts.error != null) {
+                                "${facts.error.replaceFirstChar { it.uppercase() }}. The Lab kept the id, name and URL. Use Build by tapping for the rest, or open its source on GitHub."
+                            } else {
+                                "Custom extension: the APK's strings don't tell its logic; the template only keeps the id, name and URL. Record and convert below runs the extension and writes the parts from what it really does."
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(bottom = 10.dp),
+                        )
+                    }
+                    val lines = buildList<String> {
+                        add("id            ${g.sourceId} (kept: library titles keep working)")
+                        add("name          ${g.suggestedName}")
+                        add("baseUrl       ${g.baseUrl}")
+                        add("theme         ${facts.themeClass ?: facts.error ?: "none found"}")
+                        add("template      ${result.templateId}")
+                        add("dex files     ${facts.dexFiles} · ${facts.strings} strings")
+                        if (facts.dateFormats.isNotEmpty()) add("date formats  ${facts.dateFormats.take(3).joinToString(", ")}")
+                        if (facts.chapterPaths.isNotEmpty()) add("chapter paths ${facts.chapterPaths.take(3).joinToString(", ")}")
+                        if (facts.selectors.isNotEmpty()) add("selectors     ${facts.selectors.take(4).joinToString(", ")}")
+                        if (facts.sameHostUrls.isNotEmpty()) add("addresses     ${facts.sameHostUrls.take(3).joinToString(", ")}")
+                    }
+                    MonoCard(title = null, text = lines.joinToString("\n"))
                     Text(
-                        text = if (result.themeKnown) {
-                            "The extension is built on ${facts.theme}, which the Lab knows but has no template for. It kept the id, name and URL and used the closest template; the parts that read pages are marked not written."
-                        } else if (facts.error != null) {
-                            "${facts.error.replaceFirstChar { it.uppercase() }}. The Lab kept the id, name and URL. Use Build by tapping for the rest, or open its source on GitHub."
+                        text = g.explain.firstOrNull()?.text.orEmpty(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 10.dp),
+                    )
+                    // KMK (r98): the second level, for any source; the main way for a custom extension
+                    Text(
+                        text = if (result.themeRecognised) {
+                            "Record and convert runs the extension itself and writes every part from what it really does, settings and filters included."
                         } else {
-                            "Custom extension: the APK's strings don't tell its logic; the template only keeps the id, name and URL. Record and convert below runs the extension and writes the parts from what it really does."
+                            "Record and convert runs the extension itself, captures its requests and writes the source from them: settings, filters, and every step it can derive."
                         },
                         style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(bottom = 10.dp),
+                        modifier = Modifier.padding(top = 14.dp),
                     )
+                    RecordNote(host)
                 }
-                val lines = buildList<String> {
-                    add("id            ${g.sourceId} (kept: library titles keep working)")
-                    add("name          ${g.suggestedName}")
-                    add("baseUrl       ${g.baseUrl}")
-                    add("theme         ${facts.themeClass ?: facts.error ?: "none found"}")
-                    add("template      ${result.templateId}")
-                    add("dex files     ${facts.dexFiles} · ${facts.strings} strings")
-                    if (facts.dateFormats.isNotEmpty()) add("date formats  ${facts.dateFormats.take(3).joinToString(", ")}")
-                    if (facts.chapterPaths.isNotEmpty()) add("chapter paths ${facts.chapterPaths.take(3).joinToString(", ")}")
-                    if (facts.selectors.isNotEmpty()) add("selectors     ${facts.selectors.take(4).joinToString(", ")}")
-                    if (facts.sameHostUrls.isNotEmpty()) add("addresses     ${facts.sameHostUrls.take(3).joinToString(", ")}")
-                }
-                MonoCard(title = null, text = lines.joinToString("\n"))
-                Text(
-                    text = g.explain.firstOrNull()?.text.orEmpty(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 10.dp),
-                )
-                // KMK (r98): the second level, for any source; the main way for a custom extension
-                Text(
-                    text = if (result.themeRecognised) {
-                        "Record and convert runs the extension itself and writes every part from what it really does, settings and filters included."
-                    } else {
-                        "Record and convert runs the extension itself, captures its requests and writes the source from them: settings, filters, and every step it can derive."
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(top = 14.dp),
-                )
-                RecordNote(host)
+                Spacer(Modifier.height(12.dp))
+                // Primary: Record and convert for a custom extension, Write the source for a themed one
                 if (result.themeRecognised) {
-                    OutlinedButton(onClick = onRecord, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                    Button(onClick = onWrite, modifier = Modifier.fillMaxWidth()) { Text("Write the source") }
+                    OutlinedButton(onClick = onRecord, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
                         Icon(Icons.Outlined.FiberManualRecord, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(8.dp))
                         Text("Record and convert")
                     }
                 } else {
-                    Button(onClick = onRecord, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                    Button(onClick = onRecord, modifier = Modifier.fillMaxWidth()) {
                         Icon(Icons.Outlined.FiberManualRecord, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(8.dp))
                         Text("Record and convert")
                     }
+                    OutlinedButton(onClick = onWrite, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) { Text("Template only") }
+                }
+                Row(
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                ) {
+                    TextButton(onClick = onGitHub) {
+                        Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("GitHub")
+                    }
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onWrite) { Text(if (result.themeRecognised) "Write the source" else "Template only") } },
-        dismissButton = {
-            Row {
-                TextButton(onClick = onGitHub) {
-                    Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("GitHub")
-                }
-                TextButton(onClick = onDismiss) { Text("Cancel") }
-            }
-        },
+        // The actions are in the text slot above (always visible); the dialog's own button row stays empty
+        confirmButton = {},
     )
 }
 

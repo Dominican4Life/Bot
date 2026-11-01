@@ -107,6 +107,9 @@ class DownloadCache(
         get() = File(context.cacheDir, "dl_index_cache_v4")
 
     private val rootDownloadsDirMutex = Mutex()
+
+    /** KMK (r99): one [linkFolders] at a time (the start-up run and a renew); declared before `init` uses it */
+    private val linkMutex = Mutex()
     private var rootDownloadsDir = RootDirectory(storageManager.getMangaDownloadsDirectory())
 
     init {
@@ -132,6 +135,27 @@ class DownloadCache(
         storageManager.changes
             .onEach { invalidateCache() }
             .launchIn(scope)
+
+        // KMK (r99): link the download folders to their source ids once at start, also when the index came from the
+        // disk cache (its renew may be hours away). A folder found under a source's older name means the index
+        // from the disk cache lacks it: listed again
+        scope.launch {
+            try {
+                // Only with every source loaded: a folder of a source missing from the list would count as unclaimed
+                withTimeoutOrNull(30.seconds) {
+                    extensionManager.isInitialized.first { it }
+                    sourceManager.isInitialized.first { it }
+                } ?: return@launch
+                val favorites = Injekt.get<tachiyomi.domain.manga.interactor.GetFavorites>().await()
+                if (favorites.isEmpty()) return@launch
+                val sources = getSources()
+                val recovered = linkFolders(sources, sources.map { it.id to provider.sourceMatch(it) })
+                if (recovered > 0) invalidateCache()
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                logcat(LogPriority.WARN, e) { "DownloadCache: linking the source folders failed" }
+            }
+        }
     }
 
     /**
@@ -486,9 +510,10 @@ class DownloadCache(
 
             // KMK: nothing in the library yet (a fresh install): don't list the download folders. Checked again in a
             // minute, and a restore asks for a full reindex when it's done
-            libraryWasEmpty = runCatching {
-                Injekt.get<tachiyomi.domain.manga.interactor.GetFavorites>().await().isEmpty()
-            }.getOrDefault(false)
+            val favorites = runCatching {
+                Injekt.get<tachiyomi.domain.manga.interactor.GetFavorites>().await()
+            }.getOrNull()
+            libraryWasEmpty = favorites?.isEmpty() ?: false
             if (libraryWasEmpty) {
                 _isInitializing.emit(false)
                 return@run
@@ -497,6 +522,13 @@ class DownloadCache(
             // KMK: a folder belongs to a source by name whatever its tag, (EN), (JS), (ALL), and numbered copies too
             val matches = sources.map { it.id to provider.sourceMatch(it) }
 
+            // KMK (r99): folders are linked to source ids (a renamed source keeps its folder). Older names are
+            // recovered once per source, and every folder today's rules give a source is linked to it
+            if (favorites != null) linkFolders(sources, matches)
+            val linkKind = SourceFolderLinks.Kind.MANGA
+            val linkedOwners = SourceFolderLinks.owners(linkKind)
+            val sourceIds = sources.mapTo(HashSet()) { it.id }
+
             rootDownloadsDirMutex.withLock {
                 val updatedRootDir = RootDirectory(storageManager.getMangaDownloadsDirectory())
 
@@ -504,9 +536,17 @@ class DownloadCache(
                 updatedRootDir.dir?.listFiles().orEmpty()
                     .filter { it.isDirectory && !it.name.isNullOrBlank() }
                     .forEach { dir ->
+                        // KMK (r99): a folder linked to a source's id is that source's, before any name rule
+                        // (ranked by link order, ahead of every name rank)
+                        val linkedIds = linkedOwners[dir.name!!].orEmpty().filter { it in sourceIds }
+                        linkedIds.forEach { id ->
+                            val order = SourceFolderLinks.folders(linkKind, id).indexOf(dir.name!!)
+                            bySource.getOrPut(id) { mutableListOf() } += dir to (order - LINKED_RANK_BASE)
+                        }
                         matches
                             .mapNotNull { (id, match) -> match.rank(dir.name!!)?.let { id to it } }
                             .minByOrNull { it.second }
+                            ?.takeIf { (id, _) -> id !in linkedIds }
                             ?.let { (id, rank) -> bySource.getOrPut(id) { mutableListOf() } += dir to rank }
                     }
 
@@ -565,6 +605,60 @@ class DownloadCache(
     @Volatile
     private var libraryWasEmpty = false
 
+    /**
+     * KMK (r99): links the manga download folders to their source ids before the index is built
+     * ([SourceFolderLinks.recoverAndSeed]): a JS source renamed in the Source Lab ("Mitaku JS" → "Mitaku") keeps
+     * showing the downloads in its old folder. Only with every source loaded, also the switched-off, hidden and
+     * uninstalled ones ([SourceFolderLinks.knownSources]), so a folder of one of them is never taken as unclaimed;
+     * when they didn't load, nothing is linked and no source is marked tried. A failure here only skips the linking.
+     */
+    private suspend fun linkFolders(
+        sources: List<Source>,
+        matches: List<Pair<Long, SourceFolders.Match>>,
+    ): Int {
+        if (sources.isEmpty()) return 0
+        return linkMutex.withLock {
+            try {
+                val known = SourceFolderLinks.knownSources(SourceFolderLinks.Kind.MANGA) ?: return@withLock 0
+                linkFoldersLocked(sources, matches, known)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                eu.kanade.tachiyomi.util.system.AppLog.add(
+                    'W',
+                    "download",
+                    "Couldn't link the download folders to their sources: ${e.message}",
+                )
+                0
+            }
+        }
+    }
+
+    private fun linkFoldersLocked(
+        sources: List<Source>,
+        matches: List<Pair<Long, SourceFolders.Match>>,
+        known: List<SourceFolderLinks.Owner>,
+    ): Int {
+        val root = storageManager.getMangaDownloadsDirectory() ?: return 0
+        val matchById = matches.toMap()
+        val candidates = sources.mapNotNull { source ->
+            val match = matchById[source.id] ?: return@mapNotNull null
+            SourceFolderLinks.Candidate(
+                id = source.id,
+                displayName = source.name,
+                baseName = match.baseName,
+                match = match,
+                jsKey = (source as? eu.kanade.tachiyomi.jssource.JsMangaSource)?.info?.key,
+                sanitize = provider::validFolderName,
+            )
+        }
+        return SourceFolderLinks.recoverAndSeed(
+            SourceFolderLinks.Kind.MANGA,
+            root.listFiles().orEmpty().toList(),
+            candidates,
+            known,
+        )
+    }
+
     private fun getSources(): List<Source> {
         // SY -->
         return sourceManager.getVisibleOnlineSources() + sourceManager.getStubSources()
@@ -598,6 +692,9 @@ class DownloadCache(
         }
     }
 }
+
+/** KMK (r99): folders linked to a source id rank ahead of every name rank in the index (link order kept) */
+private const val LINKED_RANK_BASE = 1000
 
 /**
  * Class to store the files under the root downloads directory.

@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import androidx.compose.runtime.Immutable
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
+import eu.kanade.tachiyomi.data.download.SourceFolderLinks
 import eu.kanade.tachiyomi.jssource.JsFilters
 import eu.kanade.tachiyomi.jssource.JsPreferences
 import eu.kanade.tachiyomi.jssource.JsRuntime
@@ -317,6 +318,11 @@ class SourceEditorScreenModel(
         val note = saveNote // KMK (r96)
         screenModelScope.launchIO {
             mutableState.update { it.copy(running = "Saving") }
+            // KMK (r99): the source's download folder is linked to its id before the save, so a new `name` can't
+            // hide its downloads (folders used to be found by name only). Only the folder named exactly after its
+            // current name, and only when no other source claims it by name
+            val before = manager.get(s.key)
+            val keptFolder = before?.let { SourceFolderLinks.keepOnRename(it) }
             runCatching {
                 manager.save(
                     key = s.key,
@@ -334,6 +340,23 @@ class SourceEditorScreenModel(
                 )
             }.onSuccess { info ->
                 if (saveNote == note) saveNote = null // KMK (r96): used; a note set meanwhile stays for the next save
+                // KMK (r99): renamed: say where its downloads stay (shown after the "Saved" snackbar)
+                if (before != null && before.id == info.id && before.name.trim() != info.name.trim()) {
+                    if (keptFolder != null) {
+                        AppLog.add(
+                            'I',
+                            "download",
+                            "${before.name} renamed to ${info.name} (id ${info.id}): downloads stay in $keptFolder",
+                        )
+                        message("Name changed: downloads stay in $keptFolder (linked by id)")
+                    } else {
+                        AppLog.add(
+                            'I',
+                            "download",
+                            "${before.name} renamed to ${info.name} (id ${info.id}); no download folder linked to it",
+                        )
+                    }
+                }
                 mutableState.update {
                     // KMK: another source was opened meanwhile: leave it alone
                     if (it.key != s.key) return@update it.copy(running = null)

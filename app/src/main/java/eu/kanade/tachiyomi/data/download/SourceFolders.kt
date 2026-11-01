@@ -49,11 +49,24 @@ object SourceFolders {
     /** Every folder under [parent] that belongs to the source, best first */
     fun find(parent: UniFile?, match: Match): List<UniFile> {
         parent ?: return emptyList()
-        return parent.listFiles().orEmpty()
-            .filter { it.isDirectory && !it.name.isNullOrBlank() }
-            .mapNotNull { dir -> match.rank(dir.name!!)?.let { dir to it } }
-            .sortedBy { it.second }
-            .map { it.first }
+        return findIn(parent.listFiles().orEmpty().toList(), match)
+    }
+
+    /** KMK (r99): [find] on a listing already made ([children] of the downloads folder) */
+    fun findIn(children: List<UniFile>, match: Match): List<UniFile> = children
+        .filter { it.isDirectory && !it.name.isNullOrBlank() }
+        .mapNotNull { dir -> match.rank(dir.name!!)?.let { dir to it } }
+        .sortedBy { it.second }
+        .map { it.first }
+
+    /**
+     * KMK (r99): a source's folders under [parent]: the ones linked to its id ([SourceFolderLinks], in link order),
+     * then the ones [match] accepts, best first. One listing.
+     */
+    fun findLinked(parent: UniFile?, kind: SourceFolderLinks.Kind, id: Long, match: Match): List<UniFile> {
+        parent ?: return emptyList()
+        val children = parent.listFiles().orEmpty().filter { it.isDirectory && !it.name.isNullOrBlank() }
+        return (SourceFolderLinks.existing(kind, id, children) + findIn(children, match)).distinctBy { it.name }
     }
 
     /**

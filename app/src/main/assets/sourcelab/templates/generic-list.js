@@ -1,4 +1,4 @@
-// @version 1
+// @version 2
 // Generic list template of the Source Lab, written for {{name}} ({{baseUrl}}) from what was tapped in Build by
 // tapping (or filled by hand). Lists are pages of ITEM cards, chapters / episodes are the links of CHAPTER on a
 // title page, pages are the IMAGE pictures of a chapter page, videos the VIDEO_FRAME of an episode page.
@@ -17,6 +17,10 @@ var COVER_ATTR = "{{coverAttr}}";
 var NEXT = "{{nextSelector}}";
 var CHAPTER = "{{chapterSelector}}";
 var CHAPTER_DATE = "{{dateSelector}}";
+// r99: "This page is the only episode" (one video per title page, no list): the title page is episode 1, and
+// CHAPTER_DATE / EPISODE_NUMBER are read on that page (EPISODE_NUMBER is used only then)
+var SINGLE_EPISODE = "{{singleEpisode}}" === "true";
+var EPISODE_NUMBER = "{{numberSelector}}";
 var IMAGE = "{{imageSelector}}";
 var IMAGE_ATTR = "{{imageAttr}}";
 var VIDEO_FRAME = "{{videoFrame}}";
@@ -67,9 +71,22 @@ var extension = {
 
 /*@part id="getChapterList"*/
   // Chapters / episodes: the CHAPTER links of the title page, each address once, the number from the text, the
-  // date from CHAPTER_DATE inside or next to the link when one was picked.
+  // date from CHAPTER_DATE inside or next to the link when one was picked. With SINGLE_EPISODE the title page is
+  // the one episode: its own address, the h1 as title, number 1 (or EPISODE_NUMBER's), the date from CHAPTER_DATE.
   getChapterList: async function (url) {
     var doc = await host.parse(await get(url));
+    if (SINGLE_EPISODE) {
+      var when = CHAPTER_DATE ? (await doc.select(CHAPTER_DATE))[0] : null;
+      var numberEl = EPISODE_NUMBER ? (await doc.select(EPISODE_NUMBER))[0] : null;
+      var name = (await doc.text("h1") || await doc.attr("meta[property='og:title']", "content") || "Episode 1").trim();
+      return [{
+        url: url,
+        title: name,
+        number: (numberEl ? numberOf(numberEl.text) : null) || 1,
+        dateUploaded: require("date").parse(when ? (when.attr("datetime") || when.attr("title") || when.text) : ""),
+      }];
+    }
+    if (!CHAPTER) throw new Error("No chapter link was picked in Build by tapping: open a title and tap a chapter link, or say the title page is the only episode");
     var links = await doc.select(CHAPTER);
     var out = [];
     var seen = {};

@@ -56,6 +56,10 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
         val hrefs: List<String>,
         val attrsAllHttp: List<String>,
         val pageUrl: String,
+        /** r99: the element's text (or alt / title) as shown in the hint, first 60 characters */
+        val snippet: String = "",
+        /** r99: "tap", or "up" / "down" when the hint's Up / Down moved the pick */
+        val via: String = "tap",
     )
 
     @Immutable
@@ -80,6 +84,12 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
         val busy: String? = null,
         val error: String? = null,
         val delivered: Boolean = false,
+        /**
+         * r99: "This page is the only episode" (123av: one video per title page, no episode list). The title
+         * page is then the single episode: no chapter link is needed, Date / Number picks describe that episode,
+         * and the Video frame step runs on the title page itself.
+         */
+        val singleEpisode: Boolean = false,
     ) {
         val site: String get() = (pageUrl ?: loadUrl ?: url).let { Detector.normalize(it) }
         val host: String get() = site.removePrefix("https://").removePrefix("http://")
@@ -102,6 +112,13 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
     fun setUrl(url: String) = mutableState.update { it.copy(url = url, error = null) }
 
     fun setJson(json: Boolean) = mutableState.update { it.copy(json = json) }
+
+    /** r99: the title-page toggle "This page is the only episode" */
+    fun setSingleEpisode(single: Boolean) {
+        mutableState.update { it.copy(singleEpisode = single) }
+        AppLog.add('D', "lab", "Builder: this page is the only episode = $single")
+        rederive()
+    }
 
     fun setAnime(anime: Boolean) {
         mutableState.update { it.copy(anime = anime) }
@@ -133,7 +150,8 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
         val listPage = pageOf(Step.ListPage) ?: startUrl?.trim()?.substringBefore('#')?.trimEnd('/')
         val target = when {
             s.step != Step.ListPage && listPage != null && shown == listPage -> Step.ListPage
-            s.step == Step.ChapterPage && shown == pageOf(Step.TitlePage) -> Step.TitlePage
+            // r99: with "only episode" the video step runs on the title page itself, so that page is no way back
+            s.step == Step.ChapterPage && !s.singleEpisode && shown == pageOf(Step.TitlePage) -> Step.TitlePage
             else -> return
         }
         mutableState.update { it.copy(step = target, pending = null) }
@@ -168,12 +186,17 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
             hrefs = o.arr("hrefs")?.mapNotNull { (it as? JsonPrimitive)?.content }.orEmpty(),
             attrsAllHttp = o.arr("attrsAllHttp")?.mapNotNull { (it as? JsonPrimitive)?.content }.orEmpty(),
             pageUrl = o.str("pageUrl") ?: state.value.pageUrl.orEmpty(),
+            snippet = o.str("snippet").orEmpty(),
+            via = o.str("via") ?: "tap",
         )
         if (raw.cssPath.isBlank()) return
+        // r99: the text it shows and how it was reached (a tap, or Up / Down in the hint)
+        val how = if (raw.via == "tap") "tap" else "tap (${raw.via})"
+        val shown = if (raw.snippet.isNotBlank()) " · \"${raw.snippet}\"" else ""
         AppLog.add(
             'D',
             "lab",
-            "picker tap ${shortSelector(raw.likeSelector)} ×${raw.count} · ${raw.cssPath}${if (viaConsole) " (console)" else ""}",
+            "picker $how ${shortSelector(raw.likeSelector)} ×${raw.count} · ${raw.cssPath}$shown${if (viaConsole) " (console)" else ""}",
         )
         mutableState.update { it.copy(pending = raw) }
     }
@@ -239,9 +262,15 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
                 load(href)
             }
             Step.TitlePage -> {
+                // r99: the title page is the only episode: the video frame is picked on this same page
+                if (s.singleEpisode) {
+                    mutableState.update { it.copy(step = Step.ChapterPage, pending = null) }
+                    AppLog.add('D', "lab", "Builder: video step on the title page itself (only episode) ${s.pageUrl.orEmpty()}")
+                    return
+                }
                 val href = s.pick("chapter")?.hrefs?.firstOrNull()
                 if (href == null) {
-                    mutableState.update { it.copy(error = "Tap a chapter link first, so the Lab knows which chapter to open") }
+                    mutableState.update { it.copy(error = "Tap a chapter link first, so the Lab knows which chapter to open, or turn on \"This page is the only episode\" when the title has no list") }
                     return
                 }
                 mutableState.update { it.copy(step = Step.ChapterPage) }
@@ -259,6 +288,8 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
             Step.ChapterPage -> Step.TitlePage
         }
         mutableState.update { it.copy(step = previous, pending = null) }
+        // r99: from the video step of an only-episode title the page shown is already the title page
+        if (s.step == Step.ChapterPage && s.singleEpisode) return
         val back = s.picks.lastOrNull { it.pick.label in previous.labels }?.pick?.pageUrl
         if (back != null) load(back)
     }
@@ -272,7 +303,7 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
 
     private fun rederive() {
         val s = state.value
-        val selection = runCatching { Derive.derive(s.site, s.anime, s.picks) }
+        val selection = runCatching { Derive.derive(s.site, s.anime, s.picks, s.singleEpisode) }
             .onFailure { AppLog.add('W', "lab", "Derive failed: ${it.message}") }
             .getOrNull()
         mutableState.update { it.copy(selection = selection) }
@@ -281,12 +312,19 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
     /** Done: the generic-list template filled with the derived values, handed to Half A */
     fun write() {
         val s = state.value
-        val selection = s.selection ?: Derive.derive(s.site, s.anime, s.picks)
+        val selection = s.selection ?: Derive.derive(s.site, s.anime, s.picks, s.singleEpisode)
+        // r99: the JSON format has no way to say "the title page is the one episode": written as JS then
+        // r99 fix: nor "no chapter link was picked" (its empty CHAPTER selector would fail without saying why): JS too,
+        // whose getChapterList throws the clear error
+        val noChapter = selection.derived["chapterSelector"].isNullOrBlank() && !s.singleEpisode
+        val json = s.json && !s.singleEpisode && !noChapter
+        if (s.json && s.singleEpisode) AppLog.add('I', "lab", "Builder: only-episode source written as JS (the JSON format lists episodes from links)")
+        if (s.json && noChapter) AppLog.add('I', "lab", "Builder: no chapter link picked: written as JS (its chapter list says to tap one)")
         mutableState.update { it.copy(busy = "Writing the source…", error = null) }
         screenModelScope.launchIO {
             try {
                 val generated = withIOContext {
-                    val template = Templates.get(if (s.json) "generic-list.json" else "generic-list")
+                    val template = Templates.get(if (json) "generic-list.json" else "generic-list")
                         ?: throw IllegalStateException("The generic-list template is missing from the app")
                     val host = s.host
                     val values = LinkedHashMap<String, String>()
@@ -304,12 +342,17 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
                         siteUrl = s.site,
                     )
                     val videoTodo = selection.derived["videoNote"]?.startsWith("TODO") == true
+                    // r99: no chapter link picked (and not an only-episode title): the chapter part can't be written
+                    val chapterTodo = selection.derived["chapterSelector"].isNullOrBlank() && !s.singleEpisode
                     Generator.generate(
                         template = template,
                         values = values,
                         lab = lab,
                         drop = setOf(if (s.anime) "getPageList" else "getVideoList"),
-                        notWritten = if (s.anime && videoTodo) setOf("getVideoList") else emptySet(),
+                        notWritten = buildSet {
+                            if (s.anime && videoTodo) add("getVideoList")
+                            if (chapterTodo) add("getChapterList")
+                        },
                         anime = s.anime,
                     )
                 }

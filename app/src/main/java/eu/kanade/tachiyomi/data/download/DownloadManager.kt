@@ -407,24 +407,37 @@ class DownloadManager(
      * @param newSource the new source.
      */
     fun renameSource(oldSource: Source, newSource: Source) {
+        // KMK (r99): a JS source's folder is never renamed: its downloads are found by its id (SourceFolderLinks),
+        // whatever it is called now. The source given here is its stub, so it is told by its id
+        val jsSource = sourceManager.get(newSource.id) is eu.kanade.tachiyomi.jssource.JsMangaSource ||
+            Injekt.get<eu.kanade.tachiyomi.jssource.JsSourceManager>().savedFlow.value
+                .any { !it.anime && it.id == newSource.id }
+        if (jsSource) return
         val oldFolder = provider.findSourceDir(oldSource) ?: return
+        val oldName = oldFolder.name ?: return
+        // KMK (r99): a folder linked to any source id is left as it is (the link finds it by the id)
+        val linkKind = SourceFolderLinks.Kind.MANGA
+        if (SourceFolderLinks.owners(linkKind).keys.any { it.equals(oldName, ignoreCase = true) }) return
         val newName = provider.getSourceDirName(newSource)
 
-        if (oldFolder.name == newName) return
+        if (oldName == newName) return
         // KMK: a folder that already counts for the new source (same name, other tag) is left as it is
-        if (oldFolder.name?.let { provider.sourceMatch(newSource).rank(it) } != null) return
+        if (provider.sourceMatch(newSource).rank(oldName) != null) return
 
-        val capitalizationChanged = oldFolder.name.equals(newName, ignoreCase = true)
+        val capitalizationChanged = oldName.equals(newName, ignoreCase = true)
         if (capitalizationChanged) {
             val tempName = newName + Downloader.TMP_DIR_SUFFIX
             if (!oldFolder.renameTo(tempName)) {
-                logcat(LogPriority.ERROR) { "Failed to rename source download folder: ${oldFolder.name}" }
+                logcat(LogPriority.ERROR) { "Failed to rename source download folder: $oldName" }
                 return
             }
         }
 
-        if (!oldFolder.renameTo(newName)) {
-            logcat(LogPriority.ERROR) { "Failed to rename source download folder: ${oldFolder.name}" }
+        if (oldFolder.renameTo(newName)) {
+            // KMK (r99): a link made meanwhile (a download) follows the folder
+            SourceFolderLinks.renameFolder(linkKind, newSource.id, oldName, newName)
+        } else {
+            logcat(LogPriority.ERROR) { "Failed to rename source download folder: $oldName" }
         }
     }
 

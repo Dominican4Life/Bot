@@ -14,6 +14,7 @@ import eu.kanade.tachiyomi.data.anime.AnimePrefs
 import eu.kanade.tachiyomi.data.anime.AnimeRepository
 import eu.kanade.tachiyomi.data.anime.AnimeVideoFetcher
 import eu.kanade.tachiyomi.data.anime.Episode
+import eu.kanade.tachiyomi.data.download.SourceFolderLinks
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.data.download.video.ParallelVideoDownload
 import eu.kanade.tachiyomi.network.NetworkHelper
@@ -163,6 +164,8 @@ class AnimeDownloadManager(
             // KMK (r88): pieces of episode downloads that aren't queued any more (cancelled, failed, removed)
             ParallelVideoDownload.cleanUp(KEY_PREFIX, keptKeys())
         }
+        // KMK (r99): download folders follow the source id
+        scope.launch { linkFolders() }
     }
 
     // Queue
@@ -595,21 +598,71 @@ class AnimeDownloadManager(
 
     // Files
 
-    private fun sourceDirName(anime: Anime): String {
-        val source = sourceManager.get(anime.source)
-        val name = source?.let { "${it.name} (${it.lang.uppercase()})" } ?: anime.source.toString()
+    private fun sourceDirName(anime: Anime): String = sourceDirName(anime.source)
+
+    private fun sourceDirName(sourceId: Long): String {
+        val source = sourceManager.get(sourceId)
+        val name = source?.let { "${it.name} (${it.lang.uppercase()})" } ?: sourceId.toString()
         return DiskUtil.buildValidFilename(name)
     }
 
     // KMK: the source's folders under any tag ("Name (EN)", "Name (JS)") and numbered copies count too
-    private fun sourceMatch(anime: Anime): eu.kanade.tachiyomi.data.download.SourceFolders.Match {
-        val source = sourceManager.get(anime.source)
+    private fun sourceMatch(anime: Anime): eu.kanade.tachiyomi.data.download.SourceFolders.Match =
+        sourceMatch(anime.source)
+
+    private fun sourceMatch(sourceId: Long): eu.kanade.tachiyomi.data.download.SourceFolders.Match {
+        val source = sourceManager.get(sourceId)
         return eu.kanade.tachiyomi.data.download.SourceFolders.match(
-            exact = sourceDirName(anime),
-            baseName = DiskUtil.buildValidFilename(source?.name ?: anime.source.toString()),
+            exact = sourceDirName(sourceId),
+            baseName = DiskUtil.buildValidFilename(source?.name ?: sourceId.toString()),
             lang = source?.lang.orEmpty(),
             js = source is eu.kanade.tachiyomi.jssource.JsAnimeSource,
         )
+    }
+
+    /**
+     * KMK (r99): links the anime download folders to their source ids once at start
+     * ([SourceFolderLinks.recoverAndSeed]; the library's sources only, others are linked when they download). A JS
+     * source renamed in the Source Lab ("Mitaku JS" → "Mitaku") keeps finding the episodes in its old folder; when an
+     * older folder was found, the downloaded state is read again. Only once the anime catalogue and the JS sources
+     * are loaded ([SourceFolderLinks.knownSources], also switched-off ones, so their folders count as claimed); when
+     * they didn't load in time nothing is linked and no source is marked tried.
+     */
+    private suspend fun linkFolders() {
+        try {
+            val known = SourceFolderLinks.knownSources(SourceFolderLinks.Kind.ANIME) ?: return
+            val root = storageManager.getAnimeDownloadsDirectory(false) ?: return
+            val names = loadLibraryNames()
+            if (names.isEmpty()) return
+            val candidates = names.keys.mapNotNull { sourceId ->
+                val source = sourceManager.get(sourceId) ?: return@mapNotNull null
+                val match = sourceMatch(sourceId)
+                SourceFolderLinks.Candidate(
+                    id = sourceId,
+                    displayName = source.name,
+                    baseName = match.baseName,
+                    match = match,
+                    jsKey = (source as? eu.kanade.tachiyomi.jssource.JsAnimeSource)?.info?.key,
+                    sanitize = { DiskUtil.buildValidFilename(it) },
+                )
+            }
+            val recovered = dirLock.withLock {
+                SourceFolderLinks.recoverAndSeed(
+                    SourceFolderLinks.Kind.ANIME,
+                    root.listFiles().orEmpty().toList(),
+                    candidates,
+                    known,
+                )
+            }
+            if (recovered > 0) {
+                fileCache.clear()
+                nameCounts.clear()
+                _changes.update { it + 1 }
+            }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            AppLog.add('W', "download", "Couldn't link the anime download folders to their sources: ${e.message}")
+        }
     }
 
     // KMK: also where the anime's cover is kept (CoverFolders)
@@ -629,7 +682,9 @@ class AnimeDownloadManager(
         val animeRoot = storageManager.getAnimeDownloadsDirectory(create) ?: return null
         val title = DiskUtil.buildValidFilename(anime.title)
         val match = sourceMatch(anime)
-        val sourceDirs = eu.kanade.tachiyomi.data.download.SourceFolders.find(animeRoot, match)
+        // KMK (r99): the folders linked to the source's id first (a renamed source keeps its folder), then by name
+        val sourceDirs = eu.kanade.tachiyomi.data.download.SourceFolders
+            .findLinked(animeRoot, SourceFolderLinks.Kind.ANIME, anime.source, match)
         val twins = caseTwinNames(anime, title)
         if (twins.isEmpty()) {
             // KMK: the anime's folder wherever it already is
@@ -639,6 +694,7 @@ class AnimeDownloadManager(
             val sourceDir = sourceDirs.firstOrNull()
                 ?: eu.kanade.tachiyomi.data.download.SourceFolders.findOrCreate(animeRoot, sourceDirName(anime), match)
                 ?: return null
+            linkIfExact(anime, sourceDir)
             return eu.kanade.tachiyomi.data.download.SourceFolders.findOrCreate(sourceDir, title)
                 ?.let { AnimeFolder(it, shared = false) }
         }
@@ -669,9 +725,21 @@ class AnimeDownloadManager(
         val sourceDir = sourceDirs.firstOrNull()
             ?: eu.kanade.tachiyomi.data.download.SourceFolders.findOrCreate(animeRoot, sourceDirName(anime), match)
             ?: return null
+        linkIfExact(anime, sourceDir)
         val name = if (sameButCase.isEmpty()) title else tagged
         return eu.kanade.tachiyomi.data.download.SourceFolders.findOrCreate(sourceDir, name)
             ?.let { AnimeFolder(it, shared = true) }
+    }
+
+    /**
+     * KMK (r99): a download's source folder is linked to the source's id only when it is named exactly after the
+     * source: one found by the looser name rules may be another source's (seeding links those after checking every
+     * known source). An already linked folder stays linked.
+     */
+    private fun linkIfExact(anime: Anime, sourceDir: UniFile) {
+        if (sourceDir.name.equals(sourceDirName(anime), ignoreCase = true)) {
+            SourceFolderLinks.link(SourceFolderLinks.Kind.ANIME, anime.source, sourceDir.name)
+        }
     }
 
     /** KMK (r90): the folder name of a title whose name (apart from letter case) another title already uses */
