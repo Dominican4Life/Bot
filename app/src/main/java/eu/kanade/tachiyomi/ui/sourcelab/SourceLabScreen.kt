@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.ui.sourcelab
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -34,6 +35,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.SecondaryTabRow
@@ -54,6 +56,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cafe.adriel.voyager.core.model.rememberScreenModel
@@ -102,6 +105,9 @@ internal class SourceLabScreen(
         var railDest by rememberSaveable { mutableStateOf(RailDest.Sources) }
         var showMenu by remember { mutableStateOf(false) }
         var confirmTemplateUpdate by remember { mutableStateOf(false) } // KMK (r100)
+        // KMK (r101): the tablet's Source info panel (open / hidden, kept across sessions) and the phone's sheet
+        val sourceInfo = rememberSourceInfoOpen()
+        var infoSheet by rememberSaveable { mutableStateOf(false) }
         val pop: () -> Unit = { navigator.pop() }
         // r98: the app's Log (Diagnostics, Log tab) on top of the Lab; Back returns here with the editor untouched
         val openLogs: () -> Unit = { navigator.push(DiagnosticsScreen(DiagTab.LOG)) }
@@ -155,6 +161,19 @@ internal class SourceLabScreen(
                 },
                 onDismiss = { confirmTemplateUpdate = false },
             )
+        }
+
+        // KMK (r101): the phone's Source info, from the Code tab's header row (the code isn't pushed down any more)
+        if (infoSheet && !tablet && state.key != null) {
+            ModalBottomSheet(onDismissRequest = { infoSheet = false }) {
+                SourceInfoPanel(
+                    editor = editor,
+                    editorState = editorState,
+                    labState = state,
+                    onHide = null,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
 
         EditorDialogs(
@@ -356,31 +375,59 @@ internal class SourceLabScreen(
                             tablet = tablet,
                             modifier = Modifier.fillMaxSize(),
                         )
-                        tablet -> Row(modifier = Modifier.fillMaxSize()) {
-                            CodeTab(
-                                model = editor,
-                                state = editorState,
-                                findOpen = findOpen,
-                                onFindOpenChange = { findOpen = it },
-                                highlight = state.highlight,
-                                revealLine = state.revealLine,
-                                modifier = Modifier.width(600.dp).fillMaxHeight(),
-                            )
-                            VerticalDivider()
-                            if (state.tab == LabTab.Code) {
-                                ExplainPane(state = state, model = model, editorState = editorState, modifier = Modifier.weight(1f).fillMaxHeight())
-                            } else {
-                                SourcePane(
-                                    tab = state.tab,
-                                    state = state,
-                                    model = model,
-                                    editor = editor,
-                                    editorState = editorState,
-                                    query = query,
-                                    onQuery = { query = it },
-                                    askBeforeReplacing = actions.askBeforeReplacing,
-                                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                        tablet -> BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                            // r101 fix: the code column leaves the pane at least 380 dp (a portrait tablet), never
+                            // under 360 dp itself, and at most 700 dp (Explain) / 600 dp (the other tabs)
+                            val room = maxWidth
+                            fun codeWidth(cap: Dp): Dp = maxOf(360.dp, minOf(cap, room - 380.dp))
+                            Row(modifier = Modifier.fillMaxSize()) {
+                                // KMK (r101): one CodeTab for every tab (its scroll and find bar survive a tab switch),
+                                // only its width changes: Code fills the room beside the Source info panel, Explain
+                                // gets up to 700 dp, the other tabs up to 600 dp
+                                val codeModifier = when (state.tab) {
+                                    LabTab.Code -> Modifier.weight(1f)
+                                    LabTab.Explain -> Modifier.width(codeWidth(700.dp))
+                                    else -> Modifier.width(codeWidth(600.dp))
+                                }
+                                CodeTab(
+                                    model = editor,
+                                    state = editorState,
+                                    findOpen = findOpen,
+                                    onFindOpenChange = { findOpen = it },
+                                    highlight = state.highlight,
+                                    revealLine = state.revealLine,
+                                    modifier = codeModifier.fillMaxHeight(),
                                 )
+                                VerticalDivider()
+                                if (state.tab == LabTab.Code) {
+                                    if (sourceInfo.open) {
+                                        SourceInfoPanel(
+                                            editor = editor,
+                                            editorState = editorState,
+                                            labState = state,
+                                            onHide = { sourceInfo.set(false) },
+                                            modifier = Modifier.width(340.dp).fillMaxHeight(),
+                                        )
+                                    } else {
+                                        SourceInfoStrip(
+                                            iconUrl = editorState.iconUrl,
+                                            onOpen = { sourceInfo.set(true) },
+                                            modifier = Modifier.width(44.dp).fillMaxHeight(),
+                                        )
+                                    }
+                                } else {
+                                    SourcePane(
+                                        tab = state.tab,
+                                        state = state,
+                                        model = model,
+                                        editor = editor,
+                                        editorState = editorState,
+                                        query = query,
+                                        onQuery = { query = it },
+                                        askBeforeReplacing = actions.askBeforeReplacing,
+                                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                                    )
+                                }
                             }
                         }
                         else -> Column(modifier = Modifier.fillMaxSize()) {
@@ -402,6 +449,7 @@ internal class SourceLabScreen(
                                     highlight = state.highlight,
                                     revealLine = state.revealLine,
                                     modifier = Modifier.fillMaxSize(),
+                                    onOpenInfo = { infoSheet = true },
                                 )
                             } else {
                                 SourcePane(

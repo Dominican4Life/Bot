@@ -638,6 +638,34 @@ Commit abaa39c2. The owner's r99 run on a video site: the episode's player `ifra
 - **Not done / to watch**: the synthetic tap may do nothing in an unattached WebView; JSON-format anime sources still use render-capture; a "nothing to replace" update without a `// @version` line adds no History entry.
 - **What must not change**: the finder's WebViews are destroyed in `finally`; the template's name globals stay `TAB_…`; placeholders never end in `Json`; r99's picker rules (touchmove never prevented, listeners `passive: false`).
 
+## Changes in r101 (1 November 2026)
+
+Commit TBD. The owner's tablet videos after r100: qualities "Auto, Auto"; the title screen had no cover, the site-wide slogan as description and menu links as tags; search 404'd (guessed address); tapping the site menu's "Genres" offered only "Video frame / Not this"; the "Address name filter1" box confused him; Code and Explain tabs looked the same and the info header pushed the code down; the JS/JSON switch looked like a second source. Four writers from `scratchpad/r101/CONTRACT.md`, then a compile review, a behaviour test and a fix pass.
+
+### Code editor layout
+- **Tablet Code tab**: full-width code + **Source info** panel on the right (`ui/sourcelab/SourceInfoPanel.kt`, 340 dp): name, language, base URL, icon URL, Manga / Anime, Format, Open in browser, Source settings, facts (template + version or the extension it was imported from, source id, parts tested / failed). Hidden with › to a 44 dp strip; open/closed is the preference `pref_lab_source_info_open` (default true). **Explain tab**: code (screen width − 380 dp, 360–700 dp) + Explain cards; tapping a card lights up its lines without leaving Explain. Test / Lint / Report / History: code (≤ 600 dp) + their pane; Lint's "go to line" no longer switches to Code on tablet.
+- **Phone**: the header row opens the same panel in a bottom sheet; the old folding Details strip is gone.
+- **Format** is fixed text once the code is not blank and not an untouched template (`SourceTemplates.isTemplate`): the JS / JSON chips only exist for new sources. Flipping JSON on a JS source used to break it.
+
+### Real qualities (`VideoFinder.realQualities`)
+Every caught HLS playlist (≤ 6) is read (shared client, the video's Referer / Origin + UA, 8 s, first 256 KB). `#EXT-X-STREAM-INF` = master (variants resolved with RESOLUTION / NAME); `#EXTINF` = media. Caught variants of a caught master (also by host+path with a different query, plus audio / subtitle / I-frame renditions) are dropped; kept playlists are deduped by host+path. Labels: master "Auto"; media → the master's height, its NAME, a `720p` in its URL, else "Auto". If nothing could be read, r100's per-folder guess runs. Log `D video find …: playlist … is a master with N qualities` / `media playlist, labelled 720p` / `dropped variant` / `dropped duplicate`.
+
+### Build by tapping: title page and helper
+- Title-page labels (optional, after Chapter / Date / Number): **Cover** (`bigCover`), **Description**, **Tags**, **Author**, **Status** (`PickCheck.TITLE_FIELDS`). Derive writes `detailsCover`, `detailsCoverAttr`, `descriptionSelector`, `tagsSelector`, `authorSelector`, `statusSelector`; picking any forces JS. Every pick carries `pageDate`; with no Date picked the cards say "Tap the release date (e.g. in Details) as Date".
+- Item suggestion from Kotlin: when an Item fails "holds the Title / Cover", `Derive.itemSuggestion` (common ancestor of Title and Cover) is sent as `__labPicker.suggestSelector(css, "item")`.
+- The Next pick's own href (not the first look-alike) gives the page rule (`extras.setNextHref`).
+- generic-list **v4** `getDetails`: picked fields first (all guarded with `typeof`, so Update template 3 → 4 replaces only `getDetails`); cover falls back to og:image (no svg / logo / favicon) → video poster → thumbnailUrl → twitter:image, and **no cover key** when none (JsMapping keeps the list cover); description skips the home page's meta description (read once, cached on `globalThis`); tags skip links inside nav / header / footer / aside / menus and words like "Genres". `Generator.EXTRAS_FALLBACKS` has `""` for the six new placeholders.
+
+### Lists and options: search, page rule, filters from the site
+- **Search from the site's form**: picker.js sends the first GET search form on every page load (`LabPicker.form`, console `LABFORM:<token>:`); it fills `searchPath` unless a search was recorded or typed.
+- **Page rule** from the Next pick: `page=2`, another param that is 2, `/page/2`, a number added to the path; used for lists, tabs, search and path filters. "No page number" only without a Next pick.
+- **Pick a list on the site** (`groupMode`): the next tap (Pick or Browse) sends the tapped entry's look-alikes, hidden submenus included (`LabPicker.group`, `LABGROUP:<token>:`), then turns off; it also turns off when the step changes, Filters closes or the builder is left, and a "Waiting for your tap on the site · Cancel" bar shows meanwhile. `deriveGroup`: one query param changing → param filter; one path segment changing → **path filter** (`path` with `{value}` + the page rule); sort-like texts → **Sort** (narrowed to the sort entries); a `<select>` uses its `name`; an entry that opens an index page (e.g. the menu's "Genres") makes no filter, only **Read the whole list**. A filter replaces another only with the same type, key, mode and path / param. Labels lose counts ("Action 1,234 videos" → "Action"). The "Address name" box is gone.
+- **Read the whole list** (`BuilderListReader`): IO, `NetworkHelper.client`, Jsoup; the largest group (≥ 5) of same-shaped links outside nav / header / footer / aside; next page by rel=next, Next / › / », or page N+1; **random pause** between pages from a two-point RangeSlider (0–10 s, default `SourcePreferences.migrationDelay()` else 1–3 s) and a page limit (1–100); Stop keeps what was read; first 400 entries become options (said in the note).
+- `filtersList` entries: `{ key, name, type: select|sort|checkbox|text, mode: param|path, param?, path?, options, on? }`. v4 `search()`: with no words, a non-sort path filter with a value (else the sort's path) is the list address, param filters added; with words, SEARCH_PATH + param filters (path filters dropped, logged).
+
+- **Not done / to watch**: a range (two-handle) filter in Browse was not built (the two-point slider is the read-list pause); a menu of ≤ 12 single-segment links with no list name now gets the read offer instead of a filter.
+- **What must not change**: the JSON switch stays unreachable for sources with code; `getDetails` leaves `coverUrl` out rather than null-blanking it; filters never replace a filter of another type / key.
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.

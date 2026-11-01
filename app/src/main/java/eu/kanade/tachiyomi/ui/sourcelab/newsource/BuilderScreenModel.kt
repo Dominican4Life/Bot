@@ -26,9 +26,12 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withIOContext
 import uy.kohesive.injekt.Injekt
@@ -46,6 +49,12 @@ import java.util.Locale
  * with via "suggest", kept in `State.suggestion`, never pending). Use suggestion / Keep mine / Not this / OK, next /
  * Up / Down (re-labelled through `relabel`) / Test it now (W1's VideoFinder). [extras] is W3's Search / Tabs /
  * Filters / Settings: its values go into the template and force the JS format when used.
+ *
+ * r101: the title page also offers Cover, Description, Tags, Author and Status (optional: each has a fallback in
+ * the template's getDetails; [optionalLabels]). An Item that doesn't hold the Title gets a suggestion computed here
+ * ([Derive.itemSuggestion], sent as `suggestSelector`), so it is always offered. The Next pick tells the extras its
+ * address (`setNextHref`); the page's search form (`onSearchForm`) and group picks (`onGroupPicked`) go to the extras,
+ * and the extras' `groupMode` is sent to the page whenever it changes (and after every injection, see BuilderScreen).
  */
 internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean) :
     StateScreenModel<BuilderScreenModel.State>(State(url = startUrl.orEmpty(), anime = anime)) {
@@ -53,7 +62,8 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
     /** The three pages of the flow and the labels each offers */
     enum class Step(val number: Int, val title: String, val labels: List<String>) {
         ListPage(1, "home page", listOf("item", "title", "cover", "next")),
-        TitlePage(2, "title page", listOf("chapter", "date", "number")),
+        // r101: + the title page's own fields (optional), after chapter / date / number
+        TitlePage(2, "title page", listOf("chapter", "date", "number") + PickCheck.TITLE_FIELDS),
         ChapterPage(3, "chapter page", listOf("image", "video")),
     }
 
@@ -82,6 +92,8 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
         val boundByScript: Boolean = false,
         val nextLike: Boolean = false,
         val samples: List<String> = emptyList(),
+        /** r101: the page's first date-looking text (the helper's "tap the release date as Date") */
+        val pageDate: String = "",
     ) {
         fun info(): PickInfo = PickInfo(
             tag = tag,
@@ -101,6 +113,7 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
             boundByScript = boundByScript,
             nextLike = nextLike,
             samples = samples,
+            pageDate = pageDate,
         )
     }
 
@@ -181,6 +194,19 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
             mutableState.update { it.copy(pickerScript = script) }
         }
         if (!startUrl.isNullOrBlank()) load(startUrl)
+        // r101 (W4's "Pick a list on the site"): the page's group mode follows the extras' state
+        screenModelScope.launchIO {
+            extras.state.map { it.groupMode }.distinctUntilChanged().collect { on ->
+                page("if (window.__labPicker.groupMode) window.__labPicker.groupMode($on);")
+                AppLog.add('D', "lab", "Builder: group pick mode = $on")
+            }
+        }
+        // r101: a step change ends "Pick a list on the site" (it must not stay armed out of sight)
+        screenModelScope.launchIO {
+            state.map { it.step }.distinctUntilChanged().collect {
+                if (extras.state.value.groupMode) extras.setGroupMode(false)
+            }
+        }
     }
 
     fun setUrl(url: String) = mutableState.update { it.copy(url = url, error = null) }
@@ -230,6 +256,20 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
     fun onPageOptions(json: String) {
         runCatching { extras.onPageOptions(json) }
             .onFailure { AppLog.add('W', "lab", "extras: options not read: ${it.message}") }
+    }
+
+    /** r101: picker.js found the site's search box (LabPicker.form or the console's LABFORM line) */
+    fun onSearchForm(json: String) {
+        AppLog.add('D', "lab", "picker search form: ${json.take(300)}")
+        runCatching { extras.onSearchForm(json) }
+            .onFailure { AppLog.add('W', "lab", "extras: search form not read: ${it.message}") }
+    }
+
+    /** r101: a group pick (LabPicker.group or the console's LABGROUP line): a whole list for a filter */
+    fun onGroupPicked(json: String) {
+        AppLog.add('D', "lab", "picker group pick (${json.length} chars)")
+        runCatching { extras.onGroupPicked(json) }
+            .onFailure { AppLog.add('W', "lab", "extras: group pick not read: ${it.message}") }
     }
 
     /**
@@ -289,6 +329,7 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
             boundByScript = o.bool("boundByScript") ?: false,
             nextLike = o.bool("nextLike") ?: false,
             samples = o.arr("samples")?.mapNotNull { (it as? JsonPrimitive)?.content }.orEmpty(),
+            pageDate = o.str("pageDate").orEmpty(),
         )
         // r100: the helper's suggestion is shown by its card, never taken as a tap waiting for a label
         if (raw.via == "suggest") {
@@ -377,6 +418,18 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
         }
         rederive()
         AppLog.add('I', "lab", "Builder: $label = ${raw.likeSelector} (${raw.count} like it) on ${raw.pageUrl}")
+        // r101: the Next link's address tells the extras how this site numbers its pages (page=2, /page/2 …)
+        if (label == "next") {
+            // The tapped link's own href first: hrefs[0] is the first look-alike (page 1 of a numbered pager)
+            val nextPageUrl = raw.pageUrl.ifBlank { state.value.pageUrl.orEmpty() }
+            val own = raw.attrs["href"]?.trim()?.takeIf { it.isNotEmpty() && !it.startsWith("javascript:", ignoreCase = true) }
+                ?.let { h -> nextPageUrl.trim().toHttpUrlOrNull()?.resolve(h)?.toString() ?: h }
+            val href = own ?: raw.hrefs.firstOrNull { it.isNotBlank() }
+            if (href != null) {
+                runCatching { extras.setNextHref(href, nextPageUrl) }
+                    .onFailure { AppLog.add('W', "lab", "extras: next link not read: ${it.message}") }
+            }
+        }
         val s = state.value
         val check = s.checks[label]
         val script = StringBuilder("window.__labPicker.keep(${JsonPrimitive(raw.likeSelector)});")
@@ -391,10 +444,33 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
             val name = PickCheck.labelName(label, s.anime)
             script.append(" if (window.__labPicker.mark) window.__labPicker.mark(${JsonPrimitive(level)}, ${JsonPrimitive(name)});")
             if (check.level == PickCheck.Level.Warn) {
-                script.append(" if (window.__labPicker.suggest) window.__labPicker.suggest(${JsonPrimitive(label)});")
+                // r101: an Item that doesn't hold the Title / Cover: the card derived from those picks is always
+                // offered (the page's own search found nothing the second time in the owner's run)
+                val itemCss = if (label == "item" && check.checks.any { !it.ok && it.text.startsWith("doesn't hold") }) {
+                    itemSuggestion(s)
+                } else {
+                    null
+                }
+                if (itemCss != null) {
+                    AppLog.add('D', "lab", "helper suggestion for item from the Title / Cover picks: $itemCss")
+                    script.append(
+                        " if (window.__labPicker.suggestSelector) window.__labPicker.suggestSelector(" +
+                            "${JsonPrimitive(itemCss)}, ${JsonPrimitive(label)});" +
+                            " else if (window.__labPicker.suggest) window.__labPicker.suggest(${JsonPrimitive(label)});",
+                    )
+                } else {
+                    script.append(" if (window.__labPicker.suggest) window.__labPicker.suggest(${JsonPrimitive(label)});")
+                }
             }
         }
         page(script.toString())
+    }
+
+    /** r101: the Item the Title and Cover picks point at (Derive's common ancestor), as a selector for the page */
+    private fun itemSuggestion(s: State): String? {
+        val title = s.raws["title"]?.let { it.cssPath.ifBlank { it.likeSelector } }
+        val cover = s.raws["cover"]?.let { it.cssPath.ifBlank { it.likeSelector } }
+        return runCatching { Derive.itemSuggestion(title, cover) }.getOrNull()
     }
 
     fun dismissPending() = mutableState.update { it.copy(pending = null) }
@@ -529,9 +605,14 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
         else -> "file"
     }
 
-    /** The first label of this page's step with no pick yet ("chapter" is not wanted for an only-episode title) */
+    /**
+     * The first label of this page's step with no pick yet ("chapter" is not wanted for an only-episode title).
+     * r101: the title page's own fields are optional: never "next" (OK, next goes on to the chapter)
+     */
     fun nextUnpicked(s: State = state.value): String? =
-        s.labels.firstOrNull { label -> s.pick(label) == null && !(label == "chapter" && s.singleEpisode) }
+        s.labels.firstOrNull { label ->
+            s.pick(label) == null && !(label == "chapter" && s.singleEpisode) && label !in optionalLabels
+        }
 
     /** "Next: open a title" / "Next: open a chapter": the first link of the pick that leads there */
     fun nextStep() {
@@ -582,6 +663,9 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
     fun clearError() = mutableState.update { it.copy(error = null) }
 
     companion object {
+        /** r101: labels nothing needs (the title page's own fields; the template has a fallback for each) */
+        val optionalLabels: Set<String> = PickCheck.TITLE_FIELDS.toSet()
+
         /** The last segment of a selector, as the hint shows it: `div.item > a.title` → `a.title` */
         fun shortSelector(selector: String): String = selector.substringAfterLast(" > ").ifBlank { selector }
     }
@@ -618,7 +702,10 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
         val noChapter = selection.derived["chapterSelector"].isNullOrBlank() && !s.singleEpisode
         // r100 (W3): tabs, filters, settings and a recorded search exist only in the JS template
         val extrasUsed = runCatching { extras.used }.getOrDefault(false)
-        val json = s.json && !s.singleEpisode && !noChapter && !extrasUsed
+        // r101: the title page's own fields (Cover, Description, Tags, Author, Status) are read only by the JS template
+        val detailsPicked = s.picks.any { it.pick.label in optionalLabels }
+        val json = s.json && !s.singleEpisode && !noChapter && !extrasUsed && !detailsPicked
+        if (s.json && detailsPicked) AppLog.add('I', "lab", "Builder: title page fields picked: written as JS (the JSON format reads only og:image / the meta description)")
         if (s.json && extrasUsed) AppLog.add('I', "lab", "Builder: lists and options set: written as JS (the JSON format has no tabs, filters or settings)")
         if (s.json && s.singleEpisode) AppLog.add('I', "lab", "Builder: only-episode source written as JS (the JSON format lists episodes from links)")
         if (s.json && noChapter) AppLog.add('I', "lab", "Builder: no chapter link picked: written as JS (its chapter list says to tap one)")

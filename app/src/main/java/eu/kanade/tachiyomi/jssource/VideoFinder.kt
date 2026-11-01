@@ -16,6 +16,8 @@ import eu.kanade.tachiyomi.util.system.WebViewUtil
 import eu.kanade.tachiyomi.util.system.setDefaultSettings
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -27,10 +29,13 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.util.Collections
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.resume
 
@@ -119,6 +124,16 @@ internal object VideoFinder {
     private val PREVIEW = Regex("""preview|thumb|trailer|teaser|(?:^|[^a-z])ads?(?:[^a-z]|$)""", RegexOption.IGNORE_CASE)
     private val INIT_NAME = Regex("""^init""", RegexOption.IGNORE_CASE)
     private val MASTER_NAME = Regex("""master""", RegexOption.IGNORE_CASE)
+
+    // r101: reading the caught HLS playlists (master or media, and the qualities a master lists)
+    private const val PLAYLIST_TIMEOUT_S = 8L
+    private const val PLAYLIST_MAX_BYTES = 256L * 1024
+    private val RESOLUTION = Regex("""RESOLUTION=(\d+)x(\d+)""", RegexOption.IGNORE_CASE)
+    private val NAME_ATTR = Regex("""(?:^|[,:])NAME="([^"]*)"""")
+    private val URI_ATTR = Regex("""(?:^|[,:])URI="([^"]*)"""")
+
+    // "720p" in a playlist's address (`/720p/index.m3u8`, `video_1080p.m3u8`, `?res=480p`); not "p" words
+    private val HEIGHT_IN_URL = Regex("""(?<![0-9a-z])(\d\d\d\d?)p(?![a-z])""", RegexOption.IGNORE_CASE)
 
     private enum class Kind { HLS, DASH, FILE, SEGMENT }
 
@@ -322,11 +337,11 @@ internal object VideoFinder {
                 host != null && !sameSite(host, pageHost) && !AD.containsMatchIn(f)
             }
             if (capture.strongCount() > 0) {
-                return@withContext done(build(capture, started, url, playerFrame, ::step), "found")
+                return@withContext done(build(capture, started, url, playerFrame, userAgent, ::step), "found")
             }
             if (first.error != null && first.frames.isEmpty() && first.videoTags == 0) {
                 if (capture.count() > 0) {
-                    return@withContext done(build(capture, started, url, playerFrame, ::step), "found")
+                    return@withContext done(build(capture, started, url, playerFrame, userAgent, ::step), "found")
                 }
                 return@withContext done(emptyList(), "the page didn't load (${first.error})")
             }
@@ -375,7 +390,7 @@ internal object VideoFinder {
             }
             // A playlist / the player's file; else the plain files seen on the way (a fallback)
             if (capture.count() > 0) {
-                return@withContext done(build(capture, started, url, playerFrame, ::step), "found")
+                return@withContext done(build(capture, started, url, playerFrame, userAgent, ::step), "found")
             }
 
             // ---------- nothing caught: why ----------
@@ -409,8 +424,17 @@ internal object VideoFinder {
      * when nothing else came), deduped; next to a playlist the plain files that are pieces of it (`init.mp4`, a file
      * in a playlist's or a piece's folder) or previews are dropped; of a master playlist and its variants only the
      * master is kept (the app's `hls.expand` makes the quality list). HLS, then DASH, then files; max 6.
+     * r101: the HLS playlists are read first ([inspect]) to know which is a master and what quality a media playlist
+     * is ([realQualities]); the r100 guess by name / folder ([mastersOnly]) only when none could be read.
      */
-    private fun build(capture: Capture, started: Long, pageUrl: String, playerFrame: String?, step: (String) -> Unit): List<Found> {
+    private suspend fun build(
+        capture: Capture,
+        started: Long,
+        pageUrl: String,
+        playerFrame: String?,
+        userAgent: String,
+        step: (String) -> Unit,
+    ): List<Found> {
         val all = capture.snapshot().sortedBy { it.atMs }
         val strong = all.filter { capture.strong(it) }
         val pool = if (strong.isNotEmpty()) {
@@ -442,22 +466,30 @@ internal object VideoFinder {
         }
         if (droppedFiles > 0) step("left out $droppedFiles plain files next to the playlist (previews, init, pieces)")
         val hlsAll = unique.filter { it.kind == Kind.HLS }
-        val hls = mastersOnly(hlsAll)
-        if (hls.size < hlsAll.size) step("kept the master playlist, left out ${hlsAll.size - hls.size} of its variants")
+        // r101: each caught playlist is read (off the main thread) to tell a master (its qualities) from a media
+        // playlist (one quality): a master's variants are left out, a media playlist gets its height as quality.
+        // Before, a master + one of its variants in another folder came out as "Auto, Auto".
+        val read = inspect(
+            hlsAll.take(MAX_VIDEOS),
+            hlsAll.take(MAX_VIDEOS).associate { it.url to headersOf(refererOf(it, playerFrame).first) },
+            userAgent,
+            pageUrl,
+        )
+        val hlsLabels = HashMap<String, String>()
+        val hls = if (read.isEmpty()) {
+            // None could be read: the r100 guess by file name / folder
+            mastersOnly(hlsAll).also { kept ->
+                if (kept.size < hlsAll.size) step("kept the master playlist, left out ${hlsAll.size - kept.size} of its variants")
+            }
+        } else {
+            realQualities(hlsAll, read, hlsLabels, step)
+        }
         val ordered = (hls + unique.filter { it.kind == Kind.DASH } + files).take(MAX_VIDEOS)
 
         val fallbackSaid = HashSet<String>()
         val found = ordered.map { hit ->
-            val sent = hit.referer?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
-            // No Referer header on the request: the player's address (the opened player in pass 2, the first player
-            // frame of another site in pass 1), else the page itself
-            val (refererUrl, which) = when {
-                sent != null -> sent to "the request's Referer"
-                hit.framePass -> hit.passUrl to "the opened player"
-                playerFrame != null -> playerFrame to "the player frame"
-                else -> hit.passUrl to "the episode page"
-            }
-            if (sent == null && fallbackSaid.add(which)) {
+            val (refererUrl, which) = refererOf(hit, playerFrame)
+            if (which != REFERER_SENT && fallbackSaid.add(which)) {
                 AppLog.add('D', "video", "find $pageUrl: no Referer on ${fileNameOf(hit.url)}: used $which (${hostWords(refererUrl)})")
             }
             hit to Found(
@@ -468,15 +500,12 @@ internal object VideoFinder {
                     else -> "file"
                 },
                 quality = when (hit.kind) {
-                    Kind.HLS -> "Auto"
+                    Kind.HLS -> hlsLabels[hit.url] ?: "Auto"
                     Kind.DASH -> "Auto (DASH)"
                     else -> "Direct"
                 },
                 server = label(refererUrl).ifBlank { label(pageUrl) },
-                headers = buildMap {
-                    put("Referer", refererUrl)
-                    originOf(refererUrl)?.let { put("Origin", it) }
-                },
+                headers = headersOf(refererUrl),
             )
         }
         found.firstOrNull()?.let { (hit, f) ->
@@ -489,6 +518,207 @@ internal object VideoFinder {
         }
         if (found.size > 1) step("${found.size} videos in all")
         return found.map { it.second }
+    }
+
+    private const val REFERER_SENT = "the request's Referer"
+
+    /**
+     * The Referer a video is played with, and where it came from: the request's own Referer; with none, the player's
+     * address (the opened player in pass 2, the first player frame of another site in pass 1), else the page itself
+     */
+    private fun refererOf(hit: Hit, playerFrame: String?): Pair<String, String> {
+        val sent = hit.referer?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+        return when {
+            sent != null -> sent to REFERER_SENT
+            hit.framePass -> hit.passUrl to "the opened player"
+            playerFrame != null -> playerFrame to "the player frame"
+            else -> hit.passUrl to "the episode page"
+        }
+    }
+
+    private fun headersOf(refererUrl: String): Map<String, String> = buildMap {
+        put("Referer", refererUrl)
+        originOf(refererUrl)?.let { put("Origin", it) }
+    }
+
+    /** A quality / rendition a master playlist lists: its height (RESOLUTION) and NAME when given */
+    private class Rendition(val height: Int?, val name: String?)
+
+    /** A read playlist: a master (its variant / rendition addresses, absolute) or a media playlist (no parts) */
+    private class Playlist(val master: Boolean, val qualities: Int, val parts: Map<String, Rendition>)
+
+    /**
+     * r101: reads every [hits] playlist in parallel on IO (the video's Referer / Origin + the WebView's User-Agent,
+     * 8 s each). Answers the ones that are a master or a media playlist, by caught address; one that fails or isn't
+     * a playlist is left out (kept as is by the caller).
+     */
+    private suspend fun inspect(
+        hits: List<Hit>,
+        headers: Map<String, Map<String, String>>,
+        userAgent: String,
+        pageUrl: String,
+    ): Map<String, Playlist> {
+        if (hits.isEmpty()) return emptyMap()
+        val client = Injekt.get<NetworkHelper>().client.newBuilder()
+            .callTimeout(PLAYLIST_TIMEOUT_S, TimeUnit.SECONDS)
+            .build()
+        val answers = withContext(Dispatchers.IO) {
+            hits.map { hit ->
+                async { hit.url to readPlaylist(client, hit.url, headers[hit.url].orEmpty(), userAgent, pageUrl) }
+            }.awaitAll()
+        }
+        val out = LinkedHashMap<String, Playlist>()
+        answers.forEach { (url, playlist) -> if (playlist != null) out[url] = playlist }
+        return out
+    }
+
+    /** Blocking (IO only): GET [url] and read the start of it as a playlist; null when it fails or isn't one */
+    private fun readPlaylist(
+        client: OkHttpClient,
+        url: String,
+        sendHeaders: Map<String, String>,
+        userAgent: String,
+        pageUrl: String,
+    ): Playlist? {
+        val request = try {
+            Request.Builder().url(url).apply {
+                sendHeaders.forEach { (name, value) -> header(name, value) }
+                header("User-Agent", userAgent)
+            }.build()
+        } catch (e: IllegalArgumentException) {
+            return null
+        }
+        val (text, finalUrl) = try {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    AppLog.add('D', "video", "find $pageUrl: playlist ${tailOf(url)} answered ${response.code}, left as is")
+                    return null
+                }
+                response.peekBody(PLAYLIST_MAX_BYTES).string() to response.request.url
+            }
+        } catch (e: Exception) {
+            AppLog.add('D', "video", "find $pageUrl: couldn't read playlist ${tailOf(url)} (${e.message ?: e.javaClass.simpleName}), left as is")
+            return null
+        }
+        return parsePlaylist(text, finalUrl)
+    }
+
+    /**
+     * `#EXT-X-STREAM-INF` → a master: each variant's address (resolved against [base], the address after
+     * redirects) with its RESOLUTION height and NAME; the I-frame and `#EXT-X-MEDIA` playlists (sound, subtitles)
+     * it names are its parts too. `#EXTINF` → a media playlist. Else null.
+     */
+    private fun parsePlaylist(text: String, base: HttpUrl): Playlist? {
+        val lines = text.lines().map { it.trim() }
+        if (lines.none { it.startsWith("#EXT-X-STREAM-INF") }) {
+            return if (lines.any { it.startsWith("#EXTINF") }) Playlist(master = false, qualities = 0, parts = emptyMap()) else null
+        }
+        val parts = LinkedHashMap<String, Rendition>()
+        val qualityKeys = HashSet<String>()
+        lines.forEachIndexed { index, line ->
+            when {
+                line.startsWith("#EXT-X-STREAM-INF:") -> {
+                    var next: String? = null
+                    for (j in index + 1 until lines.size) {
+                        val candidate = lines[j]
+                        if (candidate.isEmpty() || candidate.startsWith("#")) continue
+                        next = candidate
+                        break
+                    }
+                    val absolute = next?.let { resolveRef(base, it) } ?: return@forEachIndexed
+                    val height = RESOLUTION.find(line)?.groupValues?.get(2)?.toIntOrNull()?.takeIf { it > 0 }
+                    val name = NAME_ATTR.find(line)?.groupValues?.get(1)?.trim()?.takeIf { it.isNotEmpty() }
+                    qualityKeys.add(height?.toString() ?: absolute)
+                    if (absolute !in parts) parts[absolute] = Rendition(height, name)
+                }
+                line.startsWith("#EXT-X-I-FRAME-STREAM-INF:") || line.startsWith("#EXT-X-MEDIA:") -> {
+                    val absolute = URI_ATTR.find(line)?.groupValues?.get(1)?.let { resolveRef(base, it) } ?: return@forEachIndexed
+                    if (absolute !in parts) {
+                        parts[absolute] = Rendition(
+                            RESOLUTION.find(line)?.groupValues?.get(2)?.toIntOrNull()?.takeIf { it > 0 },
+                            NAME_ATTR.find(line)?.groupValues?.get(1)?.trim()?.takeIf { it.isNotEmpty() },
+                        )
+                    }
+                }
+            }
+        }
+        return Playlist(master = true, qualities = qualityKeys.size, parts = parts)
+    }
+
+    private fun resolveRef(base: HttpUrl, ref: String): String? =
+        ref.toHttpUrlOrNull()?.toString() ?: base.resolve(ref)?.toString()
+
+    /** An address as OkHttp writes it, so a caught address and one resolved from a playlist compare equal */
+    private fun normalUrl(url: String): String = url.toHttpUrlOrNull()?.toString() ?: url
+
+    /** host + path of a `.m3u8` address (the same playlist with another token in its query), else null */
+    private fun playlistPathOf(url: String): String? {
+        val parsed = url.toHttpUrlOrNull() ?: return null
+        if (!parsed.encodedPath.endsWith(".m3u8", ignoreCase = true)) return null
+        return parsed.host.lowercase() + parsed.encodedPath
+    }
+
+    /** The last two parts of an address's path ("720/index.m3u8"), for the log */
+    private fun tailOf(url: String): String {
+        val path = url.toHttpUrlOrNull()?.encodedPath ?: url.substringBefore('?')
+        return path.trimEnd('/').split('/').filter { it.isNotEmpty() }.takeLast(2).joinToString("/").ifEmpty { url }
+    }
+
+    /**
+     * r101: of the caught HLS playlists ([hlsAll], in the order they were asked for), the ones to offer, with their
+     * quality in [labels]: a caught address that a caught master lists (a variant, or its sound / subtitles) is
+     * dropped; a master is "Auto" (the app splits it into qualities); a media playlist is the height the master
+     * gives it, else a "720p" in its address, else "Auto". A playlist that couldn't be read is kept as is ("Auto").
+     */
+    private fun realQualities(
+        hlsAll: List<Hit>,
+        read: Map<String, Playlist>,
+        labels: MutableMap<String, String>,
+        step: (String) -> Unit,
+    ): List<Hit> {
+        val listed = HashMap<String, Rendition>()
+        val listedPaths = HashMap<String, Rendition>()
+        read.values.filter { it.master }.forEach { master ->
+            master.parts.forEach { (address, rendition) ->
+                listed.getOrPut(normalUrl(address)) { rendition }
+                playlistPathOf(address)?.let { listedPaths.getOrPut(it) { rendition } }
+            }
+        }
+        val kept = hlsAll.filter { hit ->
+            if (read[hit.url]?.master == true) return@filter true
+            val variant = normalUrl(hit.url) in listed || playlistPathOf(hit.url)?.let { it in listedPaths } == true
+            if (variant) step("playlist ${tailOf(hit.url)}: dropped variant (its master playlist was caught too)")
+            !variant
+        }.let { list ->
+            // The same playlist caught twice with another token ("Auto, Auto"): host + path, the first one kept
+            val seen = HashSet<String>()
+            list.filter { hit ->
+                val first = seen.add(playlistPathOf(hit.url) ?: normalUrl(hit.url))
+                if (!first) step("playlist ${tailOf(hit.url)}: dropped duplicate (same playlist, another token)")
+                first
+            }
+        }
+        kept.forEach { hit ->
+            val playlist = read[hit.url] ?: return@forEach
+            if (playlist.master) {
+                labels[hit.url] = "Auto"
+                step("playlist ${tailOf(hit.url)} is a master with ${playlist.qualities} qualities")
+            } else {
+                val rendition = listed[normalUrl(hit.url)] ?: playlistPathOf(hit.url)?.let { listedPaths[it] }
+                val label = mediaLabel(hit.url, rendition)
+                labels[hit.url] = label
+                step("playlist ${tailOf(hit.url)} is a media playlist, labelled $label")
+            }
+        }
+        return kept
+    }
+
+    /** A media playlist's quality: the master's RESOLUTION height, else its NAME, else "720p" in the address, else Auto */
+    private fun mediaLabel(url: String, fromMaster: Rendition?): String {
+        fromMaster?.height?.let { return "${it}p" }
+        fromMaster?.name?.let { return it }
+        HEIGHT_IN_URL.find(url)?.groupValues?.get(1)?.let { return "${it}p" }
+        return "Auto"
     }
 
     /**

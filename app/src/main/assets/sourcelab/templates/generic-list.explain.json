@@ -22,12 +22,18 @@
     "tabLatestName": "",
     "tabsList": "[]",
     "filtersList": "[]",
-    "settingsList": "[]"
+    "settingsList": "[]",
+    "detailsCover": "",
+    "detailsCoverAttr": "",
+    "descriptionSelector": "",
+    "tagsSelector": "",
+    "authorSelector": "",
+    "statusSelector": ""
   },
   "parts": {
     "headers": {
       "title": "Headers and constants",
-      "text": "The site as Referer on every picture, and the selectors and list paths the builder derived (each has its reason in the builder's card); the Popular / Latest button names, tabs, filters and settings from \"Lists and options\" (empty lists when none were recorded).",
+      "text": "The site as Referer on every picture, and the selectors and list paths the builder derived (each has its reason in the builder's card); the title page's own fields tapped in Build by tapping (Cover, Description, Tags, Author, Status; empty when not tapped); the Popular / Latest button names, tabs, filters and settings from \"Lists and options\" (empty lists when none were recorded).",
       "ruleIds": [
         "referer-on-images",
         "selector-generated-class"
@@ -47,12 +53,12 @@
     },
     "search": {
       "title": "Search",
-      "text": "The search path with the words and page filled (the address recorded from a real search on the site when there is one), the same cards; each filter's value is added to the address as param=value, empty ones left out.",
+      "text": "The search path with the words and page filled (the address recorded from a real search on the site, or its search box, when there is one), the same cards. Each filter adds its value: a \"param\" filter as param=value, a \"path\" filter (a genre or sort list of the site, /genres/{value}) by opening that list's address instead when no words are typed (left out while searching for words); a sort filter sends its picked option's value; empty ones are left out.",
       "ruleIds": []
     },
     "getDetails": {
       "title": "Title page",
-      "text": "The h1 or og:title, og:image as cover, the meta description and genre-looking links: what every site prints, until a tap says otherwise.",
+      "text": "The Cover, Description, Tags, Author and Status tapped on the title page first. Else og:image, a video poster or the player's poster as cover, and no cover at all when the page has none, so the list's cover stays; og:description unless it is the site's own slogan (the home page's description, read once); genre / tag links outside the site's menus (nav, header, footer, aside, menus), without words like \"Genres\" or \"Tags\". Author and status only when tapped.",
       "optional": true,
       "ruleIds": []
     },
@@ -80,13 +86,13 @@
     },
     "extras": {
       "title": "Tabs, filters and settings",
-      "text": "Added only when \"Lists and options\" recorded some: tabs become buttons at the top of Browse (getCatalogs / getCatalog with the same cards), filters the filter sheet (search adds their values), settings the source's settings (read with host.preference.get(\"key\")).",
+      "text": "Added only when \"Lists and options\" recorded some: tabs become buttons at the top of Browse (getCatalogs / getCatalog with the same cards), filters the filter sheet (dropdowns, sort lists, checkboxes, text; search adds their values or opens their list's address), settings the source's settings (read with host.preference.get(\"key\")).",
       "optional": true,
       "ruleIds": []
     },
     "helpers": {
       "title": "Helpers",
-      "text": "One request with the site as Referer, the list path with {page} / {q} filled, a parameter set in an address, the shared card parser (titles with a hidden word left out when the source has that setting), absolute addresses and the last number of a text.",
+      "text": "One request with the site as Referer, the list path with {page} / {q} filled, the value a filter sends, a parameter set in an address, the shared card parser (titles with a hidden word left out when the source has that setting), absolute addresses and the last number of a text.",
       "ruleIds": []
     }
   },
@@ -96,6 +102,12 @@
         "getVideoList"
       ],
       "note": "Videos use the app's video finder: plays players whose address the site's script fills in and catches DASH."
+    },
+    "4": {
+      "parts": [
+        "getDetails"
+      ],
+      "note": "Title page: the cover / description / tags / author you tap; keeps the list cover when the page has none; skips the site-wide description and menu links."
     }
   }
 }

@@ -13,6 +13,11 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
  * smallest common ancestor of the Title and Cover picks, with a `warning…` entry the panel shows; NEXT comes from
  * the pager around the tapped link; CHAPTER is empty (the part is "not written") when no chapter was tapped; and
  * [singleEpisode] makes the title page its own only episode (Date / Number read on that page).
+ *
+ * r101: the title page's own fields tapped on it (Cover, Description, Tags, Author, Status) give `detailsCover` /
+ * `detailsCoverAttr`, `descriptionSelector`, `tagsSelector`, `authorSelector`, `statusSelector` (the template's
+ * getDetails reads them first; empty = not picked, the template's fallbacks then). [itemSuggestion] is the Item the
+ * tap helper offers when the tapped one doesn't hold the Title.
  */
 internal object Derive {
 
@@ -46,6 +51,11 @@ internal object Derive {
         val number = byLabel["number"]?.lastOrNull()
         val image = byLabel["image"]?.lastOrNull()
         val video = byLabel["video"]?.lastOrNull()
+        val bigCover = byLabel["bigCover"]?.lastOrNull()
+        val description = byLabel["description"]?.lastOrNull()
+        val tags = byLabel["tags"]?.lastOrNull()
+        val author = byLabel["author"]?.lastOrNull()
+        val status = byLabel["status"]?.lastOrNull()
 
         // Item selector: the smallest element that holds the title link and the cover on every card. A tapped Item
         // is kept only when it holds them (its segment is on their paths); else the derived one is used, with a warning.
@@ -206,6 +216,36 @@ internal object Derive {
             put("numberSelector", relative(number.likeSelector, derived["chapterSelector"].orEmpty()), "the number you tapped; the code reads the last number in the link text")
         }
 
+        // r101: the title page's own fields: exact paths (one element per page), like-selectors for the tags
+        if (bigCover != null) {
+            put("detailsCover", pageSelector(bigCover), "the title's picture you tapped on the title page (its exact place); og:image and the player's poster when a page has none there")
+            val attr = COVER_ATTRS.firstOrNull { it in bigCover.attrsAllHttp }
+                ?: COVER_ATTRS.firstOrNull { bigCover.pick.attrs[it]?.isNotBlank() == true } ?: "src"
+            put(
+                "detailsCoverAttr",
+                attr,
+                if (attr in bigCover.attrsAllHttp) "holds the picture's full address" else "the first picture attribute present; the code also tries the lazy-load ones and src",
+            )
+        }
+        if (description != null) {
+            put("descriptionSelector", pageSelector(description), "the description you tapped on the title page (its exact place); the page's meta description when it isn't there")
+        }
+        if (tags != null) {
+            val one = tags.pick.tag == "a" || tags.pick.count >= 2
+            val sel = if (one) tags.likeSelector else "${pageSelector(tags)} a"
+            put(
+                "tagsSelector",
+                clean(sel).first,
+                if (one) "the tag you tapped and the ${tags.pick.count} like it on the title page" else "the links inside the tag box you tapped",
+            )
+        }
+        if (author != null) {
+            put("authorSelector", pageSelector(author), "the author you tapped on the title page (its exact place)")
+        }
+        if (status != null) {
+            put("statusSelector", pageSelector(status), "the status you tapped on the title page (its exact place); words like Ongoing / Completed are understood")
+        }
+
         // Pages (manga)
         if (image != null) {
             val (sel, why) = clean(lastSegment(image.likeSelector))
@@ -342,6 +382,23 @@ internal object Derive {
     }
 
     fun parentOf(path: String): String = path.split(" > ").dropLast(1).joinToString(" > ")
+
+    /**
+     * r101: the Item the tap helper suggests when the tapped one doesn't hold the Title (or Cover): the like-path
+     * (positions dropped) down to the smallest element around both the Title and the Cover pick ([commonAncestor] on
+     * their full css paths), else down to the parent of the one that was picked. Null with neither, or when only
+     * `body` is left.
+     */
+    fun itemSuggestion(titlePath: String?, coverPath: String?): String? {
+        val base = titlePath?.takeIf { it.isNotBlank() } ?: coverPath?.takeIf { it.isNotBlank() } ?: return null
+        val other = if (base == titlePath) coverPath?.takeIf { it.isNotBlank() } else null
+        val all = segments(base)
+        val anchor = other?.let { commonAncestor(base, it) }
+        val end = if (anchor != null) all.indexOfLast { it == anchor } else all.lastIndex - 1
+        if (end < 0) return null
+        val selector = all.subList(0, end + 1).joinToString(" > ") { likeSegment(it) }
+        return selector.takeIf { it.isNotBlank() && it != "body" }
+    }
 
     /** The link inside a chapter row: the path itself when it ends in `a`, else `<row> a` */
     private fun toLink(path: String): String {

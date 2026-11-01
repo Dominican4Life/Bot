@@ -37,6 +37,16 @@
 // look-alikes outlined dashed green until the next tap / label; .adopt() makes it the current element when the app
 // uses it; .optionsFor(param) sends a filter's choices (a select's options, else link values) through
 // LabPicker.options / console "LABOPTS:<token>:", in Browse mode too. Nothing here changes how a tap is taken.
+//
+// r101: (1) the site's search box: on every page load (and on .readForm()) the first GET form with a search field is
+// sent as { action, method, field, hidden } through LabPicker.form / console "LABFORM:<token>:", so the app records
+// the real search address instead of guessing /search?q=. (2) Group pick: .groupMode(true) makes the next tap (Pick
+// or Browse mode) pick a whole list instead (a genre menu, a sort menu, a <select>): never navigates, sends
+// { pageUrl, tapped, likeSelector, count, items, isSelect, heading, sameList } through LabPicker.group / console
+// "LABGROUP:<token>:" and turns itself off; hidden entries (collapsed submenus) are included. (3)
+// .suggestSelector(css, label): the app's own suggestion (the Item derived from the Title and Cover picks), outlined
+// and sent back like suggest(). (4) Every pick carries pageDate: the first date-looking text of the page ("Release
+// date 2026-10-29"), so the app can say "tap the release date as Date".
 (function () {
   var TOKEN = "";
   try {
@@ -53,8 +63,12 @@
   }
 
   // r100: "options" (optionsFor's answer) goes to LabPicker.options, console "LABOPTS:<token>:<json>"
+  // r101: "form" (the site's search box) → LabPicker.form / "LABFORM:", "group" (a group pick) → LabPicker.group /
+  // "LABGROUP:"
+  var METHODS = { pick: "pick", options: "options", form: "form", group: "group", log: "log" };
+  var PREFIXES = { pick: "LABPICK:", options: "LABOPTS:", form: "LABFORM:", group: "LABGROUP:", log: "LABLOG:" };
   function send(kind, text) {
-    var method = kind === "pick" ? "pick" : kind === "options" ? "options" : "log";
+    var method = METHODS[kind] || "log";
     if (bridgeHas(method)) {
       try {
         LabPicker[method](text);
@@ -63,7 +77,7 @@
         // falls through to the console
       }
     }
-    var prefix = kind === "pick" ? "LABPICK:" : kind === "options" ? "LABOPTS:" : "LABLOG:";
+    var prefix = PREFIXES[kind] || "LABLOG:";
     try { console.log(prefix + TOKEN + ":" + text); } catch (e2) { /* nothing left to try */ }
   }
 
@@ -97,6 +111,8 @@
     ensureStyle();
     applyModeClass(window.__labPicker.mode);
     send("log", "already on " + location.href + " (" + window.__labPicker.mode + ")");
+    // r101: an in-page route change may bring another search box
+    try { if (window.__labPicker.readForm) window.__labPicker.readForm(); } catch (eForm) { /* nothing */ }
     return;
   }
   ensureStyle();
@@ -309,6 +325,7 @@
       nextLike: nextLike(el),
       rect: { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) },
       samples: samples,
+      pageDate: pageDate(),
       cssPath: path,
       snippet: snippetOf(el),
       via: via || "tap",
@@ -322,6 +339,43 @@
       attrsAllHttp: attrsAllHttp,
       pageUrl: location.href,
     };
+  }
+
+  // r101: the first date-looking text of the page (a written date, not "3 days ago": those are the related
+  // list's), with the label in front of it when the element before it says Release / Date / Published / Aired
+  // (a Details block "Release date  2026-10-29"); "" when there is none. Cached per address.
+  var DATE_TEXT = /\b(19|20)\d{2}[-\/.]\d{1,2}[-\/.]\d{1,2}\b|\b\d{1,2}[-\/.]\d{1,2}[-\/.](19|20)\d{2}\b|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(st|nd|rd|th)?,?\s+(19|20)\d{2}\b|\b\d{1,2}\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?,?\s+(19|20)\d{2}\b/i;
+  var DATE_LABEL = /(release|date|published|posted|aired|premiered|uploaded|added)/i;
+  var pageDateCache = { url: "", value: "" };
+  function pageDate() {
+    if (pageDateCache.url === location.href) return pageDateCache.value;
+    var found = "";
+    var labelled = "";
+    try {
+      var walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT, null);
+      var node;
+      var seen = 0;
+      while ((node = walker.nextNode()) && seen < 4000 && !labelled) {
+        seen++;
+        var parent = node.parentElement;
+        if (!parent || /^(script|style|noscript|template|option)$/i.test(parent.tagName) || parent.id === "__lab-badge") continue;
+        var t = String(node.nodeValue || "").replace(/\s+/g, " ").trim();
+        if (!t || t.length > 60 || !DATE_TEXT.test(t)) continue;
+        // The label: the text before the date in its row (the previous element, or the same text node)
+        var before = "";
+        var prev = parent.previousElementSibling;
+        if (prev) before = String(prev.textContent || "").replace(/\s+/g, " ").trim().slice(0, 30);
+        if (!before && parent.parentElement && parent.parentElement.firstElementChild !== parent) {
+          before = String(parent.parentElement.firstElementChild.textContent || "").replace(/\s+/g, " ").trim().slice(0, 30);
+        }
+        var own = t.replace(DATE_TEXT, "").replace(/[:\s]+$/, "").trim();
+        if (DATE_LABEL.test(own)) labelled = t;
+        else if (DATE_LABEL.test(before)) labelled = (before.replace(/[:\s]+$/, "") + " " + t).trim();
+        if (!found) found = t;
+      }
+    } catch (e) { /* no tree walker */ }
+    pageDateCache = { url: location.href, value: (labelled || found).slice(0, 80) };
+    return pageDateCache.value;
   }
 
   // src / href as the browser resolves them (an absolute address even when the attribute is relative)
@@ -458,6 +512,13 @@
     if (found.fallback) {
       note = "everything here was skipped; using " + found.fallback;
       send("log", "tap: " + note);
+    }
+    // r101: the app asked for a whole list (groupMode): this tap picks the list, not one element
+    if (groupOn) {
+      groupOn = false;
+      applyModeClass(mode);
+      groupPick(el);
+      return;
     }
     // A tap on text inside a link or an image's wrapper means the link or the image
     if (el.tagName.toLowerCase() !== "a" && !isMedia(el)) {
@@ -757,7 +818,242 @@
     return largest(queryAll("iframe, video"));
   }
 
-  var FINDERS = { item: findItem, title: findTitle, cover: findCover, next: findNext, chapter: findChapter, image: findImage, video: findVideo };
+  // r101: title-page fields. Outside the site's menus and the page's edges
+  function inChrome(el) {
+    try { return !!el.closest("nav, header, footer, aside, [class*=menu], [class*=nav]"); } catch (e) { return false; }
+  }
+
+  // Cover (title page): the largest picture shown, at least 100 × 100, not a menu / header one
+  function findBigCover() {
+    var best = null;
+    var area = 0;
+    var imgs = queryAll("img");
+    for (var i = 0; i < imgs.length; i++) {
+      var r = imgs[i].getBoundingClientRect();
+      if (r.width < 100 || r.height < 100 || inChrome(imgs[i])) continue;
+      if (r.width * r.height > area) { area = r.width * r.height; best = imgs[i]; }
+    }
+    return best;
+  }
+
+  // Description: the block with the longest text of its own (≥ 80 characters), few links, not in the menus
+  function ownText(el) {
+    var t = "";
+    for (var i = 0; i < el.childNodes.length; i++) {
+      var n = el.childNodes[i];
+      if (n.nodeType === 3) t += n.nodeValue;
+      else if (n.nodeType === 1 && /^(b|i|em|strong|br|span|small)$/i.test(n.tagName)) t += n.textContent;
+    }
+    return t.replace(/\s+/g, " ").trim();
+  }
+  function findDescription() {
+    var best = null;
+    var longest = 79;
+    var blocks = queryAll("p, div, section, article, span, dd");
+    for (var i = 0; i < blocks.length && i < 5000; i++) {
+      var b = blocks[i];
+      if (!shown(b) || inChrome(b)) continue;
+      var len = ownText(b).length;
+      if (len > longest && b.querySelectorAll("a[href]").length <= 3) { longest = len; best = b; }
+    }
+    return best;
+  }
+
+  // Tags: a group of ≥ 2 links with short texts (≤ 30 characters) that open genre / tag / category pages
+  var TAG_HREF = /genre|tag|categor|keyword/i;
+  function findTags() {
+    var groups = {};
+    var links = queryAll("a[href]");
+    for (var i = 0; i < links.length && i < 3000; i++) {
+      var a = links[i];
+      var t = String(a.textContent || "").replace(/\s+/g, " ").trim();
+      if (!t || t.length > 30 || !shown(a) || inChrome(a) || !TAG_HREF.test(a.getAttribute("href") || "")) continue;
+      var sel = likeSelector(pathOf(a));
+      (groups[sel] = groups[sel] || []).push(a);
+    }
+    var best = null;
+    for (var s in groups) {
+      if (!Object.prototype.hasOwnProperty.call(groups, s)) continue;
+      if (groups[s].length >= 2 && (!best || groups[s].length > best.length)) best = groups[s];
+    }
+    return best ? best[0] : null;
+  }
+
+  var FINDERS = {
+    item: findItem, title: findTitle, cover: findCover, next: findNext, chapter: findChapter, image: findImage, video: findVideo,
+    bigCover: findBigCover, description: findDescription, tags: findTags,
+  };
+
+  // ---------- r101: the site's search box ----------
+
+  var SEARCH_NAME = /^(q|s|search|keyword|keywords|query|k|term|word)$/i;
+
+  // The search field of [form]: input[type=search], an input inside [role=search], or one named like a search word
+  function searchFieldOf(form) {
+    var inputs = form.querySelectorAll("input[name]");
+    var byType = null;
+    var byRole = null;
+    var byName = null;
+    var roleBox = form.matches && form.matches("[role=search]") ? form : null;
+    for (var i = 0; i < inputs.length; i++) {
+      var input = inputs[i];
+      var type = String(input.getAttribute("type") || "text").toLowerCase();
+      if (!/^(search|text|)$/.test(type)) continue;
+      if (!byType && type === "search") byType = input;
+      if (!byRole && (roleBox || input.closest("[role=search]"))) byRole = input;
+      if (!byName && SEARCH_NAME.test(input.getAttribute("name") || "")) byName = input;
+    }
+    return byType || byRole || byName;
+  }
+
+  var lastForm = "";
+  function readForm() {
+    var forms = queryAll("form");
+    for (var i = 0; i < forms.length; i++) {
+      var form = forms[i];
+      var method = String(form.getAttribute("method") || "get").toLowerCase();
+      if (method !== "get") continue;
+      var field = searchFieldOf(form);
+      if (!field) continue;
+      var action = "";
+      try { action = new URL(form.getAttribute("action") || location.href, location.href).href; } catch (e) { action = location.href; }
+      if (!form.getAttribute("action")) action = action.split("#")[0].split("?")[0];
+      var hidden = {};
+      var hiddenInputs = form.querySelectorAll("input[type=hidden][name]");
+      for (var h = 0; h < hiddenInputs.length; h++) {
+        var hn = hiddenInputs[h].getAttribute("name");
+        if (hn && hn !== field.getAttribute("name")) hidden[hn] = String(hiddenInputs[h].value || "");
+      }
+      var found = { action: action, method: method, field: field.getAttribute("name"), hidden: hidden, pageUrl: location.href };
+      var text = JSON.stringify(found);
+      // Once per page and form: the app is told again only when something changed
+      if (text !== lastForm) {
+        lastForm = text;
+        send("form", text);
+        send("log", "search form: " + action + " ?" + found.field + "=");
+      }
+      return found;
+    }
+    return null;
+  }
+
+  // ---------- r101: group pick (a whole list: a genre menu, a sort menu, a <select>) ----------
+
+  var groupOn = false;
+
+  function cleanText(el) {
+    var t = String(el.textContent || "").replace(/\s+/g, " ").trim();
+    if (!t) t = el.getAttribute("title") || el.getAttribute("aria-label") || el.getAttribute("alt") || "";
+    if (!t) {
+      var img = el.querySelector && el.querySelector("img[alt]");
+      if (img) t = img.getAttribute("alt") || "";
+    }
+    return String(t).replace(/\s+/g, " ").trim().slice(0, 120);
+  }
+
+  // The entry the tap means: the <select> itself, the link, the button / option / menu item, a lone link inside
+  function groupEntry(el) {
+    var tag = el.tagName.toLowerCase();
+    if (tag === "select") return el;
+    var opt = el.closest("option, optgroup");
+    if (opt) return opt.closest("select") || opt;
+    var link = el.closest("a[href]");
+    if (link) return link;
+    var control = el.closest("button, [role=option], [role=menuitem], [role=tab], [role=radio], [data-value], label");
+    if (control) return control;
+    var inner = el.querySelectorAll ? el.querySelectorAll("a[href]") : [];
+    if (inner.length === 1) return inner[0];
+    return el;
+  }
+
+  function itemOf(el) {
+    var tag = el.tagName.toLowerCase();
+    var out = { text: cleanText(el) };
+    if (tag === "a") {
+      var raw = el.getAttribute("href") || "";
+      if (raw && !/^(javascript:|#)/i.test(raw)) {
+        try { out.href = new URL(raw, location.href).href; } catch (e) { out.href = el.href || ""; }
+      }
+    }
+    var value = el.getAttribute("data-value");
+    if (value === null && (tag === "option" || tag === "button" || tag === "input" || tag === "li")) value = el.getAttribute("value");
+    if (value === null && tag === "option") value = el.value;
+    if (value !== null && value !== undefined) out.value = String(value);
+    return out;
+  }
+
+  // The list's name: an aria-label on the list, a heading before it, or the label of the submenu toggle above it
+  function headingOf(el) {
+    var node = el.parentElement;
+    for (var level = 0; node && level < 6 && !/^(body|html)$/i.test(node.tagName); level++, node = node.parentElement) {
+      var aria = node.getAttribute("aria-label");
+      if (aria && aria.length <= 40) return aria.trim();
+      var prev = node.previousElementSibling;
+      for (var hop = 0; prev && hop < 2; hop++, prev = prev.previousElementSibling) {
+        if (/^(h1|h2|h3|h4|h5|h6|label|button|summary|strong|span|a|div)$/i.test(prev.tagName)) {
+          var t = String(prev.textContent || "").replace(/\s+/g, " ").trim();
+          if (t && t.length <= 40 && prev.querySelectorAll("a[href]").length <= 1) return t;
+        }
+      }
+    }
+    return "";
+  }
+
+  function groupPick(el) {
+    clearMarks();
+    var entry = groupEntry(el);
+    var isSelect = entry.tagName.toLowerCase() === "select";
+    var path = pathOf(entry);
+    var like = likeSelector(path);
+    var items = [];
+    var members = [];
+    var seen = {};
+    function addItem(member) {
+      if (items.length >= 400) return;
+      var it = itemOf(member);
+      var key = (it.href || "") + "|" + (it.value === undefined ? "" : it.value) + "|" + it.text;
+      if (seen[key] || (!it.text && !it.href && it.value === undefined)) return;
+      seen[key] = true;
+      items.push(it);
+      members.push(member);
+    }
+    if (isSelect) {
+      for (var o = 0; o < entry.options.length; o++) addItem(entry.options[o]);
+    } else {
+      var likes = queryAll(like); // hidden ones too: a collapsed submenu's entries are in the document
+      if (likes.indexOf(entry) < 0) likes.unshift(entry);
+      for (var i = 0; i < likes.length; i++) addItem(likes[i]);
+    }
+    // The tapped entry's own list (the nearest element holding two or more of them), for a menu whose submenus
+    // share one look
+    var sameList = [];
+    if (!isSelect) {
+      var box = entry.parentElement;
+      for (var level = 0; box && level < 4 && !/^(body|html)$/i.test(box.tagName); level++, box = box.parentElement) {
+        var inBox = members.filter(function (m) { return box.contains(m); });
+        if (inBox.length >= 2) {
+          for (var s = 0; s < inBox.length; s++) sameList.push(itemOf(inBox[s]));
+          break;
+        }
+      }
+    }
+    for (var p = 0; p < members.length; p++) paintSuggestion(members[p]);
+    var tapped = itemOf(entry);
+    var out = {
+      pageUrl: location.href,
+      tapped: { text: tapped.text, href: tapped.href || "" },
+      likeSelector: isSelect ? like + " option" : like,
+      count: items.length,
+      items: items,
+      isSelect: isSelect,
+      heading: headingOf(entry),
+      sameList: sameList,
+    };
+    if (isSelect) out.name = entry.getAttribute("name") || "";
+    showBadge("List picked: " + items.length + " entries (dashed green) — see the app");
+    send("group", JSON.stringify(out));
+    send("log", "group pick " + shortName(path) + " ×" + items.length + (isSelect ? " (select)" : "") + " · \"" + tapped.text.slice(0, 40) + "\"");
+  }
 
   // ---------- pick mode: the site never sees the tap ----------
 
@@ -769,6 +1065,8 @@
     var t = event.target;
     return t && t.nodeType === 3 ? t.parentElement : t;
   }
+  // r101: taps are the picker's in Pick mode, and in Browse mode too while a group pick waits for its tap
+  function taking() { return mode === "pick" || groupOn; }
 
   // touchstart on an interactive target is prevented (no focus, no menu, no click), so it is picked on touchend
   var touch = null;            // { x, y, target, interactive, moved }
@@ -776,7 +1074,7 @@
   var MOVE_SLOP = 10;
 
   function onTouchStart(event) {
-    if (mode !== "pick") return;
+    if (!taking()) return;
     event.stopImmediatePropagation();
     var t = event.touches && event.touches[0];
     if (!t || event.touches.length > 1) { touch = null; return; }
@@ -785,13 +1083,13 @@
     if (touch.interactive) event.preventDefault();
   }
   function onTouchMove(event) {
-    if (mode !== "pick") return;
+    if (!taking()) return;
     event.stopImmediatePropagation(); // never preventDefault: scrolling stays the browser's
     var t = event.touches && event.touches[0];
     if (touch && t && (Math.abs(t.clientX - touch.x) > MOVE_SLOP || Math.abs(t.clientY - touch.y) > MOVE_SLOP)) touch.moved = true;
   }
   function onTouchEnd(event) {
-    if (mode !== "pick") return;
+    if (!taking()) return;
     event.stopImmediatePropagation();
     var start = touch;
     touch = null;
@@ -802,12 +1100,12 @@
     pickAt(start.x, start.y, start.target);
   }
   function onPress(event) {
-    if (mode !== "pick") return;
+    if (!taking()) return;
     event.stopImmediatePropagation();
     if (interactive(targetOf(event))) event.preventDefault();
   }
   function onClick(event) {
-    if (mode !== "pick") return;
+    if (!taking()) return;
     // The default action (following the link, submitting, opening) and the site's own handlers are stopped even
     // for a tap on the background, so pick mode never navigates
     event.preventDefault();
@@ -826,18 +1124,18 @@
   // auxclick: a stylus button or long press on some keyboards; dblclick: a second quick tap
   window.addEventListener("click", onClick, ACTIVE);
   window.addEventListener("auxclick", onClick, ACTIVE);
-  window.addEventListener("dblclick", function (ev) { if (mode === "pick") { ev.preventDefault(); ev.stopImmediatePropagation(); } }, ACTIVE);
-  window.addEventListener("submit", function (ev) { if (mode === "pick") ev.preventDefault(); }, true);
+  window.addEventListener("dblclick", function (ev) { if (taking()) { ev.preventDefault(); ev.stopImmediatePropagation(); } }, ACTIVE);
+  window.addEventListener("submit", function (ev) { if (taking()) ev.preventDefault(); }, true);
   window.addEventListener("focusin", function (ev) {
     // A control that still got focus (a label's input) is let go, so no on-screen keyboard or menu opens
-    if (mode !== "pick") return;
+    if (!taking()) return;
     var t = targetOf(ev);
     if (t && interactive(t) && typeof t.blur === "function") { try { t.blur(); } catch (e2) { /* nothing */ } }
   }, true);
   // A link opened through a JS handler we didn't catch (window.open from a window-level listener): kept inside
   window.open = (function (original) {
     return function (url) {
-      if (mode === "pick") return null;
+      if (taking()) return null;
       return original ? original.apply(window, arguments) : null;
     };
   })(window.open);
@@ -918,6 +1216,52 @@
       send("pick", JSON.stringify(d));
       return d.likeSelector;
     },
+    // r101: the app's own suggestion for [label] (default "item"): the elements of [css] (the Item derived from the
+    // Title and Cover picks), outlined dashed green; the one nearest the last tap is sent like suggest() does
+    suggestSelector: function (css, label) {
+      label = String(label || "item");
+      clearSuggestion();
+      var els = queryAll(String(css || "")).filter(function (x) { return x.id !== "__lab-badge"; });
+      if (!els.length) {
+        send("log", "suggest " + label + ": nothing matches " + css);
+        send("pick", JSON.stringify({ via: "suggest", forLabel: label, none: true, pageUrl: location.href }));
+        return "none";
+      }
+      var shownEls = els.filter(shown);
+      var pool = shownEls.length ? shownEls : els;
+      pool.sort(function (a, b) { return distanceFromTap(a) - distanceFromTap(b); });
+      var el = pool[0];
+      suggested = el;
+      for (var i = 0; i < els.length; i++) paintSuggestion(els[i]);
+      var d = describe(el, "suggest");
+      d.forLabel = label;
+      d.fromApp = String(css);
+      showBadge("Suggested " + label + " ×" + els.length + " (dashed green) — see the helper");
+      send("pick", JSON.stringify(d));
+      return d.likeSelector;
+    },
+    // r101: the site's search box (also sent by itself on every page load); null when the page has none
+    readForm: function () {
+      lastForm = ""; // asked for: always sent
+      var found = null;
+      try { found = readForm(); } catch (e) { send("log", "search form not read: " + e.message); }
+      if (!found) send("log", "search form: none on " + location.href);
+      return found ? found.action : "none";
+    },
+    // r101: on = the next tap (Pick or Browse mode) picks a whole list (see groupPick) and never navigates
+    groupMode: function (on) {
+      var was = groupOn;
+      groupOn = !!on;
+      applyModeClass(groupOn ? "pick" : mode);
+      if (groupOn) {
+        clearMarks();
+        showBadge("Tap one entry of the list: a genre, a sort option, a type…");
+      } else if (was) {
+        showBadge(null); // cancelled before a tap (after a group pick the badge says what was picked)
+      }
+      send("log", "group mode " + (groupOn ? "on" : "off"));
+      return groupOn;
+    },
     // r100: the app used the suggestion: it becomes the current element (Up / Down move from it)
     adopt: function () {
       var el = suggested;
@@ -975,4 +1319,6 @@
     },
   };
   send("log", "ready (" + mode + ") on " + location.href + " \u00b7 bridge " + (bridgeHas("pick") ? "yes" : "no, console"));
+  // r101: the site's search box, once per page load
+  try { readForm(); } catch (eForm) { send("log", "search form not read: " + eForm.message); }
 })();

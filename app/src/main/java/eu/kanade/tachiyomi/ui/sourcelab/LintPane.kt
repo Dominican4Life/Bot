@@ -35,6 +35,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.navigator.LocalNavigator
+import eu.kanade.presentation.util.isTabletUi
 import eu.kanade.tachiyomi.jssource.lab.LintFinding
 import eu.kanade.tachiyomi.jssource.lab.LintSeverity
 import eu.kanade.tachiyomi.ui.codeeditor.SourceEditorScreenModel
@@ -52,6 +53,7 @@ internal fun LintPane(
     modifier: Modifier = Modifier,
 ) {
     val navigator = LocalNavigator.current
+    val tablet = isTabletUi()
     val lint = state.lint ?: state.source?.lastLint
     val rules = state.rules
     var confirmApply by remember { mutableStateOf<LintFinding?>(null) }
@@ -93,7 +95,8 @@ internal fun LintPane(
                 onApply = { confirmApply = finding },
                 onOpenLine = {
                     finding.line?.let { model.revealLine(it) }
-                    model.setTab(LabTab.Code)
+                    // r101: the tablet shows the code beside this pane; Code would swap the pane for Source info
+                    if (!tablet) model.setTab(LabTab.Code)
                 },
                 onRead = { navigator?.push(RulesScreen(ruleId = finding.ruleId)) },
                 onIgnore = { model.ignoreRule(finding.ruleId, !finding.ignored) },
@@ -161,7 +164,7 @@ internal fun LintPane(
                     onClick = {
                         val ok = model.applyFix(editor, finding)
                         confirmApply = null
-                        if (ok) model.setTab(LabTab.Code)
+                        if (ok && !tablet) model.setTab(LabTab.Code)
                     },
                 ) { Text("Apply") }
             },

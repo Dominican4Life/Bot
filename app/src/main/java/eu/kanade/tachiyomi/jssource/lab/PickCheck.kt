@@ -14,6 +14,7 @@ import kotlin.math.abs
  * @param boundByScript a player (iframe / video) whose address the site's script fills in (`:src`, `v-bind:src` …)
  * @param nextLike rel=next, an aria-label saying next, or text starting with next / › / » / > / →
  * @param samples the first three look-alikes' texts
+ * @param pageDate r101: the first date-looking text of the page ("Release date 2026-10-29"), "" when none
  */
 internal data class PickInfo(
     val tag: String,
@@ -33,6 +34,7 @@ internal data class PickInfo(
     val boundByScript: Boolean = false,
     val nextLike: Boolean = false,
     val samples: List<String> = emptyList(),
+    val pageDate: String = "",
 )
 
 /**
@@ -41,6 +43,10 @@ internal data class PickInfo(
  * label now gets a short list of checks (✓ / ✕), a level (Ok green, Warn amber, Info blue), a title and one
  * sentence, and the builder shows them over the page (mockups `scratchpad/r100-helper/`). Pure: same facts, same
  * verdict.
+ *
+ * r101: the title page's own fields (Cover, Description, Tags, Author, Status: labels `bigCover`, `description`,
+ * `tags`, `author`, `status`), and a hint on the title-page cards when no Date was picked but the page shows a
+ * written date ("Tap the release date (e.g. in Details) as Date").
  */
 internal object PickCheck {
     enum class Level { Ok, Warn, Info }
@@ -67,8 +73,16 @@ internal object PickCheck {
         "number" -> "Number"
         "image" -> "Page image"
         "video" -> "Video"
+        "bigCover" -> "Cover"
+        "description" -> "Description"
+        "tags" -> "Tags"
+        "author" -> "Author"
+        "status" -> "Status"
         else -> label.replaceFirstChar { it.uppercase() }
     }
+
+    /** r101: the title page's own fields, picked on the title page (none is needed: each has a fallback) */
+    val TITLE_FIELDS = listOf("bigCover", "description", "tags", "author", "status")
 
     private val PLAYER_TAGS = setOf("iframe", "video", "source", "embed", "object")
 
@@ -222,6 +236,48 @@ internal object PickCheck {
                 okBody = "A player box (${pick.tag}): the Lab opens this page in the hidden browser, presses Play and catches the video."
                 warnBody = "You tapped a <${pick.tag}>, not the player. Try Up, or tap the video's edge."
             }
+            // r101: the title page's own fields
+            "bigCover" -> {
+                val picture = pick.tag == "img" || pick.tag == "picture" || pick.imgCount >= 1
+                add(picture, "picture (${pick.tag})", "not a picture")
+                val attr = Derive.COVER_ATTRS.firstOrNull { it in pick.attrsAllHttp }
+                    ?: Derive.COVER_ATTRS.firstOrNull { pick.attrs[it]?.isNotBlank() == true }
+                val address = attr != null || (pick.tag != "img" && pick.imgCount >= 1)
+                add(address, if (attr != null) "address in $attr" else "address on the picture inside", "no address")
+                okBody = "The title's picture${if (attr != null) ", read from $attr" else ""}; the list's cover stays when a page has none."
+                warnBody = youTapped + "Cover is the title's big picture on its page."
+            }
+            "description" -> {
+                val length = maxOf(pick.textLen, pick.text.trim().length)
+                add(length >= 40, "$length characters", "only $length characters (a description is a sentence or more)")
+                okBody = "Reads as the description: “${pick.text.trim().take(60)}…”."
+                warnBody = youTapped + "Description is the paragraph about the title."
+            }
+            "tags" -> {
+                val shortTexts = pick.samples.filter { it.isNotBlank() }
+                val chips = if (pick.count >= 2) pick.count else pick.linkCount
+                add(chips >= 2, "$chips tags", if (chips == 1) "only one tag" else "no tags")
+                val short = if (pick.count >= 2) {
+                    shortTexts.isNotEmpty() && shortTexts.all { it.length <= 40 }
+                } else {
+                    pick.linkCount >= 2 && pick.textLen <= pick.linkCount * 40
+                }
+                add(short, "short texts", "long texts (tags are a word or two each)")
+                okBody = "$chips tags${if (shortTexts.isNotEmpty() && pick.count >= 2) ": " + shortTexts.joinToString(", ") else ""}."
+                warnBody = youTapped + "Tags are the genre / tag links of the title (Tap one of them, or the box around them)."
+            }
+            "author", "status" -> {
+                val t = pick.text.ifBlank { pick.snippet }.trim()
+                val limit = if (label == "author") 80 else 40
+                add(t.isNotEmpty(), "has text", "no text")
+                if (t.isNotEmpty()) add(t.length <= limit, "short text", "${t.length} characters (a ${name.lowercase()} is short)")
+                okBody = "Reads as the ${name.lowercase()}: “${t.take(40)}”."
+                warnBody = youTapped + if (label == "author") {
+                    "Author is the short text with the author's (or maker's) name."
+                } else {
+                    "Status is the short word like “Ongoing” or “Completed”."
+                }
+            }
             else -> {
                 okBody = "Picked ${pick.count} like it."
             }
@@ -234,12 +290,22 @@ internal object PickCheck {
             Level.Warn -> "This doesn't look like $article $name"
             Level.Info -> name
         }
-        val body = if (finalLevel == Level.Ok) okBody else warnBody
+        var body = if (finalLevel == Level.Ok) okBody else warnBody
+        // r101: a title-page card while no Date was picked and the page shows a written date
+        if (others["date"] == null && pick.pageDate.isNotBlank() && label in DATE_HINT_LABELS &&
+            (label != "video" || singleEpisode)
+        ) {
+            body = (if (body.isBlank()) "" else "$body ") +
+                "Tap the release date (e.g. in Details) as Date: the page shows “${pick.pageDate.take(50)}”."
+        }
         val samples = if (label in SAMPLED) pick.samples.filter { it.isNotBlank() }.take(3) else emptyList()
         return Result(label = label, level = finalLevel, title = finalTitle, body = body, checks = checks, samples = samples)
     }
 
-    private val SAMPLED = setOf("item", "title", "chapter", "date", "number")
+    private val SAMPLED = setOf("item", "title", "chapter", "date", "number", "tags")
+
+    /** r101: the cards that say "tap the release date as Date" (title-page labels; the video one only on that page) */
+    private val DATE_HINT_LABELS = setOf("chapter", "number", "video") + TITLE_FIELDS
 
     private fun items(n: Int): String = if (n == 1) "1 Item" else "$n Items"
 

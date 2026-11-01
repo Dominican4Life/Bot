@@ -26,6 +26,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.navigator.LocalNavigator
+import eu.kanade.presentation.util.isTabletUi
 import eu.kanade.tachiyomi.jssource.lab.ExplainEntry
 import eu.kanade.tachiyomi.jssource.lab.StepStatus
 import eu.kanade.tachiyomi.ui.codeeditor.SourceEditorScreenModel
@@ -44,6 +45,9 @@ internal fun ExplainPane(
     modifier: Modifier = Modifier,
 ) {
     val navigator = LocalNavigator.current
+    // KMK (r101): the tablet's Explain tab has the code beside it, so a tapped part lights up there; the phone
+    // switches to Code to show the lines
+    val tablet = isTabletUi()
     val tested = state.lastRun?.steps.orEmpty()
         .filter { it.status != StepStatus.Skipped }
         .flatMap { step -> step.partIds.map { it to step.status } }
@@ -87,7 +91,7 @@ internal fun ExplainPane(
                 selected = state.selectedPart == entry.id,
                 onClick = {
                     model.showPart(entry)
-                    if (entry.lines != null) model.setTab(LabTab.Code)
+                    if (entry.lines != null && !tablet) model.setTab(LabTab.Code)
                 },
             )
         }

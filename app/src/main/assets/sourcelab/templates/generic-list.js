@@ -1,9 +1,12 @@
-// @version 3
+// @version 4
 // Generic list template of the Source Lab, written for {{name}} ({{baseUrl}}) from what was tapped in Build by
 // tapping (or filled by hand). Lists are pages of ITEM cards, chapters / episodes are the links of CHAPTER on a
 // title page, pages are the IMAGE pictures of a chapter page, videos the VIDEO_FRAME of an episode page.
 // r100 (v3): videos come from the app's video finder (host.findVideo); the tabs, filters and settings recorded in
 // "Lists and options" of Build by tapping are added only when there are some (part "extras").
+// r101 (v4): the title page reads the Cover / Description / Tags / Author / Status tapped on it first, keeps the
+// list's cover when the page has none, skips the site-wide description and menu links; filters can change the list's
+// address itself (a genre page /genres/{value}) and sort the list ("sort" filters).
 
 /*@part id="headers"*/
 // Headers and constants: the site as Referer on every picture; the selectors the builder derived (each with
@@ -26,8 +29,15 @@ var EPISODE_NUMBER = "{{numberSelector}}";
 var IMAGE = "{{imageSelector}}";
 var IMAGE_ATTR = "{{imageAttr}}";
 var VIDEO_FRAME = "{{videoFrame}}";
+// r101: the title page's own fields tapped in Build by tapping (empty = not tapped: getDetails' fallbacks then)
+var DETAILS_COVER = "{{detailsCover}}";
+var DETAILS_COVER_ATTR = "{{detailsCoverAttr}}";
+var DESCRIPTION = "{{descriptionSelector}}";
+var TAGS = "{{tagsSelector}}";
+var AUTHOR = "{{authorSelector}}";
+var STATUS = "{{statusSelector}}";
 // r100: "Lists and options" of Build by tapping: the names of the Popular / Latest buttons (empty = the app's own),
-// extra tabs [{ name, path }], search filters [{ key, name, type, options, param, on }] and settings (the
+// extra tabs [{ name, path }], search filters [{ key, name, type, mode, param, path, options, on }] and settings (the
 // getSourcePreferences format). Lists are JSON text; "[]" when nothing was recorded. (Not POPULAR_NAME / LATEST_NAME:
 // the app reads those globals as the names even when empty.)
 var TAB_POPULAR_NAME = "{{tabPopularName}}";
@@ -62,34 +72,141 @@ var extension = {
 /*@end*/
 
 /*@part id="search"*/
-  // Search: SEARCH_PATH with {q} and {page} filled, the same cards. Each FILTERS entry adds its value to the address
-  // as param=value (a dropdown: the picked option's value; a checkbox: its "on" value when ticked; a text: when not
-  // blank; empty values are left out), replacing that parameter when the path already has it.
+  // Search: SEARCH_PATH with {q} and {page} filled, the same cards. Each FILTERS entry adds its value (a dropdown: the
+  // picked option's value; a sort: its picked option's value; a checkbox: its "on" value when ticked; a text: when not
+  // blank; empty values are left out). A "param" filter (the default) sets param=value in the address; a "path"
+  // filter changes the list's address itself (path with {value}, e.g. /genres/{value}?page={page}): with no words
+  // typed, the first path filter with a value (a sort only when no other has one) gives the address instead of
+  // SEARCH_PATH; while searching for words, path filters are left out.
   search: async function (query, page, filters) {
-    var url = pathFor(SEARCH_PATH, page, query || "");
+    var q = String(query || "").trim();
+    var chosen = [];
     for (var i = 0; i < FILTERS.length; i++) {
       var f = FILTERS[i];
-      var v = filters ? filters[f.key] : undefined;
-      if (f.type === "checkbox") v = v === true || v === "true" ? String(f.on || "1") : "";
-      else v = v === undefined || v === null ? "" : String(v).trim();
-      if (v) url = withParam(url, f.param || f.key, v);
+      var v = filterValue(f, filters ? filters[f.key] : undefined);
+      if (v) chosen.push({ f: f, v: v });
     }
+    var paths = chosen.filter(function (c) { return c.f.mode === "path" && c.f.path; });
+    var url = null;
+    if (!q && paths.length) {
+      var use = paths.filter(function (c) { return c.f.type !== "sort"; })[0] || paths[0];
+      url = pathFor(String(use.f.path).split("{value}").join(use.v), page, "");
+      paths.forEach(function (c) {
+        if (c !== use) console.log("Filter " + (c.f.name || c.f.key) + " left out: " + (use.f.name || use.f.key) + " already picks the list's address");
+      });
+    } else {
+      url = pathFor(SEARCH_PATH, page, q);
+      paths.forEach(function (c) {
+        console.log("Filter " + (c.f.name || c.f.key) + " changes the list's address: left out while searching for words");
+      });
+    }
+    chosen.forEach(function (c) {
+      if (c.f.mode !== "path") url = withParam(url, c.f.param || c.f.key, c.v);
+    });
     return cards(await get(url));
   },
 /*@end*/
 
 /*@part id="getDetails"*/
-  // Title page: the h1 (or og:title), og:image as the cover, the meta description, genre-looking links.
+  // Title page: the Cover / Description / Tags / Author / Status tapped on it first (DETAILS_COVER, DESCRIPTION,
+  // TAGS, AUTHOR, STATUS). Else: the cover from og:image, a <video poster> or the player's poster, and no cover at
+  // all when there is none (the list's cover stays); og:description unless it is the site's own slogan (the home
+  // page's description, read once); genre / tag links outside the site's menus, without "Genres" / "Tags" words.
+  // Author and status only when tapped. (Every r101 constant is checked, so this part also runs in older sources.)
   getDetails: async function (url) {
     var doc = await host.parse(await get(url));
-    return {
-      url: url,
-      title: (await doc.text("h1") || await doc.attr("meta[property='og:title']", "content") || "").trim(),
-      coverUrl: abs(await doc.attr("meta[property='og:image']", "content")),
-      description: await doc.attr("meta[property='og:description']", "content") || await doc.attr("meta[name='description']", "content"),
-      genres: (await doc.select("a[href*='/genre'], a[href*='/tag'], a[rel~=tag]")).map(function (a) { return a.text; }),
-      webUrl: url,
-    };
+    var pickedCover = typeof DETAILS_COVER !== "undefined" ? DETAILS_COVER : "";
+    var pickedCoverAttr = typeof DETAILS_COVER_ATTR !== "undefined" ? DETAILS_COVER_ATTR : "";
+    var pickedDescription = typeof DESCRIPTION !== "undefined" ? DESCRIPTION : "";
+    var pickedTags = typeof TAGS !== "undefined" ? TAGS : "";
+    var pickedAuthor = typeof AUTHOR !== "undefined" ? AUTHOR : "";
+    var pickedStatus = typeof STATUS !== "undefined" ? STATUS : "";
+    function clean(t) { return String(t || "").replace(/\s+/g, " ").trim(); }
+    function picture(u) {
+      u = String(u || "").trim().split(/[\s,]+/)[0];
+      if (!u || /^data:/i.test(u)) return null;
+      var full = abs(u);
+      return /^https?:\/\//i.test(full || "") && !/\.svg(\?|#|$)|favicon|\/logo[^\/]*$/i.test(full) ? full : null;
+    }
+    async function textOf(css) {
+      if (!css) return "";
+      try { var el = await doc.selectOne(css); return el ? clean(el.text) : ""; } catch (e) { return ""; }
+    }
+    async function meta(css, name) {
+      try { return clean(await doc.attr(css, name)); } catch (e) { return ""; }
+    }
+    var out = { url: url, webUrl: url };
+    out.title = (await doc.text("h1") || await doc.attr("meta[property='og:title']", "content") || "").trim();
+
+    // Cover: the tapped picture, og:image, a <video poster>, the player's poster; none = left out (the list's stays)
+    var cover = null;
+    if (pickedCover) {
+      try {
+        var el = await doc.selectOne(pickedCover);
+        if (el && el.tag !== "img") el = (await el.selectOne("img")) || el;
+        if (el) {
+          cover = picture(el.attr(pickedCoverAttr || "src")) || picture(el.attr("data-src")) || picture(el.attr("data-lazy-src")) ||
+            picture(el.attr("data-original")) || picture(el.attr("srcset")) || picture(el.attr("src")) || picture(el.attr("poster"));
+        }
+      } catch (e) { cover = null; }
+    }
+    cover = cover || picture(await meta("meta[property='og:image']", "content")) ||
+      picture(await meta("meta[name='og:image']", "content")) ||
+      picture(await meta("video[poster]", "poster")) ||
+      picture(await meta("[data-poster]", "data-poster")) ||
+      picture(await meta("meta[itemprop='thumbnailUrl']", "content")) ||
+      picture(await meta("link[itemprop='thumbnailUrl']", "href")) ||
+      picture(await meta("meta[name='twitter:image']", "content"));
+    if (cover) out.coverUrl = cover;
+
+    // Description: the tapped text, else the page's meta description unless it is the whole site's
+    var description = await textOf(pickedDescription);
+    if (!description) {
+      var meta1 = await meta("meta[property='og:description']", "content") || await meta("meta[name='description']", "content");
+      if (meta1) {
+        var g = typeof globalThis !== "undefined" ? globalThis : {};
+        if (g.__labSiteDescriptions === undefined) {
+          g.__labSiteDescriptions = [];
+          try {
+            var home = await host.parse(await get(BASE + "/"));
+            var a1 = clean(await home.attr("meta[property='og:description']", "content"));
+            var a2 = clean(await home.attr("meta[name='description']", "content"));
+            g.__labSiteDescriptions = [a1, a2].filter(function (x) { return x; }).map(function (x) { return x.toLowerCase(); });
+          } catch (e) { console.log("The home page's description wasn't read: " + e.message); }
+        }
+        if (g.__labSiteDescriptions.indexOf(meta1.toLowerCase()) < 0) description = meta1;
+        else console.log("The page's description is the site's own slogan: left out");
+      }
+    }
+    if (description) out.description = description;
+
+    // Tags: the tapped ones, else genre / tag links outside the site's menus
+    var genres = [];
+    var seenTag = {};
+    function addTag(t) {
+      t = clean(t);
+      if (!t || t.length > 40 || /^(genres?|categor(y|ies)|tags?|keywords?|more|all|\+\d+)$/i.test(t)) return;
+      if (seenTag[t.toLowerCase()]) return;
+      seenTag[t.toLowerCase()] = true;
+      genres.push(t);
+    }
+    if (pickedTags) {
+      try { (await doc.select(pickedTags, { html: false })).forEach(function (a) { addTag(a.text); }); } catch (e) { genres = []; }
+    }
+    if (!genres.length) {
+      var links = await doc.select("a[href*='/genre'], a[href*='/tag'], a[href*='/categor'], a[rel~=tag]", { html: false });
+      var menu = {};
+      (await doc.select("nav a, header a, footer a, aside a, [class*=menu] a, [class*=nav] a", { html: false })).forEach(function (a) { menu[a.id] = true; });
+      links.forEach(function (a) { if (!menu[a.id]) addTag(a.text); });
+    }
+    if (genres.length) out.genres = genres;
+
+    // Author / status: only when tapped ("Author: X" / "Status: Ongoing" lose their label)
+    var author = (await textOf(pickedAuthor)).replace(/^(authors?|artists?|by|cast|makers?|studios?)\s*[:：]\s*/i, "");
+    if (author) out.author = author;
+    var status = (await textOf(pickedStatus)).replace(/^status\s*[:：]?\s*/i, "");
+    if (status) out.status = status;
+    return out;
   },
 /*@end*/
 
@@ -192,7 +309,7 @@ if (FILTERS.length) {
   extension.getFilters = function () {
     return FILTERS.map(function (f) {
       var out = { key: f.key, name: f.name || f.key, type: f.type };
-      if (f.type === "select") out.options = f.options || [];
+      if (f.type === "select" || f.type === "sort") out.options = f.options || [];
       return out;
     });
   };
@@ -219,6 +336,21 @@ function pathFor(path, page, query) {
   var p = String(path).split("{page}").join(String(page)).split("{q}").join(encodeURIComponent(query));
   if (page === 1) p = p.replace(/\/page\/1\/?$/, "/").replace(/([?&])page=1(&|$)/, "$1").replace(/[?&]$/, "");
   return /^https?:/.test(p) ? p : BASE + (p.charAt(0) === "/" ? "" : "/") + p;
+}
+// r101 (v4): the value a filter sends to search(): a dropdown's option value, a sort's picked option ({ index, value,
+// ascending } from the app) value, a ticked checkbox's "on" value, a text's words; "" = not set
+function filterValue(f, v) {
+  if (v === undefined || v === null) return "";
+  if (f.type === "checkbox") return v === true || v === "true" ? String(f.on || "1") : "";
+  if (f.type === "sort") {
+    if (typeof v === "object") {
+      var opt = (f.options || [])[v.index];
+      v = v.value !== undefined && v.value !== null && v.value !== "" ? v.value : (opt ? opt.value : "");
+    }
+    return v === undefined || v === null ? "" : String(v).trim();
+  }
+  if (typeof v === "object") return "";
+  return String(v).trim();
 }
 function withParam(url, key, value) {
   var at = url.indexOf("#");

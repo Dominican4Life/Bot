@@ -105,6 +105,10 @@ import java.util.UUID
  * Labels rows' verdict glyphs, the "Check each pick" switch, W3's "Lists and options" pane, and the bridge's
  * `options` (picker.js `optionsFor`, console fallback `LABOPTS:<token>:`). Page scripts from the model (keep / mark
  * / suggest / adopt / drop / up / down) arrive through `pageScripts`, in order.
+ *
+ * r101: the title page's own fields (Cover, Description, Tags, Author, Status) as optional rows; the bridge's `form`
+ * (the site's search box, console `LABFORM:<token>:`) and `group` (a group pick, console `LABGROUP:<token>:`); the
+ * extras' group mode is put back on the page after every injection.
  */
 internal class BuilderScreen(private val startUrl: String? = null, private val anime: Boolean = false) : Screen(), LabFlowScreen {
 
@@ -137,6 +141,18 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
         @JavascriptInterface
         fun options(json: String) {
             model.onPageOptions(json)
+        }
+
+        /** r101: the site's search box (picker.js `readForm`, on every page load); console fallback `LABFORM:` */
+        @JavascriptInterface
+        fun form(json: String) {
+            model.onSearchForm(json)
+        }
+
+        /** r101: a group pick (a whole list: genres, sort options, a select); console fallback `LABGROUP:` */
+        @JavascriptInterface
+        fun group(json: String) {
+            model.onGroupPicked(json)
         }
     }
 
@@ -187,6 +203,8 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
         }
         DisposableEffect(Unit) {
             onDispose {
+                // r101: leaving the builder ends "Pick a list on the site"
+                runCatching { if (model.extras.state.value.groupMode) model.extras.setGroupMode(false) }
                 holder[0]?.let { web ->
                     runCatching {
                         web.stopLoading()
@@ -198,8 +216,11 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
             }
         }
 
-        val picked = state.picks.size
-        val wanted = BuilderScreenModel.Step.ListPage.labels.size + BuilderScreenModel.Step.TitlePage.labels.size + 1
+        // r101: the title page's own fields are optional: counted apart ("5 of 8 · +2")
+        val picked = state.picks.count { it.pick.label !in BuilderScreenModel.optionalLabels }
+        val extraPicked = state.picks.size - picked
+        val wanted = BuilderScreenModel.Step.ListPage.labels.size + BuilderScreenModel.Step.TitlePage.labels.size + 1 -
+            BuilderScreenModel.optionalLabels.size
         Scaffold(
             topBar = {
                 AppBar(
@@ -235,7 +256,7 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
                     head = "Picking",
                     color = StripColor.Blue,
                     figures = listOf(
-                        "Picked" to "$picked of $wanted",
+                        "Picked" to ("$picked of $wanted" + (if (extraPicked > 0) " · +$extraPicked" else "")),
                         "Kind" to if (state.anime) "Anime" else "Manga",
                         "Step" to "${state.step.number} / 3",
                     ),
@@ -257,6 +278,8 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
                     holder[0]?.evaluateJavascript("window.__labPicker && window.__labPicker.$direction()", null)
                     Unit
                 }
+                // r101: "Pick a list on the site" waits for a tap: said next to the page, wherever the pane is scrolled
+                GroupModeBar(model)
                 // r100 (W3): a filter's choices are read from the page (a <select>, or links carrying the parameter)
                 val askOptions: (String) -> Unit = { param ->
                     holder[0]?.evaluateJavascript(
@@ -364,6 +387,37 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
         }
     }
 
+    /** r101: "Pick a list on the site" is on: the page waits for a tap (Cancel turns it off) */
+    @Composable
+    private fun GroupModeBar(model: BuilderScreenModel) {
+        val extrasState by model.extras.state.collectAsState()
+        if (!extrasState.groupMode) return
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.tertiaryContainer,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 12.dp)) {
+                Icon(
+                    Icons.Outlined.TouchApp,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Waiting for your tap on the site: one entry of the list",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = { model.extras.setGroupMode(false) }) { Text("Cancel") }
+            }
+        }
+    }
+
     /**
      * KMK (r98): the step after a tap, above the page on phone and tablet alike: "Picked a.title ×24 — now tap a
      * label" with this page's labels as chips (the Labels card's rows take a tap too). r96 asked in a dialog that
@@ -441,6 +495,10 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
         // One evaluation: no page script runs between setting the token and picker.js taking it
         view.evaluateJavascript("window.__labToken = ${JsonPrimitive(labToken)};\n$script", null)
         view.evaluateJavascript(modeScript(model.state.value.pickMode), null)
+        // r101: a group pick still waiting for its tap survives a page load (the new page's picker starts off)
+        if (runCatching { model.extras.state.value.groupMode }.getOrDefault(false)) {
+            view.evaluateJavascript("window.__labPicker && window.__labPicker.groupMode && window.__labPicker.groupMode(true)", null)
+        }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -480,6 +538,8 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
                                     val pick = "$PICK_PREFIX$labToken:"
                                     val log = "$LOG_PREFIX$labToken:"
                                     val options = "$OPTS_PREFIX$labToken:"
+                                    val form = "$FORM_PREFIX$labToken:"
+                                    val group = "$GROUP_PREFIX$labToken:"
                                     return when {
                                         text.startsWith(pick) -> {
                                             model.onPick(text.removePrefix(pick), viaConsole = true)
@@ -487,6 +547,14 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
                                         }
                                         text.startsWith(options) -> {
                                             model.onPageOptions(text.removePrefix(options))
+                                            true
+                                        }
+                                        text.startsWith(form) -> {
+                                            model.onSearchForm(text.removePrefix(form))
+                                            true
+                                        }
+                                        text.startsWith(group) -> {
+                                            model.onGroupPicked(text.removePrefix(group))
                                             true
                                         }
                                         text.startsWith(log) -> {
@@ -550,6 +618,15 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
                 }
                 val all = BuilderScreenModel.Step.ListPage.labels + BuilderScreenModel.Step.TitlePage.labels + listOf(if (state.anime) "video" else "image")
                 all.forEach { label ->
+                    // r101: the title page's own fields, under their own heading (none is needed)
+                    if (label == BuilderScreenModel.optionalLabels.firstOrNull { it in all }) {
+                        Text(
+                            "Title page details · optional",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 10.dp, bottom = 2.dp),
+                        )
+                    }
                     val pick = state.pick(label)
                     val here = label in state.labels
                     // r98: with a tap waiting, this page's labels take it (the same as the chips above the page)
@@ -578,6 +655,7 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
                                 pick != null -> pick.likeSelector.substringAfterLast(" > ") + " · ${pick.pick.count}"
                                 state.singleEpisode && label == "chapter" -> "not needed: this page is the episode"
                                 here && state.nextLabel == label -> "next: tap ${whatToTap(label)}"
+                                here && label in BuilderScreenModel.optionalLabels -> "optional: tap ${whatToTap(label)}"
                                 here -> "tap it on the page"
                                 label in BuilderScreenModel.Step.TitlePage.labels -> "open a title to pick it"
                                 else -> "open a chapter to pick it"
@@ -917,6 +995,9 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
     private fun suggestionNoun(label: String): String = when (label) {
         "item" -> "boxes"
         "cover", "image" -> "pictures"
+        "bigCover" -> "picture"
+        "description" -> "text"
+        "tags" -> "tags"
         "video" -> "player"
         "next" -> "link"
         else -> "links"
@@ -954,6 +1035,11 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
         "number" -> "a number"
         "image" -> "a page picture"
         "video" -> "the player"
+        "bigCover" -> "the title's picture"
+        "description" -> "the description"
+        "tags" -> "a genre / tag"
+        "author" -> "the author's name"
+        "status" -> "the status"
         else -> "it on the page"
     }
 
@@ -1009,6 +1095,8 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
         const val PICK_PREFIX = "LABPICK:"
         const val LOG_PREFIX = "LABLOG:"
         const val OPTS_PREFIX = "LABOPTS:"
+        const val FORM_PREFIX = "LABFORM:"
+        const val GROUP_PREFIX = "LABGROUP:"
     }
 
     /** r99: the step's page; the video step of an only-episode title is that title page */
@@ -1025,6 +1113,12 @@ internal class BuilderScreen(private val startUrl: String? = null, private val a
         "number" -> "Number"
         "image" -> "Page image"
         "video" -> "Video frame"
+        // r101: the title page's own fields
+        "bigCover" -> "Cover"
+        "description" -> "Description"
+        "tags" -> "Tags"
+        "author" -> "Author"
+        "status" -> "Status"
         else -> label
     }
 }

@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.ui.sourcelab.newsource
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,6 +17,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
+import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -64,8 +66,14 @@ internal fun BuilderExtrasPane(
     val s by extras.state.collectAsState()
     LaunchedEffect(siteUrl) { extras.setSite(siteUrl) }
     var open by rememberSaveable { mutableStateOf("") }
+    // r101: the page "Read the whole list" reads (null: the dialog is closed)
+    var readUrl by rememberSaveable { mutableStateOf<String?>(null) }
     fun toggle(section: String) {
         open = if (open == section) "" else section
+    }
+    // r101: closing the Filters section (or opening another) ends "Pick a list on the site"
+    LaunchedEffect(open) {
+        if (open != "filters" && extras.state.value.groupMode) extras.setGroupMode(false)
     }
 
     Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainer, modifier = modifier.fillMaxWidth()) {
@@ -105,18 +113,30 @@ internal fun BuilderExtrasPane(
             if (open == "tabs") TabsSection(s, extras, pageUrl)
             HorizontalDivider()
             SectionHeader("Filters", filtersStatus(s), open == "filters") { toggle("filters") }
-            if (open == "filters") FiltersSection(s, extras, onAskOptions)
+            if (open == "filters") FiltersSection(s, extras, pageUrl, onAskOptions) { readUrl = it }
             HorizontalDivider()
             SectionHeader("Settings", settingsStatus(s), open == "settings") { toggle("settings") }
             if (open == "settings") SettingsSection(s, extras)
         }
+    }
+    val reading = readUrl
+    if (reading != null) {
+        ReadListDialog(
+            url = reading,
+            onDismiss = { readUrl = null },
+            onDone = { result ->
+                extras.onListRead(reading, result)
+                readUrl = null
+            },
+        )
     }
 }
 
 // ---------- status lines ----------
 
 private fun searchStatus(s: BuilderExtras): String =
-    s.searchPath?.let { "Recorded ✓ $it" } ?: "Not recorded: the Lab guesses /search?q="
+    s.searchPath?.let { if (s.searchFromForm) "Site's search box ✓ $it" else "Recorded ✓ $it" }
+        ?: "Not recorded: the Lab guesses /search?q="
 
 private fun tabsStatus(s: BuilderExtras): String {
     val names = buildList {
@@ -193,7 +213,11 @@ private fun SearchSection(s: BuilderExtras, extras: BuilderExtrasModel) {
             )
         } else {
             Text(
-                "Recorded ✓" + (s.searchFrom?.let { " from $it" } ?: ""),
+                if (s.searchFromForm) {
+                    "Found the site's search box ✓ (a search you make in Browse replaces it)"
+                } else {
+                    "Recorded ✓" + (s.searchFrom?.let { " from $it" } ?: "")
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.primary,
                 maxLines = 2,
@@ -210,6 +234,14 @@ private fun TabsSection(s: BuilderExtras, extras: BuilderExtrasModel, pageUrl: S
     var newName by remember { mutableStateOf("") }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 12.dp)) {
         Hint("Open the list on the site (Browse to move around), then \"Use this page\". An empty name keeps the app's own.")
+        val rule = s.pageRule
+        Hint(
+            if (rule != null) {
+                "Pages: ${rule.shown}, from the Next link you picked ✓"
+            } else {
+                "Pages: not known yet. Pick the site's Next link as Next (Labels) and lists follow it; until then the Lab tries ?page=2."
+            },
+        )
         ListRow(
             title = "Popular",
             rev = s.rev,
@@ -306,12 +338,72 @@ private fun ListRow(
 }
 
 @Composable
-private fun FiltersSection(s: BuilderExtras, extras: BuilderExtrasModel, onAskOptions: (String) -> Unit) {
+private fun FiltersSection(
+    s: BuilderExtras,
+    extras: BuilderExtrasModel,
+    pageUrl: String?,
+    onAskOptions: (String) -> Unit,
+    onReadList: (String) -> Unit,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 12.dp)) {
         Hint(
-            "Switch to Browse and change a sort or a filter on the site's search or list page: when the address changes, " +
-                "the Lab offers the changed part here. Filters are added to the search address as name=value.",
+            "Pick a list on the site (its genres, its sort menu, its types) and its entries become a filter. Or switch " +
+                "to Browse and change a sort or a filter on the site: when the address changes, the Lab offers the changed part.",
         )
+        if (s.groupMode) {
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.tertiaryContainer,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 10.dp)) {
+                    Text(
+                        "Tap one entry of the list: a genre, a sort option, a type… (menus that fold open count too)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                        modifier = Modifier.weight(1f).padding(vertical = 8.dp),
+                    )
+                    TextButton(onClick = { extras.setGroupMode(false) }) { Text("Cancel") }
+                }
+            }
+        } else {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                OutlinedButton(onClick = { extras.setGroupMode(true) }) {
+                    Icon(Icons.Outlined.TouchApp, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Pick a list on the site")
+                }
+                TextButton(onClick = { pageUrl?.let(onReadList) }, enabled = pageUrl != null) {
+                    Text("Read the whole list of this page")
+                }
+            }
+        }
+        val offer = s.listOffer
+        if (offer != null) {
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(modifier = Modifier.padding(10.dp)) {
+                    Text(
+                        "\"${offer.text}\" opens a list page",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        offer.url,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Row {
+                        TextButton(onClick = { onReadList(offer.url) }) { Text("Read the whole list") }
+                        TextButton(onClick = extras::dismissListOffer) { Text("Not now") }
+                    }
+                }
+            }
+        }
         s.offers.forEach { offer ->
             Surface(
                 shape = RoundedCornerShape(8.dp),
@@ -350,6 +442,8 @@ private fun FiltersSection(s: BuilderExtras, extras: BuilderExtrasModel, onAskOp
 
 @Composable
 private fun FilterEditor(rev: Int, index: Int, filter: ExtrasFilter, extras: BuilderExtrasModel, onAskOptions: (String) -> Unit) {
+    val isPath = filter.mode == "path"
+    val param = filter.param.ifBlank { if (filter.askParam) "" else filter.key }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Filter ${index + 1}", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
@@ -357,26 +451,25 @@ private fun FilterEditor(rev: Int, index: Int, filter: ExtrasFilter, extras: Bui
                 Icon(Icons.Outlined.Delete, contentDescription = "Remove", modifier = Modifier.size(18.dp))
             }
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            ExtrasField(rev, "f$index.name", filter.name, { extras.setFilterName(index, it) }, "Name", modifier = Modifier.weight(1f))
-            Spacer(Modifier.width(8.dp))
-            ExtrasField(
-                rev,
-                "f$index.key",
-                filter.key,
-                { extras.setFilterKey(index, it) },
-                "Address name",
-                modifier = Modifier.weight(1f),
-                monospace = true,
-            )
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        ExtrasField(rev, "f$index.name", filter.name, { extras.setFilterName(index, it) }, "Name")
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(selected = filter.type == "select", onClick = { extras.setFilterType(index, "select") }, label = { Text("Dropdown") })
+            FilterChip(selected = filter.type == "sort", onClick = { extras.setFilterType(index, "sort") }, label = { Text("Sort") })
             FilterChip(selected = filter.type == "checkbox", onClick = { extras.setFilterType(index, "checkbox") }, label = { Text("Checkbox") })
             FilterChip(selected = filter.type == "text", onClick = { extras.setFilterType(index, "text") }, label = { Text("Text") })
         }
+        if (!isPath && filter.askParam) {
+            ExtrasField(
+                rev,
+                "f$index.param",
+                filter.param,
+                { extras.setFilterParam(index, it) },
+                "Parameter in the address (genre in ?genre=action)",
+                monospace = true,
+            )
+        }
         when (filter.type) {
-            "select" -> {
+            "select", "sort" -> {
                 ExtrasField(
                     rev,
                     "f$index.options",
@@ -388,12 +481,15 @@ private fun FilterEditor(rev: Int, index: Int, filter: ExtrasFilter, extras: Bui
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        "${filter.options.size} options · the first is used when nothing is picked",
+                        "${filter.options.size} options · " +
+                            if (filter.type == "sort") "the first is picked at first" else "the first is used when nothing is picked",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f),
                     )
-                    TextButton(onClick = { onAskOptions(filter.key) }, enabled = filter.key.isNotBlank()) { Text("Read from the page") }
+                    if (!isPath) {
+                        TextButton(onClick = { onAskOptions(param) }, enabled = param.isNotBlank()) { Text("Read from the page") }
+                    }
                 }
             }
             "checkbox" -> ExtrasField(
@@ -401,11 +497,22 @@ private fun FilterEditor(rev: Int, index: Int, filter: ExtrasFilter, extras: Bui
                 "f$index.on",
                 filter.onValue,
                 { extras.setFilterOnValue(index, it) },
-                "Value when ticked (${filter.key.ifBlank { "name" }}=…)",
+                "Value when ticked",
                 monospace = true,
             )
-            else -> Hint("What is typed in the box is added as ${filter.key.ifBlank { "name" }}=…")
+            else -> Unit
         }
+        Text(
+            when {
+                isPath -> "Picks change the address to ${filter.path.ifBlank { "…" }} (without a search word)"
+                param.isBlank() -> "Picks add …=value to the search address: type the parameter above"
+                filter.type == "text" -> "What is typed is added to the search address as ?$param=…"
+                else -> "Picks add ?$param=… to the search address"
+            },
+            fontFamily = FontFamily.Monospace,
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

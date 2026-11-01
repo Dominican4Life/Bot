@@ -100,6 +100,13 @@ internal object Generator {
         "tabsList" to "[]",
         "filtersList" to "[]",
         "settingsList" to "[]",
+        // r101 (v4 title page): a pre-v4 explain sidecar paired with v4 code must not fail "template needs {{…}}"
+        "detailsCover" to "",
+        "detailsCoverAttr" to "",
+        "descriptionSelector" to "",
+        "tagsSelector" to "",
+        "authorSelector" to "",
+        "statusSelector" to "",
     )
 
     /** The parts that hold the identity block; dropping them would leave no `extension` */

@@ -28,14 +28,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.automirrored.outlined.PlaylistPlay
 import androidx.compose.material.icons.automirrored.outlined.ViewList
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ClearAll
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.ErrorOutline
-import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Favorite
 import androidx.compose.material.icons.outlined.FavoriteBorder
@@ -47,12 +45,10 @@ import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SnackbarDuration
@@ -91,7 +87,6 @@ import eu.kanade.tachiyomi.jssource.JsPreferences
 import eu.kanade.tachiyomi.ui.anime.source.AnimeSourceScreen
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreen
 import eu.kanade.tachiyomi.ui.sourcelab.SourceLabScreen
-import eu.kanade.tachiyomi.ui.webview.WebViewScreen
 import eu.kanade.tachiyomi.util.storage.getUriCompat
 import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
@@ -120,8 +115,11 @@ class SourceEditorScreen(private val sourceKey: String? = null) : Screen() {
 // KMK --> (r96) the Code tab
 
 /**
- * The Code tab: a collapsible Details strip (name, icon, language, address, Manga / Anime, JS / JSON) over the
- * [CodeEditor]. [highlight] and [revealLine] come from the Explain pane (1-based lines).
+ * The Code tab: the [CodeEditor] with its status line. [onOpenInfo] non-null (phone) draws a one-line header row
+ * (icon, name, kind, format, language, address) that opens the Source info sheet; null (tablet, where the Source
+ * info panel sits beside the code) draws no header. KMK (r101): the folding Details strip is gone: its fields are
+ * the Lab's Source info panel, which offers JS / JSON only while the code is an untouched template.
+ * [highlight] and [revealLine] come from the Explain pane (1-based lines).
  */
 @Composable
 internal fun CodeTab(
@@ -132,68 +130,54 @@ internal fun CodeTab(
     highlight: IntRange?,
     revealLine: Int?,
     modifier: Modifier = Modifier,
+    onOpenInfo: (() -> Unit)? = null,
 ) {
-    val navigator = LocalNavigator.currentOrThrow
-    val context = LocalContext.current
-    var detailsOpen by rememberSaveable { mutableStateOf(false) }
     Column(modifier = modifier) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { detailsOpen = !detailsOpen }
-                .padding(start = 12.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
-        ) {
-            AsyncImage(
-                model = state.iconUrl.ifBlank { null },
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
+        if (onOpenInfo != null) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
-                    .size(22.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-            )
-            Text(
-                text = buildString {
-                    append(state.name.ifBlank { "Untitled source" })
-                    append(" · ")
-                    append(if (state.anime) "Anime" else "Manga")
-                    append(" · ")
-                    append(if (state.json) "JSON" else "JS")
-                    append(" · ")
-                    append(state.lang.ifBlank { "en" })
-                    if (state.baseUrl.isNotBlank()) append(" · ").append(state.baseUrl.removePrefix("https://").removePrefix("http://"))
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(start = 8.dp),
-            )
-            Icon(
-                if (detailsOpen) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
-                contentDescription = "Details",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(20.dp),
-            )
+                    .fillMaxWidth()
+                    .clickable(onClick = onOpenInfo)
+                    .padding(start = 12.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+            ) {
+                AsyncImage(
+                    model = state.iconUrl.ifBlank { null },
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(22.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                )
+                Text(
+                    text = buildString {
+                        append(state.name.ifBlank { "Untitled source" })
+                        append(" · ")
+                        append(if (state.anime) "Anime" else "Manga")
+                        append(" · ")
+                        append(if (state.json) "JSON" else "JS")
+                        append(" · ")
+                        append(state.lang.ifBlank { "en" })
+                        if (state.baseUrl.isNotBlank()) append(" · ").append(state.baseUrl.removePrefix("https://").removePrefix("http://"))
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(start = 8.dp),
+                )
+                Icon(
+                    Icons.Outlined.ExpandMore,
+                    contentDescription = "Source info",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            HorizontalDivider()
         }
-        if (detailsOpen) {
-            DetailsFields(
-                state = state,
-                model = model,
-                onOpenInBrowser = {
-                    val url = state.baseUrl.trim()
-                    if (url.startsWith("http")) {
-                        navigator.push(WebViewScreen(url = url, initialTitle = state.name.ifBlank { url }, sourceId = null))
-                    } else {
-                        context.toast("Set the Base URL first")
-                    }
-                },
-            )
-        }
-        HorizontalDivider()
         CodeEditor(
             code = state.code,
             onCodeChange = model::setCode,
@@ -226,55 +210,6 @@ internal fun CodeTab(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-        }
-    }
-}
-
-/** The Details fields the editor had on its Details tab, as a strip the Code tab folds out */
-@Composable
-private fun DetailsFields(
-    state: SourceEditorScreenModel.State,
-    model: SourceEditorScreenModel,
-    onOpenInBrowser: () -> Unit,
-) {
-    Column(
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(max = 360.dp)
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-    ) {
-        Text(
-            "Left empty, these come from the source's own name, lang, iconUrl and baseUrl.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        OutlinedTextField(state.name, model::setName, label = { Text("Name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(state.iconUrl, model::setIconUrl, label = { Text("Icon URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(state.lang, model::setLang, label = { Text("Language") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(state.baseUrl, model::setBaseUrl, label = { Text("Base URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.horizontalScroll(rememberScrollState()),
-        ) {
-            FilterChip(selected = !state.anime, onClick = { model.setAnime(false) }, label = { Text("Manga") })
-            FilterChip(selected = state.anime, onClick = { model.setAnime(true) }, label = { Text("Anime") })
-            Spacer(Modifier.width(8.dp))
-            FilterChip(selected = !state.json, onClick = { model.setJson(false) }, label = { Text("JS extension") })
-            FilterChip(selected = state.json, onClick = { model.setJson(true) }, label = { Text("JSON declarative") })
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onOpenInBrowser) {
-                Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Open in browser")
-            }
-            OutlinedButton(onClick = model::openSettings) {
-                Icon(Icons.Outlined.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Source settings")
-            }
         }
     }
 }
