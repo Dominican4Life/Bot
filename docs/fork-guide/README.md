@@ -385,7 +385,7 @@ Commit d972fe01. "Start-up and battery": a read-only efficiency audit in five pa
 
 ## Changes in r96 (1 November 2026)
 
-Commit TBD. Takes the r95 audit's bigger library and database items (`scratchpad/r95/audit/02-library-database.md`, plus 01's anime-library finding and 04's finding 9) and the Discord removal r95 left out. Written by three writers in parallel (library and database, Source Lab); each adds its own subsection here.
+Commit 5ff05ef7. Takes the r95 audit's bigger library and database items (`scratchpad/r95/audit/02-library-database.md`, plus 01's anime-library finding and 04's finding 9) and the Discord removal r95 left out. Written by three writers in parallel (library and database, Source Lab); each adds its own subsection here.
 
 ### Library and database
 
