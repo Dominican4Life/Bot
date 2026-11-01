@@ -730,6 +730,31 @@ Commit 0a5f2bfd. "Speed and battery": the r95 audit was re-checked against r102'
 - **Not done (r104)**: cold start (manga extension loading and the logs folder lookup off the main thread) and History / Updates queries (migration 58: `UNION ALL`, `date_fetch` index, scoped `historyView`).
 - **What must not change**: the log ring stays in `filesDir`; test runtimes never use the VideoFinder memo; the reader shows "not downloaded" only after a storage check; Feed models wait for `FeedShown`.
 
+## Changes in r104 (1 November 2026)
+
+Commit e0705406. The two items held from r103 (cold start, History / Updates queries) plus the owner's r103 feedback (Suggestions label, filters missing from Browse, filter reorder, tag rows like the site, template lints, Record and convert capturing nothing, Duplicate tile removed). Writers from `scratchpad/r104/CONTRACT.md` and `CONTRACT-C.md`, then a compile review, a behaviour test, two fix passes and a final compile check.
+
+### Cold start
+- **Manga extensions load off the main thread** (`ExtensionManager`, `ExtensionLoader.loadingNow()`); installed / untrusted lists start eagerly; a 5 s publish wait never sets `isInitialized` from a stale list; a load failure is logged and still finishes; `E app Extensions still loading after 30 s: <package>`; install / uninstall events during loading go through one queue in arrival order.
+- **`sourceManager.isInitialized` now means "extensions loaded"**: `AndroidSourceManager` publishes built-in sources (local, merged, E-Hentai family, device files, JS) at once and adds extension sources from `extensionManager.installedNow()`.
+- Waiters: Global / Migrate search (and the pinned-only check, which never saves from an empty list and runs before the first search), deep links, MigrationList (`!!` removed), BrowseSource / SourceFeed models (stub → wait 30 s → re-resolve and reload; screens show loading while `waitingForSource`), PairSync (`awaitInstalled`), library / metadata update jobs, backups, extension screens.
+- **Downloads**: `Downloader.queueRestored` / `awaitQueueRestored(60 s)`; restore on IO, skips chapter ids already queued; `DownloadJob` waits for it and stays active if the downloader is already running.
+- App start: logs-folder lookup and AppModule warm-up on background threads.
+
+### History / Updates (migration 58, DB version 59)
+- Named queries `historyScoped`, `getLatestHistoryScoped`, `updatesWithFilters`, `updatesByReadStatus`, anime `getUpdates`: `UNION ALL` where branches can't overlap, `CROSS JOIN` + condition in `WHERE` to keep table order; indexes `kmk_chapters_date_fetch_index`, `kmk_chapters_unread_date_fetch_index` (partial), `kmk_episodes_date_fetch_index`. Same columns and mappers; `QueryLog` logs the first query per screen (`D db History query: N rows in X ms`).
+- **Downgrade**: r103 or older can't be installed over r104 (DB 59 → 58).
+
+### Source Lab
+- **Tags = the site's rows**: with Tags armed, a tap on a details block, row, label or value gives one group per row in page order (name = label, values only, selector anchored on the label); link rows → Tags, plain rows → Description; re-tap adds missing rows; in Edit, rows replace restored whole-row / label-list groups ("Split into rows" also offered; Undo restores exactly). `ROW_CLASS` matches whole class words.
+- **Suggestions label**: a tap on a card in a "You may like" / "Related videos" section adds a group named after the heading (`:matchesOwn`, so a "See all" link in the heading is fine); `suggestionGroups` → template `getRelated` returns named groups. `JsAnimeSource` supports `getRelated` too, but the anime title screen merges groups into one Suggestions row.
+- **Filters**: a filter with no address shows "Not in the source yet…" in red and is skipped (logged); filters made from links keep their own page (path mode, first option "Any" = empty); a page other than search is used only when one of its filters has a value, the first changed filter wins and the rest are logged; path segment values are URL-encoded; ▲ / ▼ reorder. Filters made from links before r104 are flagged "pick this menu again"; Test Run's "0 titles" verdict hints at the address.
+- **generic-list v7**: helpers log their errors (lint clean), single-episode thumbnail = picked cover / og:image / poster; `updates."7"`.
+- **Record and convert**: requests made on OkHttp / other threads now count for the running step (steps run one at a time); requests with another site's Referer / Origin, app hosts (GitHub, repos, trackers) are excluded; those counted only by elimination have their own budget (20 requests, 2 MB per step) and never teach hosts. `D lab Recording <step>: N requests (…)`. Clearer TODO reasons in `RecordedConverter`.
+- **New source**: "Duplicate a source" tile removed; Import from extension sits next to Import a file.
+
+- **What must not change**: built-ins publish before extensions, but nothing that can uninstall or drop data (SideloadFolder sync, download restore, library names) acts before `isInitialized`; fallback-counted recorder requests never teach hosts; search-page filters go only into the search address.
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
