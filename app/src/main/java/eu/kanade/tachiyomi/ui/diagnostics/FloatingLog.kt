@@ -73,7 +73,6 @@ import eu.kanade.tachiyomi.diagnostics.Resource
 import eu.kanade.tachiyomi.diagnostics.TimeWindow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.conflate
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -198,7 +197,7 @@ private fun FloatingWindow(parent: IntSize) {
     // ≤ 50 rows, re-read at most every 100 ms (contract §8 rule 5)
     LaunchedEffect(tagFilter, problemsOnly, paused) {
         if (paused) return@LaunchedEffect
-        diag.logVersion.conflate().collect {
+        diag.logVersion.collect {
             tail = diag.logTail(DiagBudget.FLOAT_TAIL_LINES, tagFilter, problemsOnly)
             delay(DiagBudget.FLOAT_REFRESH_MIN_MS)
         }
