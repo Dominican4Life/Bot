@@ -1,7 +1,9 @@
-// @version 2
+// @version 3
 // Generic list template of the Source Lab, written for {{name}} ({{baseUrl}}) from what was tapped in Build by
 // tapping (or filled by hand). Lists are pages of ITEM cards, chapters / episodes are the links of CHAPTER on a
 // title page, pages are the IMAGE pictures of a chapter page, videos the VIDEO_FRAME of an episode page.
+// r100 (v3): videos come from the app's video finder (host.findVideo); the tabs, filters and settings recorded in
+// "Lists and options" of Build by tapping are added only when there are some (part "extras").
 
 /*@part id="headers"*/
 // Headers and constants: the site as Referer on every picture; the selectors the builder derived (each with
@@ -24,11 +26,23 @@ var EPISODE_NUMBER = "{{numberSelector}}";
 var IMAGE = "{{imageSelector}}";
 var IMAGE_ATTR = "{{imageAttr}}";
 var VIDEO_FRAME = "{{videoFrame}}";
+// r100: "Lists and options" of Build by tapping: the names of the Popular / Latest buttons (empty = the app's own),
+// extra tabs [{ name, path }], search filters [{ key, name, type, options, param, on }] and settings (the
+// getSourcePreferences format). Lists are JSON text; "[]" when nothing was recorded. (Not POPULAR_NAME / LATEST_NAME:
+// the app reads those globals as the names even when empty.)
+var TAB_POPULAR_NAME = "{{tabPopularName}}";
+var TAB_LATEST_NAME = "{{tabLatestName}}";
+var TABS = JSON.parse("{{tabsList}}" || "[]");
+var FILTERS = JSON.parse("{{filtersList}}" || "[]");
+var SETTINGS = JSON.parse("{{settingsList}}" || "[]");
+var HIDE_WORDS = SETTINGS.some(function (s) { return s && s.key === "hideWords"; });
 var extension = {
   name: "{{name}}",
   lang: "{{lang}}",
   baseUrl: BASE,
   iconUrl: "{{iconUrl}}",
+  popularName: TAB_POPULAR_NAME || undefined,
+  latestName: TAB_LATEST_NAME || undefined,
   headers: { Referer: BASE + "/" },
 /*@end*/
 
@@ -48,9 +62,19 @@ var extension = {
 /*@end*/
 
 /*@part id="search"*/
-  // Search: SEARCH_PATH with {q} and {page} filled, the same cards.
+  // Search: SEARCH_PATH with {q} and {page} filled, the same cards. Each FILTERS entry adds its value to the address
+  // as param=value (a dropdown: the picked option's value; a checkbox: its "on" value when ticked; a text: when not
+  // blank; empty values are left out), replacing that parameter when the path already has it.
   search: async function (query, page, filters) {
-    return cards(await get(pathFor(SEARCH_PATH, page, query || "")));
+    var url = pathFor(SEARCH_PATH, page, query || "");
+    for (var i = 0; i < FILTERS.length; i++) {
+      var f = FILTERS[i];
+      var v = filters ? filters[f.key] : undefined;
+      if (f.type === "checkbox") v = v === true || v === "true" ? String(f.on || "1") : "";
+      else v = v === undefined || v === null ? "" : String(v).trim();
+      if (v) url = withParam(url, f.param || f.key, v);
+    }
+    return cards(await get(url));
   },
 /*@end*/
 
@@ -123,43 +147,67 @@ var extension = {
 /*@end*/
 
 /*@part id="getVideoList"*/
-  // Videos: the VIDEO_FRAME of the episode page. {{videoNote}}
-  // A plain <video><source> is a direct file; an embed is loaded in the hidden browser and the .m3u8 / .mp4 it
-  // asks for is the video (the embed page as Referer, every video under its host's server group).
+  // Videos: the app's video finder (host.findVideo) opens the episode page in the hidden browser, presses Play and
+  // catches the stream the player asks for (.m3u8 / .mpd / .mp4), also when the site's script fills in the
+  // player's address after the page loads; then the player itself is opened with the page as Referer. {{videoNote}}
+  // The "quality" and "server" settings (when the source has them) put the preferred ones first.
   getVideoList: async function (url) {
-    var doc = await host.parse(await get(url));
-    var frames = await doc.select(VIDEO_FRAME + ", video source[src], video[src]");
+    var found = await host.findVideo(url, { frame: VIDEO_FRAME, referer: BASE + "/" });
+    var hls = require("hls");
     var out = [];
-    for (var i = 0; i < frames.length && out.length < 6; i++) {
-      var src = frames[i].attr("src") || frames[i].attr("data-src");
-      if (!src || /about:blank/.test(src)) continue;
-      src = abs(src);
-      if (frames[i].tag === "source" || frames[i].tag === "video") {
-        out.push({ url: src, quality: frames[i].attr("label") || "Direct", server: "Direct", headers: { Referer: BASE + "/" } });
-        continue;
-      }
-      var hostName = (src.match(/^https?:\/\/([^/]+)/) || [])[1] || "embed";
-      var page = await host.render(src, { capture: /\.m3u8|\.mp4|\.mkv/i, waitForResource: /\.m3u8|\.mp4/i, timeout: 25000 });
-      var urls = (page.resources || []).filter(function (u) { return /\.m3u8|\.mp4|\.mkv/i.test(u); });
-      var seen = {};
-      for (var j = 0; j < urls.length; j++) {
-        var u = urls[j].replace(/#.*$/, "");
-        if (seen[u]) continue;
-        seen[u] = true;
-        var video = { url: u, quality: /\.m3u8/i.test(u) ? "Auto" : "Direct", server: hostName.split(".")[0], headers: { Referer: src } };
-        var expanded = /\.m3u8/i.test(u) ? await require("hls").expand(video) : [video];
-        out.push.apply(out, expanded);
-      }
+    for (var i = 0; i < (found.videos || []).length; i++) {
+      var v = found.videos[i];
+      var video = { url: v.url, quality: v.quality, server: v.server, headers: v.headers };
+      out.push.apply(out, v.kind === "hls" ? await hls.expand(video) : [video]);
     }
-    if (!out.length) throw new Error("No playable video on " + url + " (player host not recognised)");
+    if (!out.length) throw new Error("No playable video on " + url + ": " + (found.reason || "nothing caught"));
+    var wantQ = String((await host.preference.get("quality")) || "");
+    var wantS = String((await host.preference.get("server")) || "").toLowerCase();
+    if ((wantQ && wantQ !== "Best") || wantS) {
+      out = out.map(function (v, i) {
+        var score = (wantQ && wantQ !== "Best" && String(v.quality).indexOf(wantQ) >= 0 ? 2 : 0)
+          + (wantS && String(v.server).toLowerCase().indexOf(wantS) >= 0 ? 1 : 0);
+        return { v: v, i: i, s: score };
+      }).sort(function (a, b) { return b.s - a.s || a.i - b.i; }).map(function (x) { return x.v; });
+    }
     return out;
   },
 /*@end*/
 };
 
+/*@part id="extras"*/
+// Tabs, filters and settings from "Lists and options" in Build by tapping, each added only when some were recorded
+// (a source without them has exactly the methods above): TABS become tab buttons at the top of Browse (getCatalogs /
+// getCatalog: the tab's path with {page} filled, the same cards), FILTERS the filter sheet (search adds their
+// values), SETTINGS the source's settings (the code reads them with host.preference.get("key")).
+if (TABS.length) {
+  extension.getCatalogs = function () {
+    return TABS.map(function (t) { return { id: t.path, name: t.name || t.path, tab: true }; });
+  };
+  extension.getCatalog = async function (id, page) {
+    return cards(await get(pathFor(id, page, "")));
+  };
+}
+if (FILTERS.length) {
+  extension.getFilters = function () {
+    return FILTERS.map(function (f) {
+      var out = { key: f.key, name: f.name || f.key, type: f.type };
+      if (f.type === "select") out.options = f.options || [];
+      return out;
+    });
+  };
+}
+if (SETTINGS.length) {
+  extension.getSourcePreferences = function () {
+    return SETTINGS;
+  };
+}
+/*@end*/
+
 /*@part id="helpers"*/
-// Helpers: one request with the site as Referer, the list path with {page} / {q} filled, the ITEM card parser
-// the three lists share, absolute addresses and the first number of a text.
+// Helpers: one request with the site as Referer, the list path with {page} / {q} filled, a parameter set in an
+// address, the ITEM card parser the lists share (titles with a "Hide titles containing" word left out when the
+// source has that setting), absolute addresses and the last number of a text.
 async function get(url, options) {
   var o = options || {};
   var headers = Object.assign({ Referer: BASE + "/" }, o.headers || {});
@@ -172,9 +220,22 @@ function pathFor(path, page, query) {
   if (page === 1) p = p.replace(/\/page\/1\/?$/, "/").replace(/([?&])page=1(&|$)/, "$1").replace(/[?&]$/, "");
   return /^https?:/.test(p) ? p : BASE + (p.charAt(0) === "/" ? "" : "/") + p;
 }
+function withParam(url, key, value) {
+  var at = url.indexOf("#");
+  var hash = at >= 0 ? url.slice(at) : "";
+  var base = at >= 0 ? url.slice(0, at) : url;
+  var k = encodeURIComponent(key);
+  var pair = k + "=" + encodeURIComponent(value);
+  var re = new RegExp("([?&])" + k.replace(/[.*+?^$()|[\]\\]/g, "\\$&") + "=[^&]*");
+  if (re.test(base)) return base.replace(re, function (m, sep) { return sep + pair; }) + hash;
+  var joiner = base.indexOf("?") < 0 ? "?" : (/[?&]$/.test(base) ? "" : "&");
+  return base + joiner + pair + hash;
+}
 async function cards(html) {
   var doc = await host.parse(html);
   var items = await doc.select(ITEM);
+  var hide = !HIDE_WORDS ? [] : String((await host.preference.get("hideWords")) || "").toLowerCase().split(",")
+    .map(function (w) { return w.trim(); }).filter(function (w) { return w; });
   var out = [];
   for (var i = 0; i < items.length; i++) {
     var t = TITLE ? await items[i].selectOne(TITLE) : null;
@@ -182,9 +243,12 @@ async function cards(html) {
     if (!a || !a.attr("href")) continue;
     var img = COVER ? await items[i].selectOne(COVER) : await items[i].selectOne("img");
     var src = img ? (img.attr(COVER_ATTR) || img.attr("data-src") || img.attr("data-lazy-src") || img.attr("src") || "") : "";
+    var name = (t ? (t.text || t.attr("title")) : "") || a.attr("title") || a.text || (img ? img.attr("alt") : "");
+    var lower = String(name || "").toLowerCase();
+    if (hide.length && hide.some(function (w) { return lower.indexOf(w) >= 0; })) continue;
     out.push({
       url: abs(a.attr("href")),
-      title: (t ? (t.text || t.attr("title")) : "") || a.attr("title") || a.text || (img ? img.attr("alt") : ""),
+      title: name,
       coverUrl: src ? abs(String(src).trim().split(/[\s,]+/)[0]) : null,
     });
   }

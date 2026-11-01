@@ -532,6 +532,15 @@
     });
   };
 
+  // KMK (r100): the app's video finder. Opens the episode page in the hidden browser, presses Play and catches
+  // the stream the player asks for (also when the site's script fills in the player's address), then opens each
+  // player frame itself with the page as Referer. Answers { videos: [{ url, kind, quality, server, headers }],
+  // reason, steps, frames, tookMs }; can take up to `timeout` ms (45 s by default).
+  g.host.findVideo = function (url, options) {
+    var o = options || {};
+    return ask('findVideo', { url: String(url), frame: o.frame, referer: o.referer, timeout: o.timeout });
+  };
+
 
   // Waits ms milliseconds, up to 10000. Useful for a source's own rate
   // limiting, or between retries (fetch's own retry option does this for you).

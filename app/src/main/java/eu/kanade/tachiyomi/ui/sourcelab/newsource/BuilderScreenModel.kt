@@ -4,7 +4,9 @@ import android.app.Application
 import androidx.compose.runtime.Immutable
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
+import eu.kanade.tachiyomi.jssource.VideoFinder
 import eu.kanade.tachiyomi.jssource.arr
+import eu.kanade.tachiyomi.jssource.bool
 import eu.kanade.tachiyomi.jssource.int
 import eu.kanade.tachiyomi.jssource.jsJson
 import eu.kanade.tachiyomi.jssource.lab.BuilderPick
@@ -14,11 +16,16 @@ import eu.kanade.tachiyomi.jssource.lab.Detector
 import eu.kanade.tachiyomi.jssource.lab.Generator
 import eu.kanade.tachiyomi.jssource.lab.LabHandoff
 import eu.kanade.tachiyomi.jssource.lab.LabMeta
+import eu.kanade.tachiyomi.jssource.lab.PickCheck
+import eu.kanade.tachiyomi.jssource.lab.PickInfo
 import eu.kanade.tachiyomi.jssource.lab.Templates
 import eu.kanade.tachiyomi.jssource.obj
 import eu.kanade.tachiyomi.jssource.str
 import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -26,12 +33,19 @@ import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withIOContext
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.util.Locale
 
 /**
  * KMK (r96, Source Lab): the state behind "Build by tapping" (D§2.4): the page in the WebView, the element just
  * tapped and waiting for a label, the labelled picks, and what [Derive] made of them, re-derived after every
  * pick so the reasons are shown live. Done → the generic-list template filled with the derived values, handed to
  * Half A through LabHandoff with the picks in `LabMeta.picks`.
+ *
+ * r100: the tap helper. Every label is checked ([PickCheck], facts from picker.js) and the verdict kept in
+ * `State.checks`; the page colours the pick by it, and on a Warn suggests what the label most likely means (a pick
+ * with via "suggest", kept in `State.suggestion`, never pending). Use suggestion / Keep mine / Not this / OK, next /
+ * Up / Down (re-labelled through `relabel`) / Test it now (W1's VideoFinder). [extras] is W3's Search / Tabs /
+ * Filters / Settings: its values go into the template and force the JS format when used.
  */
 internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean) :
     StateScreenModel<BuilderScreenModel.State>(State(url = startUrl.orEmpty(), anime = anime)) {
@@ -58,9 +72,41 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
         val pageUrl: String,
         /** r99: the element's text (or alt / title) as shown in the hint, first 60 characters */
         val snippet: String = "",
-        /** r99: "tap", or "up" / "down" when the hint's Up / Down moved the pick */
+        /** r99: "tap", or "up" / "down" when the hint's Up / Down moved the pick; r100: "suggest" (the helper's) */
         val via: String = "tap",
-    )
+        // r100: the facts the tap helper checks (PickCheck)
+        val imgCount: Int = 0,
+        val linkCount: Int = 0,
+        val textLen: Int = 0,
+        val distinctHrefs: Int = 0,
+        val boundByScript: Boolean = false,
+        val nextLike: Boolean = false,
+        val samples: List<String> = emptyList(),
+    ) {
+        fun info(): PickInfo = PickInfo(
+            tag = tag,
+            count = count,
+            text = text,
+            snippet = snippet,
+            likeSelector = likeSelector,
+            cssPath = cssPath,
+            hrefs = hrefs,
+            attrs = attrs,
+            attrsAllHttp = attrsAllHttp,
+            pageUrl = pageUrl,
+            imgCount = imgCount,
+            linkCount = linkCount,
+            textLen = textLen,
+            distinctHrefs = distinctHrefs,
+            boundByScript = boundByScript,
+            nextLike = nextLike,
+            samples = samples,
+        )
+    }
+
+    /** r100: the helper's "Test it now" on a Video pick: running, then what VideoFinder caught or why not */
+    @Immutable
+    data class VideoTest(val running: Boolean, val ok: Boolean, val text: String)
 
     @Immutable
     data class State(
@@ -79,8 +125,6 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
         val pending: RawPick? = null,
         val picks: List<Derive.Picked> = emptyList(),
         val selection: BuilderSelection? = null,
-        val keepSelector: String? = null,        // the selector to outline as kept, with its tick
-        val keepTick: Int = 0,
         val busy: String? = null,
         val error: String? = null,
         val delivered: Boolean = false,
@@ -90,6 +134,22 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
          * and the Video frame step runs on the title page itself.
          */
         val singleEpisode: Boolean = false,
+        /** r100: the tap each label was given (what the helper checks), by label */
+        val raws: Map<String, RawPick> = emptyMap(),
+        /** r100: the helper's verdict per labelled pick */
+        val checks: Map<String, PickCheck.Result> = emptyMap(),
+        /** r100: "Check each pick" (the helper card, the coloured outline and the suggestion) */
+        val helper: Boolean = true,
+        /** r100: the label whose helper card shows (the one just given); null = no card */
+        val helperFor: String? = null,
+        /** r100: the element the page suggested for [helperFor] (via "suggest"), never a pending tap */
+        val suggestion: RawPick? = null,
+        /** r100: the helper card's Up / Down: the element they reach gets this label again */
+        val relabel: String? = null,
+        /** r100: "OK, next: Cover": the label the Labels card points at next */
+        val nextLabel: String? = null,
+        /** r100: "Test it now" on the Video pick */
+        val videoTest: VideoTest? = null,
     ) {
         val site: String get() = (pageUrl ?: loadUrl ?: url).let { Detector.normalize(it) }
         val host: String get() = site.removePrefix("https://").removePrefix("http://")
@@ -98,6 +158,20 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
     }
 
     private val context get() = Injekt.get<Application>()
+
+    /** r100 (W3): Search / Tabs / Filters / Settings, recorded while the owner browses the site */
+    val extras = BuilderExtrasModel()
+
+    /**
+     * r100: scripts for the page (keep / mark / suggest / adopt …), evaluated by the screen in this order. A flow,
+     * not state: two scripts sent before a recomposition would otherwise lose the first.
+     */
+    private val pageScriptFlow = MutableSharedFlow<String>(extraBufferCapacity = 32)
+    val pageScripts: SharedFlow<String> = pageScriptFlow.asSharedFlow()
+
+    private fun page(script: String) {
+        pageScriptFlow.tryEmit("if (window.__labPicker) { $script }")
+    }
 
     init {
         screenModelScope.launchIO {
@@ -128,7 +202,18 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
     /** Loads a page in the WebView (the URL box's Go, "Next: open a title", "Next: open a chapter") */
     fun load(url: String) {
         val target = url.trim().let { if (it.startsWith("http://") || it.startsWith("https://")) it else "https://$it" }
-        mutableState.update { it.copy(url = target, loadUrl = target, loadTick = it.loadTick + 1, pending = null, error = null) }
+        mutableState.update {
+            it.copy(
+                url = target,
+                loadUrl = target,
+                loadTick = it.loadTick + 1,
+                pending = null,
+                error = null,
+                helperFor = null,
+                suggestion = null,
+                relabel = null,
+            )
+        }
     }
 
     /** From the WebView: the page finished loading, or its history changed (an in-page navigation too) */
@@ -136,6 +221,15 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
         mutableState.update {
             it.copy(pageUrl = url ?: it.pageUrl, url = url ?: it.url, canGoBack = canGoBack, canGoForward = canGoForward)
         }
+        // r100 (W3): a search / filter change shows in the address
+        runCatching { extras.onPageLoaded(url) }
+            .onFailure { AppLog.add('W', "lab", "extras: page not read: ${it.message}") }
+    }
+
+    /** r100 (W3): picker.js's optionsFor answer (LabPicker.options or the console's LABOPTS line) */
+    fun onPageOptions(json: String) {
+        runCatching { extras.onPageOptions(json) }
+            .onFailure { AppLog.add('W', "lab", "extras: options not read: ${it.message}") }
     }
 
     /**
@@ -154,7 +248,7 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
             s.step == Step.ChapterPage && !s.singleEpisode && shown == pageOf(Step.TitlePage) -> Step.TitlePage
             else -> return
         }
-        mutableState.update { it.copy(step = target, pending = null) }
+        mutableState.update { it.copy(step = target, pending = null, helperFor = null, suggestion = null, relabel = null) }
     }
 
     /** Pick mode (taps select, nothing navigates) or browse mode (the site works as usual) */
@@ -188,7 +282,19 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
             pageUrl = o.str("pageUrl") ?: state.value.pageUrl.orEmpty(),
             snippet = o.str("snippet").orEmpty(),
             via = o.str("via") ?: "tap",
+            imgCount = o.int("imgCount") ?: 0,
+            linkCount = o.int("linkCount") ?: 0,
+            textLen = o.int("textLen") ?: 0,
+            distinctHrefs = o.int("distinctHrefs") ?: 0,
+            boundByScript = o.bool("boundByScript") ?: false,
+            nextLike = o.bool("nextLike") ?: false,
+            samples = o.arr("samples")?.mapNotNull { (it as? JsonPrimitive)?.content }.orEmpty(),
         )
+        // r100: the helper's suggestion is shown by its card, never taken as a tap waiting for a label
+        if (raw.via == "suggest") {
+            onSuggestion(raw, o.str("forLabel").orEmpty(), o.bool("none") == true)
+            return
+        }
         if (raw.cssPath.isBlank()) return
         // r99: the text it shows and how it was reached (a tap, or Up / Down in the hint)
         val how = if (raw.via == "tap") "tap" else "tap (${raw.via})"
@@ -198,14 +304,50 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
             "lab",
             "picker $how ${shortSelector(raw.likeSelector)} ×${raw.count} · ${raw.cssPath}$shown${if (viaConsole) " (console)" else ""}",
         )
-        mutableState.update { it.copy(pending = raw) }
+        // r100: the helper card's Up / Down: the element reached keeps the label it was moving
+        val relabel = state.value.relabel
+        if (relabel != null && (raw.via == "up" || raw.via == "down")) {
+            applyLabel(relabel, raw)
+            return
+        }
+        mutableState.update { it.copy(pending = raw, relabel = null, helperFor = null, suggestion = null) }
     }
 
-    fun onPickerLog(text: String) = AppLog.add('D', "lab", "picker $text")
+    private fun onSuggestion(raw: RawPick, forLabel: String, none: Boolean) {
+        val s = state.value
+        if (forLabel.isBlank() || forLabel != s.helperFor) return // a late answer for a card that went
+        if (none || raw.cssPath.isBlank() || raw.likeSelector == s.raws[forLabel]?.likeSelector) {
+            AppLog.add('D', "lab", "helper suggestion for $forLabel: none")
+            mutableState.update { it.copy(suggestion = null) }
+            if (!none) page("window.__labPicker.unsuggest();")
+            return
+        }
+        AppLog.add('D', "lab", "helper suggestion for $forLabel: ${raw.likeSelector} ×${raw.count}")
+        mutableState.update { it.copy(suggestion = raw) }
+    }
+
+    fun onPickerLog(text: String) {
+        AppLog.add('D', "lab", "picker $text")
+        // r100 fix pass: picker.js logs "up: …" / "down: …" only when it can't move (a move sends a pick instead):
+        // the helper's Up / Down then has nothing to re-label, so the next real tap isn't labelled by surprise
+        if ((text.startsWith("up: ") || text.startsWith("down: ")) && state.value.relabel != null) {
+            AppLog.add('D', "lab", "helper move: nothing to move to, re-label cleared")
+            mutableState.update { it.copy(relabel = null) }
+        }
+    }
 
     /** Gives the pending tap a label; the same label picked again replaces the earlier pick */
     fun label(label: String) {
         val raw = state.value.pending ?: return
+        applyLabel(label, raw)
+    }
+
+    /**
+     * r100: gives [raw] the [label] (a tap, the helper's suggestion, or the element its Up / Down reached), checks
+     * it (PickCheck), and tells the page: keep its outline, colour it by the verdict, and on a Warn look for what
+     * the label most likely means (`suggest`).
+     */
+    private fun applyLabel(label: String, raw: RawPick) {
         val picked = Derive.Picked(
             pick = BuilderPick(
                 label = label,
@@ -224,29 +366,172 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
         mutableState.update { s ->
             s.copy(
                 picks = s.picks.filter { it.pick.label != label } + picked,
+                raws = s.raws + (label to raw),
                 pending = null,
-                keepSelector = raw.likeSelector,
-                keepTick = s.keepTick + 1,
+                helperFor = if (s.helper) label else null,
+                suggestion = null,
+                relabel = null,
+                nextLabel = null,
+                videoTest = if (label == "video") null else s.videoTest,
             )
         }
         rederive()
         AppLog.add('I', "lab", "Builder: $label = ${raw.likeSelector} (${raw.count} like it) on ${raw.pageUrl}")
+        val s = state.value
+        val check = s.checks[label]
+        val script = StringBuilder("window.__labPicker.keep(${JsonPrimitive(raw.likeSelector)});")
+        if (s.helper && check != null) {
+            val failed = check.checks.filterNot { it.ok }.joinToString(" · ") { it.text }.ifBlank { "all checks passed" }
+            AppLog.add('D', "lab", "helper $label: ${check.level} · $failed")
+            val level = when (check.level) {
+                PickCheck.Level.Ok -> "ok"
+                PickCheck.Level.Warn -> "warn"
+                PickCheck.Level.Info -> "info"
+            }
+            val name = PickCheck.labelName(label, s.anime)
+            script.append(" if (window.__labPicker.mark) window.__labPicker.mark(${JsonPrimitive(level)}, ${JsonPrimitive(name)});")
+            if (check.level == PickCheck.Level.Warn) {
+                script.append(" if (window.__labPicker.suggest) window.__labPicker.suggest(${JsonPrimitive(label)});")
+            }
+        }
+        page(script.toString())
     }
 
     fun dismissPending() = mutableState.update { it.copy(pending = null) }
 
     fun removePick(label: String) {
-        mutableState.update { s -> s.copy(picks = s.picks.filter { it.pick.label != label }) }
+        mutableState.update { s ->
+            s.copy(
+                picks = s.picks.filter { it.pick.label != label },
+                raws = s.raws - label,
+                helperFor = s.helperFor?.takeIf { it != label },
+                suggestion = if (s.helperFor == label) null else s.suggestion,
+                videoTest = if (label == "video") null else s.videoTest,
+            )
+        }
         rederive()
     }
 
     /** Undo: the last pick goes, or the pending tap */
     fun undo() {
         mutableState.update { s ->
-            if (s.pending != null) s.copy(pending = null) else s.copy(picks = s.picks.dropLast(1))
+            if (s.pending != null) {
+                s.copy(pending = null)
+            } else {
+                val picks = s.picks.dropLast(1)
+                val kept = picks.map { it.pick.label }.toSet()
+                s.copy(
+                    picks = picks,
+                    raws = s.raws.filterKeys { it in kept },
+                    helperFor = s.helperFor?.takeIf { it in kept },
+                    suggestion = if (s.helperFor?.let { it in kept } == true) s.suggestion else null,
+                )
+            }
         }
         rederive()
     }
+
+    // ---------- r100: the tap helper ----------
+
+    /** "Check each pick": off = no card, no coloured outline, no suggestion (the checks still mark the rows) */
+    fun setHelper(on: Boolean) {
+        mutableState.update {
+            it.copy(helper = on, helperFor = if (on) it.helperFor else null, suggestion = if (on) it.suggestion else null)
+        }
+        if (!on) page("window.__labPicker.unsuggest && window.__labPicker.unsuggest();")
+        AppLog.add('D', "lab", "helper: check each pick = $on")
+    }
+
+    /** "Use suggestion": the suggested element gets the card's label (and becomes the page's current element) */
+    fun useSuggestion() {
+        val s = state.value
+        val label = s.helperFor ?: return
+        val raw = s.suggestion ?: return
+        page("if (window.__labPicker.adopt) window.__labPicker.adopt();")
+        AppLog.add('I', "lab", "helper: used suggestion for $label (${raw.likeSelector} ×${raw.count})")
+        applyLabel(label, raw)
+    }
+
+    /** "Keep mine" / "OK": the card goes, the pick stays as it is */
+    fun dismissHelper() {
+        val s = state.value
+        val label = s.helperFor ?: return
+        if (s.checks[label]?.level == PickCheck.Level.Warn) AppLog.add('D', "lab", "helper $label: kept as picked")
+        mutableState.update { it.copy(helperFor = null, suggestion = null, relabel = null) }
+        page("window.__labPicker.unsuggest && window.__labPicker.unsuggest();")
+    }
+
+    /** "Not this": the pick goes (and its outlines) */
+    fun rejectHelperPick() {
+        val s = state.value
+        val label = s.helperFor ?: return
+        val selector = s.raws[label]?.likeSelector
+        AppLog.add('D', "lab", "helper $label: removed (Not this)")
+        removePick(label)
+        mutableState.update { it.copy(helperFor = null, suggestion = null, relabel = null) }
+        page("if (window.__labPicker.drop) window.__labPicker.drop(${JsonPrimitive(selector.orEmpty())});")
+    }
+
+    /** "OK, next: Cover": the next label of this page still to pick, or the next step when all are */
+    fun helperNext() {
+        val s = state.value
+        val next = nextUnpicked(s)
+        mutableState.update { it.copy(helperFor = null, suggestion = null, relabel = null, nextLabel = next) }
+        page("window.__labPicker.unsuggest && window.__labPicker.unsuggest();")
+        if (next == null && s.step != Step.ChapterPage) nextStep()
+    }
+
+    /** The helper card's Up / Down: the element reached comes back as a pick and gets the card's label again */
+    fun helperMove(direction: String) {
+        val label = state.value.helperFor ?: return
+        mutableState.update { it.copy(relabel = label, suggestion = null) }
+        page("window.__labPicker.$direction();")
+    }
+
+    /** "Test it now" on the Video pick: VideoFinder opens the page in the hidden browser and presses Play */
+    fun testVideo() {
+        val s = state.value
+        val pick = s.raws["video"] ?: return
+        if (s.videoTest?.running == true) return
+        val pageUrl = pick.pageUrl.ifBlank { s.pageUrl.orEmpty() }
+        if (pageUrl.isBlank()) return
+        val frame = s.selection?.derived?.get("videoFrame")?.takeIf { it.isNotBlank() }
+        val referer = s.site.trimEnd('/') + "/"
+        val waiting = VideoTest(running = true, ok = false, text = "Testing: the hidden browser opens the page and presses Play (up to 45 s)…")
+        mutableState.update { it.copy(videoTest = waiting) }
+        AppLog.add('I', "lab", "helper test video: $pageUrl (frame ${frame ?: "any"})")
+        screenModelScope.launchIO {
+            val test = try {
+                val r = VideoFinder.find(context, pageUrl, frame, referer)
+                val seconds = String.format(Locale.ROOT, "%.1f", r.tookMs / 1000.0)
+                if (r.videos.isNotEmpty()) {
+                    val kinds = r.videos.map { kindName(it.kind) }.distinct().joinToString(" / ")
+                    val servers = r.videos.map { it.server }.filter { it.isNotBlank() }.distinct().joinToString(", ")
+                    val what = if (r.videos.size == 1) "a video" else "${r.videos.size} videos"
+                    val from = if (servers.isNotEmpty()) " · from $servers" else ""
+                    VideoTest(false, true, "Found $what in $seconds s · $kinds$from")
+                } else {
+                    VideoTest(false, false, "No video in $seconds s: ${r.reason}")
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                VideoTest(false, false, "The test failed: ${e.message ?: e.toString()}")
+            }
+            AppLog.add('I', "lab", "helper test video: ${test.text}")
+            mutableState.update { it.copy(videoTest = test) }
+        }
+    }
+
+    private fun kindName(kind: String): String = when (kind) {
+        "hls" -> "HLS"
+        "dash" -> "DASH"
+        else -> "file"
+    }
+
+    /** The first label of this page's step with no pick yet ("chapter" is not wanted for an only-episode title) */
+    fun nextUnpicked(s: State = state.value): String? =
+        s.labels.firstOrNull { label -> s.pick(label) == null && !(label == "chapter" && s.singleEpisode) }
 
     /** "Next: open a title" / "Next: open a chapter": the first link of the pick that leads there */
     fun nextStep() {
@@ -307,6 +592,20 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
             .onFailure { AppLog.add('W', "lab", "Derive failed: ${it.message}") }
             .getOrNull()
         mutableState.update { it.copy(selection = selection) }
+        recheck()
+    }
+
+    /** r100: the helper's verdict on every labelled pick (they depend on each other: Title vs Item counts …) */
+    private fun recheck() {
+        mutableState.update { s ->
+            val infos = s.picks.mapNotNull { p -> s.raws[p.pick.label]?.let { p.pick.label to it.info() } }.toMap()
+            val checks = infos.mapNotNull { (label, info) ->
+                runCatching { label to PickCheck.check(label, info, infos - label, s.anime, s.singleEpisode) }
+                    .onFailure { AppLog.add('W', "lab", "helper $label: check failed: ${it.message}") }
+                    .getOrNull()
+            }.toMap()
+            s.copy(checks = checks)
+        }
     }
 
     /** Done: the generic-list template filled with the derived values, handed to Half A */
@@ -317,7 +616,10 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
         // r99 fix: nor "no chapter link was picked" (its empty CHAPTER selector would fail without saying why): JS too,
         // whose getChapterList throws the clear error
         val noChapter = selection.derived["chapterSelector"].isNullOrBlank() && !s.singleEpisode
-        val json = s.json && !s.singleEpisode && !noChapter
+        // r100 (W3): tabs, filters, settings and a recorded search exist only in the JS template
+        val extrasUsed = runCatching { extras.used }.getOrDefault(false)
+        val json = s.json && !s.singleEpisode && !noChapter && !extrasUsed
+        if (s.json && extrasUsed) AppLog.add('I', "lab", "Builder: lists and options set: written as JS (the JSON format has no tabs, filters or settings)")
         if (s.json && s.singleEpisode) AppLog.add('I', "lab", "Builder: only-episode source written as JS (the JSON format lists episodes from links)")
         if (s.json && noChapter) AppLog.add('I', "lab", "Builder: no chapter link picked: written as JS (its chapter list says to tap one)")
         mutableState.update { it.copy(busy = "Writing the source…", error = null) }
@@ -333,6 +635,8 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean)
                     values["baseUrl"] = s.site
                     values["iconUrl"] = "https://www.google.com/s2/favicons?domain=$host&sz=128"
                     values.putAll(selection.derived)
+                    // r100 (W3): recorded search / tab paths override Derive's guesses; tabs, filters, settings
+                    values.putAll(extras.templateValues(s.site))
                     val lab = LabMeta(
                         engine = "generic-list",
                         templateId = template.id,

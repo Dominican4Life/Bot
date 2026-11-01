@@ -22,6 +22,8 @@ import eu.kanade.tachiyomi.jssource.lab.PartIndex
 import eu.kanade.tachiyomi.jssource.lab.RetestJob
 import eu.kanade.tachiyomi.jssource.lab.RulesFile
 import eu.kanade.tachiyomi.jssource.lab.RulesParser
+import eu.kanade.tachiyomi.jssource.lab.TemplateUpdate
+import eu.kanade.tachiyomi.jssource.lab.Templates
 import eu.kanade.tachiyomi.jssource.lab.TestRun
 import eu.kanade.tachiyomi.jssource.lab.TestRuns
 import eu.kanade.tachiyomi.jssource.lab.TestStep
@@ -84,6 +86,9 @@ internal class SourceLabScreenModel(
         /** The outcome of a generated source's id ("Keeps the extension's id …"), shown once */
         val idNote: String? = null,
         val message: String? = null,
+        /** KMK (r100): the open source's template has a newer version ("Update template"), null when it hasn't */
+        val templateOffer: TemplateUpdate.Offer? = null,
+        val updatingTemplate: Boolean = false,
     ) {
         val source: LabSource? get() = key?.let { k -> sources.firstOrNull { it.key == k } }
     }
@@ -122,6 +127,7 @@ internal class SourceLabScreenModel(
                 reportPlan = emptyList(),
                 reportFile = null,
                 idNote = null,
+                templateOffer = null,
             )
         }
         key?.let { loadSource(it) }
@@ -149,6 +155,10 @@ internal class SourceLabScreenModel(
                 emptyList()
             }
             val plan = runCatching { IssueReport.plan(key, state.value.reportOptions) }.getOrDefault(emptyList())
+            // KMK (r100): a newer version of the template the source was written with
+            val offer = runCatching { TemplateUpdate.offer(key) }
+                .onFailure { AppLog.add('W', "lab", "Template update check of $key failed: ${it.message}") }
+                .getOrNull()
             mutableState.update {
                 if (it.key != key) return@update it
                 it.copy(
@@ -158,6 +168,7 @@ internal class SourceLabScreenModel(
                     explain = explain,
                     history = history,
                     reportPlan = plan,
+                    templateOffer = offer,
                 )
             }
         }
@@ -368,6 +379,49 @@ internal class SourceLabScreenModel(
                     message("v$n is the current code now (no new version)")
                 }
                 .onFailure { message("Couldn't restore v$n: ${it.message}") }
+        }
+    }
+
+    /**
+     * KMK (r100): "Update template": the offered parts of the saved code are replaced by the template's newer ones and
+     * saved as a new version (TemplateUpdate); the editor reloads. The caller has already asked about unsaved edits.
+     */
+    fun updateTemplate(editor: SourceEditorScreenModel) {
+        val key = state.value.key ?: return
+        val offer = state.value.templateOffer ?: return
+        if (state.value.updatingTemplate) return
+        mutableState.update { it.copy(updatingTemplate = true) }
+        screenModelScope.launchIO {
+            try {
+                val source = LabStore.source(key)
+                val template = Templates.get(offer.templateId)
+                val outcome = if (source == null || template == null) {
+                    TemplateUpdate.Outcome.Refused("The source or its template is gone")
+                } else {
+                    TemplateUpdate.update(source, template)
+                }
+                when (outcome) {
+                    is TemplateUpdate.Outcome.Updated -> {
+                        editor.open(key)
+                        loadSource(key)
+                        message(
+                            "Updated to ${outcome.offer.templateName} v${outcome.offer.to} (${outcome.offer.partWords}). " +
+                                "Run the Test to check it.",
+                        )
+                    }
+                    is TemplateUpdate.Outcome.Refused -> {
+                        AppLog.add('W', "lab", "Template update of $key refused: ${outcome.message}")
+                        message("Not updated: ${outcome.message}")
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                AppLog.add('E', "lab", "Template update of $key failed: $e")
+                message("Not updated: ${e.message}")
+            } finally {
+                mutableState.update { it.copy(updatingTemplate = false) }
+            }
         }
     }
 

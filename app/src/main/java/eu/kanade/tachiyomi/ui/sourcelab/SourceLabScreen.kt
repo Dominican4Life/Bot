@@ -101,6 +101,7 @@ internal class SourceLabScreen(
         var query by rememberSaveable { mutableStateOf(model.lastQuery()) }
         var railDest by rememberSaveable { mutableStateOf(RailDest.Sources) }
         var showMenu by remember { mutableStateOf(false) }
+        var confirmTemplateUpdate by remember { mutableStateOf(false) } // KMK (r100)
         val pop: () -> Unit = { navigator.pop() }
         // r98: the app's Log (Diagnostics, Log tab) on top of the Lab; Back returns here with the editor untouched
         val openLogs: () -> Unit = { navigator.push(DiagnosticsScreen(DiagTab.LOG)) }
@@ -141,6 +142,19 @@ internal class SourceLabScreen(
             } finally {
                 model.consumeIdNote()
             }
+        }
+
+        // KMK (r100): "Update template?" (Save / Discard / Cancel first when the editor has unsaved edits)
+        val offerToConfirm = state.templateOffer
+        if (confirmTemplateUpdate && offerToConfirm != null) {
+            TemplateUpdateDialog(
+                offer = offerToConfirm,
+                onConfirm = {
+                    confirmTemplateUpdate = false
+                    actions.askBeforeReplacing("Updating the template") { model.updateTemplate(editor) }
+                },
+                onDismiss = { confirmTemplateUpdate = false },
+            )
         }
 
         EditorDialogs(
@@ -317,6 +331,15 @@ internal class SourceLabScreen(
                         },
                     )
                     LabStrip(state = state, editorState = editorState)
+                    // KMK (r100): the source's template has a newer version
+                    val templateOffer = state.templateOffer
+                    if (templateOffer != null && state.key != null && railDest == RailDest.Sources) {
+                        TemplateUpdateBar(
+                            offer = templateOffer,
+                            busy = state.updatingTemplate,
+                            onUpdate = { confirmTemplateUpdate = true },
+                        )
+                    }
                     if (editorState.running != null || state.running || state.retestProgress != null || state.reportBuilding) {
                         LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     } else {

@@ -1,16 +1,15 @@
-// @version 1
+// @version 2
 // Anime player page template of the Source Lab, written for {{name}} ({{baseUrl}}).
 // The home page links to titles (/anime/…) and to episodes (/watch/… or …-episode-N); an episode page holds the
-// player in an <{{frameSelector}}>. Known embed hosts (StreamWish, Filemoon, Vidstream / Vidsrc, a plain <source>)
-// are read with the hidden browser catching the .m3u8 the player loads; any other host is a TODO.
+// player in an <{{frameSelector}}>. Videos come from the app's video finder (host.findVideo): the hidden browser
+// plays the episode page (and then the player frame itself) and catches the .m3u8 / .mpd / .mp4 it asks for.
 
 /*@part id="headers"*/
 // Headers and constants: the site as Referer on covers; COVER_ATTR the <img> attribute that held a real
-// address; FRAME the element that holds the player on an episode page.
+// address; FRAME the element that holds the player on an episode page (the video finder starts there).
 var BASE = "{{baseUrl}}";
 var COVER_ATTR = "{{coverAttr}}";
 var FRAME = "{{frameSelector}}";
-var KNOWN_HOSTS = ["streamwish", "filemoon", "vidstream", "vidsrc", "wish", "moon", "dood", "mp4upload", "vidhide", "voe"];
 var extension = {
   name: "{{name}}",
   lang: "{{lang}}",
@@ -81,28 +80,29 @@ var extension = {
 /*@end*/
 
 /*@part id="getVideoList"*/
-  // Videos: the episode page's player frame(s). A plain <video><source> is a direct file; a known embed host is
-  // loaded in the hidden browser and the .m3u8 / .mp4 it asks for is the video (the embed page as Referer).
-  // An unknown host is reported by name so the Lab can show which extractor is missing.
+  // Videos: the app's video finder (host.findVideo) opens the episode page in the hidden browser, presses Play and
+  // catches the stream the player asks for (.m3u8 / .mpd / .mp4), also when the site's script fills in the
+  // player's address after the page loads; then the player itself is opened with the page as Referer. {{videoNote}}
+  // The "quality" and "server" settings (when the source has them) put the preferred ones first.
   getVideoList: async function (url) {
-    var doc = await host.parse(await get(url));
-    var frames = await doc.select(FRAME + "[src], iframe[data-src], video source[src], video[src]");
+    var found = await host.findVideo(url, { frame: FRAME, referer: BASE + "/" });
+    var hls = require("hls");
     var out = [];
-    for (var i = 0; i < frames.length && out.length < 6; i++) {
-      var src = frames[i].attr("src") || frames[i].attr("data-src");
-      if (!src || /about:blank|ads|banner/i.test(src)) continue;
-      src = abs(src);
-      if (frames[i].tag === "source" || frames[i].tag === "video") {
-        out.push({ url: src, quality: frames[i].attr("label") || frames[i].attr("size") || "Direct", server: "Direct", headers: { Referer: BASE + "/" } });
-        continue;
-      }
-      var hostName = (src.match(/^https?:\/\/([^/]+)/) || [])[1] || "";
-      var known = KNOWN_HOSTS.filter(function (k) { return hostName.indexOf(k) >= 0; }).length > 0;
-      var videos = await extract(src, hostName);
-      if (videos.length) out.push.apply(out, videos);
-      else if (!known) console.log("Unknown player host " + hostName + ": no video caught");
+    for (var i = 0; i < (found.videos || []).length; i++) {
+      var v = found.videos[i];
+      var video = { url: v.url, quality: v.quality, server: v.server, headers: v.headers };
+      out.push.apply(out, v.kind === "hls" ? await hls.expand(video) : [video]);
     }
-    if (!out.length) throw new Error("No playable video on " + url + " (player host not recognised)");
+    if (!out.length) throw new Error("No playable video on " + url + ": " + (found.reason || "nothing caught"));
+    var wantQ = String((await host.preference.get("quality")) || "");
+    var wantS = String((await host.preference.get("server")) || "").toLowerCase();
+    if ((wantQ && wantQ !== "Best") || wantS) {
+      out = out.map(function (v, i) {
+        var score = (wantQ && wantQ !== "Best" && String(v.quality).indexOf(wantQ) >= 0 ? 2 : 0)
+          + (wantS && String(v.server).toLowerCase().indexOf(wantS) >= 0 ? 1 : 0);
+        return { v: v, i: i, s: score };
+      }).sort(function (a, b) { return b.s - a.s || a.i - b.i; }).map(function (x) { return x.v; });
+    }
     return out;
   },
 /*@end*/
@@ -110,8 +110,7 @@ var extension = {
 
 /*@part id="helpers"*/
 // Helpers: one request with the site as Referer; the title-card parser (links under /anime/ or with a poster,
-// each once); the embed extractor (hidden browser, .m3u8 / .mp4 caught, the embed as Referer, "Auto" when it is
-// a master playlist); absolute addresses and the first number of a text.
+// each once); absolute addresses and the first number of a text.
 async function get(url, options) {
   var o = options || {};
   var headers = Object.assign({ Referer: BASE + "/" }, o.headers || {});
@@ -133,28 +132,6 @@ async function titles(html) {
     if (!title) continue;
     var src = img ? (img.attr(COVER_ATTR) || img.attr("data-src") || img.attr("src") || "") : "";
     out.push({ url: abs(href), title: title.trim(), coverUrl: src ? abs(String(src).trim().split(/[\s,]+/)[0]) : null });
-  }
-  return out;
-}
-async function extract(embedUrl, hostName) {
-  var page = await host.render(embedUrl, { capture: /\.m3u8|\.mp4|\.mkv/i, waitForResource: /\.m3u8|\.mp4/i, timeout: 25000 });
-  var urls = (page.resources || []).filter(function (u) { return /\.m3u8|\.mp4|\.mkv/i.test(u); });
-  var seen = {};
-  var out = [];
-  var hls = require("hls");
-  for (var i = 0; i < urls.length; i++) {
-    var u = urls[i].replace(/#.*$/, "");
-    if (seen[u]) continue;
-    seen[u] = true;
-    var video = {
-      url: u,
-      quality: /\.m3u8/i.test(u) ? "Auto" : "Direct",
-      server: hostName.split(".")[0],
-      headers: { Referer: embedUrl, Origin: embedUrl.replace(/^(https?:\/\/[^/]+).*$/, "$1") },
-    };
-    // A master playlist becomes "Auto" plus one video per quality, all under the same server
-    var expanded = /\.m3u8/i.test(u) ? await hls.expand(video) : [video];
-    out.push.apply(out, expanded);
   }
   return out;
 }

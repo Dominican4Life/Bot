@@ -80,6 +80,24 @@ internal object Templates {
 
     fun placeholdersIn(text: String): List<String> = PLACEHOLDER.findAll(text).map { it.groupValues[1] }.distinct().toList()
 
+    /** KMK (r100): one version step of a template: the parts that version replaced, and what changed in one line */
+    data class UpdateStep(val parts: List<String>, val note: String)
+
+    /**
+     * KMK (r100): the sidecar's `updates` block, `{ "<toVersion>": { "parts": [ids], "note": "…" } }`: what
+     * "Update template" (TemplateUpdate) replaces in a source written with an older version. A version with no
+     * entry replaced nothing a saved source can take over by parts.
+     */
+    fun updates(template: LabTemplate): Map<Int, UpdateStep> =
+        sidecar(stemOfId(template.id)).obj("updates")?.mapNotNull { (key, value) ->
+            val version = key.trim().toIntOrNull() ?: return@mapNotNull null
+            val step = value as? JsonObject ?: return@mapNotNull null
+            version to UpdateStep(
+                parts = step.arr("parts")?.mapNotNull { (it as? JsonPrimitive)?.content?.takeIf { id -> id.isNotBlank() } }.orEmpty(),
+                note = step.str("note").orEmpty(),
+            )
+        }?.toMap().orEmpty()
+
     /**
      * Sources written with a template that has a newer version now (CONTRACT-LAB §5.4). Half A shows the count
      * on Home; regenerating is not in this release.

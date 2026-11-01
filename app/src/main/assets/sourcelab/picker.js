@@ -18,7 +18,7 @@
 // script ("LABPICK:<token>:<json>"); the app ignores console lines without it, so the page can't fake a pick. The
 // token is taken off window at once. Unpainting puts back the element's own inline outline / background values.
 //
-// r99 (owner's 123av run): (1) a tap on the site's own controls opened them (a "Type: All" dropdown opened under
+// r99 (owner's run): (1) a tap on the site's own controls opened them (a "Type: All" dropdown opened under
 // the tap and its option became the Item pick): in pick mode pointerdown / mousedown / touchstart are now taken at
 // the window (capture, not passive) and their default is prevented on interactive targets (button, select, input,
 // label, summary, [role=button], [aria-haspopup] …), so no focus, no menu; a touch on one is picked on touchend
@@ -28,6 +28,15 @@
 // viewport, transparent ones and positioned boxes with no text and no picture, and taking the innermost element with
 // visible text or a picture. The path is never a bare tag. (3) window.__labPicker.up() / .down() move the pick to
 // the parent / the first meaningful child and send it again (via "up" / "down"), for the app's Up / Down buttons.
+//
+// r100 (the tap helper; the owner's Item tap landed on a "New Releases" heading and nothing said so): every pick
+// also carries imgCount, linkCount, textLen, distinctHrefs, boundByScript, nextLike, rect and samples, which the
+// app's PickCheck turns into a verdict. window.__labPicker.mark(state) colours the current pick (ok green, warn
+// amber, info blue); .suggest(label) finds the element the label most likely means near the last tap (Item: the
+// smallest repeated box with a picture and a link) and sends it as a pick with via "suggest" + forLabel, its
+// look-alikes outlined dashed green until the next tap / label; .adopt() makes it the current element when the app
+// uses it; .optionsFor(param) sends a filter's choices (a select's options, else link values) through
+// LabPicker.options / console "LABOPTS:<token>:", in Browse mode too. Nothing here changes how a tap is taken.
 (function () {
   var TOKEN = "";
   try {
@@ -43,8 +52,9 @@
     }
   }
 
+  // r100: "options" (optionsFor's answer) goes to LabPicker.options, console "LABOPTS:<token>:<json>"
   function send(kind, text) {
-    var method = kind === "pick" ? "pick" : "log";
+    var method = kind === "pick" ? "pick" : kind === "options" ? "options" : "log";
     if (bridgeHas(method)) {
       try {
         LabPicker[method](text);
@@ -53,7 +63,8 @@
         // falls through to the console
       }
     }
-    try { console.log((kind === "pick" ? "LABPICK:" : "LABLOG:") + TOKEN + ":" + text); } catch (e2) { /* nothing left to try */ }
+    var prefix = kind === "pick" ? "LABPICK:" : kind === "options" ? "LABOPTS:" : "LABLOG:";
+    try { console.log(prefix + TOKEN + ":" + text); } catch (e2) { /* nothing left to try */ }
   }
 
   var STYLE_ID = "__lab-picker-style";
@@ -197,7 +208,30 @@
     } catch (e) { /* nothing */ }
   }
 
+  // r100: the suggestion's dashed green outlines, saved and put back the same way (their own list, so the
+  // suggestion can go without touching the pick's outlines)
+  var SUGG = [];
+  function paintSuggestion(el) {
+    try {
+      for (var s = 0; s < STYLED.length; s++) if (STYLED[s].el === el) return; // the pick's own outline stays
+      var saved = { el: el, values: {} };
+      for (var p = 0; p < PAINTED.length; p++) {
+        saved.values[PAINTED[p]] = [el.style.getPropertyValue(PAINTED[p]), el.style.getPropertyPriority(PAINTED[p])];
+      }
+      SUGG.push(saved);
+      el.style.setProperty("outline", "3px dashed #4caf6a", "important");
+      el.style.setProperty("outline-offset", "-3px", "important");
+    } catch (e) { /* an SVG node without style */ }
+  }
+  function clearSuggestion() {
+    for (var i = 0; i < SUGG.length; i++) unpaint(SUGG[i]);
+    SUGG = [];
+    suggested = null;
+  }
+  var suggested = null;
+
   function clearMarks() {
+    clearSuggestion();
     var marked = document.querySelectorAll(".__lab-like, .__lab-picked");
     for (var i = 0; i < marked.length; i++) {
       marked[i].classList.remove("__lab-like");
@@ -251,7 +285,30 @@
       var link = likes[h].tagName.toLowerCase() === "a" ? likes[h] : (likes[h].querySelector("a[href]") || likes[h].closest("a[href]"));
       if (link && link.href) hrefs.push(link.href);
     }
+    // r100: what the app's helper checks (PickCheck): pictures and links in the element, its text, how many
+    // different addresses its look-alikes open, a player whose address the site's script sets, a "next" link
+    var distinct = {};
+    var distinctCount = 0;
+    for (var d = 0; d < likes.length && distinctCount < 200; d++) {
+      var dl = linkOf(likes[d]);
+      var key = dl && dl.href ? String(dl.href).split("#")[0] : "";
+      if (key && !distinct[key]) { distinct[key] = true; distinctCount++; }
+    }
+    var samples = [];
+    for (var m = 0; m < likes.length && samples.length < 3; m++) {
+      var st = snippetOf(likes[m]);
+      if (st) samples.push(st);
+    }
+    var r = el.getBoundingClientRect();
     return {
+      imgCount: countIn(el, PICTURE),
+      linkCount: countIn(el, "a[href]"),
+      textLen: String(el.textContent || "").replace(/\s+/g, " ").trim().length,
+      distinctHrefs: distinctCount,
+      boundByScript: boundByScript(el),
+      nextLike: nextLike(el),
+      rect: { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) },
+      samples: samples,
       cssPath: path,
       snippet: snippetOf(el),
       via: via || "tap",
@@ -426,6 +483,282 @@
     return null;
   }
 
+  // ---------- r100: facts for the helper ----------
+
+  var PICTURE = "img, picture, [style*=background-image]";
+
+  // How many elements match [selector]: the element itself and inside it
+  function countIn(el, selector) {
+    var n = 0;
+    try {
+      if (el.matches && el.matches(selector)) n++;
+      n += el.querySelectorAll(selector).length;
+    } catch (e) { /* nothing */ }
+    return n;
+  }
+
+  // The link an element is or holds or sits in
+  function linkOf(el) {
+    if (!el || !el.tagName) return null;
+    if (el.tagName.toLowerCase() === "a" && el.hasAttribute("href")) return el;
+    try { return el.querySelector("a[href]") || el.closest("a[href]"); } catch (e) { return null; }
+  }
+
+  function usableAddress(v) {
+    v = String(v || "").trim();
+    return v.length > 0 && !/^(about:blank|javascript:|#)/i.test(v);
+  }
+
+  // A player (iframe / video) whose address the site's script fills in after the page loads (Vue `:src`,
+  // `v-bind:src`, Alpine `x-bind:src`, Angular `[src]` / `ng-src`): the plain page has no address for it. A src
+  // binding counts even when the live page already shows a src (the script ran here, it won't in a plain fetch);
+  // any other binding counts only when there is no usable src / data-src.
+  var BIND_SRC = /^(:src|v-bind:src|x-bind:src|\[src\]|ng-src|data-ng-src|:data-src)$/i;
+  var BIND_ANY = /^(:|v-bind:|x-bind:|\[src\]|ng-src)/i;
+  function boundByScript(el) {
+    var tag = el.tagName.toLowerCase();
+    if (tag !== "iframe" && tag !== "video") return false;
+    var usable = usableAddress(el.getAttribute("src")) || usableAddress(el.getAttribute("data-src"));
+    if (!usable && tag === "video") {
+      var source = el.querySelector("source[src]");
+      if (source && usableAddress(source.getAttribute("src"))) usable = true;
+    }
+    var srcBound = false;
+    var anyBound = false;
+    for (var i = 0; i < el.attributes.length; i++) {
+      var name = el.attributes[i].name;
+      if (BIND_SRC.test(name)) srcBound = true;
+      if (BIND_ANY.test(name)) anyBound = true;
+    }
+    return srcBound || (!usable && anyBound);
+  }
+
+  // A "next page" link: rel=next, an aria-label saying next, or text that starts with next / › / » / > / →
+  function nextLike(el) {
+    var a = linkOf(el) || el;
+    var rel = String(a.getAttribute("rel") || "");
+    if (/(^|\s)next(\s|$)/i.test(rel)) return true;
+    if (/next/i.test(String(a.getAttribute("aria-label") || ""))) return true;
+    var t = String(a.textContent || "").replace(/\s+/g, " ");
+    return /^\s*(next|›|»|>|→)/i.test(t);
+  }
+
+  // ---------- r100: suggest (the helper's "Did you mean …?") ----------
+
+  function shown(el) {
+    try {
+      var r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    } catch (e) { return false; }
+  }
+
+  function centre(el) {
+    var r = el.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  }
+
+  // Distance from the last tap (the current element) to [el]: nearer suggestions first
+  function distanceFromTap(el) {
+    if (!current) return 0;
+    try {
+      var a = centre(current);
+      var b = centre(el);
+      return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+    } catch (e) { return 0; }
+  }
+
+  var NOT_ITEM = /^(html|body|head|main|nav|header|footer|ul|ol|table|tbody|thead|tr|form|script|style|img|picture|svg|video|iframe|source|a)$/;
+
+  // One box per title: holds a picture, a link and some text, and is shown
+  function itemish(el) {
+    if (!el || el.nodeType !== 1 || NOT_ITEM.test(el.tagName.toLowerCase())) return false;
+    if (el.id === "__lab-badge" || !shown(el)) return false;
+    if (countIn(el, PICTURE) < 1) return false;
+    if (!el.querySelector("a[href]") && !el.closest("a[href]")) return false;
+    return String(el.textContent || "").replace(/\s+/g, "").length > 0;
+  }
+
+  function likesOf(el, cache) {
+    var sel = likeSelector(pathOf(el));
+    if (!cache[sel]) cache[sel] = queryAll(sel);
+    return cache[sel];
+  }
+
+  // Repeated (≥ 3 look-alikes) and most of the look-alikes are boxes like it
+  function repeatedItem(el, cache) {
+    if (!itemish(el)) return false;
+    var sel = likeSelector(pathOf(el));
+    var key = "rep:" + sel;
+    if (cache[key] === undefined) {
+      var likes = likesOf(el, cache);
+      var checked = 0;
+      var good = 0;
+      for (var i = 0; i < likes.length && checked < 20; i++, checked++) if (itemish(likes[i])) good++;
+      cache[key] = likes.length >= 3 && good >= 3 && good >= 0.6 * checked;
+    }
+    return cache[key];
+  }
+
+  // The smallest repeated boxes under [root]: candidates with no candidate inside them, grouped by look-alike
+  // selector; the biggest group wins (ties: the one nearer the tap); returns its member nearest the tap
+  function bestItemUnder(root, cache) {
+    if (!root || !root.querySelectorAll) return null;
+    var all = Array.prototype.slice.call(root.querySelectorAll("*"), 0, 5000);
+    var found = [];
+    for (var i = 0; i < all.length; i++) if (repeatedItem(all[i], cache)) found.push(all[i]);
+    var minimal = [];
+    for (var j = 0; j < found.length; j++) {
+      var inner = false;
+      for (var k = 0; k < found.length && !inner; k++) {
+        if (k !== j && found[j] !== found[k] && found[j].contains(found[k])) inner = true;
+      }
+      if (!inner) minimal.push(found[j]);
+    }
+    if (!minimal.length) return null;
+    var groups = {};
+    for (var m = 0; m < minimal.length; m++) {
+      var sel = likeSelector(pathOf(minimal[m]));
+      (groups[sel] = groups[sel] || []).push(minimal[m]);
+    }
+    var best = null;
+    for (var key in groups) {
+      if (!Object.prototype.hasOwnProperty.call(groups, key)) continue;
+      var g = groups[key];
+      g.sort(function (a, b) { return distanceFromTap(a) - distanceFromTap(b); });
+      if (!best || g.length > best.length || (g.length === best.length && distanceFromTap(g[0]) < distanceFromTap(best[0]))) best = g;
+    }
+    return best ? best[0] : null;
+  }
+
+  // Item: the tap's ancestors first, then inside the tap's nearest container (up to 6 levels), then the page
+  function findItem() {
+    var cache = {};
+    var node = current;
+    while (node && node.nodeType === 1 && !/^(body|html)$/i.test(node.tagName)) {
+      // A repeated shelf around the tap (heading + its cards) holds smaller repeated boxes: those are the items
+      if (repeatedItem(node, cache)) return bestItemUnder(node, cache) || node;
+      node = node.parentElement;
+    }
+    var box = current ? current.parentElement : null;
+    for (var level = 0; box && level < 6 && !/^(html)$/i.test(box.tagName); level++, box = box.parentElement) {
+      var inside = bestItemUnder(box, cache);
+      if (inside) return inside;
+      if (/^body$/i.test(box.tagName)) return null;
+    }
+    return bestItemUnder(document.body, cache);
+  }
+
+  function findTitle() {
+    var item = findItem();
+    if (!item) return null;
+    var heading = item.querySelector("h1 a[href], h2 a[href], h3 a[href], h4 a[href], h5 a[href], h6 a[href]");
+    if (heading && String(heading.textContent || "").trim()) return heading;
+    var links = item.querySelectorAll("a[href]");
+    for (var i = 0; i < links.length; i++) if (String(links[i].textContent || "").trim()) return links[i];
+    return null;
+  }
+
+  function findCover() {
+    var item = findItem();
+    if (!item) return null;
+    return item.querySelector("img") || item.querySelector("picture, [style*=background-image]");
+  }
+
+  function samePage(href) {
+    return String(href || "").split("#")[0].replace(/\/$/, "") === String(location.href).split("#")[0].replace(/\/$/, "");
+  }
+
+  function findNext() {
+    var links = queryAll("a[href]").filter(function (a) { return shown(a) && !/(^|\s)prev/i.test(String(a.getAttribute("rel") || "")); });
+    for (var i = 0; i < links.length; i++) if (nextLike(links[i]) && !samePage(links[i].href)) return links[i];
+    for (var j = 0; j < links.length; j++) if (/[?&](page|p)=2(\D|$)|\/page\/2(\D|$)/.test(links[j].href)) return links[j];
+    return null;
+  }
+
+  // Groups of repeated links (≥ 2 different addresses, not this page, not in the site's menus) under [root]
+  function bestLinkGroup(root) {
+    if (!root || !root.querySelectorAll) return null;
+    var links = Array.prototype.slice.call(root.querySelectorAll("a[href]"), 0, 3000);
+    var groups = {};
+    for (var i = 0; i < links.length; i++) {
+      var a = links[i];
+      if (!shown(a) || samePage(a.href) || /^javascript:/i.test(a.getAttribute("href") || "")) continue;
+      try { if (a.closest("nav, header, footer")) continue; } catch (e) { /* nothing */ }
+      var sel = likeSelector(pathOf(a));
+      var g = groups[sel] || (groups[sel] = { els: [], hrefs: {}, n: 0 });
+      g.els.push(a);
+      var key = String(a.href).split("#")[0];
+      if (!g.hrefs[key]) { g.hrefs[key] = true; g.n++; }
+    }
+    var best = null;
+    for (var s in groups) {
+      if (!Object.prototype.hasOwnProperty.call(groups, s)) continue;
+      if (groups[s].n >= 2 && (!best || groups[s].n > best.n)) best = groups[s];
+    }
+    return best ? best.els[0] : null;
+  }
+
+  function findChapter() {
+    // The tap's own link group when it is a repeated one
+    var own = current ? linkOf(current) : null;
+    if (own && current && (current === own || current.contains(own) || own.contains(current))) {
+      var group = queryAll(likeSelector(pathOf(own)));
+      var hrefs = {};
+      var n = 0;
+      for (var i = 0; i < group.length; i++) {
+        var key = String(group[i].href || "").split("#")[0];
+        if (key && !samePage(key) && !hrefs[key]) { hrefs[key] = true; n++; }
+      }
+      if (n >= 2) return own;
+    }
+    var box = current ? current.parentElement : null;
+    for (var level = 0; box && level < 5 && !/^(html|body)$/i.test(box.tagName); level++, box = box.parentElement) {
+      var near = bestLinkGroup(box);
+      if (near) return near;
+    }
+    return bestLinkGroup(document.body);
+  }
+
+  function findImage() {
+    var imgs = queryAll("img").filter(function (i) {
+      var r = i.getBoundingClientRect();
+      return Math.max(r.width, i.naturalWidth || 0) >= 200 && r.height > 0;
+    });
+    var groups = {};
+    for (var i = 0; i < imgs.length; i++) {
+      var sel = likeSelector(pathOf(imgs[i]));
+      (groups[sel] = groups[sel] || []).push(imgs[i]);
+    }
+    var best = null;
+    for (var s in groups) {
+      if (!Object.prototype.hasOwnProperty.call(groups, s)) continue;
+      if (groups[s].length >= 2 && (!best || groups[s].length > best.length)) best = groups[s];
+    }
+    return best ? best[0] : null;
+  }
+
+  function largest(list) {
+    var best = null;
+    var area = 0;
+    for (var i = 0; i < list.length; i++) {
+      var r = list[i].getBoundingClientRect();
+      if (r.width * r.height > area) { area = r.width * r.height; best = list[i]; }
+    }
+    return best;
+  }
+
+  function findVideo() {
+    var node = current;
+    if (node && /^(iframe|video)$/i.test(node.tagName)) return node;
+    for (var level = 0; node && level < 4 && !/^(html|body)$/i.test(node.tagName); level++, node = node.parentElement) {
+      var inside = largest(Array.prototype.slice.call(node.querySelectorAll("iframe, video")));
+      if (inside) return inside;
+    }
+    return largest(queryAll("iframe, video"));
+  }
+
+  var FINDERS = { item: findItem, title: findTitle, cover: findCover, next: findNext, chapter: findChapter, image: findImage, video: findVideo };
+
   // ---------- pick mode: the site never sees the tap ----------
 
   var INTERACTIVE = "button, select, option, textarea, input, label, summary, [role=button], [role=option], [role=menuitem], [aria-haspopup]";
@@ -535,19 +868,110 @@
     },
     count: function (selector) { return queryAll(selector).length; },
     // r99: Up / Down from the app's hint bar: the parent, or the first child with text or a picture
+    // r100 fix pass: every "can't move" answer is also logged as "up: …" / "down: …" (the app clears its re-label)
     up: function () {
-      if (mode !== "pick" || !current) return "none";
+      if (mode !== "pick" || !current) { send("log", "up: nothing picked to move from"); return "none"; }
       var p = current.parentElement;
       if (!p || /^(body|html)$/i.test(p.tagName)) { send("log", "up: already at the top"); return "top"; }
       pickElement(p, "up");
       return pathOf(p);
     },
     down: function () {
-      if (mode !== "pick" || !current) return "none";
+      if (mode !== "pick" || !current) { send("log", "down: nothing picked to move from"); return "none"; }
       var c = firstMeaningfulChild(current);
       if (!c) { send("log", "down: " + shortName(pathOf(current)) + " has no child with text or a picture"); return "none"; }
       pickElement(c, "down");
       return pathOf(c);
+    },
+    // r100: the helper's verdict on the current pick: its outline turns green ("ok"), amber ("warn") or blue
+    // ("info"); [name] is the label as the app shows it, for the badge
+    mark: function (state, name) {
+      if (!current) return "none";
+      var colour = state === "ok" ? "#4caf6a" : state === "warn" ? "#f2b33d" : "#7cb4ff";
+      var likes = queryAll(likeSelector(pathOf(current)));
+      for (var i = 0; i < likes.length; i++) {
+        if (likes[i] !== current) paint(likes[i], "2px solid " + colour, "-2px", null);
+      }
+      paint(current, "3px solid " + colour, "-3px", null);
+      var label = String(name || "pick");
+      showBadge(state === "ok" ? "\u2713 " + label + " looks right" : state === "warn" ? "! Check the helper: this may not be a " + label : "i " + label + ": see the helper");
+      return state;
+    },
+    // r100: the best element for [label] near the last tap, sent as a pick { via: "suggest", forLabel } with its
+    // look-alikes outlined dashed green; { via: "suggest", forLabel, none: true } when there is none
+    suggest: function (label) {
+      clearSuggestion();
+      var el = null;
+      try { el = FINDERS[label] ? FINDERS[label]() : null; } catch (e) { send("log", "suggest " + label + " failed: " + e.message); }
+      if (el && current && likeSelector(pathOf(el)) === likeSelector(pathOf(current))) el = null; // that is the pick itself
+      if (!el) {
+        send("pick", JSON.stringify({ via: "suggest", forLabel: label, none: true, pageUrl: location.href }));
+        return "none";
+      }
+      suggested = el;
+      var likes = queryAll(likeSelector(pathOf(el)));
+      for (var i = 0; i < likes.length; i++) paintSuggestion(likes[i]);
+      if (likes.indexOf(el) < 0) paintSuggestion(el);
+      var d = describe(el, "suggest");
+      d.forLabel = label;
+      showBadge("Suggested " + label + " \u00d7" + d.count + " (dashed green) \u2014 see the helper");
+      send("pick", JSON.stringify(d));
+      return d.likeSelector;
+    },
+    // r100: the app used the suggestion: it becomes the current element (Up / Down move from it)
+    adopt: function () {
+      var el = suggested;
+      clearSuggestion();
+      if (!el) return "none";
+      current = el;
+      return pathOf(el);
+    },
+    unsuggest: function () {
+      clearSuggestion();
+      return "ok";
+    },
+    // r100: "Not this": the pick's outlines go, the labelled ones of [selector] too
+    drop: function (selector) {
+      clearMarks();
+      var els = selector ? queryAll(selector) : [];
+      for (var i = 0; i < els.length; i++) els[i].classList.remove("__lab-kept");
+      return els.length;
+    },
+    // r100: the choices a filter on [param] can take, sent through LabPicker.options (console "LABOPTS:"):
+    // a <select name=param>'s options, else the values of links whose address carries param= (max 60). Works in
+    // Browse mode too.
+    optionsFor: function (param) {
+      param = String(param || "");
+      var out = [];
+      var seen = {};
+      function add(label, value) {
+        if (out.length >= 60 || value === null || value === undefined) return;
+        value = String(value);
+        if (seen["v:" + value]) return;
+        seen["v:" + value] = true;
+        out.push({ label: String(label || value).replace(/\s+/g, " ").trim().slice(0, 80) || value, value: value });
+      }
+      var select = null;
+      try {
+        var quoted = window.CSS && CSS.escape ? CSS.escape(param) : param.replace(/["\\]/g, "\\$&");
+        select = document.querySelector('select[name="' + quoted + '"]');
+      } catch (e) { select = null; }
+      if (select) {
+        for (var i = 0; i < select.options.length; i++) add(select.options[i].text, select.options[i].value);
+      } else if (param) {
+        var links = queryAll("a[href]");
+        for (var j = 0; j < links.length && out.length < 60; j++) {
+          var href = links[j].getAttribute("href") || "";
+          if (href.indexOf(param + "=") < 0) continue;
+          try {
+            var value = new URL(links[j].href, location.href).searchParams.get(param);
+            if (value !== null) add(snippetOf(links[j]) || value, value);
+          } catch (e2) { /* not an address */ }
+        }
+      }
+      send("options", JSON.stringify({ param: param, options: out }));
+      send("log", "options for " + param + ": " + out.length + (select ? " (select)" : " (links)"));
+      return out.length;
     },
   };
   send("log", "ready (" + mode + ") on " + location.href + " \u00b7 bridge " + (bridgeHas("pick") ? "yes" : "no, console"));

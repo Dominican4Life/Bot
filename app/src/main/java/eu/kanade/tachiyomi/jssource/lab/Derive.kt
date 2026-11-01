@@ -29,9 +29,6 @@ internal object Derive {
     /** Class names a build tool generated: they change on every deploy, so a selector on them dies */
     val GENERATED_CLASS = Regex("""\.(css|sc|jss|emotion)-[a-z0-9]{4,}\b""")
 
-    /** Embed hosts the anime templates can read through the hidden browser */
-    val KNOWN_PLAYER_HOSTS = listOf("streamwish", "filemoon", "vidstream", "vidsrc", "wish", "moon", "dood", "mp4upload", "vidhide", "voe")
-
     fun derive(siteUrl: String, anime: Boolean, picks: List<Picked>, singleEpisode: Boolean = false): BuilderSelection {
         val derived = LinkedHashMap<String, String>()
         val reasons = LinkedHashMap<String, String>()
@@ -236,15 +233,12 @@ internal object Derive {
                     "the code reads src / data-src of the frame; a <$tag> has none. Tap the player again, or use Up / Down in the hint until it says iframe or video",
                 )
             }
-            val known = tag == "video" || tag == "source" || KNOWN_PLAYER_HOSTS.any { it in host }
-            if (known) {
-                put("videoNote", "Player host $host is one the hidden browser reads.", "a known embed host: the .m3u8 it loads is caught")
-            } else {
-                put("videoNote", "TODO: unknown player $host: the hidden browser is tried; add an extractor if nothing is caught.", "an embed host the Lab has no extractor for: the part is marked not written")
-            }
+            // r100: no TODO any more: the app's video finder (host.findVideo) plays any player, whatever its host
+            val where = if (tag == "video" || tag == "source") "a <$tag> on the page" else if (host.isBlank()) "a <$tag> whose address the site's script fills in" else "a <$tag> from $host"
+            put("videoNote", "The player tapped is $where.", "the video finder plays it in the hidden browser and catches the stream it asks for, whatever the host")
         } else if (anime) {
             put("videoFrame", "iframe", "no player tapped: the first <iframe> of the episode page")
-            put("videoNote", "TODO: unknown player: no player was tapped.", "no player tapped: the part is marked not written")
+            put("videoNote", "No player was tapped: every iframe and <video> of the page is tried.", "no player tapped: the video finder tries the page's iframes and videos")
         }
 
         return BuilderSelection(

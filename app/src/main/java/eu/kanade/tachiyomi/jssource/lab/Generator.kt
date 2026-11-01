@@ -39,6 +39,9 @@ internal object Generator {
         val raw = Templates.code(template) ?: throw IllegalStateException("Template ${template.id} has no code any more")
         val filled = LinkedHashMap<String, String>()
         filled.putAll(Templates.defaults(template))
+        // r100 fix pass: the "Lists and options" placeholders of generic-list v3 have safe values even when an older
+        // (imported) sidecar without these defaults is read next to the v3 code
+        EXTRAS_FALLBACKS.forEach { (k, v) -> if (k !in filled) filled[k] = v }
         values.forEach { (k, v) -> filled[k] = v }
         // `{{xJson}}` is the JSON twin of `{{x}}`: the same value with the engine's own placeholder names
         for (key in Templates.placeholdersIn(raw)) {
@@ -90,6 +93,14 @@ internal object Generator {
     }
 
     // ---------- parts ----------
+
+    private val EXTRAS_FALLBACKS = mapOf(
+        "tabPopularName" to "",
+        "tabLatestName" to "",
+        "tabsList" to "[]",
+        "filtersList" to "[]",
+        "settingsList" to "[]",
+    )
 
     /** The parts that hold the identity block; dropping them would leave no `extension` */
     private val HEADER_PARTS = setOf("headers", "helpers")

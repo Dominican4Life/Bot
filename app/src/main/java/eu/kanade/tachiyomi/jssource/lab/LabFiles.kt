@@ -76,12 +76,64 @@ internal object LabFiles {
 
         @Synchronized
         private fun pointedVersion(name: String): Int? {
-            val own = runCatching { pointerFile(name).readText().trim().toIntOrNull() }.getOrNull()
+            val (pointed, builtInThen) = pointedImport(name) ?: return null
+            // KMK (r100): an app update whose built-in file is newer than the imported one wins (the owner had
+            // imported rules v12 by hand; r100 ships v13 built in). The imported versions stay listed.
+            // Fix pass: the pointer remembers the built-in version of the moment it was written (`12@13`), so a
+            // deliberate roll back to an older import holds until an app update brings a newer built-in file; a
+            // pointer without `@` (written before) counts as `@0`.
+            val builtIn = assetVersion(name)
+            if (builtIn != null && builtIn > builtInThen && builtIn > pointed) {
+                if (loggedNewer.add(name)) {
+                    AppLog.add('I', "lab", "$name: the built-in v$builtIn is newer than the imported v$pointed, using it")
+                }
+                return null
+            }
+            // An explain sidecar follows its code file: when the built-in code wins over an import, so does the
+            // built-in sidecar (an older imported generic-list.explain.json has no `updates` and misses the defaults
+            // the built-in v3 code needs)
+            if (kind == LabFileKind.Templates && name.endsWith(EXPLAIN_SUFFIX)) {
+                val stem = name.removeSuffix(EXPLAIN_SUFFIX)
+                val codeOverridden = listOf("$stem.js", "$stem.json").any { code ->
+                    NAME_PATTERN.matches(code) && pointedImport(code) != null && pointedVersion(code) == null
+                }
+                if (codeOverridden) {
+                    if (loggedNewer.add(name)) {
+                        AppLog.add('I', "lab", "$name: follows the built-in $stem code (newer than the import), using the built-in one")
+                    }
+                    return null
+                }
+            }
+            return pointed
+        }
+
+        /** The pointer text for [version]: the version, then `@` and the built-in version known now */
+        private fun pointerText(name: String, version: Int): String = "$version@${assetVersion(name) ?: 0}"
+
+        private val assetVersions = HashMap<String, Int?>()
+        private val loggedNewer = HashSet<String>()
+
+        /** The built-in file's version (assets don't change while the app runs, so read once) */
+        private fun assetVersion(name: String): Int? = assetVersions.getOrPut(name) {
+            assetText(name)?.let { text -> runCatching { LabFiles.versionOf(kind, name, text) }.getOrNull() }
+        }
+
+        /** The imported version the pointer names and the built-in version recorded with it (0 when none) */
+        private fun pointedImport(name: String): Pair<Int, Int>? {
+            val own = runCatching { parsePointer(pointerFile(name).readText()) }.getOrNull()
             // "0" written by a roll back to the asset: don't fall back to the legacy pointer
-            if (own != null) return own.takeIf { it > 0 && versionFile(name, it).exists() }
+            if (own != null) return own.takeIf { it.first > 0 && versionFile(name, it.first).exists() }
             val legacy = legacyPointerFile(name) ?: return null
-            return runCatching { legacy.readText().trim().toIntOrNull() }.getOrNull()
-                ?.takeIf { it > 0 && versionFile(name, it).exists() }
+            return runCatching { parsePointer(legacy.readText()) }.getOrNull()
+                ?.takeIf { it.first > 0 && versionFile(name, it.first).exists() }
+        }
+
+        /** `12@13` → (12, 13); `12` → (12, 0); anything else → null */
+        private fun parsePointer(text: String): Pair<Int, Int>? {
+            val trimmed = text.trim()
+            val version = trimmed.substringBefore('@').trim().toIntOrNull() ?: return null
+            val builtInThen = trimmed.substringAfter('@', "0").trim().toIntOrNull() ?: 0
+            return version to builtInThen
         }
 
         private fun assetText(name: String): String? {
@@ -168,7 +220,7 @@ internal object LabFiles {
             if (file.exists()) throw IllegalArgumentException("line 1: version $version was imported before")
             file.writeText(text)
             metaFile(name, version).writeText("${System.currentTimeMillis()}\n${fileName.orEmpty()}")
-            pointerFile(name).writeText(version.toString())
+            pointerFile(name).writeText(pointerText(name, version))
             AppLog.add('I', "lab", "Imported ${kind.name.lowercase()} $name v$version${fileName?.let { " from $it" }.orEmpty()}")
             return version
         }
@@ -209,7 +261,7 @@ internal object LabFiles {
             } else {
                 if (!versionFile(name, version).exists()) return false
                 pointer.parentFile?.mkdirs()
-                pointer.writeText(version.toString())
+                pointer.writeText(pointerText(name, version))
             }
             AppLog.add('I', "lab", "$name rolled back to ${if (version <= 0) "the built-in version" else "v$version"}")
             return true
@@ -222,6 +274,8 @@ internal object LabFiles {
             return File(dir, name).apply { writeText(text) }
         }
     }
+
+    private const val EXPLAIN_SUFFIX = ".explain.json"
 
     /** `rules.md`, `madara.js`, `madara.explain.json`: a stem, then one or two extensions */
     private val NAME_PATTERN = Regex("""[A-Za-z0-9_-]{1,64}(\.[A-Za-z0-9]{1,16}){1,2}""")

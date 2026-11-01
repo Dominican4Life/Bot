@@ -15,9 +15,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -30,6 +33,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.kanade.tachiyomi.jssource.lab.HealthState
+import eu.kanade.tachiyomi.jssource.lab.TemplateUpdate
 
 /**
  * KMK (r96): the Source Lab's shared look: the status strip under the header (a coloured head word and a few
@@ -185,4 +189,98 @@ internal fun MonoCard(title: String?, text: String) {
             }
         }
     }
+}
+
+/**
+ * KMK (r100): under the status strip when the open source was written with an older template version:
+ * "Template v2 → v3 · <note>" and a small Update button (the confirm dialog is [TemplateUpdateDialog]).
+ */
+@Composable
+internal fun TemplateUpdateBar(offer: TemplateUpdate.Offer, busy: Boolean, onUpdate: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 2.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(start = 14.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Template v${offer.from} → v${offer.to}",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = offer.problem
+                        ?: (if (offer.parts.isEmpty()) "Nothing to replace for this source: marks it as v${offer.to}" else null)
+                        ?: offer.notes.lastOrNull()
+                        ?: "New ${offer.partWords} part",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            FilledTonalButton(onClick = onUpdate, enabled = !busy) {
+                Text(if (busy) "Updating…" else "Update")
+            }
+        }
+    }
+}
+
+/** KMK (r100): "Update template?": the parts it replaces, what changed, and that the old code stays in History */
+@Composable
+internal fun TemplateUpdateDialog(offer: TemplateUpdate.Offer, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    val problem = offer.problem
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Update to ${offer.templateName} v${offer.to}?") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (problem != null) {
+                    Text(problem)
+                } else if (offer.parts.isEmpty()) {
+                    // r100 fix pass: the listed parts were left out when the source was written (a manga source has
+                    // no Videos part): only the template version is raised, with a note in History
+                    Text(
+                        "${offer.sourceName} has no ${offer.skippedTitles.joinToString(", ")} part, so there is " +
+                            "nothing to replace: this only marks it as written with v${offer.to} (noted in History).",
+                    )
+                } else {
+                    Text("Replaces these parts of ${offer.sourceName}: ${offer.partWords}")
+                    offer.notes.forEach { note ->
+                        Text(
+                            text = "• $note",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Text("Your edits in these parts are replaced; the old code stays in History.")
+                    Text(
+                        text = "Run the Test afterwards to check it.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            if (problem == null) {
+                TextButton(onClick = onConfirm) { Text("Update") }
+            } else {
+                TextButton(onClick = onDismiss) { Text("OK") }
+            }
+        },
+        dismissButton = {
+            if (problem == null) TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
 }

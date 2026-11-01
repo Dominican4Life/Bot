@@ -1,0 +1,278 @@
+package eu.kanade.tachiyomi.jssource.lab
+
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import kotlin.math.abs
+
+/**
+ * KMK (r100, Source Lab): the facts picker.js sends about one tapped element, as the tap helper reads them. Plain
+ * data (no Android), so [PickCheck] can be tested on its own.
+ *
+ * @param count how many look-alikes the page holds (same tag + class path)
+ * @param imgCount pictures in the element or the element itself (img, picture, a background image)
+ * @param linkCount `a[href]` in the element or the element itself
+ * @param distinctHrefs different addresses the look-alikes' links open (picker caps it at 200)
+ * @param boundByScript a player (iframe / video) whose address the site's script fills in (`:src`, `v-bind:src` …)
+ * @param nextLike rel=next, an aria-label saying next, or text starting with next / › / » / > / →
+ * @param samples the first three look-alikes' texts
+ */
+internal data class PickInfo(
+    val tag: String,
+    val count: Int,
+    val text: String = "",
+    val snippet: String = "",
+    val likeSelector: String = "",
+    val cssPath: String = "",
+    val hrefs: List<String> = emptyList(),
+    val attrs: Map<String, String> = emptyMap(),
+    val attrsAllHttp: List<String> = emptyList(),
+    val pageUrl: String = "",
+    val imgCount: Int = 0,
+    val linkCount: Int = 0,
+    val textLen: Int = 0,
+    val distinctHrefs: Int = 0,
+    val boundByScript: Boolean = false,
+    val nextLike: Boolean = false,
+    val samples: List<String> = emptyList(),
+)
+
+/**
+ * KMK (r100, Source Lab): the tap helper's verdict on one labelled pick in Build by tapping. The owner's r99 Item
+ * tap landed on a "New Releases" heading bar (once on the page, no picture, no link) and nothing told him; every
+ * label now gets a short list of checks (✓ / ✕), a level (Ok green, Warn amber, Info blue), a title and one
+ * sentence, and the builder shows them over the page (mockups `scratchpad/r100-helper/`). Pure: same facts, same
+ * verdict.
+ */
+internal object PickCheck {
+    enum class Level { Ok, Warn, Info }
+
+    data class Check(val ok: Boolean, val text: String)
+
+    data class Result(
+        val label: String,
+        val level: Level,
+        val title: String,
+        val body: String,
+        val checks: List<Check>,
+        val samples: List<String> = emptyList(),
+    )
+
+    /** The label as the helper names it */
+    fun labelName(label: String, anime: Boolean): String = when (label) {
+        "item" -> "Item"
+        "title" -> "Title"
+        "cover" -> "Cover"
+        "next" -> "Next page"
+        "chapter" -> if (anime) "Episode" else "Chapter"
+        "date" -> "Date"
+        "number" -> "Number"
+        "image" -> "Page image"
+        "video" -> "Video"
+        else -> label.replaceFirstChar { it.uppercase() }
+    }
+
+    private val PLAYER_TAGS = setOf("iframe", "video", "source", "embed", "object")
+
+    private val DATE = Regex(
+        """(?i)(\d{1,4}[-/.]\d{1,2}([-/.]\d{1,4})?|\b(jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|june?|july?|aug(ust)?|sep(t(ember)?)?|oct(ober)?|nov(ember)?|dec(ember)?)\.?(\s|,|$)""" +
+            """|\bago\b|\btoday\b|\byesterday\b|\b\d+\s*(mins?|minutes?|h|hours?|days?|weeks?|months?|years?)\b)""",
+    )
+    private val DIGIT = Regex("""\d""")
+    private val PAGE_TWO = Regex("""[?&](page|p)=2(\D|$)|/page/2(\D|$)""")
+
+    fun check(label: String, pick: PickInfo, others: Map<String, PickInfo>, anime: Boolean, singleEpisode: Boolean): Result {
+        val name = labelName(label, anime)
+        val checks = ArrayList<Check>()
+        fun add(ok: Boolean, pass: String, fail: String) {
+            checks += Check(ok, if (ok) pass else fail)
+        }
+        val item = others["item"]?.takeIf { label != "item" }
+        val tapped = pick.snippet.ifBlank { pick.text }.trim().take(60)
+        val youTapped = if (tapped.isNotBlank()) "You tapped “$tapped”. " else "You tapped a <${pick.tag}>. "
+        var level: Level? = null
+        var title: String? = null
+        var okBody = ""
+        var warnBody = ""
+
+        when (label) {
+            "item" -> {
+                add(pick.count >= 3, "${pick.count} found", "appears ${times(pick.count)} (items repeat)")
+                add(pick.imgCount >= 1, "picture inside", "no picture inside")
+                add(pick.linkCount >= 1, "link inside", "no link to a title")
+                others["title"]?.let { add(holdsPick(pick, it), "holds the Title", "doesn't hold the Title you picked") }
+                others["cover"]?.let { add(holdsPick(pick, it), "holds the Cover", "doesn't hold the Cover you picked") }
+                okBody = "${pick.count} boxes, each with a picture and a link to its title."
+                val missing = listOfNotNull(
+                    if (pick.count < 3) (if (pick.count <= 1) "appears only once" else "appears only ${pick.count} times") else null,
+                    if (pick.imgCount < 1 && pick.linkCount < 1) "holds no picture or link" else null,
+                    if (pick.imgCount < 1 && pick.linkCount >= 1) "holds no picture" else null,
+                    if (pick.linkCount < 1 && pick.imgCount >= 1) "holds no link" else null,
+                )
+                warnBody = youTapped + "An Item is one box per title, repeated down the list, holding its picture and title link" +
+                    (if (missing.isNotEmpty()) " — this ${missing.joinToString(" and ")}." else ".")
+            }
+            "title" -> {
+                if (item != null && pick.count >= 3 && within20(pick.count, item.count)) {
+                    add(true, "${pick.count} found, matches ${items(item.count)}", "")
+                } else {
+                    add(pick.count >= 3, "${pick.count} found", "appears ${times(pick.count)} (titles repeat)")
+                    if (item != null && !within20(pick.count, item.count)) {
+                        add(false, "", "${pick.count} found but ${items(item.count)}")
+                    }
+                }
+                add(pick.textLen > 0 || pick.text.isNotBlank(), "text in every one", "no text (the title's name is read from it)")
+                val isLink = (pick.tag == "a" || pick.linkCount >= 1) && pick.hrefs.isNotEmpty()
+                add(isLink, "links to ${linkShape(pick.hrefs)}", "not a link (the title must open its page)")
+                if (isLink) {
+                    add(
+                        pick.distinctHrefs * 5 >= pick.count * 4,
+                        "no duplicates",
+                        "${pick.count} links but only ${pick.distinctHrefs} different addresses",
+                    )
+                }
+                okBody = "${pick.count} titles${if (item != null) ", one in every Item" else ""}, each one opens a title page."
+                warnBody = youTapped + "A Title is the link with the title's name, one in every Item, that opens its page."
+            }
+            "cover" -> {
+                val picture = pick.tag == "img" || pick.tag == "picture" || pick.imgCount >= 1
+                add(picture, "picture (${pick.tag})", "not a picture")
+                add(pick.count >= 3, "${pick.count} found", "appears ${times(pick.count)} (covers repeat)")
+                item?.let { add(within20(pick.count, it.count), "matches ${items(it.count)}", "${pick.count} found but ${items(it.count)}") }
+                val attr = Derive.COVER_ATTRS.firstOrNull { it in pick.attrsAllHttp }
+                add(attr != null, "address in $attr", "no full address on every one")
+                okBody = "${pick.count} pictures${if (item != null) ", one in every Item" else ""}, read from ${attr ?: "src"}."
+                warnBody = youTapped + "A Cover is the picture in every Item."
+            }
+            "next" -> {
+                val href = pick.attrs["href"]?.takeIf { it.isNotBlank() } ?: pick.hrefs.firstOrNull()
+                add(href != null, "a link", "not a link")
+                val resolved = href?.let { resolve(pick.pageUrl, it) }
+                val pageTwo = resolved?.let { PAGE_TWO.containsMatchIn(it) } == true || pick.text.trim() == "2"
+                add(pick.nextLike || pageTwo, if (pick.nextLike) "says next" else "goes to page 2", "doesn't say next or go to page 2")
+                if (resolved != null) {
+                    add(sameSite(resolved, pick.pageUrl), "same site", "goes to another site")
+                }
+                okBody = "Opens the next page of this list on the same site."
+                warnBody = youTapped + "Next page is the link to page 2 of the list (“›”, “Next” or “2”)."
+            }
+            "chapter" -> {
+                val here = pick.pageUrl.substringBefore('#').trimEnd('/')
+                val word = name.lowercase()
+                if (pick.count < 2) {
+                    add(false, "", "only one link")
+                    if (!singleEpisode) {
+                        level = Level.Info
+                        title = "Only one $word link — is this the only $word?"
+                        warnBody = "Only one link like this is on the page. If the title page is the only $word, turn on " +
+                            "“This page is the only episode”; else tap another $word link."
+                    }
+                } else {
+                    add(true, "${pick.count} found", "")
+                }
+                if (pick.count >= 2) {
+                    add(pick.distinctHrefs >= 2, "different addresses", "all go to the same address")
+                }
+                add(
+                    pick.hrefs.isNotEmpty() && pick.hrefs.none { it.substringBefore('#').trimEnd('/') == here },
+                    "opens other pages",
+                    if (pick.hrefs.isEmpty()) "not a link" else "links to this same page",
+                )
+                okBody = "${pick.count} links, each opens a different $word."
+                if (level == null) warnBody = youTapped + "A $word link is one of the repeated links on the title page, each opening a different one."
+            }
+            "date" -> {
+                val t = pick.text.ifBlank { pick.snippet }
+                add(DATE.containsMatchIn(t) || pick.attrs.containsKey("datetime"), "looks like a date", "doesn't look like a date")
+                okBody = "Reads as a date: “${t.take(40)}”."
+                warnBody = youTapped + "A Date is text like “1 Nov 2026”, “2026-11-01” or “3 days ago”."
+            }
+            "number" -> {
+                val t = pick.text.ifBlank { pick.snippet }
+                add(DIGIT.containsMatchIn(t), "has a number", "no number in it")
+                okBody = "Has a number: “${t.take(40)}”."
+                warnBody = youTapped + "A Number is the text with the chapter or episode number."
+            }
+            "image" -> {
+                add(pick.tag == "img", "picture (img)", "not a picture (img)")
+                add(pick.count >= 2, "${pick.count} found", "appears ${times(pick.count)} (pages repeat)")
+                val address = pick.attrsAllHttp.isNotEmpty() || Derive.COVER_ATTRS.any { pick.attrs[it]?.isNotBlank() == true }
+                add(address, "address present", "no address")
+                okBody = "${pick.count} page pictures."
+                warnBody = youTapped + "A Page image is one of the big pictures repeated down the chapter page."
+            }
+            "video" -> {
+                val player = pick.tag in PLAYER_TAGS
+                add(player, "player box (${pick.tag})", "not a player: try Up, or tap the video's edge")
+                if (player) {
+                    add(true, "${pick.count} on the page", "")
+                    val src = pick.attrs["src"]?.takeIf { it.isNotBlank() && it != "about:blank" }
+                        ?: pick.attrs["data-src"].orEmpty()
+                    if (pick.boundByScript || src.isBlank()) {
+                        // No address in the page (a script sets it): a note, not a mistake (123av, r99)
+                        add(false, "", if (pick.boundByScript) "address set by script" else "no address in the page")
+                        level = Level.Info
+                        title = "Video player found — needs the hidden browser"
+                        warnBody = "This is the player, but its address is filled in by the site's own script after the page loads, " +
+                            "so the plain page has none. The Lab will open this page in the hidden browser, press Play, and catch " +
+                            "the video it asks for."
+                    } else {
+                        val host = resolve(pick.pageUrl, src)?.toHttpUrlOrNull()?.host
+                        add(true, if (host != null) "address in the page ($host)" else "address in the page", "")
+                    }
+                }
+                okBody = "A player box (${pick.tag}): the Lab opens this page in the hidden browser, presses Play and catches the video."
+                warnBody = "You tapped a <${pick.tag}>, not the player. Try Up, or tap the video's edge."
+            }
+            else -> {
+                okBody = "Picked ${pick.count} like it."
+            }
+        }
+
+        val finalLevel = level ?: if (checks.any { !it.ok }) Level.Warn else Level.Ok
+        val article = if (name.first().lowercaseChar() in "aeiou") "an" else "a"
+        val finalTitle = title ?: when (finalLevel) {
+            Level.Ok -> "Looks right — $name"
+            Level.Warn -> "This doesn't look like $article $name"
+            Level.Info -> name
+        }
+        val body = if (finalLevel == Level.Ok) okBody else warnBody
+        val samples = if (label in SAMPLED) pick.samples.filter { it.isNotBlank() }.take(3) else emptyList()
+        return Result(label = label, level = finalLevel, title = finalTitle, body = body, checks = checks, samples = samples)
+    }
+
+    private val SAMPLED = setOf("item", "title", "chapter", "date", "number")
+
+    private fun items(n: Int): String = if (n == 1) "1 Item" else "$n Items"
+
+    private fun times(n: Int): String = if (n == 1) "1 time" else "$n times"
+
+    /** Counts within ±20 % of each other (a few cards without a cover or a title are normal) */
+    private fun within20(count: Int, of: Int): Boolean = of > 0 && abs(count - of) * 5 <= of
+
+    /** The item's own segment (classes, no position) is on the other pick's path: the item holds it */
+    private fun holdsPick(item: PickInfo, other: PickInfo): Boolean {
+        val itemPath = item.cssPath.ifBlank { item.likeSelector }
+        val otherPath = other.cssPath.ifBlank { other.likeSelector }
+        if (itemPath.isBlank() || otherPath.isBlank()) return true
+        val own = Derive.likeSegment(Derive.lastSegment(itemPath))
+        return otherPath.split(" > ").any { Derive.likeSegment(it.trim()) == own }
+    }
+
+    /** `/en/v/…`: the first path segments the title links share */
+    private fun linkShape(hrefs: List<String>): String {
+        val paths = hrefs.mapNotNull { it.toHttpUrlOrNull()?.encodedPath?.trim('/')?.split('/') }
+        val first = paths.firstOrNull() ?: return "its page"
+        val shared = first.indices.takeWhile { i -> paths.all { it.size > i + 1 && it[i] == first[i] } }.size
+        return if (shared == 0) "its page" else "/" + first.take(shared).joinToString("/") + "/…"
+    }
+
+    private fun resolve(base: String, href: String): String? {
+        if (href.isBlank()) return null
+        return base.toHttpUrlOrNull()?.resolve(href)?.toString() ?: href.toHttpUrlOrNull()?.toString()
+    }
+
+    private fun sameSite(url: String, page: String): Boolean {
+        val a = url.toHttpUrlOrNull()?.host?.removePrefix("www.") ?: return true
+        val b = page.toHttpUrlOrNull()?.host?.removePrefix("www.") ?: return true
+        return a == b || a.endsWith(".$b") || b.endsWith(".$a")
+    }
+}

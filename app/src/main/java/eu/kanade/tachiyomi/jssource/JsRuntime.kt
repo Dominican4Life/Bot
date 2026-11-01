@@ -410,6 +410,13 @@ class JsRuntime private constructor(
                     }
                     "trace" -> mapOf("ok" to true)
                     "render" -> JsRender.render(context, payload)
+                    "findVideo" -> VideoFinder.find( // KMK (r100)
+                        context,
+                        payload.str("url") ?: throw IllegalArgumentException("host.findVideo needs a url"),
+                        payload.str("frame"),
+                        payload.str("referer"),
+                        payload.long("timeout") ?: 45_000L,
+                    ).toMap()
                     "hash" -> mapOf("hash" to JsCrypto.hash(payload.str("algorithm").orEmpty(), payload.str("input").orEmpty()))
                     "aes" -> mapOf(
                         "value" to JsCrypto.aes(
