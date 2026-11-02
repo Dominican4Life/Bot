@@ -76,8 +76,12 @@ internal class ExtensionInstaller(
         val step = MutableStateFlow(InstallStep.Pending)
         activeSteps[downloadId] = step
         names[downloadId] = extension.name
+        // KMK: r105 the install service's log lines name it too
+        Installer.extensionNames[downloadId] = extension.name
 
         val job = scope.launch {
+            // KMK: r105 for the "n of N" in the install log
+            Installer.downloadsInFlight.incrementAndGet()
             val tmpFile = File(context.cacheDir, "extension_$pkgName.apk")
             try {
                 step.value = InstallStep.Downloading
@@ -113,6 +117,8 @@ internal class ExtensionInstaller(
                 // KMK -->
                 tmpFile.delete()
                 // KMK <--
+            } finally {
+                Installer.downloadsInFlight.decrementAndGet()
             }
         }
 

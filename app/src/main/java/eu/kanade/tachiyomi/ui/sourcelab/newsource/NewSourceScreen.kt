@@ -968,6 +968,8 @@ private fun RecordDialog(
                         add("filters         ${result.filters}")
                         add("steps written   ${result.written.size}${if (result.written.isNotEmpty()) " (" + result.written.joinToString(", ") + ")" else ""}")
                         add("TODO parts      ${result.todo.size}${if (result.todo.isNotEmpty()) " (" + result.todo.joinToString(", ") + ")" else ""}")
+                        // KMK (r105): each written list / title page run on the recorded replies against the extension's own results
+                        if (result.checks.isNotEmpty()) add("checked         ${result.checks.joinToString(", ")}")
                         result.botCheck?.let { add("bot check       $it (passed in the hidden browser)") }
                         add("id              ${result.generated.sourceId} (kept: library titles stay linked)")
                     }

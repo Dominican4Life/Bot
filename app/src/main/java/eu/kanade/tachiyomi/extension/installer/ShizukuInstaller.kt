@@ -13,6 +13,7 @@ import android.os.IBinder
 import androidx.core.content.ContextCompat
 import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.extension.model.InstallStep
+import eu.kanade.tachiyomi.util.system.AppLog
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -61,6 +62,30 @@ class ShizukuInstaller(private val service: Service) : Installer(service) {
             val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, Int.MIN_VALUE)
             val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
             val packageName = intent.getStringExtra(PackageInstaller.EXTRA_PACKAGE_NAME)
+
+            // KMK -->
+            // r105 fix: a result that comes after the watchdog gave up on its entry used to land on the next one.
+            // Android puts the installed package in the result (null only when the APK couldn't be read, which comes
+            // at once); the Shizuku session id stays in the shell process, so the package is what's compared.
+            val active = getActiveEntry()
+            if (active == null) {
+                AppLog.add(
+                    'W',
+                    "extensions",
+                    "Ignored a Shizuku install result for ${packageName ?: "an unknown package"}: nothing is being installed",
+                )
+                return
+            }
+            val expected = runCatching { Installer.packageOf(active.uri) }.getOrNull()
+            if (packageName != null && expected != null && packageName != expected) {
+                AppLog.add(
+                    'W',
+                    "extensions",
+                    "Ignored a late Shizuku install result for $packageName while installing ${Installer.labelOf(active)}",
+                )
+                return
+            }
+            // KMK <--
 
             if (status == PackageInstaller.STATUS_SUCCESS) {
                 continueQueue(InstallStep.Installed)
@@ -112,6 +137,8 @@ class ShizukuInstaller(private val service: Service) : Installer(service) {
 
     override fun processEntry(entry: Entry) {
         super.processEntry(entry)
+        // KMK: r105 (Shizuku has no session id; the base class's 60 s watchdog covers a result that never comes)
+        logInstalling(entry, null)
         try {
             service.contentResolver.openAssetFileDescriptor(entry.uri, "r")?.use {
                 shellInterface?.install(it)

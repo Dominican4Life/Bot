@@ -1,4 +1,4 @@
-// @version 7
+// @version 8
 // Generic list template of the Source Lab, written for {{name}} ({{baseUrl}}) from what was tapped in Build by
 // tapping (or filled by hand). Lists are pages of ITEM cards, chapters / episodes are the links of CHAPTER on a
 // title page, pages are the IMAGE pictures of a chapter page, videos the VIDEO_FRAME of an episode page.
@@ -16,6 +16,11 @@
 // titles on the title screen (getRelated); filters that open their own page (Trending → /en/trending?sort={value})
 // combine with the other filters of that page; an only-episode title's episode gets the title's picture; the title
 // page's small readers log what failed instead of hiding it.
+// r105 (v8): filters have a role: "page" filters pick which list is browsed (a built-in "List" first: Popular, Latest
+// and the tabs; Types → /en/censored, a directory → /en/makers/{value}; only the first one changed from its default
+// applies), "extra" filters add their parameter (type=censored) on top of whichever list is chosen; filters can sit
+// in named groups (Collections); suggestion covers skip placeholders; a section the site's script fills in later is
+// read from the address it really comes from.
 
 /*@part id="headers"*/
 // Headers and constants: the site as Referer on every picture; the selectors the builder derived (each with
@@ -48,12 +53,13 @@ var STATUS = "{{statusSelector}}";
 // r102: the title page's rows tapped as Tags groups: [{ name, selector, target }], target "tags" (genres "name: value"),
 // "description" (a "name: value, value" line under the description) or "both"; "[]" when none were tapped
 var TAG_GROUPS = JSON.parse("{{tagGroups}}" || "[]");
-// r104: the title page's sections tapped as Suggestions: [{ name, item, link, title, cover, coverAttr }] ("[]" = none);
-// getRelated (part "extras") lists each section's cards under its name
+// r104: the title page's sections tapped as Suggestions: [{ name, item, link, title, cover, coverAttr, late }] ("[]" =
+// none); getRelated (part "extras") lists each section's cards under its name (r105: "late" = the address a section
+// the site's script fills in comes from)
 var SUGGESTION_GROUPS = JSON.parse("{{suggestionGroups}}" || "[]");
 // r100: "Lists and options" of Build by tapping: the names of the Popular / Latest buttons (empty = the app's own),
-// extra tabs [{ name, path }], search filters [{ key, name, type, mode, param, path, options, on }] and settings (the
-// getSourcePreferences format). Lists are JSON text; "[]" when nothing was recorded. (Not POPULAR_NAME / LATEST_NAME:
+// extra tabs [{ name, path }], filters [{ key, name, type, role, group, param, path, onSearch, options, on }] (r105:
+// role "page" picks the list, "extra" adds param=value to it) and settings (the getSourcePreferences format). Lists are JSON text; "[]" when nothing was recorded. (Not POPULAR_NAME / LATEST_NAME:
 // the app reads those globals as the names even when empty.)
 var TAB_POPULAR_NAME = "{{tabPopularName}}";
 var TAB_LATEST_NAME = "{{tabLatestName}}";
@@ -87,80 +93,49 @@ var extension = {
 /*@end*/
 
 /*@part id="search"*/
-  // Search: SEARCH_PATH with {q} and {page} filled, the same cards. Each FILTERS entry adds its value (a dropdown: the
-  // picked option's value; a sort: its picked option's value; a checkbox: its "on" value when ticked; a text: when not
-  // blank; empty values are left out). A "param" filter (the default) sets param=value in the address; a "path"
-  // filter changes the list's address itself (path with {value}, e.g. /genres/{value}?page={page}): with no words
-  // typed, the first path filter with a value (a sort only when no other has one) gives the address instead of
-  // SEARCH_PATH; while searching for words, path filters are left out.
+  // Search and filters. FILTERS entries have a role (r105, v8): "page" filters pick the list that is browsed (their
+  // option is a whole address such as /en/censored or /en/all?sort=week, or fills {value} in their path, e.g. a
+  // directory's /en/makers/{value}); "extra" filters add param=value (type=censored) to whichever list is chosen. The
+  // sheet starts with the built-in "List" (Popular, Latest, the tabs; Latest at first). Only one page filter applies:
+  // the first one changed from its default in the filter order; with none changed the List's page is used: the list
+  // Browse was showing when the filters were applied (the app sends it as "__from": "popular", "latest" or
+  // "tab:<path>"), else Latest. Dropdowns and sorts have an empty first option ("Site default", "All"): an empty value
+  // is no filter, every other option (the site's first one too) is sent. Extras are added only when set (a page keeps
+  // its own sort otherwise). The page number follows the style of the list paths (?page=N, /page/N or /N). Words
+  // typed: SEARCH_PATH with the words, plus the extras that work on the search page; the page filters and the other
+  // extras are left out with a log line.
+  // Older filters (no role, v7): a "path" filter is a page filter (two of one page's query parameters still combine), a
+  // "param" filter an extra of the search page (with no list picked it opens the search page with no words, as in v7,
+  // and the ones at their first option go along, as in v7). An extra with onLists false is only sent to the search page.
   // r102 (v5): a grouped tag tapped on a title page arrives as "Group: tag" (Genres: Drama): when a filter is named
   // like the group (or has it as key) and has an option labelled like the tag, that option is picked (no words);
-  // else only the tag's words are searched. (Every constant / helper is checked, so this part also runs in older
-  // sources.)
-  // r103 (v6): an "autocomplete" filter (a text box with suggestions) gets the names typed as a list: each is matched
-  // to an option by its label or value (any case), a name not in the list is sent as a slug ("Big Tits" → big-tits),
-  // names starting with "-" are left out; a path filter uses the first name, a param filter joins them with ",".
-  // A grouped tag whose group is an autocomplete filter searches that name even when the list doesn't have it.
-  // r104 (v7): a path filter whose {value} sits in the address's query (?sort={value}) is a parameter of that page: the
-  // other path filters of the same page add their parameter to it instead of being left out; a value going into the
-  // address is encoded. A filter with no parameter and no path is left out with a log line (never silently).
-  // Empty values ("Any") are no filter; another page than the search page is used only when one of its filters has
-  // a value, and each filter goes only into its own page's address: with filters of two pages set, the page of the
-  // first one picked (changed from its first option) in the filter order is used, the others are logged.
+  // else only the tag's words are searched. An "autocomplete" filter (a text box with suggestions) gets the names typed
+  // as a list: each is matched to an option by its label or value (any case), a name not in the list is sent as a
+  // slug ("Slice of Life" → slice-of-life, logged), names starting with "-" are left out; a page filter uses the first name, an
+  // extra joins them with ",".
   search: async function (query, page, filters) {
     var list = typeof FILTERS !== "undefined" && Array.isArray(FILTERS) ? FILTERS : [];
     var groups = typeof TAG_GROUPS !== "undefined" && Array.isArray(TAG_GROUPS) ? TAG_GROUPS : [];
-    var valueOf = typeof filterValue === "function" ? filterValue : function (f, v) {
-      if (v === undefined || v === null) return "";
-      if (f.type === "checkbox") return v === true || v === "true" ? String(f.on || "1") : "";
-      if (typeof v === "object") {
-        var o = (f.options || [])[v.index];
-        v = v.value !== undefined && v.value !== null && v.value !== "" ? v.value : (o ? o.value : "");
-      }
-      return v === undefined || v === null ? "" : String(v).trim();
-    };
-    function slug(t) {
-      return String(t).toLowerCase().replace(/[^0-9a-z\u00c0-\uffff]+/g, "-").replace(/^-+|-+$/g, "");
-    }
-    // r103 (v6): the value an autocomplete filter sends: its names mapped to option values
-    function suggested(f, v) {
-      var names = Array.isArray(v) ? v : (v === undefined || v === null || v === "" ? [] : [v]);
-      var out = [];
-      names.forEach(function (n) {
-        var t = String(n === null || n === undefined ? "" : n).trim();
-        if (!t) return;
-        if (t.charAt(0) === "-") { console.log("Filter " + (f.name || f.key) + ": \"" + t + "\" left out (exclusion isn't supported)"); return; }
-        var low = t.toLowerCase();
-        var hit = null;
-        (f.options || []).forEach(function (o) {
-          if (!hit && o && (String(o.label || "").trim().toLowerCase() === low || String(o.value || "").toLowerCase() === low)) hit = o;
-        });
-        var value = hit ? String(hit.value || "") : slug(t);
-        if (!hit) console.log("Filter " + (f.name || f.key) + ": \"" + t + "\" isn't in its list: sent as " + value);
-        if (value && out.indexOf(value) < 0) out.push(value);
-      });
-      if (!out.length) return "";
-      return f.mode === "path" ? out[0] : out.join(",");
-    }
+    var plan = filterPlan(list);
     var q = String(query || "").trim();
     var tagged = /^([^:：]{1,40}?)\s*[:：]\s*(\S.*)$/.exec(q);
     if (tagged) {
       var ns = tagged[1].trim().toLowerCase();
       var tag = tagged[2].trim();
       var known = ns === "tags" || groups.some(function (g) { return g && String(g.name || "Tags").trim().toLowerCase() === ns; }) ||
-        list.some(function (f) { return String(f.name || "").trim().toLowerCase() === ns || String(f.key || "").toLowerCase() === ns; });
+        plan.some(function (f) { return String(f.name || "").trim().toLowerCase() === ns || String(f.key || "").toLowerCase() === ns; });
       if (known) {
         var hit = null;
         var typed = null;
-        list.forEach(function (f) {
-          if (hit || (f.type !== "select" && f.type !== "sort" && f.type !== "autocomplete")) return;
+        plan.forEach(function (f) {
+          if (hit || f.builtIn || (f.type !== "select" && f.type !== "sort" && f.type !== "autocomplete")) return;
           if (String(f.name || "").trim().toLowerCase() !== ns && String(f.key || "").toLowerCase() !== ns) return;
           (f.options || []).forEach(function (o, index) {
             if (!hit && o && String(o.label || "").trim().toLowerCase() === tag.toLowerCase()) hit = { f: f, o: o, index: index };
           });
           if (!hit && !typed && f.type === "autocomplete") typed = f;
         });
-        if (!hit && typed) hit = { f: typed, o: { label: tag, value: slug(tag) }, index: -1 };
+        if (!hit && typed) hit = { f: typed, o: { label: tag, value: slugOf(tag) }, index: -1 };
         if (hit) {
           filters = Object.assign({}, filters || {});
           filters[hit.f.key] = hit.f.type === "sort" ? { index: hit.index, value: hit.o.value, ascending: false } :
@@ -173,86 +148,88 @@ var extension = {
         }
       }
     }
-    // r104 (v7): {value} in a path filter's query: "?sort={value}" → the page and the parameter name
-    function queryParamOf(path) {
-      var at = path.indexOf("?");
-      if (at < 0 || path.indexOf("{value}") < at) return null;
-      var m = /[?&]([^=&?]+)=\{value\}/.exec(path);
-      return m ? { page: path.slice(0, at), name: decodeURIComponent(m[1]) } : null;
-    }
-    // r104 fix: the page a filter belongs to: "" = the search page (a param filter, or a path filter of the search
-    // page's own path), else its path without the query ("/en/trending", "/en/genres/{value}")
-    var searchPage = String(SEARCH_PATH).split("?")[0].replace(/\/+$/, "").toLowerCase();
-    function pageOf(f) {
-      if (f.mode !== "path") return "";
-      var p = String(f.path).split("?")[0];
-      return p.replace(/\/+$/, "").toLowerCase() === searchPage && queryParamOf(String(f.path)) ? "" : p;
-    }
-    // r104 fix: a dropdown / sort left at its first option (the app always sends one) is the default, not a pick
-    function atDefault(f, raw, v) {
-      if (f.type !== "select" && f.type !== "sort") return false;
-      if (raw && typeof raw === "object" && typeof raw.index === "number") return raw.index === 0;
-      var first = (f.options || [])[0];
-      return !!first && String(first.value === undefined || first.value === null ? "" : first.value).trim() === v;
-    }
+    // r105 fix: the list Browse was showing (Popular, Latest or a tab) is the List's default
+    var from = filters && typeof filters.__from === "string" ? filters.__from : "";
+    // Every filter's value as sent by the app ("" = none) and whether it was changed from its default
     var chosen = [];
-    for (var i = 0; i < list.length; i++) {
-      var f = list[i];
+    plan.forEach(function (f) {
       var raw = filters ? filters[f.key] : undefined;
-      // an empty value (the "Any" first option, a blank box) is no filter
-      var v = f.type === "autocomplete" ? suggested(f, raw) : valueOf(f, raw);
-      if (!v) continue;
-      if (f.mode === "path" ? String(f.path || "").indexOf("{value}") < 0 : !(f.param || f.key)) {
+      var v = f.type === "autocomplete" ? suggestedValue(f, raw) : filterValue(f, raw);
+      if (f.builtIn) {
+        var listDefault = f.options[f.defaultIndex].value;
+        var here = f.options.some(function (o) { return o.value === from; }) ? from : listDefault;
+        if (!v || v === listDefault) chosen.push({ f: f, v: here, picked: false });
+        else chosen.push({ f: f, v: v, picked: true });
+        return;
+      }
+      if (!v) return;
+      if (!f.builtIn && (f.role === "page" ? f.path.indexOf("{value}") < 0 && !/^(\/|https?:)/i.test(v) : !f.param)) {
         console.log("Filter " + (f.name || f.key) + " left out: it has no address parameter or path");
-        continue;
-      }
-      chosen.push({ f: f, v: v, page: pageOf(f), picked: !atDefault(f, raw, v) });
-    }
-    // r104 fix: the list's page. Words typed: the search page. Else the page of the first filter picked (changed
-    // from its first option) in the filter order, else of the first one with a value; another page is used only
-    // when one of its filters has a value. Each filter goes only into its own page's address; the others are logged.
-    var lead = q ? null : (chosen.filter(function (c) { return c.picked; })[0] || chosen[0] || null);
-    var listPage = lead ? lead.page : "";
-    var url = null;
-    var segmentDone = false;
-    var applied = listPage ? 1 : 0;
-    function name(c) { return c.f.name || c.f.key; }
-    if (listPage) {
-      url = pathFor(String(lead.f.path).split("{value}").join(encodeURIComponent(lead.v)), page, "");
-      segmentDone = !queryParamOf(String(lead.f.path));
-    } else {
-      url = pathFor(SEARCH_PATH, page, q);
-    }
-    chosen.forEach(function (c) {
-      if (c === lead && listPage) return;
-      if (c.page !== listPage) {
-        if (q && c.page) console.log("Filter " + name(c) + " changes the list's address: left out while searching for words");
-        else console.log("Filter " + name(c) + " left out: it belongs to " + (c.page || "the search page") + ", and " +
-          name(lead) + " (chosen first) opens " + (listPage || "the search page"));
         return;
       }
-      if (c.f.mode !== "path") {
-        url = withParam(url, c.f.param || c.f.key, c.v);
-        applied++;
-        return;
-      }
-      var qp = queryParamOf(String(c.f.path));
-      if (qp) {
-        url = withParam(url, qp.name, c.v);
-        applied++;
-      } else if (!segmentDone && listPage) {
-        segmentDone = true;
-        url = pathFor(String(c.f.path).split("{value}").join(encodeURIComponent(c.v)), page, "");
-        applied++;
-      } else {
-        console.log("Filter " + name(c) + " left out: " + name(lead || c) + " already picks this page's address");
-      }
+      chosen.push({ f: f, v: v, picked: !atDefault(f, raw, v) });
     });
+    function name(c) { return c.f.name || c.f.key; }
+    var url;
+    var lead = null;
+    var applied = 0;
+    if (q) {
+      url = pathFor(SEARCH_PATH, page, q);
+      chosen.forEach(function (c) {
+        if (c.f.role === "page") {
+          if (!c.f.builtIn && c.picked) console.log("Filter " + name(c) + " picks a list: left out while searching for words");
+        } else if (!c.picked && !c.f.legacy) {
+          // at its default: not sent
+        } else if (!c.f.onSearch) {
+          console.log("Filter " + name(c) + " left out: it wasn't seen working on the search page");
+        } else {
+          // (a v7 filter at its first option goes along, as v7 sent it)
+          url = withParam(url, c.f.param, c.v);
+          if (c.picked) applied++;
+        }
+      });
+    } else {
+      var pages = chosen.filter(function (c) { return c.f.role === "page"; });
+      var pickedPage = pages.filter(function (c) { return c.picked; })[0] || null;
+      lead = pickedPage || pages.filter(function (c) { return c.f.builtIn; })[0] || pages[0] || null;
+      // Extras seen only on the search page (filters written before r105) open the search page with no words when
+      // no list was picked, as they always did
+      var searchOnly = !pickedPage && chosen.some(function (c) { return c.f.role === "extra" && c.picked && c.f.onLists === false; });
+      if (searchOnly) {
+        url = pathFor(SEARCH_PATH, page, "");
+        lead = null;
+      } else {
+        url = lead ? pageAddress(lead.f, lead.v, page) : pathFor(LATEST_PATH, page, "");
+      }
+      if (lead && !lead.f.builtIn) applied++;
+      chosen.forEach(function (c) {
+        if (c === lead) return;
+        if (c.f.role === "page") {
+          if (!c.picked || c.f.builtIn) return;
+          // v7: two filters of the same page's query (/en/recent?type={value}, ?year={value}) combine
+          if (lead && c.f.queryParam && lead.f.queryParam && c.f.pagePart === lead.f.pagePart) {
+            url = withParam(url, c.f.queryParam, c.v);
+            applied++;
+          } else {
+            console.log("Filter " + name(c) + " left out: " + (lead ? name(lead) + " (changed first) picks the list" : "the search page is used"));
+          }
+          return;
+        }
+        // (v7 filters at their first option go along to the search page, as v7 sent them)
+        if (!c.picked && !(searchOnly && c.f.legacy)) return;
+        if (searchOnly ? !c.f.onSearch : c.f.onLists === false) {
+          console.log("Filter " + name(c) + " left out: it works on " + (searchOnly ? "the list pages" : "the search page") + ", not on " + url);
+          return;
+        }
+        url = withParam(url, c.f.param, c.v);
+        if (c.picked) applied++;
+      });
+    }
     var found = await cards(await get(url));
-    // r104 fix: a filter search with no titles says which address was tried (Test Run's console shows it)
+    // a filter search with no titles says which address was tried (Test Run's console shows it)
     if (!found.length && applied) {
-      console.log("Filters gave 0 titles at " + url + ": check the filters' addresses (a filter made from a menu's " +
-        "links: pick the menu again on the site and press Make filter to read its own page)");
+      console.log("Filters gave 0 titles at " + url + ": check the filters' addresses (Learn addresses on the site's " +
+        "dropdowns reads the codes the site really sends)");
     }
     return found;
   },
@@ -515,8 +492,13 @@ var extension = {
 // values), SETTINGS the source's settings (the code reads them with host.preference.get("key")).
 // r103 (v6): an "autocomplete" filter is a text box with its options as suggestions (no "-" exclusions).
 // r104 (v7): SUGGESTION_GROUPS give getRelated: each section's cards on the title page, as named groups
-// { "You may like": [...], "Related videos": [...] } (a manga title screen shows each under its name; an anime title
-// screen merges them into one Suggestions row).
+// { "You may like": [...], "Related videos": [...] } (a manga title screen shows each under its name).
+// r105 (v8): the sheet starts with "List" (Popular, Latest, the tabs: the list a filter search browses); filters with
+// a group name sit under that heading ({ type: "group", name, filters }); each filter says its role (page / extra).
+// A suggestions section the site's script fills in after the page loads ("late": the address it comes from, with
+// {seg1} … the title address's parts, {path}, {url}, {attr:name} or {attr:selector|name} filled) is read from that
+// address. Covers take the first real picture address (data-src, data-lazy-src, data-original, srcset, src), never a
+// placeholder (data:, blank.gif, spacer.gif, placeholder.png…, or one picture every card of a section has).
 if (TABS.length) {
   extension.getCatalogs = function () {
     return TABS.map(function (t) { return { id: t.path, name: t.name || t.path, tab: true }; });
@@ -527,16 +509,26 @@ if (TABS.length) {
 }
 if (FILTERS.length) {
   extension.getFilters = function () {
-    return FILTERS.map(function (f) {
-      var out = { key: f.key, name: f.name || f.key, type: f.type };
-      if (f.type === "select" || f.type === "sort") out.options = f.options || [];
+    var out = [];
+    filterPlan(FILTERS).forEach(function (f) {
+      var shown = { key: f.key, name: f.name || f.key, type: f.type, role: f.role };
+      if (f.type === "select" || f.type === "sort") shown.options = f.options || [];
       if (f.type === "autocomplete") {
-        out.options = f.options || [];
-        out.hint = "Type a name: " + (f.name || f.key);
-        out.prefixes = [];
+        shown.options = f.options || [];
+        shown.hint = "Type a name: " + (f.name || f.key);
+        shown.prefixes = [];
       }
-      return out;
+      if (f.defaultIndex) shown.defaultIndex = f.defaultIndex;
+      if (!f.group) {
+        out.push(shown);
+        return;
+      }
+      // one heading per group name, where its first filter is
+      var held = out.filter(function (x) { return x.type === "group" && x.name === f.group; })[0];
+      if (held) held.filters.push(shown);
+      else out.push({ type: "group", key: "group:" + f.group, name: f.group, filters: [shown] });
     });
+    return out;
   };
 }
 if (SETTINGS.length) {
@@ -552,10 +544,19 @@ if (typeof SUGGESTION_GROUPS !== "undefined" && Array.isArray(SUGGESTION_GROUPS)
       var g = SUGGESTION_GROUPS[gi] || {};
       var name = String(g.name || "").trim() || "Suggestions";
       var list = out[name] || [];
+      var pics = list.map(function () { return null; });
       var seen = {};
       list.forEach(function (x) { seen[x.url] = true; });
       try {
-        var els = g.item ? await doc.select(g.item) : [];
+        var from = doc;
+        var where = url;
+        if (g.late) {
+          // r105: the section comes from another address the page asks for after it loads
+          where = await lateAddress(g.late, url, doc);
+          from = await lateDoc(await get(where, { headers: { "X-Requested-With": "XMLHttpRequest" } }));
+        }
+        var els = g.item ? await from.select(g.item) : [];
+        if (!els.length && g.late) els = await shorterSelect(from, g.item);
         for (var i = 0; i < els.length; i++) {
           var card = els[i];
           var a = card.tag === "a" ? card : (g.link ? await card.selectOne(g.link) : null) || (await card.selectOne("a[href]"));
@@ -565,14 +566,16 @@ if (typeof SUGGESTION_GROUPS !== "undefined" && Array.isArray(SUGGESTION_GROUPS)
           if (!href || seen[href] || href === url) continue;
           var nameEl = g.title ? await card.selectOne(g.title) : null;
           var img = g.cover ? await card.selectOne(g.cover) : await card.selectOne("img");
-          var src = img ? (img.attr(g.coverAttr || "src") || img.attr("data-src") || img.attr("data-lazy-src") || img.attr("src") || "") : "";
-          src = String(src).trim().split(/[\s,]+/)[0];
+          if (img && img.tag !== "img") img = (await img.selectOne("img")) || img;
           var title = (nameEl ? nameEl.text : "") || a.attr("title") || a.text || (img ? img.attr("alt") : "") || "";
           title = String(title).replace(/\s+/g, " ").trim();
           if (!title) continue;
           seen[href] = true;
-          list.push({ url: href, title: title, coverUrl: src && !/^data:/i.test(src) ? abs(src) : null });
+          list.push({ url: href, title: title, coverUrl: coverOf(img, g.coverAttr) });
+          pics.push({ img: img, attr: g.coverAttr });
         }
+        sameCoverAgain(list, pics, "Suggestions " + name);
+        if (g.late && !list.length) console.log("Suggestions " + name + ": nothing read from " + where);
       } catch (e) {
         console.log("Suggestions " + name + " weren't read: " + (e && e.message));
       }
@@ -588,6 +591,9 @@ if (typeof SUGGESTION_GROUPS !== "undefined" && Array.isArray(SUGGESTION_GROUPS)
 // Helpers: one request with the site as Referer, the list path with {page} / {q} filled, a parameter set in an
 // address, the ITEM card parser the lists share (titles with a "Hide titles containing" word left out when the
 // source has that setting), absolute addresses and the last number of a text.
+// r105 (v8): the filters as search() uses them (filterPlan: the built-in List first, each filter's role), a page
+// filter's address with the page number in the list paths' style, picture addresses without placeholders (coverOf),
+// and the address / reply of a section that loads later.
 async function get(url, options) {
   var o = options || {};
   var headers = Object.assign({ Referer: BASE + "/" }, o.headers || {});
@@ -615,6 +621,137 @@ function filterValue(f, v) {
   if (typeof v === "object") return "";
   return String(v).trim();
 }
+// r103 (v6): "Slice of Life" → slice-of-life (a name typed that isn't in a filter's list)
+function slugOf(t) {
+  return String(t).toLowerCase().replace(/[^0-9a-zÀ-￿]+/g, "-").replace(/^-+|-+$/g, "");
+}
+// r103 (v6): the value an autocomplete filter sends: its names mapped to option values (a page filter: the first)
+function suggestedValue(f, v) {
+  var names = Array.isArray(v) ? v : (v === undefined || v === null || v === "" ? [] : [v]);
+  var out = [];
+  names.forEach(function (n) {
+    var t = String(n === null || n === undefined ? "" : n).trim();
+    if (!t) return;
+    if (t.charAt(0) === "-") { console.log("Filter " + (f.name || f.key) + ": \"" + t + "\" left out (exclusion isn't supported)"); return; }
+    var low = t.toLowerCase();
+    var hit = null;
+    (f.options || []).forEach(function (o) {
+      if (!hit && o && (String(o.label || "").trim().toLowerCase() === low || String(o.value || "").toLowerCase() === low)) hit = o;
+    });
+    var value = hit ? String(hit.value || "") : slugOf(t);
+    if (!hit) console.log("Filter " + (f.name || f.key) + ": \"" + t + "\" isn't in its list: sent as " + value);
+    if (value && out.indexOf(value) < 0) out.push(value);
+  });
+  if (!out.length) return "";
+  return f.role === "page" || f.mode === "path" ? out[0] : out.join(",");
+}
+// r105 (v8): FILTERS as search() and getFilters use them: the built-in "List" first (Popular, Latest — the default —
+// and the tabs), then each filter with its role ("page" / "extra"; v7 filters: "path" → page, "param" → extra that
+// also works on the search page), its group name and its parameter or path
+function filterPlan(list) {
+  var out = [];
+  if (!list || !list.length) return out;
+  var tabs = typeof TABS !== "undefined" && Array.isArray(TABS) ? TABS : [];
+  var popular = typeof TAB_POPULAR_NAME !== "undefined" && TAB_POPULAR_NAME ? TAB_POPULAR_NAME : "Popular";
+  var latest = typeof TAB_LATEST_NAME !== "undefined" && TAB_LATEST_NAME ? TAB_LATEST_NAME : "Latest";
+  var options = [{ label: popular, value: "popular" }, { label: latest, value: "latest" }];
+  tabs.forEach(function (t) { if (t && t.path) options.push({ label: t.name || t.path, value: "tab:" + t.path }); });
+  out.push({ key: "__list", name: "List", type: "select", role: "page", builtIn: true, options: options, defaultIndex: 1, group: "" });
+  var searchPage = String(typeof SEARCH_PATH !== "undefined" ? SEARCH_PATH : "").split("?")[0].replace(/\/+$/, "").toLowerCase();
+  list.forEach(function (f) {
+    if (!f || !f.key) return;
+    var legacy = f.role !== "page" && f.role !== "extra";
+    var role = legacy ? (f.mode === "path" ? "page" : "extra") : f.role;
+    var n = Object.assign({}, f, { role: role, group: String(f.group || "").trim(), defaultIndex: f.defaultIndex || 0, legacy: legacy });
+    // r105 fix: a dropdown / sort has an empty option ("Site default" first when it has none), the one an untouched
+    // sheet sends, so the site's own first option can be picked too (v7 filters keep their options as they were)
+    if (!legacy && (f.type === "select" || f.type === "sort")) {
+      var opts = Array.isArray(f.options) ? f.options.slice() : [];
+      var empty = -1;
+      opts.forEach(function (o, i) { if (empty < 0 && o && String(o.value === undefined || o.value === null ? "" : o.value).trim() === "") empty = i; });
+      if (empty < 0) {
+        opts.unshift({ label: "Site default", value: "" });
+        empty = 0;
+      }
+      n.options = opts;
+      if (!f.defaultIndex) n.defaultIndex = empty;
+    }
+    if (role === "page") {
+      n.path = String(f.path || "");
+      // v7: {value} in the query of a page's path (/en/recent?year={value}) is a parameter of that page: other
+      // filters of the same page add theirs to it; the search page's own one is a search parameter
+      var at = n.path.indexOf("?");
+      var qp = at >= 0 && n.path.indexOf("{value}") > at ? /[?&]([^=&?]+)=\{value\}/.exec(n.path) : null;
+      if (qp) {
+        n.queryParam = decodeURIComponent(qp[1]);
+        n.pagePart = n.path.slice(0, at).replace(/\/+$/, "").toLowerCase();
+        if (legacy && n.pagePart === searchPage) {
+          n.role = "extra";
+          n.param = n.queryParam;
+          n.onSearch = true;
+          n.onLists = false;
+        }
+      }
+    } else {
+      n.param = String(f.param || f.key);
+      // v7 param filters were the search page's: also on search, and with no words they open the search page
+      n.onSearch = legacy ? true : f.onSearch === true;
+      n.onLists = legacy ? false : f.onLists !== false;
+    }
+    out.push(n);
+  });
+  return out;
+}
+// A dropdown / sort left at its default option (the app always sends one) is the default, not a pick. r105 fix: a v8
+// filter's default is its empty option (filterPlan), so any value is a pick; a v7 one's is its first option
+function atDefault(f, raw, v) {
+  if (f.type !== "select" && f.type !== "sort") return false;
+  if (!f.legacy) return !v;
+  var d = f.defaultIndex || 0;
+  if (raw && typeof raw === "object" && typeof raw.index === "number") return raw.index === d;
+  var first = (f.options || [])[d];
+  return !!first && String(first.value === undefined || first.value === null ? "" : first.value).trim() === v;
+}
+// The page number in the list paths' style: ?page=N (any name), /page/N or /N; page 1 is the address as it is.
+// r105 fix: only a page word before /{page} (page, p, pg, pagina, seite, strona, trang, halaman) is kept: in
+// /recent/{page} "recent" is the list's own name, so another list gets /N; a slash after {page} is kept
+function pageStyle() {
+  var paths = [LATEST_PATH, POPULAR_PATH, SEARCH_PATH];
+  for (var i = 0; i < paths.length; i++) {
+    var p = String(paths[i] || "");
+    var m = /[?&]([^=&?#]+)=\{page\}/.exec(p);
+    if (m) return { kind: "query", name: m[1] };
+    m = /\/([^\/?#{}]+)\/\{page\}(\/?)/.exec(p);
+    if (m && /^(page|p|pg|pagina|seite|strona|trang|halaman)$/i.test(m[1])) return { kind: "pathWord", name: m[1], trail: m[2] === "/" };
+    m = /\/\{page\}(\/?)/.exec(p);
+    if (m) return { kind: "pathEnd", name: "", trail: m[1] === "/" };
+  }
+  return { kind: "query", name: "page" };
+}
+function withPageNumber(p, page) {
+  p = String(p);
+  if (p.indexOf("{page}") >= 0 || page === 1 || !page) return p;
+  var st = pageStyle();
+  if (st.kind === "query") return withParam(p, st.name, String(page));
+  var at = p.indexOf("?");
+  var path = (at < 0 ? p : p.slice(0, at)).replace(/\/+$/, "");
+  return path + "/" + (st.kind === "pathWord" ? st.name + "/" : "") + page + (st.trail ? "/" : "") + (at < 0 ? "" : p.slice(at));
+}
+// r105 fix: a value for an address: encoded, except %XX already in it (a directory's slug read from its links)
+function encodeValue(v) {
+  return String(v).split(/(%[0-9A-Fa-f]{2})/).map(function (s, i) { return i % 2 ? s : encodeURIComponent(s); }).join("");
+}
+// The address a page filter's value opens: the built-in List's list, the value in its path's {value}, or the value
+// itself when it is an address (/en/censored, /en/all?sort=week); the page number added in the lists' style
+function pageAddress(f, v, page) {
+  if (f.builtIn) {
+    if (v === "popular") return pathFor(POPULAR_PATH, page, "");
+    if (String(v).indexOf("tab:") === 0) return pathFor(withPageNumber(String(v).slice(4), page), page, "");
+    return pathFor(LATEST_PATH, page, "");
+  }
+  var p = f.path && f.path.indexOf("{value}") >= 0 ? f.path.split("{value}").join(encodeValue(v)) : String(v);
+  return pathFor(withPageNumber(p, page), page, "");
+}
 function withParam(url, key, value) {
   var at = url.indexOf("#");
   var hash = at >= 0 ? url.slice(at) : "";
@@ -626,27 +763,114 @@ function withParam(url, key, value) {
   var joiner = base.indexOf("?") < 0 ? "?" : (/[?&]$/.test(base) ? "" : "&");
   return base + joiner + pair + hash;
 }
+// r105 (v8): a picture's address: the picked attribute, then the lazy-load ones, srcset and src; data: / about:blank
+// addresses, placeholders by their file name (blank.gif, spacer.gif, placeholder.png, 1x1.gif…; not real covers
+// named pixel-… or lazy-…) and [skip] (the picture every card has) are skipped
+function coverOf(img, attr, skip) {
+  if (!img) return null;
+  var names = [attr, "data-src", "data-lazy-src", "data-original", "data-srcset", "srcset", "src"];
+  for (var i = 0; i < names.length; i++) {
+    if (!names[i] || names.indexOf(names[i]) < i) continue;
+    var v = firstPicture(img.attr(names[i]), /srcset/i.test(names[i]));
+    if (!v || /^(data|about|javascript):/i.test(v)) continue;
+    if (/\.svg(\?|#|$)|favicon|\/logo[^\/]*$/i.test(v) || placeholderPicture(v)) continue;
+    var full = abs(v);
+    if (!full || (skip && full === skip)) continue;
+    return full;
+  }
+  return null;
+}
+// The first address of an attribute: a srcset-style list ("a.jpg 320w, b.jpg 640w") gives its first entry; a comma
+// inside an address (Cloudinary's w_200,h_300) stays
+function firstPicture(raw, list) {
+  var v = String(raw || "").trim();
+  var d = /^(\S+)\s+\d+(?:\.\d+)?[wx]\s*(?:,|$)/.exec(v);
+  if (d) return d[1];
+  if (list) v = v.split(/,\s+(?=\S)/)[0];
+  return v.split(/\s+/)[0];
+}
+// A known placeholder by its whole file name (blank.gif, spacer.gif, placeholder.png, lazy.png, 1x1.gif, no-image.jpg)
+function placeholderPicture(v) {
+  var file = String(v).split(/[?#]/)[0].split("/").pop().toLowerCase();
+  return /^(placeholder|blank|spacer|transparent|pixel|1x1|empty|lazy|lazyload|loading|loader|grey|gray|no[-_]?(image|img|cover|thumb|poster))([-_.](min|small|\d+x\d+))?\.(gif|png|jpe?g|webp|svg)$/.test(file);
+}
+// r105 fix: one picture on every card (3 or more) is the site's placeholder: each card's next attribute is read
+function sameCoverAgain(list, pics, what) {
+  if (list.length < 3 || pics.length !== list.length) return;
+  var c = list[0].coverUrl;
+  if (!c || !list.every(function (x) { return x.coverUrl === c; })) return;
+  console.log(what + ": every card has the picture " + c + ": a placeholder, left out");
+  list.forEach(function (x, k) { x.coverUrl = pics[k] ? coverOf(pics[k].img, pics[k].attr, c) : null; });
+}
+// r105 (v8): a late section's address: {seg1}… = the title address's path parts (1 = the first), {path}, {url}
+// (encoded) and {attr:name} (that attribute of the title page's first element having it; r105 fix:
+// {attr:selector|name} = that attribute of the selector's first element)
+async function lateAddress(tpl, url, doc) {
+  var path = String(url).replace(/^https?:\/\/[^\/]+/i, "").split(/[?#]/)[0];
+  var segs = path.split("/").filter(function (x) { return !!x; });
+  var out = String(tpl).replace(/\{seg(\d+)\}/g, function (m, i) { return segs[+i - 1] || ""; })
+    .split("{path}").join(path).split("{url}").join(encodeURIComponent(url));
+  var attrs = out.match(/\{attr:[^{}]+\}/g) || [];
+  for (var i = 0; i < attrs.length; i++) {
+    var ref = attrs[i].slice(6, -1);
+    var bar = ref.lastIndexOf("|");
+    var n = bar >= 0 ? ref.slice(bar + 1) : ref;
+    var css = bar >= 0 ? ref.slice(0, bar) : "[" + n + "]";
+    var v = "";
+    try { v = String((await doc.attr(css, n)) || ""); } catch (e) { console.log("Late section: " + n + " of " + css + " wasn't read: " + e.message); }
+    out = out.split(attrs[i]).join(encodeURIComponent(v.trim()));
+  }
+  return abs(out);
+}
+// The reply of a late section: HTML, or JSON whose text values hold the HTML (joined)
+async function lateDoc(body) {
+  var t = String(body || "").trim();
+  if (/^[{\[]/.test(t)) {
+    var parts = [];
+    var walk = function (x) {
+      if (typeof x === "string") { if (x.indexOf("<") >= 0) parts.push(x); }
+      else if (x && typeof x === "object") Object.keys(x).forEach(function (k) { walk(x[k]); });
+    };
+    try { walk(JSON.parse(t)); } catch (e) { parts = []; }
+    if (parts.length) t = parts.join("\n");
+  }
+  return host.parse(t);
+}
+// A late reply holds the cards without the page around them: the item selector's last parts
+async function shorterSelect(doc, css) {
+  var parts = String(css || "").split(/\s+[>+~]\s+/);
+  for (var k = 1; k < parts.length; k++) {
+    try {
+      var els = await doc.select(parts.slice(k).join(" > "));
+      if (els.length) return els;
+    } catch (e) { /* the next shorter one */ }
+  }
+  return [];
+}
 async function cards(html) {
   var doc = await host.parse(html);
   var items = await doc.select(ITEM);
   var hide = !HIDE_WORDS ? [] : String((await host.preference.get("hideWords")) || "").toLowerCase().split(",")
     .map(function (w) { return w.trim(); }).filter(function (w) { return w; });
   var out = [];
+  var pics = [];
   for (var i = 0; i < items.length; i++) {
     var t = TITLE ? await items[i].selectOne(TITLE) : null;
     var a = t && t.tag === "a" ? t : (await items[i].selectOne("a[href]")) || (items[i].tag === "a" ? items[i] : null);
     if (!a || !a.attr("href")) continue;
     var img = COVER ? await items[i].selectOne(COVER) : await items[i].selectOne("img");
-    var src = img ? (img.attr(COVER_ATTR) || img.attr("data-src") || img.attr("data-lazy-src") || img.attr("src") || "") : "";
+    if (img && img.tag !== "img") img = (await img.selectOne("img")) || img;
     var name = (t ? (t.text || t.attr("title")) : "") || a.attr("title") || a.text || (img ? img.attr("alt") : "");
     var lower = String(name || "").toLowerCase();
     if (hide.length && hide.some(function (w) { return lower.indexOf(w) >= 0; })) continue;
     out.push({
       url: abs(a.attr("href")),
       title: name,
-      coverUrl: src ? abs(String(src).trim().split(/[\s,]+/)[0]) : null,
+      coverUrl: coverOf(img, COVER_ATTR),
     });
+    pics.push({ img: img, attr: COVER_ATTR });
   }
+  sameCoverAgain(out, pics, "List covers");
   return out;
 }
 function abs(href) {

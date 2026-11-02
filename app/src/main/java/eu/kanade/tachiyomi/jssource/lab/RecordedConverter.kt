@@ -52,6 +52,7 @@ internal object RecordedConverter {
         val todo: List<String>,        // part titles left as TODO
         val notes: List<String>,       // one line per part: how it was written, or why not
         val botCheck: String?,
+        val checks: List<String> = emptyList(),   // r105: "Popular 20 of 20", one per written part that was checked
     )
 
     private class PartCode(
@@ -61,11 +62,22 @@ internal object RecordedConverter {
         val todo: Boolean = !written,
         val settingsUsed: Set<String> = emptySet(),   // r98 fix: setting keys this part reads
         val pageRules: List<PageRule> = emptyList(),  // r98 fix: Popular's page pattern, for Latest and Search
+        val check: String? = null,                    // r105: "20 of 20 items" the written code reproduces
     )
 
     private val pretty = Json { prettyPrint = false }
 
-    fun convert(rec: Recording, facts: ApkImport.ApkFacts?): Result {
+    /**
+     * r105: the recording without DNS-over-HTTPS lookups (the app's own resolver asking dns.google or Cloudflare for
+     * the API host's address): they are never the extension's data, and they filled the TODO listings
+     */
+    private fun withoutDns(rec: Recording): Recording {
+        if (rec.steps.none { s -> s.requests.any { ExtensionRecorder.isDnsRequest(it.url, it.contentType) } }) return rec
+        return rec.copy(steps = rec.steps.map { s -> s.copy(requests = s.requests.filterNot { ExtensionRecorder.isDnsRequest(it.url, it.contentType) }) })
+    }
+
+    fun convert(recorded: Recording, facts: ApkImport.ApkFacts?): Result {
+        val rec = withoutDns(recorded)
         val templateId = if (rec.anime) "recorded-anime" else "recorded-manga"
         val template = Templates.get(templateId) ?: throw IllegalStateException("Template $templateId is missing from the app")
         val site = siteSetting(rec)
@@ -113,6 +125,9 @@ internal object RecordedConverter {
             add("Live from the loaded source: id ${row.sourceId}, name, lang, baseUrl. Settings $settingsCount, filters $filtersCount.")
             add("Written from the recording: ${writtenIds.joinToString(", ") { titles[it] ?: it }.ifBlank { "nothing" }}.")
             if (todoIds.isNotEmpty()) add("Left as TODO (the recorded requests are in each part): ${todoIds.joinToString(", ") { titles[it] ?: it }}.")
+            // r105: each written part was run on the recorded replies and compared with what the extension returned
+            val checked = parts.filter { (id, p) -> id != "constants" && p.check != null }
+            if (checked.isNotEmpty()) add("Checked against the extension's own results: ${checked.entries.joinToString(", ") { (id, p) -> "${titles[id] ?: id} ${p.check}" }}.")
             rec.botCheck?.let { add("Bot check seen: $it (at ${rec.botCheckUrl ?: rec.baseUrl}); get() passes it once in the hidden browser.") }
             facts?.themeClass?.let { add("APK theme: $it.") }
         }.map(::commentSafe)
@@ -180,6 +195,7 @@ internal object RecordedConverter {
             todo = todoIds.map { titles[it] ?: it },
             notes = notes,
             botCheck = rec.botCheck,
+            checks = parts.filter { (id, p) -> id != "constants" && p.check != null }.map { (id, p) -> "${titles[id] ?: id} ${p.check}" },
         )
     }
 
@@ -686,6 +702,23 @@ internal object RecordedConverter {
         return emptyMap()
     }
 
+    /**
+     * r105: one request alone: a single page-named value 1 in its body, a JSON leaf ("j" + its path key, e.g. the
+     * `variables.page` of a GraphQL API) or a form value ("b<i>")
+     */
+    private fun bodyPageGuess(r: RecordedRequest): Map<String, String> {
+        val x = r.requestBody ?: return emptyMap()
+        val j: JsonElement? = runCatching { Json.parseToJsonElement(x) }.getOrNull()
+        if (j != null && (j is JsonObject || j is JsonArray)) {
+            val found = ArrayList<Pair<List<Any>, String>>().also { leaves(j, emptyList(), it, 0, maxDepth = 8) }
+            val hits = found.filter { (path, value) -> value == "1" && (path.lastOrNull() as? String)?.lowercase() in PAGE_NAMES }
+            return if (hits.size == 1) mapOf("j" + pathKey(hits[0].first) to "page") else emptyMap()
+        }
+        val pairs = x.split('&')
+        val hits = pairs.indices.filter { i -> pairs[i].substringBefore('=').lowercase() in PAGE_NAMES && pairs[i].substringAfter('=', "") == "1" }
+        return if (hits.size == 1) mapOf("b${hits[0]}" to "page") else emptyMap()
+    }
+
     /** The JS expression of [url], requested as request [index] of the step (earlier replies may hold its pieces) */
     private fun urlExpr(plan: Plan, url: String, index: Int, pageMap: Map<String, String>, depth: Int): String {
         plan.knownFor(url)?.let { if (!it.raw && it.expr != "query") return it.expr }
@@ -1043,7 +1076,12 @@ internal object RecordedConverter {
         }
         val scored = candidates.map { i -> i to holdScore(step.requests[i], samples, key) }.filter { it.second > 0 }
         val top = scored.maxWithOrNull(compareBy<Pair<Int, Int>> { it.second }.thenBy { it.first })?.first
-            ?: return todoPart(method, notHeldReason(step, "the returned ${if (key == "title") "titles" else "values"}"), step, returnFor(method))
+            ?: return todoPart(
+                method,
+                notHeldReason(step, "the returned ${if (key == "title") "titles" else "values"}", samples.flatMap { s -> listOfNotNull(s["url"], s["imageUrl"], s["coverUrl"]) }),
+                step,
+                returnFor(method),
+            )
         // Of several pages of the same address, the first one (the others are its page 2, 3, …)
         val best = scored.filter { shapeOf(step.requests[it.first].url) == shapeOf(step.requests[top].url) }.minOf { it.first }
         val plan = planFor(rec, step)
@@ -1060,7 +1098,8 @@ internal object RecordedConverter {
             else -> {
                 val second = page2?.let { secondPage(request, it) }
                 val diff = second?.let { (pageDiff(request.url, it.url) ?: emptyMap()) + bodyPageDiff(request, it) }.orEmpty()
-                val guess = if (diff.isEmpty()) pageGuess(request.url) else emptyMap()
+                // r105: also a `"page": 1` / `page=1` in the request body (a GraphQL API's variables)
+                val guess = if (diff.isEmpty()) pageGuess(request.url).ifEmpty { bodyPageGuess(request) } else emptyMap()
                 val reused = if (diff.isEmpty() && guess.isEmpty() && stepId != "popular") applyRules(request.url, popularRules) else emptyMap()
                 pageFrom = when {
                     diff.isNotEmpty() -> "the page number from the diff of the recorded pages 1 and 2" +
@@ -1090,8 +1129,20 @@ internal object RecordedConverter {
         val address = urlExpr(plan, request.url, best, pageMap, 0) + optionsExpr(plan, request, best, 0, pageMap)?.let { ", $it" }.orEmpty()
         val body = ArrayList<String>()
         val how: String
+        // r105: what the written code gives on the recorded reply, compared with what the extension returned
+        val check: ListCheck
         if (json != null) {
-            val mapped = mapJsonList(plan, json, samples, kind) ?: return todoPart(method, "the JSON reply of ${shortUrl(request.url)} has the values, but no array maps onto every returned item", step, returnFor(method))
+            // r105: candidates from strict to loose, each run on the recorded reply; the first that reproduces the
+            // extension's items (≥ 90 %) is written, else the closest one when it gives at least half of them
+            val picked = mapJsonList(plan, json, samples, kind, step.items, paged = loop != null)
+            // r105 fix: a closest reading of a size that can't be the list (a side array of a few items) isn't written; a
+            // superset array is (the extension picks among its items: a TODO says so)
+            val mapped = picked.chosen ?: picked.closest?.takeIf {
+                it.check.matched * 2 >= it.check.of && it.check.matched > 0 &&
+                    (it.check.sizeProblem == null || (loop == null && it.check.outCount > step.items.size))
+            }
+                ?: return todoPart(method, listReason(request, picked.closest, kind), step, returnFor(method))
+            check = mapped.check
             val fetch = "await getJson($address)"
             if (loop != null) {
                 body.add("var out = [];")
@@ -1104,19 +1155,32 @@ internal object RecordedConverter {
                 loop.lastPagePath?.let { body.add("  if (v(json, ${jsPath(it)}) !== null && page >= Number(v(json, ${jsPath(it)}))) break;") }
                 body.add("  if (out.length === before) break;")
                 body.add("}")
+                if (check.reversed) body.add("out.reverse();")
                 body.add("return out;")
             } else {
                 body.add("var json = $fetch;")
                 body.add("var list = v(json, ${jsPath(mapped.arrayPath)}) || [];")
                 body.add("var out = [];")
                 body.addAll(itemLoop(mapped, kind))
+                if (check.reversed) body.add("out.reverse();")
                 body.add("return out;")
             }
             how = "JSON at ${pathWords(mapped.arrayPath)} (${mapped.matched} of ${samples.size} returned items found in it): " +
                 mapped.fields.entries.joinToString(", ") { (f, e) -> "${jsField(kind, f)} = ${e.words}" }
         } else {
             val doc = plan.doc(best) ?: return todoPart(method, "the reply of ${shortUrl(request.url)} is neither JSON nor HTML", step, returnFor(method))
-            val mapped = mapHtmlList(doc, samples, kind) ?: return todoPart(method, "the page ${shortUrl(request.url)} has the values, but no selector finds every returned item", step, returnFor(method))
+            val mapped = mapHtmlList(doc, samples, kind)
+                ?: return todoPart(method, "the page ${shortUrl(request.url)} holds the values, but no selector finds at least 3 in 5 of the returned items in the same place", step, returnFor(method))
+            // r105: the selectors run on the recorded page (Jsoup) and compared with what the extension returned
+            check = checkList(htmlOutput(doc, mapped, kind), step.items, kind, paged = loop != null, withName = "name" in mapped.fields, replyMatched = mapped.matched)
+            if (!check.ok && (check.matched == 0 || check.matched * 2 < check.of)) {
+                return todoPart(
+                    method,
+                    "the page ${shortUrl(request.url)} holds the values, but the selectors found give only ${check.matched} of ${check.of} of the extension's ${itemNoun(kind)} (it picks them in its own code)",
+                    step,
+                    returnFor(method),
+                )
+            }
             val fetch = "await get($address)"
             val spec = mapped.fields.entries.joinToString(", ") { (f, p) -> "${jsField(kind, f)}: [${jsStr(p.css)}, ${jsStr(p.how)}, ${jsStr(p.transform)}]" }
             val post = ArrayList<String>()
@@ -1145,6 +1209,7 @@ internal object RecordedConverter {
                 body.add("var out = [];")
                 body.addAll(itemLines)
             }
+            if (check.reversed) body.add("out.reverse();")
             body.add("return out;")
             how = "HTML of ${shortUrl(request.url)}: items \"${mapped.item}\" (${mapped.matched} of ${samples.size} returned items found), " +
                 mapped.fields.entries.joinToString(", ") { (f, p) -> "${jsField(kind, f)} from \"${p.css.ifBlank { "the item" }}\" ${p.how}" } +
@@ -1155,17 +1220,25 @@ internal object RecordedConverter {
         lines.add("// Recorded: ${requestLine(request)}")
         if (step.dataRequests.size > 1) lines.add("// (${step.dataRequests.size} requests in this step; the reply above holds the items)")
         lines.add("// ${commentSafe(how)}")
+        // r105: the written code was run on the recorded reply and its items compared with the extension's
+        lines.add("// checked: ${check.words(kind)}")
+        // r105: each TODO says why in one plain line
+        if (!check.ok) {
+            lines.add("// TODO: ${check.todoWords(kind)}")
+        } else if (!check.coversOk) {
+            lines.add("// TODO covers: only ${check.covers} of ${check.coversOf} covers match the extension's: it builds the cover address in its own code")
+        }
         if (pageNote.isNotBlank()) lines.add("// Paging: ${commentSafe(pageNote)}")
         if (stepId == "search" && rec.filters.isNotEmpty()) {
-            lines.add("// TODO filters: getFilters() lists the extension's filters, but how it sends them was not recorded")
-            lines.add("// (the search ran with the defaults); read `filters` here and add them to the address.")
+            lines.add("// TODO filters: the search was recorded with the default filters, so how the extension sends them is not known; read `filters` and add them here")
         }
         // r98 fix: say so when the search words are nowhere in the request (a query value or a body value)
-        if (stepId == "search" && !plan.queryUsed) lines.add("// TODO search: query not found in the recorded request")
+        if (stepId == "search" && !plan.queryUsed) lines.add("// TODO search: the search words are not in the recorded request: the extension builds it in its own code")
         plan.todos.distinct().forEach { lines.add("// TODO: ${commentSafe(it)}") }
         lines.addAll(partHead(plan, body))
         lines.addAll(body)
         val explain = "Written from ${requestWords(request)}: ${how}." +
+            " Checked: ${check.words(kind)}." +
             (if (pageNote.isNotBlank()) " Paging: $pageNote." else "") +
             (if (stepId == "search" && !plan.queryUsed) " The search words were not found in the recorded request." else "") +
             (if (plan.todos.isNotEmpty()) " To check: ${plan.todos.distinct().joinToString("; ")}." else "") +
@@ -1177,7 +1250,24 @@ internal object RecordedConverter {
             todo = false,
             settingsUsed = plan.settingsUsed.toSet(),
             pageRules = if (stepId == "popular" && pageMap.isNotEmpty()) rulesOf(request.url, pageMap) else emptyList(),
+            check = "${check.matched} of ${check.of}" + (if (check.sizeProblem != null) " (the code gives ${check.outCount})" else ""),
         )
+    }
+
+    private fun itemNoun(kind: Kind): String = if (kind == Kind.Pages) "pages" else "items"
+
+    /** r105: one plain line for a JSON list that no reading reproduces */
+    private fun listReason(request: RecordedRequest, closest: JsonList?, kind: Kind): String {
+        val what = if (kind == Kind.Pages) "every page's picture" else "every item's address and title"
+        if (closest == null) {
+            return "the reply of ${shortUrl(request.url)} holds the values, but not as one list that gives $what " +
+                "(the extension builds the list in its own code)"
+        }
+        return "the reply of ${shortUrl(request.url)} holds the values, but the closest reading (the list at " +
+            "${pathWords(closest.arrayPath)}) " + (
+                closest.check.sizeProblem?.takeIf { closest.check.matched * 10 >= closest.check.of * 9 }
+                    ?: "gives only ${closest.check.matched} of ${closest.check.of} of the extension's ${itemNoun(kind)}"
+                )
     }
 
     /** How many sample values a reply holds as text (JSON leaves, or the page's text and attributes) */
@@ -1238,16 +1328,93 @@ internal object RecordedConverter {
 
     // ---------- JSON lists ----------
 
-    private class FieldExpr(val code: String, val words: String)
+    /**
+     * One field's JS expression and its words. r105: [eval] gives the same value in Kotlin from an item's leaves (path
+     * key → text), so a candidate is run on the recorded reply before it is written; null for numbers and dates.
+     */
+    private class FieldExpr(val code: String, val words: String, val eval: ((Map<String, String>) -> String)? = null)
 
-    private class JsonList(val arrayPath: List<Any>, val fields: Map<String, FieldExpr>, val matched: Int)
+    private class JsonList(
+        val arrayPath: List<Any>,
+        val fields: Map<String, FieldExpr>,
+        val matched: Int,
+        val check: ListCheck = ListCheck.NONE,
+    )
 
-    private fun mapJsonList(plan: Plan, root: JsonElement, samples: List<Map<String, String>>, kind: Kind): JsonList? {
+    /** r105: the list that reproduces the extension's items, or else the closest one tried (null: none) */
+    private class JsonPick(val chosen: JsonList?, val closest: JsonList?)
+
+    /**
+     * r105: the written code's items next to the extension's: [matched] of [of] in the same order (same address and
+     * title), [reversed] when they match in the opposite order (the code then reverses its list), and how many of the
+     * extension's covers came out the same.
+     */
+    private class ListCheck(
+        val matched: Int,
+        val of: Int,
+        val reversed: Boolean,
+        val covers: Int,
+        val coversOf: Int,
+        val outCount: Int = -1,   // how many items the code gives on the recorded reply (-1: not counted)
+        // r105 fix: why the code's item count can't be the extension's list (null: the count fits) — a 1-item side
+        // array of a paged reply, or a superset array that holds the returned items among many others
+        val sizeProblem: String? = null,
+    ) {
+        /** ≥ 90 % of the extension's items, same address and title, in order, from a list of a fitting size */
+        val ok: Boolean get() = of > 0 && matched * 10 >= of * 9 && sizeProblem == null
+
+        /** r105 fix: the TODO line's reason, in one plain line */
+        fun todoWords(kind: Kind): String = if (sizeProblem != null && of > 0 && matched * 10 >= of * 9) {
+            "$sizeProblem: it picks the list in its own code"
+        } else {
+            "only $matched of $of ${if (kind == Kind.Pages) "pages" else "items"} match the extension's output: it filters, sorts or adds items in its own code"
+        }
+
+        /** ≥ 90 % of the covers the extension gave come out the same (none given: nothing to match) */
+        val coversOk: Boolean get() = coversOf == 0 || covers * 10 >= coversOf * 9
+
+        fun words(kind: Kind): String = buildString {
+            append("$matched of $of ")
+            append(if (kind == Kind.Pages) "pages" else "items")
+            append(" match the extension's output")
+            if (reversed) append(" (in reverse order: the code reverses its list)")
+            if (coversOf > 0) append(", covers $covers of $coversOf")
+            if (outCount >= 0 && outCount != of) append(" (the code gives $outCount on the recorded reply)")
+        }
+
+        companion object {
+            val NONE = ListCheck(0, 0, false, 0, 0)
+        }
+    }
+
+    /** r105: an array of the reply whose items hold the returned values, with each item's leaves */
+    private class ArrayCandidate(
+        val path: List<Any>,
+        val maps: List<Map<String, String>>,
+        val paths: Map<String, List<Any>>,
+        val pairs: List<Pair<Map<String, String>, Map<String, String>>>,
+        val score: Int,
+    )
+
+    /**
+     * r105: candidates from strict to loose, each run on the recorded reply and compared with [returned] (what the
+     * extension gave): strict = every item that can map does and each field is exact on all of them; loose = at
+     * least 4 in 5 map and the fields may use the loosenings of [fieldExpr]; last the r98 rule (half of them). The
+     * first candidate whose output has ≥ 90 % of the extension's items, same address and title, in order, wins.
+     * Items wrapped one or two levels (`recommendations[i].anyCard._id`) are read through their leaves (depth 4).
+     */
+    private fun mapJsonList(
+        plan: Plan,
+        root: JsonElement,
+        samples: List<Map<String, String>>,
+        kind: Kind,
+        returned: List<Map<String, String>>,
+        paged: Boolean,
+    ): JsonPick {
         val key = keyField(kind)
         val arrays = ArrayList<Pair<List<Any>, JsonArray>>()
         arraysIn(root, emptyList(), arrays, 0)
-        var best: Triple<List<Any>, List<Pair<Map<String, String>, Map<String, String>>>, Int>? = null
-        var bestPaths: Map<String, List<Any>> = emptyMap()
+        val found = ArrayList<ArrayCandidate>()
         for ((path, array) in arrays) {
             if (array.isEmpty()) continue
             val pathOfKey = HashMap<String, List<Any>>()
@@ -1278,24 +1445,175 @@ internal object RecordedConverter {
                 }
             }
             val score = exact * 2 + (pairs.size - exact)
-            if (pairs.size * 2 >= minOf(samples.size, array.size) && pairs.isNotEmpty() && score > (best?.third ?: 0)) {
-                best = Triple(path, pairs, score)
-                bestPaths = pathOfKey
+            if (pairs.isNotEmpty() && pairs.size * 2 >= minOf(samples.size, array.size)) {
+                found.add(ArrayCandidate(path, maps, pathOfKey, pairs, score))
             }
         }
-        val (arrayPath, pairs, _) = best ?: return null
+        // The best-held array first (stable: a tie keeps the reply's order, as r98 picked it)
+        val ordered = found.sortedByDescending { it.score }.take(12)
+        // r105 fix: the most returned items one list of the reply holds (a paged list's output must reach it)
+        val replyMatched = found.maxOfOrNull { it.pairs.size } ?: 0
+        var closest: JsonList? = null
+        var itemsOnly: JsonList? = null   // the first whose items match but whose covers don't
+        for (level in 0..2) {
+            // r105 fix: every array that passes at this level, then the one whose size is closest to the returned count
+            val passing = ArrayList<JsonList>()
+            for (c in ordered) {
+                val need = minOf(samples.size, c.maps.size)
+                val strictPairs = c.pairs.size >= need
+                val loosePairs = c.pairs.size * 5 >= need * 4
+                val tryIt = when (level) {
+                    0 -> strictPairs
+                    1 -> loosePairs
+                    else -> !loosePairs
+                }
+                if (!tryIt) continue
+                val list = jsonCandidate(plan, c, kind, loose = level > 0, returned = returned, paged = paged, replyMatched = replyMatched) ?: continue
+                if (list.check.ok && list.check.coversOk) {
+                    passing.add(list)
+                    continue
+                }
+                if (list.check.ok) {
+                    // The items are right but not the covers: the same array read with the loose field recipes
+                    // (an address already full used as it is, a learned prefix / suffix) may give them
+                    if (level == 0) {
+                        val loose = jsonCandidate(plan, c, kind, loose = true, returned = returned, paged = paged, replyMatched = replyMatched)
+                        if (loose != null && loose.check.ok && loose.check.coversOk) {
+                            passing.add(loose)
+                            continue
+                        }
+                        if (loose != null && loose.check.ok && loose.check.covers > list.check.covers) {
+                            if (itemsOnly == null) itemsOnly = loose
+                        }
+                    }
+                    if (itemsOnly == null) itemsOnly = list
+                    continue
+                }
+                val best = closest
+                if (best == null || list.check.matched > best.check.matched ||
+                    (list.check.matched == best.check.matched && best.check.sizeProblem != null && list.check.sizeProblem == null)
+                ) {
+                    closest = list
+                }
+            }
+            // minByOrNull keeps the first of equals: the best-held array wins a tie
+            val chosen = passing.minByOrNull { abs(it.check.outCount - returned.size) }
+            if (chosen != null) return JsonPick(chosen, null)
+        }
+        return JsonPick(itemsOnly, closest)
+    }
+
+    /** r105: one candidate's fields over [c], and its output on the recorded reply checked against [returned] */
+    private fun jsonCandidate(
+        plan: Plan,
+        c: ArrayCandidate,
+        kind: Kind,
+        loose: Boolean,
+        returned: List<Map<String, String>>,
+        paged: Boolean,
+        replyMatched: Int,
+    ): JsonList? {
         val fields = LinkedHashMap<String, FieldExpr>()
         for (field in fieldsOf(kind)) {
-            val expr = fieldExpr(plan, field, pairs, bestPaths) { p -> "v(it, ${jsPath(p)})" }
+            val expr = fieldExpr(plan, field, c.pairs, c.paths, loose) { p -> "v(it, ${jsPath(p)})" }
             if (expr != null) fields[field] = expr
         }
         if (required(kind).any { it !in fields }) return null
         // A chapter without a number of its own: the one in its title
         if (kind == Kind.Chapters && "number" !in fields && "name" in fields) {
-            val fromTitle = pairs.all { (s, _) -> s["number"]?.toDoubleOrNull()?.let { n -> numberIn(s["name"]) == n } ?: true }
-            if (fromTitle && pairs.any { it.first["number"] != null }) fields["number"] = FieldExpr("numberOf(${fields["name"]!!.code})", "the number in the title")
+            val fromTitle = c.pairs.all { (s, _) -> s["number"]?.toDoubleOrNull()?.let { n -> numberIn(s["name"]) == n } ?: true }
+            if (fromTitle && c.pairs.any { it.first["number"] != null }) fields["number"] = FieldExpr("numberOf(${fields["name"]!!.code})", "the number in the title")
         }
-        return JsonList(arrayPath, fields, pairs.size)
+        val output = ArrayList<Map<String, String>>()
+        for (m in c.maps) {
+            val e = HashMap<String, String>()
+            for ((f, fe) in fields) {
+                val eval = fe.eval ?: continue
+                e[f] = eval(m)
+            }
+            if (required(kind).all { !e[it].isNullOrEmpty() }) output.add(e)
+        }
+        val check = checkList(output, returned, kind, paged, withName = "name" in fields, replyMatched = replyMatched)
+        return JsonList(c.path, fields, c.pairs.size, check)
+    }
+
+    /**
+     * r105: [output] (what the written code gives on the recorded reply) next to [returned] (the extension's items):
+     * the longest run of the same items in the same order, by address and title (chapters: address, and name when
+     * the code reads one; pages: the picture). [paged]: the reply is one page of several, so only as many as it has
+     * count. Covers are compared by address.
+     */
+    private fun checkList(
+        output: List<Map<String, String>>,
+        returned: List<Map<String, String>>,
+        kind: Kind,
+        paged: Boolean,
+        withName: Boolean,
+        replyMatched: Int = 0,
+    ): ListCheck {
+        val out = output.take(2000)
+        val ret = returned.take(2000)
+        fun keyOf(e: Map<String, String>): String = when (kind) {
+            Kind.Entries -> e["url"].orEmpty() + "\u0001" + norm(e["title"].orEmpty())
+            Kind.Chapters -> e["url"].orEmpty() + (if (withName) "\u0001" + norm(e["name"].orEmpty()) else "")
+            Kind.Pages -> e["imageUrl"].orEmpty()
+        }
+        val a = out.map { keyOf(it) }
+        val b = ret.map { keyOf(it) }
+        val of = if (paged) minOf(b.size, a.size).coerceAtLeast(1) else b.size
+        val forward = commonRun(a, b)
+        val backward = if (forward * 10 < of * 9) commonRun(a.asReversed(), b) else 0
+        val reversed = backward > forward && backward * 10 >= of * 9
+        var covers = 0
+        var coversOf = 0
+        if (kind == Kind.Entries) {
+            val coverOf = HashMap<String, String>()
+            out.forEach { o -> o["url"]?.let { u -> if (u !in coverOf) coverOf[u] = o["coverUrl"].orEmpty() } }
+            for (r in ret) {
+                val want = r["coverUrl"]?.takeIf { it.isNotBlank() } ?: continue
+                val got = coverOf[r["url"].orEmpty()] ?: continue
+                coversOf++
+                if (got == want) covers++
+            }
+        }
+        val sizeProblem = sizeProblem(output.size, returned.size, paged, replyMatched)
+        return ListCheck(minOf(if (reversed) backward else forward, of), of, reversed, covers, coversOf, outCount = output.size, sizeProblem = sizeProblem)
+    }
+
+    /**
+     * r105 fix: the code's item count on the recorded reply ([out]) next to the extension's ([ret]). Paged (the reply is
+     * one page of several): at least min(ret, 5) and at least [replyMatched] (the most returned items one list of the
+     * reply holds), so a 1-item side array can't score "1 of 1". Else: between 0.8 × ret and 1.1 × ret + 1, so a
+     * superset array holding the 20 returned among 140 doesn't pass. Null: the count fits.
+     */
+    private fun sizeProblem(out: Int, ret: Int, paged: Boolean, replyMatched: Int): String? {
+        if (ret <= 0) return null
+        return if (paged) {
+            val least = maxOf(minOf(ret, 5), replyMatched)
+            if (out >= least) null else "the code gives $out on the recorded reply, the page holds at least $least of the extension's $ret"
+        } else {
+            when {
+                out * 10 > ret * 11 + 10 -> "the code gives $out on the recorded reply where the extension returned $ret"
+                out * 5 < ret * 4 -> "the code gives only $out on the recorded reply where the extension returned $ret"
+                else -> null
+            }
+        }
+    }
+
+    /** The length of the longest common subsequence of [a] and [b] (two rows, O(|a|·|b|)) */
+    private fun commonRun(a: List<String>, b: List<String>): Int {
+        if (a.isEmpty() || b.isEmpty()) return 0
+        var prev = IntArray(b.size + 1)
+        var cur = IntArray(b.size + 1)
+        for (i in 1..a.size) {
+            for (j in 1..b.size) {
+                cur[j] = if (a[i - 1] == b[j - 1]) prev[j - 1] + 1 else maxOf(prev[j], cur[j - 1])
+            }
+            val t = prev
+            prev = cur
+            cur = t
+        }
+        return prev[b.size]
     }
 
     private fun itemLoop(mapped: JsonList, kind: Kind): List<String> = buildList {
@@ -1314,12 +1632,18 @@ internal object RecordedConverter {
     /**
      * The expression of one returned [field] over the aligned (item, leaves) pairs: numbers and dates by value, text
      * as constant pieces and leaf values ([solve]); [leafCode] turns a leaf path into JS.
+     *
+     * r105: one sample with a fixed label around its value ("Synopsis: " + description) is written; and when [loose],
+     * a field no single recipe gives for every item may be (1) a value used as it is when it is already a full
+     * address, else with the learned prefix / suffix (`"https://cdn/x/" + thumbnail + "?w=250"`), (2) one value, or a
+     * second one when the first is empty (`englishName || name`), (3) the one value that gives ≥ 90 % of them.
      */
     private fun fieldExpr(
         plan: Plan,
         field: String,
         pairs: List<Pair<Map<String, String>, Map<String, String>>>,
         paths: Map<String, List<Any>>,
+        loose: Boolean = false,
         leafCode: (List<Any>) -> String,
     ): FieldExpr? {
         val present = pairs.filter { !it.first[field].isNullOrBlank() }
@@ -1355,14 +1679,24 @@ internal object RecordedConverter {
         // r98 fix: one sample can't tell constant text from data: at most 3 constant characters around a value
         // (a separator) for a field that isn't an address; more becomes a TODO for that field
         val strict = present.size < 2 && !address
-        val segs = solve(targets, samples, 0, allowConstant = present.size >= 3 && field != "url" && field != "imageUrl", maxConst = if (strict) 3 else Int.MAX_VALUE)
+        var segs = solve(targets, samples, 0, allowConstant = present.size >= 3 && field != "url" && field != "imageUrl", maxConst = if (strict) 3 else Int.MAX_VALUE)
             ?.takeIf { found -> !strict || found.sumOf { if (it is Seg.Lit) it.text.length else 0 } <= 3 }
-        if (segs == null) {
-            if (strict && solve(targets, samples, 0, allowConstant = false) != null) {
-                plan.todos.add("$field: one sample only, and its value has more than 3 characters of constant text around what the reply holds; not written")
+        if (segs == null && strict) {
+            val wide = solve(targets, samples, 0, allowConstant = false)
+            if (wide != null && wide.all { it !is Seg.Lit || labelLike(it.text) }) {
+                // r105: the constant text is a fixed label ("Synopsis: ", a line break): written
+                segs = wide
+            } else if (wide != null) {
+                plan.todos.add("$field: the extension adds its own text around the reply's value, and one sample can't tell that text from data; not written")
             }
-            return null
         }
+        if (segs != null) return segsExpr(plan, segs, paths, leafCode)
+        if (!loose || present.size < 2) return null
+        return absoluteOr(plan, targets, samples, paths, leafCode) ?: eitherValue(targets, samples, paths, leafCode)
+    }
+
+    /** [segs] as JS (constant text with the known values inside it as expressions) and as words */
+    private fun segsExpr(plan: Plan, segs: List<Seg>, paths: Map<String, List<Any>>, leafCode: (List<Any>) -> String): FieldExpr? {
         val pieces = ArrayList<Piece>()
         val words = ArrayList<String>()
         for (seg in segs) {
@@ -1378,7 +1712,131 @@ internal object RecordedConverter {
                 }
             }
         }
-        return FieldExpr(concat(pieces), words.joinToString(" + "))
+        return FieldExpr(concat(pieces), words.joinToString(" + "), eval = { m: Map<String, String> -> evalSegs(segs, m) })
+    }
+
+    /** What [segs] give for one item's leaves, as the JS does (`s()` of a missing leaf is "") */
+    private fun evalSegs(segs: List<Seg>, m: Map<String, String>): String = buildString {
+        for (seg in segs) {
+            when (seg) {
+                is Seg.Lit -> append(seg.text)
+                is Seg.Ref -> append(m[seg.key].orEmpty())
+            }
+        }
+    }
+
+    /** r105: a fixed label around a value: blank or punctuation, or a few words ending in ':' ("Synopsis:") */
+    private fun labelLike(text: String): Boolean {
+        val t = text.trim()
+        return t.isEmpty() || PUNCTUATION_ONLY.matches(t) || LABEL.matches(t)
+    }
+
+    private val PUNCTUATION_ONLY = Regex("""[\p{P}\p{S}]{1,6}""")
+    private val LABEL = Regex("""[\p{L}][\p{L}\p{N} ]{0,30}:""")
+    private val ABSOLUTE = Regex("""^https?://""", RegexOption.IGNORE_CASE)
+
+    /**
+     * r105 loosening (b): one value of the reply with constant text around it, learned separately for the items whose
+     * value is already a full address (`https://…`: used as it is, or with the same suffix) and for the others (the
+     * learned prefix / suffix: `"https://cdn/x/" + thumbnail + "?w=250"`): one branch per item in the generated code
+     */
+    private fun absoluteOr(
+        plan: Plan,
+        targets: List<String>,
+        samples: List<Map<String, String>>,
+        paths: Map<String, List<Any>>,
+        leafCode: (List<Any>) -> String,
+    ): FieldExpr? {
+        val keys = samples.first().keys.filter { k ->
+            samples.indices.all { i -> samples[i][k].let { v -> !v.isNullOrEmpty() && targets[i].contains(v) } }
+        }.sortedByDescending { k -> samples.sumOf { it[k]!!.length } }.take(8)
+        for (key in keys) {
+            val full = targets.indices.filter { i -> ABSOLUTE.containsMatchIn(samples[i][key]!!) }
+            if (full.isEmpty() || full.size == targets.size) continue
+            val rest = targets.indices.filter { it !in full }
+            val asIs = around(key, full.map { targets[it] }, full.map { samples[it] }) ?: continue
+            val built = around(key, rest.map { targets[it] }, rest.map { samples[it] }) ?: continue
+            // A full address gets no prefix; the others must have learned one (else the strict recipe gave it)
+            if (asIs.first() !is Seg.Ref || built.first() !is Seg.Lit) continue
+            val p = paths[key] ?: continue
+            val leaf = "s(${leafCode(p)})"
+            fun code(segs: List<Seg>): String = concat(
+                segs.flatMap { seg -> if (seg is Seg.Lit) splitKnown(plan, seg.text, encode = false) else listOf(Piece.Expr(leaf)) },
+            )
+            fun words(segs: List<Seg>): String = segs.joinToString(" + ") { if (it is Seg.Lit) "\"${it.text}\"" else pathWords(p) }
+            return FieldExpr(
+                "(/^https?:\\/\\//i.test($leaf) ? ${code(asIs)} : ${code(built)})",
+                "${words(asIs)} when ${pathWords(p)} is a full address, else ${words(built)}",
+                eval = { m: Map<String, String> ->
+                    if (ABSOLUTE.containsMatchIn(m[key].orEmpty())) evalSegs(asIs, m) else evalSegs(built, m)
+                },
+            )
+        }
+        return null
+    }
+
+    /** r105: [targets] as the same constant text, the value at [key], the same constant text, for every item */
+    private fun around(key: String, targets: List<String>, samples: List<Map<String, String>>): List<Seg>? {
+        if (targets.isEmpty()) return null
+        var left: String? = null
+        var right: String? = null
+        for (i in targets.indices) {
+            val v = samples[i][key] ?: return null
+            val at = targets[i].indexOf(v)
+            if (at < 0) return null
+            val l = targets[i].substring(0, at)
+            val r = targets[i].substring(at + v.length)
+            if (left == null) left = l else if (left != l) return null
+            if (right == null) right = r else if (right != r) return null
+        }
+        val before = left.orEmpty()
+        val after = right.orEmpty()
+        val segs = ArrayList<Seg>()
+        if (before.isNotEmpty()) segs.add(Seg.Lit(before))
+        segs.add(Seg.Ref(key))
+        if (after.isNotEmpty()) segs.add(Seg.Lit(after))
+        return segs
+    }
+
+    /**
+     * r105 loosenings: one value, or a second one when the first is empty or missing (`englishName || name`), that
+     * gives every item; else the single value or pair that gives ≥ 90 % of them
+     */
+    private fun eitherValue(
+        targets: List<String>,
+        samples: List<Map<String, String>>,
+        paths: Map<String, List<Any>>,
+        leafCode: (List<Any>) -> String,
+    ): FieldExpr? {
+        val n = targets.size
+        val wanted = targets.map { norm(it) }
+        fun same(i: Int, value: String?): Boolean = !value.isNullOrEmpty() && norm(value) == wanted[i]
+        val keys = samples.flatMap { it.keys }.distinct()
+            .map { k -> k to targets.indices.count { i -> same(i, samples[i][k]) } }
+            .filter { it.second > 0 }
+            .sortedByDescending { it.second }
+            .take(8)
+            .map { it.first }
+        if (keys.isEmpty()) return null
+        fun pick(m: Map<String, String>, first: String, second: String?): String =
+            m[first]?.takeIf { it.isNotEmpty() } ?: second?.let { m[it] }.orEmpty()
+        fun hits(first: String, second: String?): Int = targets.indices.count { i -> same(i, pick(samples[i], first, second)) }
+        val options = ArrayList<Pair<String, String?>>()
+        for (a in keys) for (b in keys) if (a != b) options.add(a to b)
+        for (a in keys) options.add(a to null)
+        val scored = options.map { it to hits(it.first, it.second) }
+        val chosen = scored.firstOrNull { (o, h) -> o.second != null && h == n }
+            ?: scored.maxByOrNull { it.second }?.takeIf { it.second * 10 >= n * 9 }
+            ?: return null
+        val (option, count) = chosen
+        val first = option.first
+        val second = option.second
+        val p1 = paths[first] ?: return null
+        val p2 = second?.let { paths[it] ?: return null }
+        val code = if (p2 == null) "s(${leafCode(p1)})" else "(s(${leafCode(p1)}) || s(${leafCode(p2)}))"
+        val words = (if (p2 == null) pathWords(p1) else "${pathWords(p1)}, or ${pathWords(p2)} when it is empty") +
+            (if (count < n) " (gives $count of $n)" else "")
+        return FieldExpr(code, words, eval = { m: Map<String, String> -> pick(m, first, second) })
     }
 
     private sealed interface Seg {
@@ -1550,6 +2008,45 @@ internal object RecordedConverter {
         return HtmlList(item, fields, found.size, numberFromTitle)
     }
 
+    /**
+     * r105: what the written `htmlList(html, item, spec)` gives on the recorded page, as the JS helpers do it (each
+     * field: the first match of its selector in the card, text or attribute, shaped by its transform); items without
+     * their required fields are left out, as the generated loop does
+     */
+    private fun htmlOutput(doc: Document, mapped: HtmlList, kind: Kind): List<Map<String, String>> {
+        val pageUrl = doc.location()
+        val cards = runCatching { doc.select(mapped.item) }.getOrNull() ?: return emptyList()
+        val out = ArrayList<Map<String, String>>()
+        for (card in cards) {
+            val e = HashMap<String, String>()
+            for ((f, p) in mapped.fields) {
+                pickValue(card, p, pageUrl)?.let { e[f] = it }
+            }
+            if (required(kind).all { !e[it].isNullOrEmpty() }) out.add(e)
+        }
+        return out
+    }
+
+    /** One pick read in [scope] like the JS `pickFrom` (an empty selector: [scope] itself) */
+    private fun pickValue(scope: Element, pick: HtmlPick, pageUrl: String): String? {
+        val target = if (pick.css.isEmpty()) scope else runCatching { scope.selectFirst(pick.css) }.getOrNull() ?: return null
+        val raw = if (pick.how == "text") target.text() else target.attr(pick.how.removePrefix("@"))
+        return shapeValue(raw, pick.transform, pageUrl)
+    }
+
+    /** The JS `shape(value, how)`: srcset's first address, absolute (against the page), or its path */
+    private fun shapeValue(raw: String, how: String, pageUrl: String): String? {
+        var value = raw.trim()
+        if (how == "srcset" || how == "srcsetabs") value = value.split(SRCSET_SPLIT).firstOrNull().orEmpty()
+        return when (how) {
+            "abs", "srcsetabs" -> if (value.isEmpty()) null else resolve(pageUrl, value)
+            "path" -> if (value.isEmpty()) null else resolve(pageUrl, value)?.let { pathOf(it) }
+            else -> value
+        }
+    }
+
+    private val SRCSET_SPLIT = Regex("""[\s,]+""")
+
     private fun ancestor(el: Element, depth: Int): Element? {
         var cur: Element? = el
         repeat(depth) { cur = cur?.parent() }
@@ -1706,6 +2203,9 @@ internal object RecordedConverter {
         val address = urlExpr(plan, request.url, best, emptyMap(), 0) + optionsExpr(plan, request, best, 0)?.let { ", $it" }.orEmpty()
         val body = ArrayList<String>()
         val words = ArrayList<String>()
+        // r105: each written field run on the recorded reply and compared with the extension's value
+        var checkedFields = 0
+        var matchedFields = 0
         if (json != null) {
             val out = ArrayList<Pair<List<Any>, String>>()
             leaves(json, emptyList(), out, 0, maxDepth = 8)
@@ -1718,12 +2218,19 @@ internal object RecordedConverter {
                     genreJson(json, item[f]!!)?.let { (listPath, rel) ->
                         props.add("genres: (v(json, ${jsPath(listPath)}) || []).map(function (g) { return s(v(g, ${jsPath(rel)})); }).filter(Boolean)")
                         words.add("genres from ${pathWords(listPath)}")
+                        // found as the same set of genres
+                        checkedFields++
+                        matchedFields++
                     }
                     continue
                 }
                 val expr = fieldExpr(plan, f, listOf(item to map), paths) { p -> "v(json, ${jsPath(p)})" } ?: continue
                 props.add("$f: ${expr.code}")
                 words.add("$f = ${expr.words}")
+                expr.eval?.let { eval ->
+                    checkedFields++
+                    if (norm(eval(map)) == norm(item[f]!!)) matchedFields++
+                }
             }
             if (props.isEmpty()) return todoPart(method, "the JSON reply of ${shortUrl(request.url)} holds no field the details had", step, returnFor(method))
             body.add("var json = await getJson($address);")
@@ -1737,6 +2244,8 @@ internal object RecordedConverter {
                 val name = if (f == "genre") "genres" else f
                 specs.add("$name: [${jsStr(pick.css)}, ${jsStr(pick.how)}, ${jsStr(pick.transform)}]")
                 words.add("$name from \"${pick.css}\" ${pick.how}")
+                checkedFields++
+                if (detailValueMatches(doc, pick, item[f]!!, f == "genre")) matchedFields++
             }
             if (specs.isEmpty()) return todoPart(method, "no element of ${shortUrl(request.url)} holds the details' values", step, returnFor(method))
             body.add("var html = await get($address);")
@@ -1747,6 +2256,11 @@ internal object RecordedConverter {
         val lines = ArrayList<String>()
         lines.add("// Recorded: ${requestLine(request)}")
         lines.add("// ${commentSafe(words.joinToString("; "))}")
+        val checkWords = "$matchedFields of $checkedFields fields match the extension's output"
+        if (checkedFields > 0) lines.add("// checked: $checkWords")
+        if (matchedFields < checkedFields) {
+            lines.add("// TODO: ${checkedFields - matchedFields} field(s) read differently from the extension's value: it changes them in its own code")
+        }
         val missing = fields.filter { f -> words.none { it.startsWith(if (f == "genre") "genres" else f) } }
         if (missing.isNotEmpty()) lines.add("// Not found in the reply (the list's values are kept): ${missing.joinToString(", ")}")
         plan.todos.distinct().forEach { lines.add("// TODO: ${commentSafe(it)}") }
@@ -1756,11 +2270,25 @@ internal object RecordedConverter {
             lines,
             written = true,
             explain = "Written from ${requestWords(request)}: ${words.joinToString("; ")}." +
+                (if (checkedFields > 0) " Checked: $checkWords." else "") +
                 (if (missing.isNotEmpty()) " Not found: ${missing.joinToString(", ")} (the list's values stay)." else "") +
                 (if (plan.todos.isNotEmpty()) " To check: ${plan.todos.distinct().joinToString("; ")}." else ""),
             todo = false,
             settingsUsed = plan.settingsUsed.toSet(),
+            check = if (checkedFields > 0) "$matchedFields of $checkedFields fields" else null,
         )
+    }
+
+    /** r105: what `htmlFields` gives for [pick] on the recorded page equals the extension's [value] */
+    private fun detailValueMatches(doc: Document, pick: HtmlPick, value: String, genres: Boolean): Boolean {
+        if (pick.transform == "all") {
+            val found = runCatching { doc.select(pick.css) }.getOrNull() ?: return false
+            val got = found.map { el -> norm(if (pick.how == "text") el.text() else el.attr(pick.how.removePrefix("@"))) }.filter { it.isNotEmpty() }.toSet()
+            val want = (if (genres) value.split(',') else listOf(value)).map { norm(it) }.filter { it.isNotEmpty() }.toSet()
+            return got.containsAll(want)
+        }
+        val got = pickValue(doc, HtmlPick(pick.css, pick.how, pick.transform), doc.location()) ?: return false
+        return norm(got) == norm(value) || (pick.how == "text" && value.length >= 40 && norm(got).contains(norm(value).take(60)))
     }
 
     /** An array whose items' field equals the genres, in any order */
@@ -2167,7 +2695,7 @@ internal object RecordedConverter {
      * r104: why no reply of [step] holds [what]: no request recorded at all, or replies that hold nothing readable
      * (a JSON reply whose data is one long encoded string the extension decodes in its own code)
      */
-    private fun notHeldReason(step: RecordedStep, what: String): String {
+    private fun notHeldReason(step: RecordedStep, what: String, values: List<String> = emptyList()): String {
         if (step.dataRequests.isEmpty()) {
             return if (step.requests.isEmpty()) {
                 "no request was recorded in this step, so there is nothing to convert from"
@@ -2186,7 +2714,19 @@ internal object RecordedConverter {
             return "none of the recorded replies holds $what as text; the JSON reply of ${shortUrl(encoded.first.url)} " +
                 "carries one long encoded string at ${pathWords(encoded.second)}, which the extension decodes in its own code"
         }
-        return "none of the recorded replies holds $what as text"
+        // r105: pieces of the returned addresses (an id, a folder name) in a reply: the extension puts the address
+        // together in its own code, or reads the rest from a request this recording didn't see
+        val piece = values.asSequence()
+            .flatMap { v -> v.substringBefore('?').substringBefore('#').replace(ORIGIN, "").split('/').asSequence() }
+            .filter { it.length >= 6 && it.any(Char::isDigit) && it.any(Char::isLetter) && '.' !in it }
+            .distinct()
+            .take(40)
+            .firstNotNullOfOrNull { p -> step.dataRequests.firstOrNull { r -> r.body?.contains(p) == true }?.let { p to it } }
+        if (piece != null) {
+            return "none of the recorded replies holds $what whole; ${shortUrl(piece.second.url)} has a piece of them " +
+                "(\"${piece.first.take(40)}\"), so the extension builds them in its own code"
+        }
+        return "none of the recorded replies holds $what as text (no reply carries them)"
     }
 
     /** [s] as it can appear inside a JSON string: quotes and backslashes escaped, slashes as they are or as `\/` */

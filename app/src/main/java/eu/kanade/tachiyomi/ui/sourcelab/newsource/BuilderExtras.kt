@@ -47,6 +47,13 @@ import kotlin.random.Random
  * it in red, the write logs it); a param filter made from links keeps the links' own address ([ExtrasFilter.linkPath],
  * `/en/trending?sort={value}&page={page}`) and is written as a path filter when that page isn't the search page
  * ([BuilderExtrasLogic.filtersJson] with the search path); filters can be moved up / down ([BuilderExtrasModel.moveFilter]).
+ *
+ * r105 (generic-list v8): each filter has a role ([ExtrasFilter.role]): "page" picks the list (a path filter, links to
+ * another page, a directory's text box) and "extra" adds its parameter to whichever list is shown (a dropdown learned
+ * on a list page: only ?type= changed). Learn addresses presses every entry of a list of up to 30 (codes such as
+ * "multi" for "Multiple" are read, never guessed); longer lists use a pattern checked on two more presses. Filters sit
+ * in groups ([ExtrasFilter.group]: a sub-menu's filter in its parent menu's group, "Move to group…"). Filters made
+ * before r105 (no role) are written in the v7 shape and the template reads them as before.
  */
 
 @Immutable
@@ -81,6 +88,21 @@ internal data class ExtrasFilter(
      * Trending → /en/search?sort=today). The editor says to make it again from the menu ([BuilderExtrasLogic.OLD_LINKS])
      */
     val noLinkAddress: Boolean = false,
+    /**
+     * r105: "page" = picks which list is browsed (its option opens [path] / [linkPath] with the value: Types →
+     * /en/{value}, a directory → /en/makers/{value}); "extra" = adds [param]=value on top of whichever list is chosen
+     * (Type, Year, Sort learned on a list page); "" = made before r105 (written as before: a path filter is a page
+     * filter, a parameter filter one of the search page)
+     */
+    val role: String = "",
+    /** r105: the heading it sits under in the Browse sheet ("Collections"); "" = none */
+    val group: String = "",
+    /** r105: an extra also sent while searching for words (seen working on the search page, or ticked by the owner) */
+    val onSearch: Boolean = false,
+    /** r105: the path of the page it was made on (/en/recent): an extra made on the search page works there */
+    val seenOn: String = "",
+    /** r105 fix: [role] was set by the owner on the card: making the filter again keeps it */
+    val roleSet: Boolean = false,
 )
 
 /**
@@ -596,7 +618,11 @@ internal object BuilderExtrasLogic {
                     val marked = first.url.newBuilder().setQueryParameter(param, LINK_MARK).build()
                     val linkRaw = marked.encodedPath + (marked.encodedQuery?.let { "?$it" } ?: "")
                     val linkPath = withPage(linkRaw.replace(LINK_MARK, "{value}"), rule).path
-                    filter = makeFilter(options, "param", param, "", param, heading, maxOptions).copy(linkPath = linkPath)
+                    // r105: the entries change a parameter of the page they are on (Type, Year, Sort on /en/recent) →
+                    // an extra; links to another page (Trending → /en/all?sort=today) → a page filter
+                    val samePage = page != null && first.url.encodedPath.trimEnd('/') == page.encodedPath.trimEnd('/')
+                    filter = makeFilter(options, "param", param, "", param, heading, maxOptions)
+                        .copy(linkPath = linkPath, role = if (samePage) "extra" else "page", seenOn = page?.encodedPath.orEmpty())
                     total = optionCount(options, "param")
                     how = "param $param"
                 } else {
@@ -643,7 +669,7 @@ internal object BuilderExtrasLogic {
                         note = "The entries next to \"$tappedLabel\" open other pages, not one list's " +
                             "options: no filter was made (tap a sort option for a Sort filter)."
                     } else {
-                        filter = candidate
+                        filter = candidate.copy(role = "page", seenOn = page?.encodedPath.orEmpty())
                         total = optionCount(options, "path")
                         how = "path ${result.path}"
                         if (result.addedPage) note = " Pages: guessed page={page} (tap the site's Next link as Next to read it)."
@@ -666,6 +692,8 @@ internal object BuilderExtrasLogic {
                     ?: offers.firstOrNull { o -> o.seen.isNotEmpty() && o.seen.all { it in values } }?.param.orEmpty()
                 filter = makeFilter(options, "param", param, "", param.ifEmpty { null }, heading, maxOptions)
                     .let { if (param.isEmpty()) it.copy(key = "", askParam = true) else it }
+                    // r105: a <select>'s values on this page: an extra of this page
+                    .copy(role = "extra", seenOn = page?.encodedPath.orEmpty())
                 total = optionCount(options, "param")
                 how = if (param.isEmpty()) "values, parameter not known" else "values of $param"
                 note = if (param.isEmpty()) {
@@ -926,6 +954,36 @@ internal object BuilderExtrasLogic {
         return own != search
     }
 
+    /**
+     * r105: what [f] does in the source: "page" (picks the list) or "extra" (a parameter added to it). Filters made
+     * before r105 (no role): a path filter or one opening its links' own page is a page filter, else an extra
+     */
+    fun roleOf(f: ExtrasFilter, searchPath: String?): String = when {
+        f.mode == "path" -> "page"
+        // links to the search page itself (?sort= of the search) are a parameter of the search page
+        f.role == "page" && "{value}" in f.linkPath && !linksToSearch(f, searchPath) -> "page"
+        f.role.isNotEmpty() -> "extra"
+        usesLinkPage(f, searchPath) -> "page"
+        else -> "extra"
+    }
+
+    /** r105: [f] was made on the search page (its parameter was seen there, not on a list page) */
+    fun madeOnSearchPage(f: ExtrasFilter, searchPath: String?): Boolean {
+        if (linksToSearch(f, searchPath)) return true
+        val made = pagePathOf(f.seenOn) ?: return false
+        return made == pagePathOf(searchPath)
+    }
+
+    /** r105: [f]'s links open the search page itself (a parameter of the search, not another list) */
+    fun linksToSearch(f: ExtrasFilter, searchPath: String?): Boolean {
+        if ("{value}" !in f.linkPath) return false
+        val own = pagePathOf(f.linkPath) ?: return false
+        return own == pagePathOf(searchPath)
+    }
+
+    /** r105: an extra sent while searching for words: ticked by the owner, or made on the search page */
+    fun worksOnSearch(f: ExtrasFilter, searchPath: String?): Boolean = f.onSearch || madeOnSearchPage(f, searchPath)
+
     /** r101: [b] is a new pick of [a]'s list (same type, key, mode and path / parameter): it replaces [a] */
     fun sameFilter(a: ExtrasFilter, b: ExtrasFilter): Boolean =
         a.type == b.type && a.key.isNotEmpty() && a.key == b.key && a.mode == b.mode &&
@@ -1082,6 +1140,102 @@ internal object BuilderExtrasLogic {
         }
     }
 
+    /** r105 fix: the label of the empty option a parameter's Dropdown / Sort gets when it has none */
+    const val SITE_DEFAULT = "Site default"
+
+    /**
+     * r105 fix: [options] with an empty option first (moved there, or "Site default" added): the app sends the first
+     * option of an untouched sheet, and the template sends every non-empty value, so the site's first one can be picked
+     */
+    fun withSiteDefault(options: List<ExtrasOption>): List<ExtrasOption> {
+        val at = options.indexOfFirst { it.value.isEmpty() }
+        return when {
+            at == 0 -> options
+            at > 0 -> listOf(options[at]) + options.filterIndexed { i, _ -> i != at }
+            else -> listOf(ExtrasOption(SITE_DEFAULT, "")) + options
+        }
+    }
+
+    /**
+     * r105 fix: a filter made again (Learn again, Fetch again, the menu picked again) keeps what the owner set on the
+     * one it replaces: its group, "Also while searching for words" and a role chosen on the card (a page role only
+     * when the new one has an address)
+     */
+    fun keepOwnerSettings(old: ExtrasFilter, made: ExtrasFilter): ExtrasFilter {
+        val canPage = made.mode == "path" || "{value}" in made.linkPath
+        val keepRole = old.roleSet && old.role.isNotEmpty() && (old.role != "page" || canPage)
+        return made.copy(
+            group = old.group,
+            onSearch = old.onSearch,
+            role = if (keepRole) old.role else made.role,
+            roleSet = keepRole,
+        )
+    }
+
+    /**
+     * r105 fix: the filters with each group's filters together where its first one is (as the Browse sheet shows them:
+     * one heading per group), the others in their order
+     */
+    fun groupsTogether(filters: List<ExtrasFilter>): List<ExtrasFilter> {
+        val out = ArrayList<ExtrasFilter>(filters.size)
+        val done = HashSet<String>()
+        filters.forEach { f ->
+            val g = f.group.trim()
+            if (g.isEmpty()) {
+                out += f
+            } else if (done.add(g)) {
+                out += filters.filter { it.group.trim() == g }
+            }
+        }
+        return out
+    }
+
+    /**
+     * r105 fix: ▲ / ▼ of filter [index] ([delta] < 0 = up) with groups kept together: inside its group it swaps with
+     * its neighbour; at its group's edge it leaves the group (staying where it is); outside groups, next to a group, it
+     * joins that group at that end; the only filter of a group moves past its neighbour (a whole group when that is
+     * one), keeping its group. Null = nothing to move
+     */
+    fun moveInGroups(filters: List<ExtrasFilter>, index: Int, delta: Int): List<ExtrasFilter>? {
+        if (index !in filters.indices || delta == 0) return null
+        val step = if (delta < 0) -1 else 1
+        val f = filters[index]
+        val g = f.group.trim()
+        val to = index + step
+        val n = filters.getOrNull(to)
+        val ng = n?.group?.trim().orEmpty()
+        val out = filters.toMutableList()
+        when {
+            n == null -> {
+                if (g.isEmpty()) return null
+                out[index] = f.copy(group = "")
+            }
+            g.isNotEmpty() && ng == g -> {
+                out[index] = n
+                out[to] = f
+            }
+            g.isNotEmpty() && filters.count { it.group.trim() == g } == 1 -> {
+                if (ng.isEmpty()) {
+                    out[index] = n
+                    out[to] = f
+                } else {
+                    // past the neighbour group's far end
+                    var end = to
+                    while (filters.getOrNull(end + step)?.group?.trim() == ng) end += step
+                    out.removeAt(index)
+                    out.add(end.coerceIn(0, out.size), f)
+                }
+            }
+            g.isNotEmpty() -> out[index] = f.copy(group = "")
+            ng.isNotEmpty() -> out[index] = f.copy(group = ng)
+            else -> {
+                out[index] = n
+                out[to] = f
+            }
+        }
+        return groupsTogether(out)
+    }
+
     /** "sort_by" → "Sort by" */
     fun prettyName(param: String): String =
         param.replace('_', ' ').replace('-', ' ').trim().replaceFirstChar { it.uppercase() }.ifEmpty { param }
@@ -1110,8 +1264,11 @@ internal object BuilderExtrasLogic {
             filters.mapNotNull { f ->
                 // r104: not usable yet: left out here; the editor shows it in red and templateValues logs it
                 if (filterProblem(f) != null) return@mapNotNull null
-                // r104: a filter made from links of another page than the search page opens that page
-                val linkPage = usesLinkPage(f, searchPath)
+                // r104: a filter made from links of another page than the search page opens that page. r105: a page
+                // filter made from links opens its links' page; an extra stays a parameter
+                val role = roleOf(f, searchPath)
+                val linkPage = f.mode != "path" && "{value}" in f.linkPath &&
+                    if (f.role.isEmpty()) usesLinkPage(f, searchPath) else role == "page"
                 val mode = if (f.mode == "path" || linkPage) "path" else "param"
                 val param = f.param.trim().ifEmpty { if (f.askParam) "" else f.key.trim() }
                 val path = if (linkPage) f.linkPath.trim() else f.path.trim()
@@ -1120,11 +1277,14 @@ internal object BuilderExtrasLogic {
                 val key = uniqueKey(f.key.trim().ifEmpty { param.ifEmpty { "filter" } }, keys)
                 keys += key
                 // r104 fix: the app's Dropdown / Sort always sends an option (the first when nothing was picked): a
-                // filter that opens its own page gets an empty "Any" first, so it opens that page only when picked
-                val options = if (mode == "path" && (f.type == "select" || f.type == "sort") && f.options.isNotEmpty()) {
-                    withAny(f.options)
-                } else {
-                    f.options
+                // filter that opens its own page gets an empty "Any" first, so it opens that page only when picked.
+                // r105 fix: a parameter's Dropdown / Sort gets its empty option first too ("Site default" when it has
+                // none), so the site's own first option is a pick like the others (generic-list v8 sends any value)
+                val listLike = (f.type == "select" || f.type == "sort") && f.options.isNotEmpty()
+                val options = when {
+                    listLike && mode == "path" -> withAny(f.options)
+                    listLike -> withSiteDefault(f.options)
+                    else -> f.options
                 }
                 val type = when (f.type) {
                     "checkbox" -> "checkbox"
@@ -1140,6 +1300,15 @@ internal object BuilderExtrasLogic {
                 map["type"] = JsonPrimitive(type)
                 map["mode"] = JsonPrimitive(mode)
                 if (mode == "param") map["param"] = JsonPrimitive(param) else map["path"] = JsonPrimitive(path)
+                // r105 (generic-list v8): the role ("" = a filter made before r105: the template reads it as v7 did)
+                if (f.role.isNotEmpty()) {
+                    map["role"] = JsonPrimitive(if (mode == "path") "page" else "extra")
+                    if (mode == "param") {
+                        map["onSearch"] = JsonPrimitive(worksOnSearch(f, searchPath))
+                        map["onLists"] = JsonPrimitive(!madeOnSearchPage(f, searchPath))
+                    }
+                }
+                f.group.trim().takeIf { it.isNotEmpty() }?.let { map["group"] = JsonPrimitive(it) }
                 map["options"] = JsonArray(
                     if (type == "select" || type == "sort" || type == "autocomplete") {
                         options.map { JsonObject(mapOf("label" to JsonPrimitive(it.label), "value" to JsonPrimitive(it.value))) }
@@ -1598,7 +1767,9 @@ internal class BuilderExtrasModel {
             val text = e.text.trim()
             if (text.isEmpty()) null else LearnEntry(text, paths.getOrNull(at), e.href?.trim()?.takeIf { it.isNotEmpty() })
         }.distinctBy { it.text }
-        val group = if (!isSelect && learnEntries.size >= 2 && pageUrl.startsWith("http")) {
+        // r105: a <select> without a name (the site's script reads it) is learned like a dropdown of buttons
+        val learnable = !isSelect || obj.str("name").isNullOrBlank()
+        val group = if (learnable && learnEntries.size >= 2 && pageUrl.startsWith("http")) {
             LearnGroup(
                 pageUrl = pageUrl.substringBefore('#'),
                 opener = obj.str("opener")?.trim()?.takeIf { it.isNotEmpty() },
@@ -1643,9 +1814,38 @@ internal class BuilderExtrasModel {
             heading = name?.takeIf { it.isNotBlank() } ?: BuilderExtrasLogic.nameFromUrl(url),
             maxOptions = if (suggest) BuilderExtrasLogic.MAX_SUGGESTIONS else BuilderExtrasLogic.MAX_GROUP_OPTIONS,
         )
-        val made = derived.filter?.let { if (suggest) BuilderExtrasLogic.asAutocomplete(it) else it }
-        AppLog.add('I', "lab", "extras full list of $url as ${if (suggest) "a text box with suggestions" else "a dropdown"}")
+        // r105: a directory (Genres, Makers…) opens one list per entry: a page filter; it sits in the group of the
+        // menu it was opened from (Collections ▸ Makers → "Collections")
+        val group = menuGroupOf(url)
+        val made = derived.filter
+            ?.let { if (suggest) BuilderExtrasLogic.asAutocomplete(it) else it }
+            ?.let { if (group.isNotEmpty() && it.group.isEmpty()) it.copy(group = group) else it }
+        AppLog.add(
+            'I',
+            "lab",
+            "extras full list of $url as ${if (suggest) "a text box with suggestions" else "a dropdown"}" +
+                (made?.let { " (${it.role.ifEmpty { "role as before" }} ${it.path.ifEmpty { it.param }}${if (group.isNotEmpty()) ", group $group" else ""})" } ?: ""),
+        )
         applyDerived(derived.copy(filter = made, listUrl = null), "the whole list (${result.pages} pages)")
+    }
+
+    /**
+     * r105: the menu heading a directory [url] was opened from: the card whose entry links to it (Collections, holding
+     * Makers), or the parent heading of the card that is the directory itself; "" when no menu card has it
+     */
+    private fun menuGroupOf(url: String): String {
+        val target = url.trim().substringBefore('#').trimEnd('/')
+        fun same(href: String?, base: String): Boolean {
+            val h = href?.trim()?.takeIf { it.isNotEmpty() } ?: return false
+            val abs = base.toHttpUrlOrNull()?.resolve(h)?.toString() ?: h
+            return abs.substringBefore('#').trimEnd('/') == target
+        }
+        val groups = mutable.value.menuGroups
+        groups.firstOrNull { g -> same(g.href, g.pageUrl) }?.let { g ->
+            return g.headingPath.dropLast(1).lastOrNull()?.let(BuilderExtrasLogic::cleanHeading).orEmpty()
+        }
+        groups.firstOrNull { g -> g.items.any { same(it.href, g.pageUrl) } }?.let { g -> return g.name }
+        return ""
     }
 
     // ---------- Pick a menu on the site (r103) ----------
@@ -1713,7 +1913,10 @@ internal class BuilderExtrasModel {
             offers = s.offers,
             knownParam = g.param,
         )
-        applyDerived(derived.copy(listUrl = null), "the menu group \"${g.headingPath.joinToString(" › ")}\"")
+        // r105: a sub-menu's filter sits in its parent menu's group (Collections ▸ Genres)
+        val parent = g.headingPath.dropLast(1).lastOrNull()?.let(BuilderExtrasLogic::cleanHeading).orEmpty()
+        val grouped = derived.filter?.let { if (parent.isNotEmpty()) it.copy(group = parent) else it }
+        applyDerived(derived.copy(filter = grouped, listUrl = null), "the menu group \"${g.headingPath.joinToString(" › ")}\"")
         val made = derived.filter
         mutable.update { st ->
             st.copy(menuGroups = st.menuGroups.map { if (it.id == id) it.copy(made = made?.key?.ifEmpty { "?" } ?: "") else it })
@@ -1769,12 +1972,17 @@ internal class BuilderExtrasModel {
             val filters = if (f == null) {
                 s.filters
             } else {
-                // r104 fix: a filter made again (the same list) keeps its place in the order the owner set
+                // r104 fix: a filter made again (the same list) keeps its place in the order the owner set. r105 fix:
+                // and its group, "Also while searching for words" and a role set on its card
                 val at = s.filters.indexOfFirst { sameFilter(it, f) || replaces(it) }
                 val others = s.filters.filterNot { sameFilter(it, f) || replaces(it) }
-                val made = if (f.key.isEmpty()) f else f.copy(key = BuilderExtrasLogic.uniqueKey(f.key, others.map { it.key }))
+                val kept = s.filters.getOrNull(at)?.let { BuilderExtrasLogic.keepOwnerSettings(it, f) } ?: f
+                val made = if (kept.key.isEmpty()) kept else kept.copy(key = BuilderExtrasLogic.uniqueKey(kept.key, others.map { it.key }))
                 added = made
-                if (at < 0) others + made else others.toMutableList().also { it.add(at.coerceAtMost(it.size), made) }
+                // r105 fix: a group's filters stay together (the builder's headings as the Browse sheet's)
+                BuilderExtrasLogic.groupsTogether(
+                    if (at < 0) others + made else others.toMutableList().also { it.add(at.coerceAtMost(it.size), made) },
+                )
             }
             s.copy(
                 filters = filters,
@@ -1904,6 +2112,7 @@ internal class BuilderExtrasModel {
         publish(true)
         AppLog.add('I', "lab", "learn \"${group.name}\": ${rows.size} entries on $base, pause $low–$high ms, menu button ${group.opener ?: "(none)"}")
         var triedPattern = false
+        var verifyLeft = 0
         var stopReason: String? = null
         try {
             for (i in rows.indices) {
@@ -1965,22 +2174,42 @@ internal class BuilderExtrasModel {
                     rows[i] = rows[i].copy(status = "learned", url = changed.url.substringBefore('#'))
                     AppLog.add('D', "lab", "learn ${rows[i].text} → ${changed.url}")
                 }
+                // r105: a pattern being checked: the next presses must land where it says (codes such as "multi" for
+                // "Multiple" never follow the texts: then every entry is pressed)
+                val checking = pattern
+                if (checking != null && rows[i].status == "learned") {
+                    val expected = BuilderExtrasLogic.fillPattern(checking, rows[i].text)
+                    if (expected == null || clean(expected) != clean(rows[i].url.orEmpty())) {
+                        AppLog.add('D', "lab", "learn: pattern ${checking.shown} wrong for ${rows[i].text} (${rows[i].url}): pressing all")
+                        pattern = null
+                        verifyLeft = 0
+                    } else {
+                        verifyLeft--
+                    }
+                }
+                val confirmed = pattern
+                if (confirmed != null && verifyLeft <= 0) {
+                    for (k in rows.indices) {
+                        if (rows[k].status != "waiting") continue
+                        val url = BuilderExtrasLogic.fillPattern(confirmed, rows[k].text)
+                        rows[k] = rows[k].copy(status = if (url == null) "missed" else "filled", url = url)
+                    }
+                    publish(true)
+                    AppLog.add('D', "lab", "learn: pattern ${confirmed.shown} checked on $PATTERN_CHECKS more entries")
+                    break
+                }
                 val learned = rows.filter { it.status == "learned" && it.url != null }
-                if (!triedPattern && learned.size >= PATTERN_AFTER) {
+                // r105: lists of up to PRESS_ALL entries are pressed entry by entry (each code as the site sends it)
+                if (!triedPattern && rows.size > PRESS_ALL && learned.size >= PATTERN_AFTER) {
                     triedPattern = true
                     val found = BuilderExtrasLogic.findPattern(learned.map { it.text to it.url.orEmpty() })
                     if (found != null) {
                         pattern = found
-                        for (k in rows.indices) {
-                            if (rows[k].status != "waiting") continue
-                            val url = BuilderExtrasLogic.fillPattern(found, rows[k].text)
-                            rows[k] = rows[k].copy(status = if (url == null) "missed" else "filled", url = url)
-                        }
-                        publish(true)
-                        AppLog.add('D', "lab", "learn: pattern ${found.shown} after $PATTERN_AFTER entries")
-                        break
+                        verifyLeft = PATTERN_CHECKS
+                        AppLog.add('D', "lab", "learn: pattern ${found.shown} after $PATTERN_AFTER entries, checking $PATTERN_CHECKS more")
+                    } else {
+                        AppLog.add('D', "lab", "learn: no pattern in the first $PATTERN_AFTER addresses, pressing all")
                     }
-                    AppLog.add('D', "lab", "learn: no pattern in the first $PATTERN_AFTER addresses, pressing all")
                 }
                 publish(true)
             }
@@ -1988,7 +2217,8 @@ internal class BuilderExtrasModel {
             val learned = rows.count { it.status == "learned" || it.status == "filled" }
             note = when {
                 stopReason != null -> stopReason
-                pattern != null -> "Pattern found after $PATTERN_AFTER: ${pattern?.shown} — the rest are filled in without pressing."
+                pattern != null && verifyLeft <= 0 ->
+                    "Pattern found after $PATTERN_AFTER and checked on $PATTERN_CHECKS more: ${pattern?.shown} — the rest are filled in without pressing."
                 learned == 0 -> "No entry changed the address: this list can't be learned (the site changes the page without a new address)."
                 else -> "Pressed all ${rows.count { it.status == "learned" || it.status == "nochange" }}: no pattern, each address is the one seen." +
                     rows.count { it.status == "missing" }.let { m -> if (m > 0) " $m not found on the page." else "" }
@@ -2007,11 +2237,12 @@ internal class BuilderExtrasModel {
         val run = s.learn ?: return
         val group = s.learnGroup ?: return
         stopLearning = true
+        // r105: only the entries that changed the address give the parameter and its codes: the list page itself
+        // ("All", no change) has none of the dropdown's other parameters (sort=recent…), so it would hide which one
+        // the entries change; it becomes the empty first option below
         val entries = run.rows.mapNotNull { r ->
             when (r.status) {
                 "learned", "filled" -> r.url?.let { BuilderExtrasLogic.GroupEntry(r.text, it, null) }
-                // "All": pressing it leaves the list page as it is
-                "nochange" -> BuilderExtrasLogic.GroupEntry(r.text, group.pageUrl, null)
                 else -> null
             }
         }
@@ -2024,15 +2255,29 @@ internal class BuilderExtrasModel {
             heading = group.name,
             offers = s.offers,
         )
-        // A "no change" entry ("All") names the empty option
+        // A "no change" entry ("All") names the empty option. r105 fix: a Sort's too ("Release date" when the list page
+        // already shows that order): picking it sends nothing, the site's own order
         val anyLabel = run.rows.firstOrNull { it.status == "nochange" }?.text
         val made = derived.filter?.let { f ->
-            if (anyLabel == null || f.type == "sort") {
+            if (anyLabel == null) {
                 f
             } else {
-                val options = f.options.map { if (it.value.isEmpty()) it.copy(label = anyLabel) else it }
+                val withEmpty = if (f.type == "sort") BuilderExtrasLogic.withSiteDefault(f.options) else BuilderExtrasLogic.withAny(f.options)
+                val options = withEmpty.map { if (it.value.isEmpty()) it.copy(label = anyLabel) else it }
                 f.copy(options = options, optionsText = BuilderExtrasLogic.formatOptions(options))
             }
+        }
+        made?.let { f ->
+            AppLog.add(
+                'I',
+                "lab",
+                "learn \"${group.name}\": " + if (f.role == "page") {
+                    "the address's path changes → a page filter (${f.path.ifEmpty { f.linkPath }})"
+                } else {
+                    "only ?${f.param}= changes → an extra on any list page, codes " +
+                        f.options.filter { it.value.isNotEmpty() }.take(6).joinToString(", ") { "${it.label}=${it.value}" }
+                },
+            )
         }
         val texts = run.rows.map { it.text }.toSet()
         applyDerived(derived.copy(filter = made, listUrl = null), "the learned list \"${group.name}\"") { old ->
@@ -2157,6 +2402,11 @@ internal class BuilderExtrasModel {
                                 "askParam" to JsonPrimitive(f.askParam),
                                 "linkPath" to JsonPrimitive(f.linkPath),
                                 "noLinkAddress" to JsonPrimitive(f.noLinkAddress),
+                                "role" to JsonPrimitive(f.role),
+                                "group" to JsonPrimitive(f.group),
+                                "onSearch" to JsonPrimitive(f.onSearch),
+                                "seenOn" to JsonPrimitive(f.seenOn),
+                                "roleSet" to JsonPrimitive(f.roleSet),
                             ),
                         )
                     },
@@ -2221,6 +2471,11 @@ internal class BuilderExtrasModel {
                 askParam = askParam,
                 linkPath = f.str("linkPath").orEmpty(),
                 noLinkAddress = oldLinks,
+                role = f.str("role").orEmpty().takeIf { it == "page" || it == "extra" }.orEmpty(),
+                group = f.str("group").orEmpty(),
+                onSearch = f.bool("onSearch") == true,
+                seenOn = f.str("seenOn").orEmpty(),
+                roleSet = f.bool("roleSet") == true,
             )
         }.orEmpty()
         val custom = o.arr("custom")?.mapNotNull { e ->
@@ -2391,21 +2646,62 @@ internal class BuilderExtrasModel {
 
     fun setFilterOnValue(index: Int, value: String) = updateFilter(index) { it.copy(onValue = value) }
 
-    /** r104: the filter card's ▲ / ▼: the order is the source's (filtersList, the Browse sheet) */
+    /**
+     * r104: the filter card's ▲ / ▼: the order is the source's (filtersList, the Browse sheet). r105 fix: a group's
+     * filters stay together; past its group's edge a filter leaves it, next to a group it joins it
+     * ([BuilderExtrasLogic.moveInGroups])
+     */
     fun moveFilter(index: Int, delta: Int) {
-        var moved = false
+        var moved: String? = null
         mutable.update { s ->
-            moved = false
-            val to = index + delta
-            if (index !in s.filters.indices || to !in s.filters.indices) return@update s
-            moved = true
-            val list = s.filters.toMutableList()
-            val f = list.removeAt(index)
-            list.add(to, f)
+            moved = null
+            val list = BuilderExtrasLogic.moveInGroups(s.filters, index, delta) ?: return@update s
+            val before = s.filters[index]
+            val after = list.firstOrNull { it.key == before.key && it.name == before.name } ?: before
+            moved = when {
+                after.group == before.group -> if (delta < 0) "up" else "down"
+                after.group.isEmpty() -> "out of the group \"${before.group}\""
+                else -> "into the group \"${after.group}\""
+            }
             s.copy(filters = list, rev = s.rev + 1)
         }
-        if (moved) AppLog.add('D', "lab", "extras filter ${index + 1} moved ${if (delta < 0) "up" else "down"}")
+        moved?.let { AppLog.add('D', "lab", "extras filter ${index + 1} moved $it") }
     }
+
+    /**
+     * r105: the filter card's role: "page" (picks the list; only for a filter with an address: a path, or links to
+     * another page) or "extra" (its parameter added to whichever list is chosen)
+     */
+    fun setFilterRole(index: Int, role: String) {
+        updateFilter(index) { f ->
+            if (role == "page" && f.mode != "path" && "{value}" !in f.linkPath) f else f.copy(role = role, roleSet = true)
+        }
+        state.value.filters.getOrNull(index)?.let { AppLog.add('I', "lab", "extras filter ${it.key} role ${it.role.ifEmpty { "(as before r105)" }}") }
+    }
+
+    /** r105: "Also while searching for words" of an extra */
+    fun setFilterOnSearch(index: Int, on: Boolean) = updateFilter(index) { it.copy(onSearch = on) }
+
+    /**
+     * r105: "Move to group…" / "Out of group": [group] "" = out of its group. A filter moved into a group goes right
+     * after that group's last filter, so the group stays together in the Browse sheet
+     */
+    fun setFilterGroup(index: Int, group: String) {
+        val name = group.trim().take(40)
+        mutable.update { s ->
+            val f = s.filters.getOrNull(index) ?: return@update s
+            val moved = f.copy(group = name)
+            val list = s.filters.toMutableList()
+            list.removeAt(index)
+            val last = if (name.isEmpty()) -1 else list.indexOfLast { it.group == name }
+            if (last >= 0) list.add(last + 1, moved) else list.add(index.coerceAtMost(list.size), moved)
+            s.copy(filters = list, rev = s.rev + 1)
+        }
+        AppLog.add('I', "lab", "extras filter ${index + 1} " + if (name.isEmpty()) "out of its group" else "in the group \"$name\"")
+    }
+
+    /** r105: the group names the filters have, in order (for "Move to group…") */
+    fun groupNames(): List<String> = state.value.filters.map { it.group.trim() }.filter { it.isNotEmpty() }.distinct()
 
     fun removeFilter(index: Int) = mutable.update { s ->
         if (index !in s.filters.indices) s else s.copy(filters = s.filters.filterIndexed { i, _ -> i != index }, rev = s.rev + 1)
@@ -2493,6 +2789,10 @@ internal class BuilderExtrasModel {
         // r102: Learn this list
         const val MAX_PRESSES = 60
         const val PATTERN_AFTER = 3
+
+        /** r105: lists up to this size are pressed entry by entry; longer ones use a pattern checked on 2 more */
+        const val PRESS_ALL = 30
+        const val PATTERN_CHECKS = 2
         const val CHANGE_MS = 6_000L
         const val LOAD_MS = 15_000L
         const val SETTLE_MS = 700L

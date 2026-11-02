@@ -377,7 +377,7 @@ internal object TestRuns {
 
     const val STEP_FILTERS = "filters"
     const val STEP_SETTINGS = "settings"
-    private const val MAX_FILTERS = 5
+    private const val MAX_FILTERS = 6
     private const val WORKS = "changes the list"
     private const val NOTHING_TO_COMPARE = "nothing to compare with"
     private const val SAME = "same as without it"
@@ -397,10 +397,11 @@ internal object TestRuns {
                 g.options.firstOrNull(::filled)?.let { listOf(it.label to JsonArray(listOf(it.value))) }.orEmpty()
             JsFilters.Type.Checkbox -> listOf((if (g.defaultChecked) "off" else "on") to JsonPrimitive(!g.defaultChecked))
             JsFilters.Type.TriState -> listOf("include" to JsonPrimitive(1))
-            JsFilters.Type.Sort -> g.options.take(2).mapIndexed { index, o ->
-                o.label to buildJsonObject {
-                    put("index", JsonPrimitive(index))
-                    put("value", o.value)
+            // r105 fix: a Sort's empty "Site default" (first) sends nothing: its first two real orders are tried
+            JsFilters.Type.Sort -> g.options.withIndex().filter { filled(it.value) }.take(2).map { iv ->
+                iv.value.label to buildJsonObject {
+                    put("index", JsonPrimitive(iv.index))
+                    put("value", iv.value.value)
                     put("ascending", JsonPrimitive(false))
                 }
             }
@@ -449,13 +450,33 @@ internal object TestRuns {
 
     private const val ARROW = " → "
 
+    /** r105: the Filters step's first item when the list without filters is empty */
+    private const val BASE_TITLE = "Without filters"
+    private const val EMPTY_BASE = "0 titles · filters are on a page with nothing listed"
+
     /**
-     * Each filter (max 5) once with its first non-empty value, a Sort with its first two, through `search("", 1,
+     * Each filter (max 6, r105: the built-in List first) once with its first non-empty value, a Sort with its first two, through `search("", 1,
      * { key: value })`; the titles count and whether the list differs from the unfiltered first page (Sort: from
      * each other). One item per try; its subtitle carries the verdict [judge] reads.
      */
     private suspend fun filtersCheck(rt: JsRuntime, lists: List<Result>): Result {
-        val groups = JsFilters.flat(JsFilters.groups(rt.call("getFilters")))
+        val raw = rt.call("getFilters")
+        val groups = JsFilters.flat(JsFilters.groups(raw))
+        // r105: each filter's role as getFilters says it (generic-list v8: "page" picks the list, "extra" adds to it)
+        val roles = HashMap<String, String>()
+        fun walk(e: JsonElement?) {
+            when (e) {
+                is JsonArray -> e.forEach { walk(it) }
+                is JsonObject -> {
+                    val key = e.str("key")
+                    val role = e.str("role")
+                    if (key != null && role != null) roles[key] = role
+                    walk(e["filters"] ?: e["children"] ?: e["items"])
+                }
+                else -> Unit
+            }
+        }
+        runCatching { walk(raw) }
         val tried = groups.filter { tryValues(it).isNotEmpty() }.take(MAX_FILTERS)
         if (tried.isEmpty()) {
             return Result(
@@ -468,6 +489,13 @@ internal object TestRuns {
         val unfiltered = searchUrls(rt, emptyMap())
         val base = unfiltered.urls?.takeIf { it.isNotEmpty() } ?: lists.firstOrNull { it.items.isNotEmpty() }?.items?.map { it.url }
         val items = ArrayList<Item>()
+        // r105: the list the filters go on already gives nothing: every try would say "0 titles" for the wrong reason
+        if (unfiltered.urls != null && unfiltered.urls.isEmpty()) {
+            val line = "$BASE_TITLE$ARROW${unfiltered.address}$ARROW$EMPTY_BASE"
+            AppLog.add('W', "lab", "Test Run filter $line")
+            runCatching { rt.onConsole?.invoke(JsConsoleEntry(System.currentTimeMillis(), "warn", STEP_FILTERS, line)) }
+            items.add(Item(title = BASE_TITLE, subtitle = "${unfiltered.address}$ARROW$EMPTY_BASE", kind = Kind.Other, url = ""))
+        }
         tried.forEach { g ->
             val values = tryValues(g)
             val outcomes = values.map { (label, value) -> label to searchUrls(rt, mapOf(g.key to value)) }
@@ -486,10 +514,12 @@ internal object TestRuns {
                     else -> "${urls.size} titles · $SAME"
                 }
                 // r103: the exact address tried, so a wrong learned address is visible (Logs, the run's console, the step)
-                val line = "${g.name} = $label$ARROW${outcome.address}$ARROW$verdict"
+                // r105: with its role (page: picks the list; extra: added to the list)
+                val name = g.name + (roles[g.key]?.let { " ($it)" } ?: "")
+                val line = "$name = $label$ARROW${outcome.address}$ARROW$verdict"
                 AppLog.add('D', "lab", "Test Run filter $line")
                 runCatching { rt.onConsole?.invoke(JsConsoleEntry(System.currentTimeMillis(), "info", STEP_FILTERS, line)) }
-                items.add(Item(title = "${g.name} = $label", subtitle = "${outcome.address}$ARROW$verdict", kind = Kind.Other, url = ""))
+                items.add(Item(title = "$name = $label", subtitle = "${outcome.address}$ARROW$verdict", kind = Kind.Other, url = ""))
             }
         }
         return Result(title = "", ok = true, millis = 0, items = items, text = "${items.size} tries")
@@ -750,17 +780,22 @@ internal object TestRuns {
                 }
             }
             id == STEP_FILTERS -> {
-                val verdicts = result.items.map { verdictOf(it.subtitle) }
+                // r105: the empty unfiltered list is a warning of its own, not one of the tries
+                val emptyBase = result.items.firstOrNull { it.title == BASE_TITLE }
+                val tries = result.items.filter { it.title != BASE_TITLE }
+                val warning = emptyBase?.let { "filters are on a page with nothing listed (${it.subtitle.orEmpty().substringBefore(ARROW)}) · " }.orEmpty()
+                val verdicts = tries.map { verdictOf(it.subtitle) }
                 val works = verdicts.count { WORKS in it || NOTHING_TO_COMPARE in it }
                 val failed = verdicts.count { it.startsWith(FAILED) }
                 // r103: "Sort = Today → GET /en/trending/today?page=1 → 0 titles" (the address tried, then the verdict)
-                val off = result.items.filter { item -> verdictOf(item.subtitle).let { WORKS !in it && NOTHING_TO_COMPARE !in it } }
+                val off = tries.filter { item -> verdictOf(item.subtitle).let { WORKS !in it && NOTHING_TO_COMPARE !in it } }
                     .take(2).joinToString(" · ") { "${it.title}$ARROW${it.subtitle}" }
+                val n = tries.size
                 when {
-                    count == 0 -> step(StepStatus.Amber, 0, result.text.orEmpty())
-                    failed == count -> step(StepStatus.Red, 0, "every filter failed · ${off.take(240)}")
-                    works == count -> step(StepStatus.Green, works, "$works of $count tries change the list")
-                    else -> step(StepStatus.Amber, works, "$works of $count tries change the list · ${off.take(240)}")
+                    n == 0 -> step(StepStatus.Amber, 0, warning + result.text.orEmpty())
+                    failed == n -> step(StepStatus.Red, 0, "${warning}every filter failed · ${off.take(240)}")
+                    works == n && emptyBase == null -> step(StepStatus.Green, works, "$works of $n tries change the list")
+                    else -> step(StepStatus.Amber, works, "$warning$works of $n tries change the list · ${off.take(240)}")
                 }
             }
             id == STEP_SETTINGS -> {

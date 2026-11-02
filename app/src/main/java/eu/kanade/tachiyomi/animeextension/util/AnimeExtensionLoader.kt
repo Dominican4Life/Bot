@@ -232,12 +232,29 @@ internal object AnimeExtensionLoader {
     suspend fun loadExtensionFromPkgName(context: Context, pkgName: String): AnimeLoadResult {
         val extensionPackage = getExtensionInfoFromPkgName(context, pkgName)
         if (extensionPackage == null) {
-            logcat(LogPriority.ERROR) { "Extension package is not found ($pkgName)" }
+            // KMK: r105 every install is announced to both loaders; another kind's package (or another app) isn't a
+            // failure here, so it's a D line. E stays for a package that is missing or unreadable.
+            if (isOtherInstalledPackage(context, pkgName)) {
+                logcat(LogPriority.DEBUG) { "Not a anime extension, skipped ($pkgName)" }
+            } else {
+                logcat(LogPriority.ERROR) { "Extension package is not found ($pkgName)" }
+            }
             lastError = "the app couldn't find the installed package"
             return AnimeLoadResult.Error
         }
         return loadExtension(context, extensionPackage)
     }
+
+    // KMK -->
+    /** r105: [pkgName] is installed, but without this loader's feature (e.g. a manga extension) */
+    private fun isOtherInstalledPackage(context: Context, pkgName: String): Boolean = try {
+        @Suppress("DEPRECATION")
+        val info = context.packageManager.getPackageInfo(pkgName, PackageManager.GET_CONFIGURATIONS)
+        !isPackageAnExtension(info)
+    } catch (_: Exception) {
+        false
+    }
+    // KMK <--
 
     fun getExtensionPackageInfoFromPkgName(context: Context, pkgName: String): PackageInfo? {
         return getExtensionInfoFromPkgName(context, pkgName)?.packageInfo

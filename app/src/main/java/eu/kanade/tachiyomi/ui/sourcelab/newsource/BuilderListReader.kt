@@ -434,7 +434,7 @@ internal fun ReadListDialog(
                         }
                         Text(
                             if (chosen == "autocomplete") {
-                                "Typed names are matched to the list (any case); a name not in it is sent as a slug (Big Tits → big-tits)."
+                                "Typed names are matched to the list (any case); a name not in it is sent as a slug (Slice of Life → slice-of-life)."
                             } else {
                                 "One entry is picked from the list."
                             },

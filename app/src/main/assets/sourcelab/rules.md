@@ -2,7 +2,12 @@
 version: 15
 # Komikku Source Lab rules file, v15: the ultimate guide (built in from r105; v14 was r102, v13 r100). New in v15: filters that
 # pick the list, codes not labels, groups and directories (2.6), suggestions and sections that load later (3.6), Record and
-# convert's self-check and its TODOs (11.9), stalled extension installs (11.10). Body: sections 1–12 below, written for this fork.
+# convert's self-check and its TODOs (11.9), stalled extension installs (11.10); and from r104 and r105's fix pass: tags
+# as the site's rows (3.7), the Suggestions label by section heading (3.6), filters not in the source yet, ▲▼ across
+# groups, "Site default", the List following the list browsed, the page-number style, values already encoded, re-made
+# filters keeping their settings (2.6), cover placeholders and srcset (3.4), the single episode's thumbnail (4.4),
+# template helpers that log (11.7), Record and convert's other threads, app traffic and list sizes (11.9).
+# Body: sections 1–12 below, written for this fork.
 # Machine rules first; `check` is one of regex-in-code, selector-pattern, result-field,
 # compare-saved-chapter-urls, header-present, response-status, render-option, or text (read only).
 # `applies` tags this build computes: manga, anime, js, json, api, madara, cloudflare, apk-port, videos, all.
@@ -427,6 +432,25 @@ rules:
     params: { pattern: 'was not converted from the recording' }
     applies: [js]
 
+  # ---------- new in v15: code checks from r104 and r105's fix pass ----------
+  - id: tag-group-whole-row
+    severity: info
+    check: regex-in-code
+    section: "3.7"
+    title: A Tags group that reads whole rows or the rows' labels
+    fix: "A group whose selector ends in dt, th, tr or a row box (.info-row, .field) gives \"Release date 2026-10-30\" or \"Code, Type, Studio\", never the values alone. In the builder open the source with Edit and press Split into rows on that group (or tap the details block again with Tags armed): one group per row, named after its label, values only."
+    params: { pattern: '\\?"selector\\?"\s*:\s*\\?"[^"]*?(?<![\w.-])(?:dt|th|tr|[a-z]+\.(?:[\w-]*[-_])?(?:row|field|meta-item|info-item|detail-item))(?:\.[\w-]+)*\\?"', near: 'TAG_GROUPS' }
+    applies: [js]
+  - id: value-encoded-twice
+    severity: warn
+    check: regex-in-code
+    section: "2.6"
+    title: An address encoded twice (%25 followed by a code)
+    fix: "%2520 is a space encoded twice (%20, then its % as %25). A value read from the site's links (a directory's slug) is often already encoded: keep %XX as it is and encode the rest. generic-list v8 does this for a path's value (encodeValue); write the address once, not encodeURIComponent of an encoded text. If the site really sends %25 there, Ignore the rule."
+    snippet: "function encodeValue(v) { return String(v).split(/(%[0-9A-Fa-f][0-9A-Fa-f])/).map(function (s, i) { return i % 2 ? s : encodeURIComponent(s); }).join(\"\"); }"
+    params: { pattern: '%25[0-9A-Fa-f][0-9A-Fa-f]', unless: 'encodeValue|split\(' }
+    applies: [js]
+
   # ---------- text rules (read when the tags match) ----------
   - id: madara-ajax-headers
     severity: info
@@ -844,6 +868,83 @@ rules:
     title: A batch of extension installs that seems stuck
     fix: "Android sometimes waits for a confirm nobody sees. From r105 a prompt left unanswered gets a \"Tap to approve\" notification, and the app gives up on that one extension after 60 s with no answer from Android (3 min when it is waiting for your confirm), logs it under extensions and goes on with the next; install the skipped one again on its own."
     applies: [apk-port]
+  # ---------- new in v15: text rules (r104 and r105's fix pass) ----------
+  - id: tag-rows-one-group
+    severity: info
+    check: text
+    section: "3.7"
+    title: Tags are the site's rows, one group each
+    fix: "With Tags armed, one tap on a details block, a row, a label or a value gives one group per row in page order: the name is the row's label, the values are the value elements only. Rows of links go to Tags, rows of plain text (a code, a date, a duration) to Description. Older whole-row or label-list groups get Split into rows in the Tags card; Undo puts them back."
+    applies: [js]
+  - id: suggestions-by-heading
+    severity: info
+    check: text
+    section: "3.6"
+    title: Tap a card to get its section as a Suggestions group
+    fix: "With Suggestions armed, tap one card in a \"You may like\" or \"Related\" section: the group is every card of that section, named after the section's heading (read by its own text, so a \"See all\" link in the heading is fine). Tap a card of each section you want; rename or remove groups in the card."
+    applies: [js]
+  - id: filter-not-in-source
+    severity: info
+    check: text
+    section: "2.6"
+    title: A filter in red is not in the source yet
+    fix: "\"Not in the source yet\" means the filter has no parameter and no address (a dropdown of buttons not learned, a filter added by hand). It is skipped with a log line, never sent. Learn addresses, type the parameter name, or pick the menu again; filters made from links keep their links' own page."
+    applies: [js]
+  - id: filter-site-default
+    severity: info
+    check: text
+    section: "2.6"
+    title: Dropdowns start with an empty Site default option
+    fix: "The app always sends a dropdown's or sort's picked option, the first when nothing was picked. From r105 a parameter's Sort or Select gets an empty first option, Site default (an empty option the site has is moved first instead): left there nothing is sent, and every real option, the site's first one too, is sent when picked."
+    applies: [js]
+  - id: filter-list-follows-browse
+    severity: info
+    check: text
+    section: "2.6"
+    title: Filters applied on a tab or Popular stay on that list
+    fix: "The List filter's default is the list Browse was showing (the app sends it as __from: popular, latest or tab:<path>). Extras applied on Popular or a tab are added to that list; only a changed List or page filter moves to another one. With no list known, Latest."
+    applies: [js]
+  - id: page-number-style
+    severity: info
+    check: text
+    section: "2.6"
+    title: /page/N only after a page word
+    fix: "The page number of a page filter's list follows the list paths: ?page=N (any name), /page/N when the word before the number is a page word (page, p, pg, pagina, seite, strona, trang, halaman), else /N at the end. /recent/2 is the recent list's own name plus /N, so another list gets /other/2, not /other/recent/2."
+    applies: [js]
+  - id: filter-remade-keeps-settings
+    severity: info
+    check: text
+    section: "2.6"
+    title: Making a filter again keeps what you set on it
+    fix: "Learn again, Fetch again or picking the menu again replaces the filter's options and address but keeps its place, its group, its Also while searching for words switch and a role you chose on the card (a page role only when the new filter has an address)."
+    applies: [js]
+  - id: cover-placeholders-known
+    severity: info
+    check: text
+    section: "3.4"
+    title: Placeholders are known file names, or one picture on every card
+    fix: "A cover is skipped when its file name is a placeholder's (blank.gif, spacer.gif, placeholder.png, lazy.png, 1x1.gif, no-image.jpg), not when the name only starts that way. When 3 or more cards all have the same picture it is the site's placeholder: read each card's next attribute. Only srcset attributes are split at commas: a comma inside an address (w_200,h_300) stays."
+  - id: single-episode-cover-thumb
+    severity: info
+    check: text
+    section: "4.4"
+    title: The only episode's thumbnail is the title's picture
+    fix: "A title page that is its own only episode gives the episode the title's picture as thumbnailUrl: the Cover tapped on the title page, else og:image, a video poster, twitter:image (generic-list v7+)."
+    applies: [js]
+  - id: recorder-other-threads
+    severity: info
+    check: text
+    section: "11.9"
+    title: Record and convert counts requests made on other threads
+    fix: "From r104 a request made off the step's thread (OkHttp's enqueue, an Rx scheduler) belongs to the step running then. Requests with another site's Referer or Origin and the app's own traffic (extension repos, trackers, GitHub, update checks) are left out; requests counted only because their step was running have their own budget (20, 2 MB per step) and never teach hosts. Logs: Recording <step>: N requests (M started on other threads)."
+    applies: [apk-port]
+  - id: converted-list-size
+    severity: info
+    check: text
+    section: "11.9"
+    title: A converted list must be the right size too
+    fix: "From r105 the self-check also compares counts. A paged list must give at least min(returned, 5) items and as many as the reply's best list holds, so a 1-item side array can't pass as 1 of 1. Other lists must give between 0.8 and 1.1 times the returned count: a superset array holding the 20 returned among 140 gets a TODO saying the extension picks the list in its own code."
+    applies: [apk-port]
   # ---------- softened in v14: the app's global debug switch replaces a source's own (kept last, read rarely) ----------
   - id: console-log-unguarded
     severity: info
@@ -987,6 +1088,13 @@ Many sites put the same dropdowns (Type, Year, Sort…) on every list page and c
 - **A base page with nothing listed.** The Test Run's Filters step first loads the source with no filters. When that gives 0 titles it warns "filters are on a page with nothing listed": the filters were recorded on the search page with no words, which many sites answer empty. Learn them again on a list page (Latest, a tab) so they become extras of every list.
 - **Search with words** uses the search address plus only the extras learned on the search page (or ticked **Also while searching for words**); page filters and other extras are left out with a log line, because the search page doesn't take them.
 - **Check it.** Each try in the Filters step shows the filter's role and the address tried (`Sort (extra) = Longest → GET /en/recent?page=1&sort=longest → 24 titles`). An extra that gives the same list as no filter, or 0 titles, has a wrong code or doesn't work on that page.
+- **Filters not in the source yet (r104).** A filter with no parameter and no address (a dropdown of buttons not learned yet, a filter added by hand) is shown in red on its card, "Not in the source yet — Learn addresses or type the address name", and is **skipped with a log line**, never silently dropped and never sent. Learn addresses, type the parameter's name, or pick the menu again (`filter-not-in-source`). Filters made from links keep their links' own page (a path filter with an empty first option "Any", so it opens that page only when picked); one made from links before r104 says "pick this menu again". Values put into a path are URL-encoded.
+- **Order (▲▼).** The cards' order is the Browse sheet's order, and it decides which page filter wins. Inside a group ▲▼ swap a filter with its neighbour; at the group's edge the next press takes it **out of the group** (it stays where it is); a filter outside groups that moves next to a group **joins it** at that end; the only filter of a group moves past its neighbour with its group kept. A group's filters always stay together under one heading.
+- **"Site default" first (r105 fix).** The app always sends a dropdown's or sort's picked option, the first one when nothing was picked, so the site's own first option used to be the same as "nothing". Now a parameter's Sort or Select gets an empty first option **Site default** (an empty option it already has, such as "All", is moved first instead): left there, nothing is sent; every real option, the first one too, is sent when picked (`filter-site-default`). Page filters made from links get "Any" the same way.
+- **The List follows what you were browsing (r105 fix).** The app passes the list Browse was showing as `__from` (`popular`, `latest`, `tab:<path>`): applying filters while on a tab or Popular adds the extras to **that** list; only a changed List or page filter moves to another. With nothing known it is Latest (`filter-list-follows-browse`).
+- **The page-number style (r105 fix).** A page filter's list takes the page number like the list paths do: `?page=N` (whatever the parameter is called); `/page/N` only when the word before the number is a page word (`page`, `p`, `pg`, `pagina`, `seite`, `strona`, `trang`, `halaman`); otherwise `/N` is added at the end, keeping a trailing slash. A Latest path `/recent/{page}` means "the recent list plus `/N`": another list becomes `/other/2`, never `/other/recent/2` (`page-number-style`).
+- **Values already encoded (r105 fix).** A value read from the site's links (a directory's slug such as `caf%C3%A9`) is often already percent-encoded. `%XX` already in it is kept and only the rest is encoded, so it isn't sent as `%25C3%25A9` (`value-encoded-twice` finds `%25` followed by a code in the source).
+- **Making a filter again keeps your settings (r105 fix).** Learn again, Fetch again or picking the menu again replaces the options and the address, but keeps the filter's place, its **group**, its **Also while searching for words** switch and a **role you chose** on the card (a page role only when the new one has an address to open) (`filter-remade-keeps-settings`).
 
 ## 3. Title pages
 
@@ -1002,7 +1110,7 @@ Words the app understands: ongoing, publishing, releasing, airing; complete, com
 
 `author` and `artist` are separate fields; several names go in one text joined with `", "`. Genres are a list of text (a single text also works). Read them inside the title's block, not the whole page (1.11). Don't fold the status or the type ("Manhwa") into the genres unless the site does. Labels and values: for "Status: Ongoing" rows use `div.info-row:contains(Status) span`, not row counting.
 
-**Grouped tags.** A genre written `"Group: value"` (`"Cast: Jane Doe"`, `"Maker: Studio X"`) is shown by the app under its group, like E-Hentai's namespaces: the group's name on the left, its values as chips on the right. Tapping such a tag searches the source with the whole `"Group: value"` (map it to a filter in `search` when a filter has that name and option, else search the value's words); a long press searches every source for the value alone. When you group some genres, group all of them (others as `"Tags: …"`), or the ungrouped ones sit apart. The builder's **Tags** label does this for you (11.8): each row you tap (`dt`/`dd`, `th`/`td`, a label and its links) becomes a group in `tagGroups`, sent to the genres, the description, or both.
+**Grouped tags.** A genre written `"Group: value"` (`"Cast: Jane Doe"`, `"Maker: Studio X"`) is shown by the app under its group, like E-Hentai's namespaces: the group's name on the left, its values as chips on the right. Tapping such a tag searches the source with the whole `"Group: value"` (map it to a filter in `search` when a filter has that name and option, else search the value's words); a long press searches every source for the value alone. When you group some genres, group all of them (others as `"Tags: …"`), or the ungrouped ones sit apart. The builder's **Tags** label does this for you (3.7, 11.8): one tap on the details block makes each row (`dt`/`dd`, `th`/`td`, a label and its links) a group in `tagGroups`, sent to the genres, the description, or both.
 
 ### 3.4 Covers
 
@@ -1014,6 +1122,8 @@ Covers are the most common thing that "doesn't load":
 4. **Thumbnails.** A 110 px list thumbnail is blurry in the library. `meta[property='og:image']` on the title page is usually the full picture: return it as `coverUrl` from `getDetails` **only when the list has none or the original extension does the same**; a `coverUrl` from details replaces the list's picture after the title is opened, and in Panorama it can change shape.
 5. **Relative addresses** must become full ones (9.1). `//cdn/x.jpg` gets `https:`.
 6. **Hotlink protection and image-host bot checks**: 5.3.
+7. **What counts as a placeholder (r105 fix).** A picture is a placeholder when its **whole file name** is a known one (`blank.gif`, `spacer.gif`, `placeholder.png`, `lazy.png`, `loading.gif`, `1x1.gif`, `no-image.jpg`, with an optional `-min` or size suffix), not when the name only starts that way (`pixel-art-cover.jpg` is a cover). When **3 or more cards all have the same picture**, that picture is the site's placeholder: each card's next attribute is read instead (generic-list v8 logs "every card has the picture …: a placeholder, left out"). `data:`, `about:blank`, `.svg`, favicons and logos are never covers (`cover-placeholders-known`).
+8. **Only srcset is split at commas (r105 fix).** `srcset` and `data-srcset` give their first entry (`a.jpg 320w, b.jpg 640w` → `a.jpg`). Any other attribute keeps commas inside the address (an image service's `w_200,h_300` path), so it isn't cut in half.
 
 ### 3.5 webUrl and ids
 
@@ -1021,10 +1131,22 @@ An entry's `url` is your key: whatever your code needs to find the title again, 
 
 ### 3.6 Suggestions (`getRelated`)
 
-- **Named groups.** `getRelated(url)` may return `{ "You may like": [...], "Related": [...] }`: the title screen shows one row per name, in order. The builder's **Suggestions** label makes one group per section you tap on the title page (generic-list v7+); give each the site's own heading. Entries are list entries (`url`, `title`, `coverUrl`) in the same `url` format as the lists (3.5); the title itself and repeats are left out.
+- **Named groups.** `getRelated(url)` may return `{ "You may like": [...], "Related": [...] }`: the title screen shows one row per name, in order. The builder's **Suggestions** label makes one group per section you tap on the title page (generic-list v7+); give each the site's own heading. Entries are list entries (`url`, `title`, `coverUrl`) in the same `url` format as the lists (3.5); the title itself and repeats are left out. Since r105 the anime title screen also shows one named row per group, and the full Suggestions page is split into the same sections.
+- **The Suggestions label (r104).** Like Tags it stays armed. Tap **one card** in a section: the group is every card of that section, **named after the section's heading**. The heading is found by its own text (`:matchesOwn`), so a "See all" link inside the heading doesn't stop it. Tap a card of each section you want; rename or remove groups in the Suggestions card (`suggestions-by-heading`).
 - **Covers are lazy here too.** Suggestion rows load late on most sites, so their `img` usually has a placeholder in `src` and the picture in `data-src`, `data-lazy-src`, `data-original` or `srcset`. Read those first and `src` last, and skip `data:` addresses and placeholder files (`placeholder`, `blank`, `lazy`, `loading`, `1x1`, `.svg`). An `a || b` chain that starts with `src` stops at the placeholder (`cover-src-before-lazy`); generic-list v8's `coverOf` reads them in the right order for lists and suggestions (3.4).
 - **Sections that load later.** A section whose cards are in WebView but not in `view-source:` was filled by the site's script after the page loaded, from a request of its own (HTML, or JSON holding HTML). The source only reads the page, so it finds nothing. After a Suggestions pick the builder reads the raw page; when the cards aren't there it looks through the requests the page made and keeps the one whose reply has them. The group is marked **loads later**, and its address becomes a template filled per title (`{seg1}`… the title address's parts, `{path}`, `{url}`, `{attr:name}` a value from the page). When no request has the cards the card warns that the section is filled by the site's script and isn't in the page: find the request in DevTools › Network while the section appears and put it in by hand, or leave the group out.
 - **Keep it cheap.** `getRelated` runs every time a title opens: one or two requests, the page already read for details when you can (10.1).
+
+### 3.7 Tags from the site's rows (the builder)
+
+Title pages often have a details block of label / value rows: `Release date 2026-10-30`, `Studio Studio X`, `Genres Drama, Slice of Life`. The app shows grouped tags (3.3) like the site shows these rows.
+
+- **One tap, every row (r104).** With **Tags** armed, one tap on the details block, on a row, on a label or on a value gives **one group per row, in page order**. A details block is a `dl` (`dt` / `dd`), a `table` (`th` or a short first `td`, then the next cell), or a box of 2 or more rows whose first child is a short label and the next the value. Rows with a picture are not rows.
+- **Name and values.** A group's **name is the row's label** (without its colon); its **values are the value elements only**, never the label. The selector is anchored on the label's text (`dt:matches(^\s*Studio) + dd a`), so it finds the same row on every title even when rows are missing or move.
+- **Where each row goes.** A row of **links** goes to **Tags** (`"Studio: Studio X"` genres, tappable). A row of **plain text** (a code, a date, a duration) goes to **Description** as a line under it (`Release date: 2026-10-30`). Change a group's target to Tags, Description or both in the Tags card.
+- **Re-tapping** the block adds only the rows still missing; Undo removes that tap's rows.
+- **Older groups.** Groups made before r104 may read **whole rows** (`… > div.info-row`, `tr`, giving "Release date 2026-10-30") or **the labels** (`… > dt`, `th`, giving "Code, Type, Studio"). In Edit (11.8) such a group gets **Split into rows** in the Tags card: the rows of its block replace it, one group each; Undo restores the old groups exactly. Lint's `tag-group-whole-row` finds these selectors in `TAG_GROUPS`.
+- A row class is matched as a whole word (`.row`, `.info-row`, `.meta-item`), never inside another word (`.arrow`, `.browse-list`).
 
 ## 4. Chapters and episodes
 
@@ -1048,6 +1170,8 @@ Always try to return `number`: ordering, "next chapter" and the r90 protection r
 ### 4.4 Scanlators, Sub/Dub, seasons
 
 `scanlator` is the group's name for a chapter and the episode's info line for anime: put **"Sub"**, **"Dub"** or **"Sub · Dub"** there. Sites with separate dub lists can return both episodes, with `scanlator` telling them apart. Episodes also take `thumbnailUrl` (a 16:9 picture on the row; cards have an `img`, APIs call it `thumbnail`, `image`, `still`, `poster`), `description` (the summary), `season`, `seasonName`, `seasonCoverUrl`. Anime databases (Jikan, Kitsu, AniList, TMDB) have thumbnails and summaries by title when the site has none, but keep those lookups behind a setting and bound them (10.4).
+
+**A title that is its own only episode** (the builder's single-episode switch: one video per title page, no list) gives that episode the **title's picture** as `thumbnailUrl` (generic-list v7+): the Cover tapped on the title page (its picked attribute, then `data-src`, `src`, `poster`), else `og:image`, a `video[poster]`, then `twitter:image`. A failure to read it is logged, and the episode is still returned (`single-episode-cover-thumb`).
 
 ### 4.5 Dates and timezones
 
@@ -1326,6 +1450,8 @@ One switch for every source: **Settings › Advanced › JS sources: debug logs*
 
 Line numbers match your file. A `[net] … -> 200` then an error is a parsing bug. `TypeError: not a function` right after a 200 is `text(css)` on an element. "That parsed page is gone" means the 24-page cache evicted it. Don't swallow errors: an empty `catch`, or one that returns `[]`, hides the bot-check mark the app needs and leaves nothing in Logs; log the message and rethrow, or throw your own clear `Error`. Turn a redirect loop into "not logged in" rather than a generic failure.
 
+**The templates follow this too (r104, generic-list v7+).** The title page's small readers (a field's selector, a meta tag, a Tags group, the episode thumbnail) catch their error, **log it** ("Title page: <css> wasn't read: …", "Tags group <name> wasn't read: …") and give `""`, so the other fields still come and the line is in Logs. No template helper has an empty `catch`; a source made from one is Lint-clean on `empty-catch-hides-errors`. Keep it that way when you edit one.
+
 ### 11.8 The New source builder: picking elements
 
 - **Read the helper after every tap.** Each pick is checked at once: ✓ (looks right), ! (doesn't look like that label) or i (needs something, such as a player for the hidden browser). The card lists what passed and what didn't, with sample texts. Keep **Check each pick** on.
@@ -1333,10 +1459,11 @@ Line numbers match your file. A `[net] … -> 200` then an error is a parsing bu
 - **The Item is the repeated card**: the smallest element that repeats (3 or more on the page) and holds both the title's link and its cover. Not a heading bar such as "New Releases", not the list's wrapper, not one link. Title and Cover should then count about as many as Items (within a fifth).
 - **Next** is one link to page 2 on the same site; **Chapter** links repeat and differ (a title that is its own only episode uses the single-episode switch); **Video** is the `iframe` or `video`, not the play button over it, and never an ad network's frame (6.8).
 - **Tapping for…** (from r102). The row under the address bar lists every label by page (List page, Title page, Episode/Chapter page, List for a filter). With nothing chosen the page works like a normal browser (scroll, open menus, follow links); tap a label to arm it, and the next tap on the page is that pick, never a navigation. A long press still picks without arming. The step follows the page you're on (a title's address → Title page), so open a title in the site itself and its labels are there.
-- **Tags in groups.** **Tags** stays armed: each row you tap on the title page (Cast, Maker, Genres, Release date…) becomes a group named after the row's own label, its values going to the tags, the description or both (rows of plain text such as a date go to the description). Re-tapping a row replaces its group; rename or remove one in the Tags card. The source writes them as `"Group: value"` genres (3.3) from `tagGroups`.
+- **Tags in groups.** **Tags** stays armed: from r104 one tap on a details block, a row, a label or a value brings **every row of the block**, one group each in page order, named after the row's label with the value elements only; link rows go to Tags, plain rows (a code, a date, a duration) to Description. Rename, retarget or remove one in the Tags card; old whole-row or label-list groups get **Split into rows** (3.7). The source writes them as `"Group: value"` genres (3.3) from `tagGroups`.
 - **Learn this list.** For a filter menu whose entries are buttons without links (a year or type dropdown the site's script runs), pick the list with **List for a filter**, then **Learn this list**: the builder presses each entry on the list page (opening the menu first), waits for the address to change and records it, with a short random pause between presses; after three it looks for the pattern (a query value or path part equal to the entry's text) and fills in the rest. An entry that changes nothing (like "All") becomes the filter's "Any". Tap the entries, not the menu's own button. From r105 **Learn addresses** does the same for dropdowns and `<select>`s (a `<select>` without a name too), keeps the codes the site sends rather than the labels, and sets each filter's role (2.6).
 - **Menus with sub-menus and directories.** Tapping a menu heading whose sub-menus are menus makes a group with one filter per sub-menu; a sub-menu that opens a paginated directory of names offers **Fetch the full list** and becomes a text box with suggestions (2.6).
-- **Suggestions.** Each section tapped with **Suggestions** is a named group; a card marked **loads later** reads the section from the request the page made for it, and a warning on the card means none was found (3.6).
+- **Filter cards.** Red text "Not in the source yet" on a card means that filter is skipped until it has a parameter or an address; ▲▼ also move a filter into or out of a group; making a filter again keeps its group, search switch and role (2.6).
+- **Suggestions.** Tap one card of a section with **Suggestions** armed: the section is a named group, named after its heading; a card marked **loads later** reads the section from the request the page made for it, and a warning on the card means none was found (3.6).
 - **Edit by tapping.** A source made by the builder opens again in it from Test Run › **Edit** (next to Open in Browse), with its picks restored (older sources: what can be read from the code's settings at the top); **Save to this source** writes a new History version under the same key, so the library and downloads keep it.
 
 ### 11.9 Record and convert: the self-check and its TODOs
@@ -1345,6 +1472,8 @@ Line numbers match your file. A `[net] … -> 200` then an error is a parsing bu
 
 - **It checks its own work (r105).** For every list part (Popular, Latest, Search) and for the title, chapter and page parts it tries ways to read the reply from strict to loose, runs each on the recorded reply, and keeps the first whose output matches what the extension returned: the same addresses and titles in order for at least 9 in 10 items, and the covers after any change the extension made to them. Loosenings it may use: an array where at least 8 in 10 of the returned items map onto its entries; a fixed text before or after a field (a CDN folder before an image name, `?w=250` after it), with values that are already full addresses kept as they are; items wrapped one or two levels deep; an address built from an id with a fixed path in front; a description with a fixed label around it ("Synopsis: …").
 - **Read the `checked:` line.** Each written part starts with `// checked: N of M items match the extension's output` (covers counted too, and whether the code reverses its list). The file's header lists all of them. N close to M is a part you can trust; a lower N gets a TODO line saying the extension filters, sorts or adds items in its own code. Compare those items in Test Run with the extension in Browse.
+- **The size counts too (r105 fix).** Matching items isn't enough: the number of items the code gives on the recorded reply must fit the list. For a **paged** list it must reach at least the smaller of the returned count and 5, and as many of the returned items as the reply's best list holds, so a 1-item side array (a "featured" entry next to the real list) can't score "1 of 1". For **other** lists it must be between 0.8 and 1.1 times the returned count, so a superset array holding the 20 returned items among 140 doesn't pass. A reading of the wrong size isn't written as checked; a superset is written with a TODO saying the extension picks the list in its own code (`converted-list-size`).
+- **Requests on other threads (r104).** Extensions often make their requests through OkHttp's `enqueue` or an Rx scheduler, off the thread that runs the step, and those used to be missed ("no data request was recorded"). Now an untagged request belongs to the one step that is running (steps run one at a time). Left out: requests whose Referer or Origin names a site the recording has never seen, and the **app's own traffic** during a step (extension repo indexes, update checks, trackers, GitHub). A request counted only because its step was running, to a host not seen yet, has its own budget (20 requests, 2 MB per step) and never teaches the recorder a host. Logs show `Recording <step>: N requests (M started on other threads)` (`recorder-other-threads`). Requests a cancelled step leaves behind are dropped, never counted for the next step.
 - **Every TODO says why, in one line**, above the recorded requests and a reply excerpt (the part throws "… was not converted from the recording" until it is written: `converted-part-todo`). The usual causes and what to do:
 
 | TODO says | What it means | Check or do |
@@ -1373,6 +1502,7 @@ A batch of extension installs or updates can stop on one extension when Android 
 - [ ] Every entry has `url` and `title`; no `{placeholder}` left in addresses.
 - [ ] Filters change the site's answer; no tabs or catalogs the site doesn't have (2.4).
 - [ ] Filter values are the site's codes, not its labels; each filter has the right role, and the unfiltered list isn't empty (2.6).
+- [ ] No filter card is red ("Not in the source yet"); dropdowns start with Site default; filters applied on Popular or a tab stay on that list; page 2 of a page filter's list has the right address; no `%25` codes (2.6).
 - [ ] Suggestion groups show covers, and a section marked "loads later" really gives cards (3.6).
 - [ ] A converted source: every part's `checked:` line is close to its total, and no part is left as TODO (11.9).
 - [ ] The search address was copied from a real search on the site (2.3).
@@ -1381,6 +1511,7 @@ A batch of extension installs or updates can stop on one extension when Android 
 ### 12.2 Title and chapters
 
 - [ ] Opening a title gives its description and genres; `status` only when the site says; `webUrl` opens the right page (3.2, 3.5).
+- [ ] Tags groups are the site's rows: each named after its label with values only, link rows in Tags, plain rows in the description; no whole-row or label-list group left (3.7).
 - [ ] The chapter or episode list is complete, every row has `number` and `dateUploaded`, newest at the top in the app (4.3, 4.5).
 - [ ] An APK port keeps the APK's `id` (quoted) and its title and chapter `url` formats character for character (4.2, 9.2).
 - [ ] Nothing that changes is in a chapter `url` (4.2).

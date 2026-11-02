@@ -5,6 +5,7 @@ import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
@@ -654,6 +655,15 @@ internal class BuilderScreen(
                                 // starts one, picker.js takes the tap first
                                 override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean = false
 
+                                // r105: the page's own requests (a "You may like" section its script fills in later is
+                                // read from one of them, BuilderLateSections); nothing is changed, the WebView loads it
+                                override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
+                                    val r = request ?: return null
+                                    if (r.isForMainFrame || !r.method.equals("GET", ignoreCase = true)) return null
+                                    runCatching { BuilderLateSections.record(r.url.toString(), model.state.value.pageUrl) }
+                                    return null
+                                }
+
                                 // r102: the WebView's own address (view.url), not the callback's: after Back a late
                                 // callback could put the previous page in the bar
                                 override fun onPageFinished(view: WebView?, url: String?) {
@@ -984,6 +994,18 @@ internal class BuilderScreen(
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
+                                // r105: a section the site's script fills in later
+                                if (group.late.isNotBlank()) {
+                                    Text(
+                                        "Loads later: read from ${group.late}",
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                } else if (group.lateWarning.isNotBlank()) {
+                                    Text(group.lateWarning, fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                                }
                             }
                             IconButton(onClick = { model.removeSuggestionGroup(index) }, modifier = Modifier.size(32.dp)) {
                                 Icon(Icons.Outlined.Close, contentDescription = "Remove", modifier = Modifier.size(16.dp))

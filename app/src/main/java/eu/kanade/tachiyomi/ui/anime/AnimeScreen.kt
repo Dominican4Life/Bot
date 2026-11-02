@@ -264,6 +264,7 @@ class AnimeScreen(private val animeId: Long) : Screen() {
             onEditNotes = { dialog = AnimeDialog.Notes },
             onClearAnime = { dialog = AnimeDialog.Clear },
             onRelatedScreen = { navigator.push(AnimeRelatedScreen(anime.id)) },
+            onRelatedGroup = { group -> navigator.push(AnimeRelatedScreen(anime.id, group)) },
             onMerge = { navigator.push(AnimeGlobalSearchScreen(anime.title, mergeIntoId = anime.id)) },
             onMergeSettings = { dialog = AnimeDialog.MergeSettings },
             onSearch = { query -> navigator.push(AnimeSourceScreen(anime.source, query)) },
@@ -513,6 +514,8 @@ private class AnimeActions(
     val onEditNotes: () -> Unit,
     val onClearAnime: () -> Unit,
     val onRelatedScreen: () -> Unit,
+    /** r105: the arrow of a source's named suggestion row: the full screen, scrolled to that group */
+    val onRelatedGroup: (String) -> Unit,
     val onMerge: () -> Unit,
     val onMergeSettings: () -> Unit,
     val onSearch: (String) -> Unit,
@@ -1125,24 +1128,45 @@ private fun LazyListScope.relatedItems(
 ) {
     if (!settings.enabled || state.sourceMissing) return
     if (settings.expand) {
-        if (state.suggestions.isEmpty() && !state.suggestionsLoading) return
+        val groups = state.suggestionGroups
+        if (groups.isEmpty() && !state.suggestionsLoading) return
         if (dividerAbove) item(key = "related-divider-top") { HorizontalDivider() }
-        item(key = "related") {
-            Column {
-                val title = stringResource(KMR.strings.pref_source_related_mangas)
-                RelatedMangaTitle(
-                    title = if (uppercaseTitle) title.uppercase() else title,
-                    subtitle = null,
-                    onClick = actions.onRelatedScreen,
-                    onLongClick = null,
-                    modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
-                )
-                if (state.suggestions.isEmpty()) {
+        if (groups.isEmpty()) {
+            item(key = "related") {
+                Column {
+                    val title = stringResource(KMR.strings.pref_source_related_mangas)
+                    RelatedMangaTitle(
+                        title = if (uppercaseTitle) title.uppercase() else title,
+                        subtitle = null,
+                        onClick = actions.onRelatedScreen,
+                        onLongClick = null,
+                        modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
+                    )
                     Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(modifier = Modifier.size(24.dp))
                     }
-                } else {
-                    AnimeSuggestionsRow(suggestions = state.suggestions, onClick = actions.onOpenAnime)
+                }
+            }
+        }
+        // r105: one row per group: a JS source's named groups under their own names ("Related videos", "You may
+        // like"), each arrow opening the full screen at that group; the plain list stays the one "Suggestions" row
+        groups.forEachIndexed { index, group ->
+            item(key = if (index == 0) "related" else "related-$index") {
+                Column {
+                    val name = group.name
+                    val title = name ?: stringResource(KMR.strings.pref_source_related_mangas)
+                    RelatedMangaTitle(
+                        title = if (uppercaseTitle) title.uppercase() else title,
+                        subtitle = null,
+                        onClick = if (name != null) {
+                            { actions.onRelatedGroup(name) }
+                        } else {
+                            actions.onRelatedScreen
+                        },
+                        onLongClick = null,
+                        modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
+                    )
+                    AnimeSuggestionsRow(suggestions = group.items, onClick = actions.onOpenAnime)
                 }
             }
         }

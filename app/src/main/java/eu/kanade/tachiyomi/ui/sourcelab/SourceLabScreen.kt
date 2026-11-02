@@ -120,6 +120,9 @@ internal class SourceLabScreen(
         // r98: the app's Log (Diagnostics, Log tab) on top of the Lab; Back returns here with the editor untouched
         val openLogs: () -> Unit = { navigator.push(DiagnosticsScreen(DiagTab.LOG)) }
         val actions = rememberEditorActions(editor, editorState, onLeave = pop)
+        // KMK (r105): ⋮ Convert again (a source made by Record and convert)
+        val convertAgain = rememberScreenModel(tag = "convertAgain") { ConvertAgainScreenModel() }
+        val convertState by convertAgain.state.collectAsState()
 
         // The New-source flow's result (C§5.2): taken once on arrival, and whenever one lands while this is on top.
         // Opening it in the editor goes through the unsaved-changes dialog: edits typed meanwhile aren't thrown away
@@ -169,6 +172,32 @@ internal class SourceLabScreen(
                 },
                 onDismiss = { confirmTemplateUpdate = false },
             )
+        }
+
+        // KMK (r105): Convert again records the extension once more and saves a new version of this source; once
+        // saved, the editor reopens it and Test Run runs on it
+        val convertAgainNow: () -> Unit = {
+            actions.askBeforeReplacing("Converting again") {
+                val s = editor.state.value
+                if (s.dirty && s.saved) editor.open(s.key)
+                infoSheet = false
+                convertAgain.start(s.key)
+            }
+        }
+        LaunchedEffect(convertState.savedAt) {
+            if (convertState.savedAt == 0L) return@LaunchedEffect
+            val key = convertState.key
+            // Only while that source is still the open one (the version is saved either way)
+            if (key != null && model.state.value.key == key) {
+                editor.open(key)
+                model.loadSource(key)
+                model.setTab(LabTab.Test)
+                model.runTest(editor, query)
+            }
+            convertAgain.consumeSaved()
+        }
+        if (convertState.open) {
+            ConvertAgainDialog(state = convertState, onStop = convertAgain::stop, onClose = convertAgain::close)
         }
 
         // KMK --> (r102) Edit by tapping (r103: the Edit button in Test Run, builder sources only): the builder opens
@@ -362,6 +391,14 @@ internal class SourceLabScreen(
                                         MenuItem("Export Source", Icons.Outlined.FileDownload) {
                                             showMenu = false
                                             actions.exportFile()
+                                        }
+                                        // KMK (r105): Convert again, on a saved source made by Record and convert
+                                        val lab = state.source?.lab
+                                        if (editorState.saved && convertAgain.offered(lab?.fromExtension, lab?.templateId)) {
+                                            MenuItem("Convert again", Icons.Outlined.Refresh) {
+                                                showMenu = false
+                                                convertAgainNow()
+                                            }
                                         }
                                         // KMK (r102): Duplicate removed from the menu (the owner's request)
                                         if (editorState.saved) {

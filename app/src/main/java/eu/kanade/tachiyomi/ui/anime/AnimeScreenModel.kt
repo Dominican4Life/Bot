@@ -473,12 +473,9 @@ class AnimeScreenModel(
         screenModelScope.launchIO {
             val anime = repository.getAnime(animeId) ?: return@launchIO
             // r95: the same page opened again a short while ago gets the rows it had, without new searches
-            val cacheKey = source.id to animeId
-            val cached = synchronized(suggestionCache) {
-                suggestionCache[cacheKey]?.takeIf { System.currentTimeMillis() - it.first < SUGGESTION_CACHE_MS }
-            }
+            val cached = AnimeSuggestions.cached(source.id, animeId)
             if (cached != null) {
-                mutableState.update { it.copy(suggestions = cached.second) }
+                mutableState.update { it.copy(suggestionGroups = cached) }
                 return@launchIO
             }
             mutableState.update { it.copy(suggestionsLoading = true) }
@@ -486,21 +483,26 @@ class AnimeScreenModel(
                 source.getRelatedAnimeList(
                     anime = anime.toSAnime(),
                     exceptionHandler = { e -> logcat(LogPriority.WARN, e) { "Suggestions failed" } },
-                    pushResults = { (_, list), _ ->
+                    pushResults = { (name, list), _ ->
                         val found = list.mapNotNull {
                             runCatching { repository.networkToLocal(it, source.id) }.getOrNull()
                         }.filter { it.id != animeId }
+                        // r105: a JS source's named groups ("Related videos", "You may like") get a row each;
+                        // everything else goes in the one Suggestions row as before
+                        val group = AnimeSuggestions.groupName(source, name)
                         mutableState.update { state ->
-                            state.copy(suggestions = (state.suggestions + found).distinctBy { it.id }.take(40))
+                            state.copy(
+                                suggestionGroups = AnimeSuggestions.add(
+                                    state.suggestionGroups,
+                                    group,
+                                    found,
+                                    plainCap = AnimeSuggestions.PLAIN_CAP,
+                                ),
+                            )
                         }
                     },
                 )
-                synchronized(suggestionCache) {
-                    if (suggestionCache.size >= SUGGESTION_CACHE_SIZE) {
-                        suggestionCache.remove(suggestionCache.keys.first())
-                    }
-                    suggestionCache[cacheKey] = System.currentTimeMillis() to state.value.suggestions
-                }
+                AnimeSuggestions.store(source.id, animeId, state.value.suggestionGroups)
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
                 logcat(LogPriority.WARN, e) { "Suggestions failed" }
@@ -987,7 +989,8 @@ class AnimeScreenModel(
         val videoDialog: VideoDialog? = null,
         val seedColor: androidx.compose.ui.graphics.Color? = null,
         val allEpisodes: List<Episode> = emptyList(),
-        val suggestions: List<Anime> = emptyList(),
+        /** r105: suggestion rows: a JS source's named groups in its order, then the plain Suggestions list */
+        val suggestionGroups: List<AnimeSuggestionGroup> = emptyList(),
         val suggestionsLoading: Boolean = false,
         val scanlators: Set<String> = emptySet(),
         val excludedScanlators: Set<String> = emptySet(),
@@ -1049,6 +1052,10 @@ class AnimeScreenModel(
 
         val hasStarted: Boolean
             get() = allEpisodes.any { it.seen || it.lastSecondSeen > 0 }
+
+        /** Every suggestion, all rows together */
+        val suggestions: List<Anime>
+            get() = suggestionGroups.flatMap { it.items }
     }
 
     private companion object {
@@ -1058,9 +1065,6 @@ class AnimeScreenModel(
         /** Anime whose bare episode list was already refreshed in this run */
         val refreshedThisRun: MutableSet<Long> = java.util.Collections.synchronizedSet(HashSet())
 
-        /** r95: suggestions by (source id, anime id), with when they were found; oldest dropped past the size */
-        private val suggestionCache = LinkedHashMap<Pair<Long, Long>, Pair<Long, List<Anime>>>()
-        private const val SUGGESTION_CACHE_SIZE = 20
-        private const val SUGGESTION_CACHE_MS = 30 * 60_000L
+        // r105: the suggestion cache moved to AnimeSuggestions (AnimeRelatedScreen.kt), shared with the full screen
     }
 }

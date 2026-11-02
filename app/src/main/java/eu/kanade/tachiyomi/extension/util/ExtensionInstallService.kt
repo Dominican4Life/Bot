@@ -16,6 +16,7 @@ import eu.kanade.tachiyomi.extension.installer.Installer
 import eu.kanade.tachiyomi.extension.installer.PackageInstallerInstaller
 import eu.kanade.tachiyomi.extension.installer.ShizukuInstaller
 import eu.kanade.tachiyomi.extension.util.ExtensionInstaller.Companion.EXTRA_DOWNLOAD_ID
+import eu.kanade.tachiyomi.util.system.AppLog
 import eu.kanade.tachiyomi.util.system.getSerializableExtraCompat
 import eu.kanade.tachiyomi.util.system.notificationBuilder
 import exh.log.xLogE
@@ -74,6 +75,8 @@ class ExtensionInstallService : Service() {
                     return START_NOT_STICKY
                 }
             }
+            // KMK: r105
+            AppLog.add('D', "extensions", "Install service started ($installerUsed)")
         }
         installer!!.addToQueue(id, uri)
         return START_NOT_STICKY

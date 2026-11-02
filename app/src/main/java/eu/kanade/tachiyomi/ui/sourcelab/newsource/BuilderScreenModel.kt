@@ -31,12 +31,14 @@ import eu.kanade.tachiyomi.jssource.obj
 import eu.kanade.tachiyomi.jssource.str
 import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.JsonArray
@@ -764,6 +766,7 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
         }
         if (suggestion != null) {
             AppLog.add('I', "lab", "Builder: suggestions group \"${suggestion.name}\" = ${suggestion.item} (${suggestion.count} cards)")
+            checkLateSection(suggestion, raw.pageUrl)
         }
         // r101: the Next link's address tells the extras how this site numbers its pages (page=2, /page/2 …)
         if (label == "next") {
@@ -949,7 +952,43 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
     private fun withSuggestion(groups: List<Derive.SuggestionGroup>, group: Derive.SuggestionGroup): List<Derive.SuggestionGroup> {
         val i = groups.indexOfFirst { it.item == group.item || it.name.equals(group.name, ignoreCase = true) }
         if (i < 0) return groups + group
-        return groups.toMutableList().also { it[i] = group.copy(name = groups[i].name) }
+        // r105: the same section again keeps the late address found for it
+        val late = if (groups[i].item == group.item) groups[i].late else ""
+        return groups.toMutableList().also { it[i] = group.copy(name = groups[i].name, late = late) }
+    }
+
+    /**
+     * r105: a Suggestions section whose cards aren't in the page's own HTML (the site's script adds them later) is read
+     * from the request that brought them ([BuilderLateSections]); none found: the card warns
+     */
+    private fun checkLateSection(group: Derive.SuggestionGroup, pageUrl: String) {
+        if (!pageUrl.startsWith("http")) return
+        screenModelScope.launchIO {
+            val outcome = try {
+                BuilderLateSections.check(group.item, group.values, pageUrl)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLog.add('W', "lab", "Builder: suggestions ${group.item}: the raw page wasn't read (${e.message ?: e.javaClass.simpleName})")
+                null
+            } ?: return@launchIO
+            // r105 fix: the check ran on IO; the state change and rederive (which the screen and the WebView follow) on Main
+            withContext(Dispatchers.Main) {
+                var changed = false
+                mutableState.update { s ->
+                    changed = false
+                    val i = s.suggestionGroups.indexOfFirst { it.item == group.item }
+                    if (i < 0) return@update s
+                    changed = true
+                    s.copy(
+                        suggestionGroups = s.suggestionGroups.toMutableList().also {
+                            it[i] = it[i].copy(late = outcome.late, lateWarning = outcome.warning)
+                        },
+                    )
+                }
+                if (changed) rederive()
+            }
+        }
     }
 
     /** r104: the Suggestions card's remove (the last one gone = no Suggestions pick) */

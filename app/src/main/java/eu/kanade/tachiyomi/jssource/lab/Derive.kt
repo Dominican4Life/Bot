@@ -68,6 +68,13 @@ internal object Derive {
         val count: Int = 0,
         val order: Int = -1,
         val values: List<String> = emptyList(),
+        /**
+         * r105: the section is filled by the site's script after the page loads: the address its cards come from,
+         * with the title's parts as {seg1}… / {path} / {attr:name} (generic-list v8 reads it there); "" = in the page
+         */
+        val late: String = "",
+        /** r105: the section isn't in the page and no request of the page had it (the card's warning); "" = none */
+        val lateWarning: String = "",
     )
 
     /** r104: the `suggestionGroups` placeholder (name, item, link, title, cover, coverAttr of each group) */
@@ -81,7 +88,7 @@ internal object Derive {
                     "title" to JsonPrimitive(g.title),
                     "cover" to JsonPrimitive(g.cover),
                     "coverAttr" to JsonPrimitive(g.coverAttr.ifBlank { "src" }),
-                ),
+                ) + if (g.late.isNotBlank()) mapOf("late" to JsonPrimitive(g.late.trim())) else emptyMap(),
             )
         },
     ).toString()

@@ -18,6 +18,7 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.TouchApp
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -465,8 +466,21 @@ private fun FiltersSection(
                 }
             }
         }
+        // r105: the Browse sheet starts with the built-in "List" (Popular, Latest, the tabs)
+        if (s.filters.isNotEmpty()) {
+            Hint(
+                "The Browse sheet starts with \u201cList\u201d (Popular, Latest — picked at first — and the tabs). A page " +
+                    "filter picks another list (only the first one changed applies); extras add their code to whichever list is shown.",
+            )
+        }
+        val groupNames = s.filters.map { it.group.trim() }.filter { it.isNotEmpty() }.distinct()
         s.filters.forEachIndexed { index, filter ->
-            FilterEditor(s.rev, index, s.filters.size, filter, s.searchPath ?: codeSearchPath, extras, onAskOptions)
+            // r105: a group's heading above its first filter
+            val group = filter.group.trim()
+            if (group.isNotEmpty() && s.filters.getOrNull(index - 1)?.group?.trim() != group) {
+                Text(group, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+            }
+            FilterEditor(s.rev, index, s.filters.size, filter, s.searchPath ?: codeSearchPath, extras, onAskOptions, groupNames)
             HorizontalDivider()
         }
         TextButton(onClick = extras::addFilter) {
@@ -486,15 +500,35 @@ private fun FilterEditor(
     searchPath: String?,
     extras: BuilderExtrasModel,
     onAskOptions: (String) -> Unit,
+    groupNames: List<String>,
 ) {
     val isPath = filter.mode == "path"
     val param = filter.param.ifBlank { if (filter.askParam) "" else filter.key }
     // r104: not usable yet (shown in red, left out of the source); opens its links' own page (not the search page)
     val problem = BuilderExtrasLogic.filterProblem(filter)
-    val linkPage = problem == null && BuilderExtrasLogic.usesLinkPage(filter, searchPath)
+    // r105: page (picks the list) or extra (added to any list); a filter made before r105 keeps its old rule
+    val role = BuilderExtrasLogic.roleOf(filter, searchPath)
+    val linkPage = problem == null && filter.mode != "path" && "{value}" in filter.linkPath &&
+        if (filter.role.isEmpty()) BuilderExtrasLogic.usesLinkPage(filter, searchPath) else role == "page"
+    val canPage = isPath || "{value}" in filter.linkPath
+    var askGroup by remember(index) { mutableStateOf(false) }
+    if (askGroup) {
+        GroupDialog(
+            current = filter.group,
+            names = groupNames,
+            onDone = { name ->
+                askGroup = false
+                if (name != null) extras.setFilterGroup(index, name)
+            },
+        )
+    }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Filter ${index + 1}", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+            Text(
+                "Filter ${index + 1}" + (if (filter.group.isNotBlank()) " · in ${filter.group.trim()}" else ""),
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.weight(1f),
+            )
             // r104: the order the source's filter sheet shows
             IconButton(onClick = { extras.moveFilter(index, -1) }, enabled = index > 0, modifier = Modifier.size(32.dp)) {
                 Icon(Icons.Outlined.KeyboardArrowUp, contentDescription = "Move up", modifier = Modifier.size(18.dp))
@@ -507,6 +541,37 @@ private fun FilterEditor(
             }
         }
         ExtrasField(rev, "f$index.name", filter.name, { extras.setFilterName(index, it) }, "Name")
+        // r105: the role, the group and (for an extra) whether it also goes into a search for words
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            FilterChip(
+                selected = role == "page",
+                enabled = canPage,
+                onClick = { extras.setFilterRole(index, "page") },
+                label = { Text("Picks the list") },
+            )
+            FilterChip(
+                selected = role == "extra",
+                enabled = !isPath,
+                onClick = { extras.setFilterRole(index, "extra") },
+                label = { Text("Added to any list") },
+            )
+            TextButton(onClick = { askGroup = true }) { Text(if (filter.group.isBlank()) "Move to group…" else "Other group…") }
+            if (filter.group.isNotBlank()) {
+                TextButton(onClick = { extras.setFilterGroup(index, "") }) { Text("Out of group") }
+            }
+        }
+        if (role == "extra" && filter.role.isNotEmpty()) {
+            SwitchRow(
+                title = "Also while searching for words",
+                summary = if (BuilderExtrasLogic.madeOnSearchPage(filter, searchPath)) {
+                    "Made on the search page: it is sent there"
+                } else {
+                    "Only when the site's search page takes ?${param.ifBlank { "…" }}= too"
+                },
+                checked = BuilderExtrasLogic.worksOnSearch(filter, searchPath),
+                onChange = { extras.setFilterOnSearch(index, it) },
+            )
+        }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(selected = filter.type == "select", onClick = { extras.setFilterType(index, "select") }, label = { Text("Dropdown") })
             FilterChip(selected = filter.type == "sort", onClick = { extras.setFilterType(index, "sort") }, label = { Text("Sort") })
@@ -581,6 +646,11 @@ private fun FilterEditor(
         }
         Text(
             when {
+                linkPage && filter.role.isNotEmpty() -> "Picks the list ${filter.linkPath} (left out while searching for words)"
+                filter.role.isNotEmpty() && role == "extra" && filter.type == "autocomplete" ->
+                    "The names typed are added to whichever list is shown as ?$param=a,b"
+                filter.role.isNotEmpty() && role == "extra" -> "Picks add ?$param=… to whichever list is shown (Latest, Popular, a tab or a page filter's list)"
+                filter.role.isNotEmpty() && isPath -> "Picks the list ${filter.path.ifBlank { "…" }} (left out while searching for words)"
                 linkPage -> "Picks open ${filter.linkPath} (its own page, not the search page; left out while searching for words)"
                 isPath && filter.type == "autocomplete" ->
                     "The first name typed changes the address to ${filter.path.ifBlank { "…" }} (without a search word)"
@@ -595,6 +665,32 @@ private fun FilterEditor(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+}
+
+/** r105: "Move to group…": an existing group's name or a new one; [onDone] null = cancelled */
+@Composable
+private fun GroupDialog(current: String, names: List<String>, onDone: (String?) -> Unit) {
+    var text by remember { mutableStateOf(current) }
+    AlertDialog(
+        onDismissRequest = { onDone(null) },
+        title = { Text("Move to group") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Filters of one group sit under its heading in the Browse sheet (Collections: Genres, Actresses, Makers…).",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                if (names.isNotEmpty()) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        names.forEach { n -> FilterChip(selected = text.trim() == n, onClick = { text = n }, label = { Text(n) }) }
+                    }
+                }
+                OutlinedTextField(value = text, onValueChange = { text = it }, label = { Text("Group name") }, singleLine = true)
+            }
+        },
+        confirmButton = { TextButton(onClick = { onDone(text.trim()) }, enabled = text.isNotBlank()) { Text("Move") } },
+        dismissButton = { TextButton(onClick = { onDone(null) }) { Text("Cancel") } },
+    )
 }
 
 @Composable

@@ -108,15 +108,24 @@ class JsMangaSource(
         return MangasPage(mangas, hasNextPage = mangas.isNotEmpty())
     }
 
-    override suspend fun getPopularManga(page: Int): MangasPage = listing("getPopular", page)
+    override suspend fun getPopularManga(page: Int): MangasPage {
+        browsing = "popular"
+        return listing("getPopular", page)
+    }
 
-    override suspend fun getLatestUpdates(page: Int): MangasPage = listing("getLatest", page)
+    override suspend fun getLatestUpdates(page: Int): MangasPage {
+        browsing = "latest"
+        return listing("getLatest", page)
+    }
 
     override suspend fun getSearchManga(page: Int, query: String, filters: FilterList): MangasPage {
         val catalog = filters.filterIsInstance<CatalogFilter>().firstOrNull()?.selected()
             ?: tabOf(filters)?.let { id -> catalogs.firstOrNull { it.id == id } }
-        if (catalog != null && query.isBlank()) return listing("getCatalog", catalog.id, page)
-        return listing("search", query, page, filterValues(filters))
+        if (catalog != null && query.isBlank()) {
+            browsing = "tab:${catalog.id}"
+            return listing("getCatalog", catalog.id, page)
+        }
+        return listing("search", query, page, withBrowsing(filterValues(filters), filters))
     }
 
     override suspend fun getMangaUpdate(
@@ -210,6 +219,24 @@ class JsMangaSource(
 
     private val groups by lazy { JsFilters.groups(info.filters) }
     private val catalogs by lazy { JsFilters.catalogs(info.catalogs) }
+
+    /**
+     * KMK (r105): the list Browse showed last ("popular", "latest" or "tab:<id>"), for a Source Lab list source's
+     * filter search ([withBrowsing])
+     */
+    @Volatile
+    private var browsing: String? = null
+
+    /**
+     * KMK (r105): a Source Lab list source (generic-list v8: its sheet has the built-in "List" filter, key `__list`)
+     * gets the list Browse was showing as `__from` (the picked tab button, else the list loaded last): a filter search
+     * on Popular or a tab stays on that list unless List is changed. Other sources get their values unchanged
+     */
+    private fun withBrowsing(values: Map<String, JsonElement>, filters: Iterable<*>): Map<String, JsonElement> {
+        if (JsFilters.flat(groups).none { it.key == "__list" }) return values
+        val from = filters.filterIsInstance<TabHolder>().firstOrNull()?.id?.let { "tab:$it" } ?: browsing ?: return values
+        return values + ("__from" to JsonPrimitive(from))
+    }
 
     // KMK: the source's tab catalogs, as buttons at the top of Browse
     override val popularName: String? get() = info.popularName

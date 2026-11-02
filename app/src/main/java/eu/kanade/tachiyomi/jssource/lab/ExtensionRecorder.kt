@@ -1036,6 +1036,8 @@ internal object ExtensionRecorder {
          */
         private fun stepFor(tag: SourceTag?, request: Request): Attribution? {
             if (request.tag(NoNetLog::class.java) != null) return null
+            // r105: the app's DNS-over-HTTPS lookups of the extension's hosts are never its data
+            if (isDnsRequest(request.url.toString(), request.header("Accept") ?: request.header("Content-Type"))) return null
             val onThread = running.get()
             val number = onThread ?: current
             if (number == 0) return null
@@ -1099,6 +1101,8 @@ internal object ExtensionRecorder {
                 val step = number
                 if (list == null || step == null) return@guard
                 val contentType = head?.contentType ?: response?.header("Content-Type")
+                // r105: a DNS-over-HTTPS reply seen only by its type (an unknown resolver host) is dropped too
+                if (isDnsRequest(request.url.toString(), contentType)) return@guard
                 val image = contentType?.startsWith("image/", true) == true
                 val body = head?.text
                 val server = head?.server ?: response?.header("Server")
@@ -1294,6 +1298,31 @@ internal object ExtensionRecorder {
     /** r104: [host] is one of [appHosts] or a subdomain of one */
     private fun isAppHost(host: String, appHosts: Set<String>): Boolean =
         appHosts.any { host == it || host.endsWith(".$it") }
+
+    /**
+     * r105: a DNS-over-HTTPS lookup (the app's own resolver asking dns.google, Cloudflare, … for a host's address):
+     * by its reply type (`application/dns-message`, `application/dns-json`), a known resolver host, or a
+     * `/dns-query` address. Never the extension's data: not recorded, and dropped from old recordings when converted.
+     */
+    fun isDnsRequest(url: String, contentType: String?): Boolean {
+        val type = contentType?.lowercase().orEmpty()
+        if ("dns-message" in type || "dns-json" in type) return true
+        val u = url.lowercase()
+        val host = u.substringAfter("://", "").substringBefore('/').substringBefore('?').substringBefore('#').substringAfterLast('@').substringBefore(':')
+        if (host.isNotEmpty() && DOH_HOSTS.any { host == it || host.endsWith(".$it") }) return true
+        val path = u.substringAfter("://", u).let { rest -> if ('/' in rest) rest.substring(rest.indexOf('/')) else "" }
+            .substringBefore('?').substringBefore('#')
+        return path.endsWith("/dns-query") || path.endsWith("/dns-query/")
+    }
+
+    /** r105: the DNS-over-HTTPS resolvers the app (and OkHttp's DoH) can use, and the big public ones */
+    private val DOH_HOSTS = setOf(
+        "dns.google", "dns.google.com", "cloudflare-dns.com", "one.one.one.one", "1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4",
+        "dns.quad9.net", "dns9.quad9.net", "dns.adguard.com", "dns.adguard-dns.com", "doh.opendns.com", "dns.nextdns.io",
+        "doh.cleanbrowsing.org", "dns.alidns.com", "doh.pub", "doh.360.cn", "dns.twnic.tw", "dns.mullvad.net",
+        "doh.mullvad.net", "dns.controld.com", "freedns.controld.com", "dns.njal.la", "free.shecan.ir", "doh.libredns.gr",
+        "doh.dns.sb", "dns.sb",
+    )
 
     /** The bot check's own requests (scripts, beacons): never data */
     fun isInfrastructure(url: String): Boolean {
