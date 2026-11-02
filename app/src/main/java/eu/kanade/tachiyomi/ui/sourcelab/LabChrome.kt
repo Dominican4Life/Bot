@@ -178,45 +178,52 @@ internal fun LabTopBar(
                 Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
             }
         }
-        Column(modifier = Modifier.weight(1f, fill = !besideTitle)) {
-            Text(
-                title,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (badge != null && badgeInline) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        badge.first,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = badge.second.tint(),
-                        maxLines = 1,
-                    )
-                    if (!subtitle.isNullOrBlank()) {
-                        Text(
-                            " · $subtitle",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
-            } else if (!subtitle.isNullOrBlank()) {
+        // KMK (r108) fix: the title (and its badge) in one row that takes the free room. Two weights (the title's with
+        // fill = false and a Spacer's) split the room in half, so the buttons stopped short of the right edge
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.weight(1f),
+        ) {
+            Column(modifier = Modifier.weight(1f, fill = !besideTitle)) {
                 Text(
-                    subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    title,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                if (badge != null && badgeInline) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            badge.first,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = badge.second.tint(),
+                            maxLines = 1,
+                        )
+                        if (!subtitle.isNullOrBlank()) {
+                            Text(
+                                " · $subtitle",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                } else if (!subtitle.isNullOrBlank()) {
+                    Text(
+                        subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
-        }
-        if (badge != null && besideTitle) {
-            StatusBadge(text = badge.first, color = badge.second)
-            Spacer(Modifier.weight(1f))
+            if (badge != null && besideTitle) {
+                StatusBadge(text = badge.first, color = badge.second)
+            }
         }
         actions()
     }

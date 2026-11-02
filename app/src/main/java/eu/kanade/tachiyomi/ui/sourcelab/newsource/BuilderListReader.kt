@@ -329,6 +329,8 @@ internal object BuilderListReader {
             val u = abs.toHttpUrlOrNull() ?: continue
             val last = u.pathSegments.lastOrNull { it.isNotEmpty() }
             if (u.host != host || (pageNumber(abs) != n && last != n.toString())) continue
+            // KMK (r108) fix: numbered links of this list only (see the Last link below)
+            if (listPathOf(u.encodedPath) != listPathOf(url.toHttpUrlOrNull()?.encodedPath ?: "")) continue
             if (n > highest) highest = n
         }
         // KMK (r107) fix: a pager showing only 1 2 3 … and "Last" / »: the last page's number in that link's address
@@ -343,6 +345,9 @@ internal object BuilderListReader {
             val abs = a.absUrl("href")
             val u = abs.toHttpUrlOrNull() ?: continue
             if (u.host != host) continue
+            // KMK (r108) fix: only this directory's own pager: a "»" / Last link elsewhere on the page (the site's
+            // header pointing at its main list) gave every directory that list's page count (2,257 for all)
+            if (listPathOf(u.encodedPath) != listPath?.let(::listPathOf)) continue
             val n = PAGE_QUERY.find(abs)?.groups?.get(1)?.value?.toIntOrNull()
                 ?: PAGE_PATH.find(abs)?.groups?.get(1)?.value?.toIntOrNull()
                 ?: u.encodedPath.trimEnd('/').takeIf { it.substringBeforeLast('/') == listPath }
@@ -351,6 +356,12 @@ internal object BuilderListReader {
             if (n in 2..100_000 && n > highest) highest = n
         }
         return highest
+    }
+
+    /** r108: a list path without its page part ("/x/page/3" → "/x", "/x/3" → "/x", "/x/" → "/x") */
+    private fun listPathOf(path: String): String {
+        val p = PAGE_PATH.replace(path, "").trimEnd('/')
+        return if (p.substringAfterLast('/').toIntOrNull() != null) p.substringBeforeLast('/') else p
     }
 
     // KMK (r107) fix: a pager's link to its last page

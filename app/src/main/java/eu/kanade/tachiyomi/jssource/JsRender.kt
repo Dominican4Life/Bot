@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.jssource
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
+import android.view.View
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import eu.kanade.tachiyomi.network.NetworkHelper
@@ -31,6 +32,10 @@ internal object JsRender {
 
     private const val DEFAULT_TIMEOUT_MS = 20_000L
     private const val SETTLE_MS = 500L
+
+    // KMK (r108): the hidden page's size in pixels (a phone screen)
+    private const val RENDER_WIDTH = 1080
+    private const val RENDER_HEIGHT = 2340
     private const val EVAL_TIMEOUT_MS = 10_000L // KMK (r107)
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -71,6 +76,14 @@ internal object JsRender {
                     }
                 }
             }
+            // KMK (r108): a WebView that isn't on screen is 0 × 0, so a site's "load when scrolled into view" sections
+            // (IntersectionObserver / lazy loaders, like a "You may like" row) never load in it. A phone-sized
+            // layout lets them load once the script scrolls to them
+            webView.measure(
+                View.MeasureSpec.makeMeasureSpec(RENDER_WIDTH, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(RENDER_HEIGHT, View.MeasureSpec.EXACTLY),
+            )
+            webView.layout(0, 0, RENDER_WIDTH, RENDER_HEIGHT)
             try {
                 webView.loadUrl(url)
                 val started = System.currentTimeMillis()
@@ -159,6 +172,15 @@ internal object JsRender {
         (function () {
           var found = false;
           try { found = ${if (selector == null) "true" else "!!document.querySelector(${selector.jsQuoted()})"}; } catch (e) { found = false; }
+          // KMK (r108): still not there once the page has loaded: scroll down a screen at a time (back to the top at
+          // the end), so a section that loads when it's scrolled into view gets loaded
+          if (!found && document.readyState === 'complete') {
+            try {
+              var el = document.scrollingElement || document.documentElement;
+              if (window.innerHeight + window.scrollY >= el.scrollHeight - 4) window.scrollTo(0, 0);
+              else window.scrollBy(0, Math.max(400, Math.floor(window.innerHeight * 0.8)));
+            } catch (e) {}
+          }
           return JSON.stringify({
             complete: document.readyState === 'complete',
             hasSelector: found,

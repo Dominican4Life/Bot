@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.ui.sourcelab
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -44,10 +45,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import eu.kanade.tachiyomi.jssource.JsIcons
+import eu.kanade.tachiyomi.jssource.JsSourceManager
 import eu.kanade.tachiyomi.jssource.lab.ApkImport
 import eu.kanade.tachiyomi.jssource.lab.HealthState
 import eu.kanade.tachiyomi.jssource.lab.LabSource
@@ -56,7 +61,10 @@ import eu.kanade.tachiyomi.jssource.lab.StepStatus
 import eu.kanade.tachiyomi.jssource.lab.Templates
 import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 /**
  * KMK (r96, r106): the Lab's Home (mock EHome): the totals (sources · passing · passing with warnings · failing),
@@ -315,7 +323,7 @@ private fun SourceRow(source: LabSource, wide: Boolean, onOpen: (String, LabTab)
                 .padding(start = 16.dp, end = 4.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                LetterTile(source.name)
+                LetterTile(source.name, source.key)
                 NameAndOrigin(source, Modifier.padding(start = 12.dp))
             }
             Cell(kind, Modifier.width(COL_KIND))
@@ -333,7 +341,7 @@ private fun SourceRow(source: LabSource, wide: Boolean, onOpen: (String, LabTab)
                 .clickable { onOpen(source.key, LabTab.Code) }
                 .padding(start = 12.dp, end = 0.dp, top = 10.dp, bottom = 10.dp),
         ) {
-            LetterTile(source.name)
+            LetterTile(source.name, source.key)
             Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
@@ -444,8 +452,38 @@ private fun RowMenu(source: LabSource, onOpen: (String, LabTab) -> Unit) {
     }
 }
 
+/**
+ * KMK (r108): the source's own icon (the one Browse shows, [JsIcons]) when it has one, else its first letter. The icon
+ * may still be downloading when the list first shows, so it's looked up again for a few seconds.
+ */
 @Composable
-private fun LetterTile(name: String) {
+private fun LetterTile(name: String, key: String) {
+    val icon by produceState<ImageBitmap?>(initialValue = null, key) {
+        value = withContext(Dispatchers.IO) {
+            runCatching {
+                val id = Injekt.get<JsSourceManager>().idOf(key)
+                var bitmap = JsIcons.bitmap(id)
+                var tries = 0
+                while (bitmap == null && tries < 10) {
+                    delay(1_000)
+                    bitmap = JsIcons.bitmap(id)
+                    tries++
+                }
+                bitmap?.asImageBitmap()
+            }.getOrNull()
+        }
+    }
+    val loaded = icon
+    if (loaded != null) {
+        Image(
+            bitmap = loaded,
+            contentDescription = null,
+            modifier = Modifier
+                .size(36.dp)
+                .clip(RoundedCornerShape(10.dp)),
+        )
+        return
+    }
     val color = tileColor(name)
     Box(
         contentAlignment = Alignment.Center,
