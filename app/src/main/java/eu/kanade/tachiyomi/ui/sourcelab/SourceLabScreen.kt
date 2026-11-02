@@ -2,19 +2,19 @@ package eu.kanade.tachiyomi.ui.sourcelab
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.List
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ArrowDropDown
@@ -25,15 +25,20 @@ import androidx.compose.material.icons.outlined.Dashboard
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.FileUpload
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -41,13 +46,11 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.NavigationRail
-import androidx.compose.material3.NavigationRailItem
-import androidx.compose.material3.SecondaryTabRow
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
@@ -61,10 +64,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
@@ -72,10 +72,8 @@ import eu.kanade.presentation.util.Screen
 import eu.kanade.presentation.util.isTabletUi
 import eu.kanade.tachiyomi.diagnostics.DiagTab
 import eu.kanade.tachiyomi.jssource.lab.GeneratedSource
-import eu.kanade.tachiyomi.jssource.lab.HealthState
 import eu.kanade.tachiyomi.jssource.lab.History
 import eu.kanade.tachiyomi.jssource.lab.LabHandoff
-import eu.kanade.tachiyomi.jssource.lab.LabSource
 import eu.kanade.tachiyomi.ui.codeeditor.CodeTab
 import eu.kanade.tachiyomi.ui.codeeditor.EditorDialogs
 import eu.kanade.tachiyomi.ui.codeeditor.MenuItem
@@ -89,10 +87,15 @@ import kotlinx.coroutines.delay
 import tachiyomi.presentation.core.components.material.Scaffold
 
 /**
- * KMK (r96): the Source Lab, in place of the Code editor (D§1). `key == null` is Home: the source list with health,
- * the Rules file and Re-test all cards. With a key: the source's six tabs Code · Explain · Test · Lint · Report ·
- * History (phone: a tab row; tablet: a rail and two panes, the code on the left). The only Lab entry from outside;
- * Half B's New-source flow comes back through [LabHandoff].
+ * KMK (r96): the Source Lab, in place of the Code editor (D§1). `key == null` is Home: the source list with health.
+ * With a key: the source's six tabs Code · Explain · Test · Lint · History · Report (phone: a tab row; tablet: the
+ * rail). The only Lab entry from outside; Half B's New-source flow comes back through [LabHandoff].
+ *
+ * KMK (r106, the approved mocks EHome / ECode / ETest / ELint / EHistory): one top bar per place replaces the header
+ * and the status strip (Home: Find a source, Re-test all, New source, ⋮; a source: name + "kind · format · vN · tested
+ * …", the "k of n passing" badge, Test, Save, ⋮). The tablet rail is labelled (home: Sources, New, Rules, Templates;
+ * a source: ‹ Sources, its tabs with Lint's count, Logs). Code = Parts outline · code · Test Run panel; Explain keeps
+ * the code beside it; Test / Lint / History / Report fill the width and "Go to line" opens the Code tab.
  */
 internal class SourceLabScreen(
     private val sourceKey: String? = null,
@@ -113,8 +116,8 @@ internal class SourceLabScreen(
         var railDest by rememberSaveable { mutableStateOf(RailDest.Sources) }
         var showMenu by remember { mutableStateOf(false) }
         var confirmTemplateUpdate by remember { mutableStateOf(false) } // KMK (r100)
-        // KMK (r101): the tablet's Source info panel (open / hidden, kept across sessions) and the phone's sheet
-        val sourceInfo = rememberSourceInfoOpen()
+        // KMK (r101, r106): Source info as a sheet (⋮ Source info; the phone's Code header row too). r106: the tablet's
+        // panel beside the code gave its place to the Test Run panel
         var infoSheet by rememberSaveable { mutableStateOf(false) }
         val pop: () -> Unit = { navigator.pop() }
         // r98: the app's Log (Diagnostics, Log tab) on top of the Lab; Back returns here with the editor untouched
@@ -204,7 +207,8 @@ internal class SourceLabScreen(
         // on this source's site with its picks and saves back to the same key. Unsaved edits are asked about first
         // (Save / Discard / Cancel; on Discard the editor drops them now, so the code the builder saves over is the
         // saved one)
-        val editByTapping: () -> Unit = {
+        // KMK (r106 fix): [startTab] = the builder panel's tab to open on (Lint's "Learn the codes" → "filters")
+        val openBuilder: (String?) -> Unit = { startTab ->
             actions.askBeforeReplacing("Editing by tapping") {
                 val s = editor.state.value
                 if (s.dirty && s.saved) editor.open(s.key)
@@ -212,9 +216,11 @@ internal class SourceLabScreen(
                 val start = lab?.siteUrl?.trim()?.takeIf { it.startsWith("http") }
                     ?: s.baseUrl.trim().takeIf { it.startsWith("http") }
                 infoSheet = false
-                navigator.push(BuilderScreen(startUrl = start, anime = s.anime, editKey = s.key))
+                navigator.push(BuilderScreen(startUrl = start, anime = s.anime, editKey = s.key, startTab = startTab))
             }
         }
+        val editByTapping: () -> Unit = { openBuilder(null) }
+        val learnCodes: () -> Unit = { openBuilder("filters") }
         // The source was saved elsewhere (the builder's "Save to this source", a restore): the editor reopens it
         // unless it has unsaved edits, and the Lab re-reads History / Test / Lint
         val savedSources by editor.savedSources.collectAsState()
@@ -227,7 +233,7 @@ internal class SourceLabScreen(
         // KMK <--
 
         // KMK (r101): the phone's Source info, from the Code tab's header row (the code isn't pushed down any more)
-        if (infoSheet && !tablet && state.key != null) {
+        if (infoSheet && state.key != null) {
             ModalBottomSheet(onDismissRequest = { infoSheet = false }) {
                 SourceInfoPanel(
                     editor = editor,
@@ -304,14 +310,68 @@ internal class SourceLabScreen(
         // over both while open
         BackHandler(enabled = backInsideLab) { back() }
 
+        // KMK --> (r106) the code editor revamp: top bars, rail, Fix all, the last error, the Parts outline's dots
+        var homeQuery by rememberSaveable { mutableStateOf("") }
+        var homeSearchOpen by rememberSaveable { mutableStateOf(false) }
+        var nightly by remember { mutableStateOf(model.retestNightly()) }
+        var wifiOnly by remember { mutableStateOf(model.retestWifiOnly()) }
+        var confirmFixAll by remember { mutableStateOf(false) }
+        val lintFindings = (state.lint ?: state.source?.lastLint)?.findings.orEmpty()
+        val lintCount = lintFindings.count { !it.ignored }
+        val safeFixes = remember(lintFindings, state.rules) { model.safeFixes(lintFindings) }
+        val lastError by rememberLastError(state.key, state.lastRun)
+        val partStatuses = remember(state.lastRun) { LabDiff.partStatuses(state.lastRun) }
+        // Every pane's "Go to line": the code at that line (the Code tab; the tablet's Test / Lint / History panes
+        // fill the width now, so the code isn't beside them any more)
+        val goToLine: (Int) -> Unit = { line ->
+            model.revealLine(line)
+            model.setTab(LabTab.Code)
+        }
+        val runTestNow: () -> Unit = {
+            model.runTest(editor, query)
+            if (model.state.value.tab != LabTab.Code) model.setTab(LabTab.Test)
+        }
+        val openRules: () -> Unit = { navigator.push(RulesScreen()) }
+        if (confirmFixAll && safeFixes.isNotEmpty()) {
+            AlertDialog(
+                onDismissRequest = { confirmFixAll = false },
+                title = { Text("Apply ${safeFixes.size} safe ${if (safeFixes.size == 1) "fix" else "fixes"}?") },
+                text = {
+                    Text(
+                        "Each rule's replacement is put into the code: " +
+                            safeFixes.joinToString { "${it.ruleId} (line ${it.line})" } +
+                            ". The editor changes; nothing is saved until you tap Save.",
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            confirmFixAll = false
+                            model.applyAllFixes(editor, lintFindings)
+                        },
+                    ) { Text("Apply") }
+                },
+                dismissButton = { TextButton(onClick = { confirmFixAll = false }) { Text("Cancel") } },
+            )
+        }
+        // KMK <--
+
         Scaffold(
             snackbarHost = { SnackbarHost(snackbar) },
-            floatingActionButton = {
-                if (state.key == null && !tablet && railDest == RailDest.Sources) {
-                    ExtendedFloatingActionButton(
-                        onClick = newSource,
-                        icon = { Icon(Icons.Outlined.Add, contentDescription = null) },
-                        text = { Text("New source") },
+            // KMK (r106): the phone's rail is a bottom navigation bar (its "New" replaces the New source button)
+            bottomBar = {
+                if (!tablet) {
+                    LabBottomBar(
+                        sourceOpen = state.key != null && railDest == RailDest.Sources,
+                        tab = state.tab,
+                        templatesShown = railDest == RailDest.Templates,
+                        lintCount = lintCount,
+                        onSources = goHome,
+                        onNewSource = newSource,
+                        onRules = openRules,
+                        onTemplates = { railDest = RailDest.Templates },
+                        onTab = model::setTab,
+                        onLogs = openLogs,
                     )
                 }
             },
@@ -319,207 +379,370 @@ internal class SourceLabScreen(
             Row(modifier = Modifier.fillMaxSize().padding(padding)) {
                 if (tablet) {
                     LabRail(
-                        state = state,
-                        dest = railDest,
+                        sourceOpen = state.key != null && railDest == RailDest.Sources,
+                        tab = state.tab,
+                        templatesShown = railDest == RailDest.Templates,
+                        lintCount = lintCount,
                         onSources = goHome,
                         onNewSource = newSource,
-                        onRules = { navigator.push(RulesScreen()) },
+                        onRules = openRules,
                         onTemplates = { railDest = RailDest.Templates },
-                        onRetest = model::retestAll,
                         onTab = model::setTab,
                         onLogs = openLogs,
                     )
                     VerticalDivider()
                 }
                 Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                    LabHeader(
-                        state = state,
-                        editorState = editorState,
-                        dest = railDest,
-                        onBack = { back() },
-                        onSave = { inPlace -> editor.save(inPlace) },
-                        menu = {
+                    // KMK (r106): one top bar per place (Templates, Home, a source); the status strip is gone
+                    when {
+                        railDest == RailDest.Templates -> LabTopBar(
+                            title = "Templates",
+                            subtitle = "the files the Lab writes sources from",
+                            onBack = { back() },
+                        ) {}
+                        state.key == null -> LabTopBar(
+                            title = "Source Lab",
+                            subtitle = buildString {
+                                append("${state.sources.size} ${if (state.sources.size == 1) "source" else "sources"}")
+                                state.rules?.let { append(" · rules v${it.version}") }
+                                append(" · last re-test ${state.retestLast}")
+                            },
+                            onBack = if (tablet) null else ({ back() }),
+                        ) {
+                            if (tablet) {
+                                OutlinedTextField(
+                                    value = homeQuery,
+                                    onValueChange = { homeQuery = it },
+                                    placeholder = { Text("Find a source") },
+                                    leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(24.dp),
+                                    modifier = Modifier.width(280.dp),
+                                )
+                                OutlinedButton(onClick = model::retestAll, enabled = state.retestProgress == null) {
+                                    Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Text(if (state.retestProgress == null) "  Re-test all" else "  Re-testing…")
+                                }
+                                Button(onClick = newSource) {
+                                    Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Text("  New source")
+                                }
+                            } else {
+                                IconButton(onClick = { homeSearchOpen = !homeSearchOpen }) {
+                                    Icon(Icons.Outlined.Search, contentDescription = "Find a source")
+                                }
+                            }
                             Box {
                                 IconButton(onClick = { showMenu = true }) {
-                                    Icon(Icons.Outlined.MoreVert, contentDescription = null)
+                                    Icon(Icons.Outlined.MoreVert, contentDescription = "More")
                                 }
                                 DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-                                    if (state.key == null) {
-                                        MenuItem("New source", Icons.Outlined.Add) {
-                                            showMenu = false
-                                            newSource()
-                                        }
-                                        MenuItem("Templates", Icons.Outlined.Dashboard) {
-                                            showMenu = false
-                                            railDest = RailDest.Templates
-                                        }
-                                        MenuItem("Rules file", Icons.Outlined.Checklist) {
-                                            showMenu = false
-                                            navigator.push(RulesScreen())
-                                        }
-                                        MenuItem("Re-test all", Icons.Outlined.Refresh) {
-                                            showMenu = false
-                                            model.retestAll()
-                                        }
-                                        MenuItem("Check all sources", Icons.AutoMirrored.Outlined.List) {
-                                            showMenu = false
-                                            model.checkAllSources()
-                                        }
-                                        MenuItem("Logs", Icons.Outlined.Terminal) {
-                                            showMenu = false
-                                            openLogs()
-                                        }
-                                    } else {
-                                        MenuItem("Copy code", Icons.Outlined.ContentCopy) {
-                                            showMenu = false
-                                            actions.copyCode()
-                                        }
-                                        MenuItem("Paste code", Icons.Outlined.ContentPaste) {
-                                            showMenu = false
-                                            actions.pasteCode()
-                                        }
-                                        MenuItem("Search code", Icons.Outlined.Search) {
-                                            showMenu = false
-                                            model.setTab(LabTab.Code)
-                                            findOpen = true
-                                        }
-                                        HorizontalDivider()
-                                        MenuItem("Import Source", Icons.Outlined.FileUpload) {
-                                            showMenu = false
-                                            actions.importFile()
-                                        }
-                                        MenuItem("Export Source", Icons.Outlined.FileDownload) {
-                                            showMenu = false
-                                            actions.exportFile()
-                                        }
-                                        // KMK (r105): Convert again, on a saved source made by Record and convert
-                                        val lab = state.source?.lab
-                                        if (editorState.saved && convertAgain.offered(lab?.fromExtension, lab?.templateId)) {
-                                            MenuItem("Convert again", Icons.Outlined.Refresh) {
-                                                showMenu = false
-                                                convertAgainNow()
-                                            }
-                                        }
-                                        // KMK (r102): Duplicate removed from the menu (the owner's request)
-                                        if (editorState.saved) {
-                                            MenuItem("Delete Source", Icons.Outlined.DeleteOutline) {
-                                                showMenu = false
-                                                actions.deleteSource()
-                                            }
-                                        }
-                                        HorizontalDivider()
-                                        MenuItem("Logs", Icons.Outlined.Terminal) {
-                                            showMenu = false
-                                            openLogs()
-                                        }
+                                    MenuItem("New source", Icons.Outlined.Add) {
+                                        showMenu = false
+                                        newSource()
+                                    }
+                                    MenuItem("Templates", Icons.Outlined.Dashboard) {
+                                        showMenu = false
+                                        railDest = RailDest.Templates
+                                    }
+                                    MenuItem("Rules file", Icons.Outlined.Checklist) {
+                                        showMenu = false
+                                        openRules()
+                                    }
+                                    MenuItem("Re-test all", Icons.Outlined.Refresh) {
+                                        showMenu = false
+                                        model.retestAll()
+                                    }
+                                    MenuItem("Check all sources", Icons.AutoMirrored.Outlined.List) {
+                                        showMenu = false
+                                        model.checkAllSources()
+                                    }
+                                    HorizontalDivider()
+                                    // r96's Re-test all card: the nightly schedule and Wi-Fi only
+                                    DropdownMenuItem(
+                                        text = { Text("Re-test nightly (03:00)") },
+                                        trailingIcon = { Checkbox(checked = nightly, onCheckedChange = null) },
+                                        onClick = {
+                                            nightly = !nightly
+                                            model.setRetestSchedule(nightly)
+                                        },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Nightly only on Wi-Fi") },
+                                        enabled = nightly,
+                                        trailingIcon = { Checkbox(checked = wifiOnly, onCheckedChange = null, enabled = nightly) },
+                                        onClick = {
+                                            wifiOnly = !wifiOnly
+                                            model.setRetestWifiOnly(wifiOnly)
+                                        },
+                                    )
+                                    HorizontalDivider()
+                                    MenuItem("Logs", Icons.Outlined.Terminal) {
+                                        showMenu = false
+                                        openLogs()
                                     }
                                 }
                             }
-                        },
-                    )
-                    LabStrip(state = state, editorState = editorState)
-                    // KMK (r100): the source's template has a newer version
-                    val templateOffer = state.templateOffer
-                    if (templateOffer != null && state.key != null && railDest == RailDest.Sources) {
-                        TemplateUpdateBar(
-                            offer = templateOffer,
-                            busy = state.updatingTemplate,
-                            onUpdate = { confirmTemplateUpdate = true },
-                        )
+                        }
+                        else -> LabTopBar(
+                            title = if (editorState.saved) editorState.name.ifBlank { "Source" } else editorState.name.ifBlank { "New source" },
+                            subtitle = buildString {
+                                val source = state.source
+                                append(if (editorState.anime) "Anime" else "Manga")
+                                append(" · ").append(if (editorState.json) "JSON" else "JS")
+                                if (source != null && source.version > 0) append(" · v${source.version}")
+                                state.lastRun?.let { append(" · tested ${SourceLabScreenModel.agoText(it.startedAt)}") }
+                                if (state.tab == LabTab.Lint) state.rules?.let { append(" · rules v${it.version}") }
+                                if (!editorState.saved) append(" · not saved yet") else if (editorState.dirty) append(" · not saved")
+                            },
+                            // The rail's / bottom bar's Sources (and the system Back) go home; no arrow here
+                            onBack = null,
+                            badge = runBadge(state.running, state.lastRun),
+                            badgeInline = !tablet,
+                        ) {
+                            if (tablet && state.tab == LabTab.Lint && safeFixes.isNotEmpty()) {
+                                OutlinedButton(onClick = { confirmFixAll = true }) {
+                                    Text("Fix all ${safeFixes.size} safe ${if (safeFixes.size == 1) "fix" else "fixes"}")
+                                }
+                            }
+                            if (tablet && state.tab != LabTab.Test && railDest == RailDest.Sources) {
+                                if (state.running) {
+                                    OutlinedButton(onClick = model::cancelTest) {
+                                        Icon(Icons.Outlined.Stop, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Text("  Stop")
+                                    }
+                                } else {
+                                    OutlinedButton(onClick = runTestNow, enabled = editorState.running == null) {
+                                        Icon(Icons.Outlined.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Text("  Test")
+                                    }
+                                }
+                            }
+                            // KMK (r106): the phone's Test is an icon
+                            if (!tablet && railDest == RailDest.Sources) {
+                                if (state.running) {
+                                    IconButton(onClick = model::cancelTest) {
+                                        Icon(Icons.Outlined.Stop, contentDescription = "Stop the test")
+                                    }
+                                } else {
+                                    IconButton(onClick = runTestNow, enabled = editorState.running == null) {
+                                        Icon(Icons.Outlined.PlayArrow, contentDescription = "Test")
+                                    }
+                                }
+                            }
+                            SaveSplitButton(
+                                state = state,
+                                editorState = editorState,
+                                onSave = { inPlace -> editor.save(inPlace) },
+                                compact = !tablet,
+                            )
+                            Box {
+                                IconButton(onClick = { showMenu = true }) {
+                                    Icon(Icons.Outlined.MoreVert, contentDescription = "More")
+                                }
+                                DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                                    // KMK (r106): Source info moved here from beside the code (the Test Run panel is there now)
+                                    MenuItem("Source info", Icons.Outlined.Info) {
+                                        showMenu = false
+                                        infoSheet = true
+                                    }
+                                    MenuItem("Copy code", Icons.Outlined.ContentCopy) {
+                                        showMenu = false
+                                        actions.copyCode()
+                                    }
+                                    MenuItem("Paste code", Icons.Outlined.ContentPaste) {
+                                        showMenu = false
+                                        actions.pasteCode()
+                                    }
+                                    MenuItem("Search code", Icons.Outlined.Search) {
+                                        showMenu = false
+                                        model.setTab(LabTab.Code)
+                                        findOpen = true
+                                    }
+                                    HorizontalDivider()
+                                    MenuItem("Import Source", Icons.Outlined.FileUpload) {
+                                        showMenu = false
+                                        actions.importFile()
+                                    }
+                                    MenuItem("Export Source", Icons.Outlined.FileDownload) {
+                                        showMenu = false
+                                        actions.exportFile()
+                                    }
+                                    // KMK (r105): Convert again, on a saved source made by Record and convert
+                                    val lab = state.source?.lab
+                                    if (editorState.saved && convertAgain.offered(lab?.fromExtension, lab?.templateId)) {
+                                        MenuItem("Convert again", Icons.Outlined.Refresh) {
+                                            showMenu = false
+                                            convertAgainNow()
+                                        }
+                                    }
+                                    // KMK (r102): Duplicate removed from the menu (the owner's request)
+                                    if (editorState.saved) {
+                                        MenuItem("Delete Source", Icons.Outlined.DeleteOutline) {
+                                            showMenu = false
+                                            actions.deleteSource()
+                                        }
+                                    }
+                                    HorizontalDivider()
+                                    MenuItem("Logs", Icons.Outlined.Terminal) {
+                                        showMenu = false
+                                        openLogs()
+                                    }
+                                }
+                            }
+                        }
                     }
                     if (editorState.running != null || state.running || state.retestProgress != null || state.reportBuilding) {
                         LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     } else {
                         HorizontalDivider()
                     }
+                    // KMK (r100): the source's template has a newer version (Lint has its own card for it)
+                    val templateOffer = state.templateOffer
+                    if (templateOffer != null && state.key != null && railDest == RailDest.Sources && state.tab != LabTab.Lint) {
+                        TemplateUpdateBar(
+                            offer = templateOffer,
+                            busy = state.updatingTemplate,
+                            onUpdate = { confirmTemplateUpdate = true },
+                        )
+                    }
                     when {
                         railDest == RailDest.Templates -> TemplatesPane(modifier = Modifier.fillMaxSize())
-                        state.key == null -> HomePane(
-                            state = state,
-                            model = model,
-                            onOpen = { key -> openSource(key, LabTab.Code) },
-                            onRules = { navigator.push(RulesScreen()) },
-                            onTemplates = { railDest = RailDest.Templates },
-                            tablet = tablet,
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                        tablet -> BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                            // r101 fix: the code column leaves the pane at least 380 dp (a portrait tablet), never
-                            // under 360 dp itself, and at most 700 dp (Explain) / 600 dp (the other tabs)
-                            val room = maxWidth
-                            fun codeWidth(cap: Dp): Dp = maxOf(360.dp, minOf(cap, room - 380.dp))
-                            Row(modifier = Modifier.fillMaxSize()) {
-                                // KMK (r101): one CodeTab for every tab (its scroll and find bar survive a tab switch),
-                                // only its width changes: Code fills the room beside the Source info panel, Explain
-                                // gets up to 700 dp, the other tabs up to 600 dp
-                                val codeModifier = when (state.tab) {
-                                    LabTab.Code -> Modifier.weight(1f)
-                                    LabTab.Explain -> Modifier.width(codeWidth(700.dp))
-                                    else -> Modifier.width(codeWidth(600.dp))
-                                }
-                                CodeTab(
-                                    model = editor,
-                                    state = editorState,
-                                    findOpen = findOpen,
-                                    onFindOpenChange = { findOpen = it },
-                                    highlight = state.highlight,
-                                    revealLine = state.revealLine,
-                                    modifier = codeModifier.fillMaxHeight(),
+                        state.key == null -> Column(modifier = Modifier.fillMaxSize()) {
+                            if (!tablet && homeSearchOpen) {
+                                OutlinedTextField(
+                                    value = homeQuery,
+                                    onValueChange = { homeQuery = it },
+                                    placeholder = { Text("Find a source") },
+                                    leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+                                    singleLine = true,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(start = 16.dp, end = 16.dp, top = 8.dp),
                                 )
-                                VerticalDivider()
-                                if (state.tab == LabTab.Code) {
-                                    if (sourceInfo.open) {
-                                        SourceInfoPanel(
+                            }
+                            HomePane(
+                                state = state,
+                                query = if (tablet || homeSearchOpen) homeQuery else "",
+                                onOpen = openSource,
+                                onTemplates = { railDest = RailDest.Templates },
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                        tablet -> BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                            val room = maxWidth
+                            when (state.tab) {
+                                // KMK (r106, mock ECode): Parts outline · code · Test Run panel (each side column only
+                                // when the room allows: the code keeps at least ~400 dp)
+                                LabTab.Code -> Row(modifier = Modifier.fillMaxSize()) {
+                                    if (room >= 760.dp) {
+                                        PartsOutline(
+                                            parts = state.explain,
+                                            statuses = partStatuses,
+                                            selected = state.selectedPart,
+                                            onPart = model::showPart,
+                                            modifier = Modifier.width(190.dp).fillMaxHeight(),
+                                        )
+                                        VerticalDivider()
+                                    }
+                                    CodeTab(
+                                        model = editor,
+                                        state = editorState,
+                                        findOpen = findOpen,
+                                        onFindOpenChange = { findOpen = it },
+                                        highlight = state.highlight,
+                                        revealLine = state.revealLine,
+                                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                                        errorLine = lastError.line,
+                                        errorCount = lastError.count,
+                                    )
+                                    if (room >= 980.dp) {
+                                        VerticalDivider()
+                                        TestRunSide(
+                                            state = state,
+                                            model = model,
                                             editor = editor,
                                             editorState = editorState,
-                                            labState = state,
-                                            onHide = { sourceInfo.set(false) },
-                                            modifier = Modifier.width(340.dp).fillMaxHeight(),
-                                        )
-                                    } else {
-                                        SourceInfoStrip(
-                                            iconUrl = editorState.iconUrl,
-                                            onOpen = { sourceInfo.set(true) },
-                                            modifier = Modifier.width(44.dp).fillMaxHeight(),
+                                            query = query,
+                                            onGoToLine = goToLine,
+                                            modifier = Modifier.width(360.dp).fillMaxHeight(),
                                         )
                                     }
-                                } else {
-                                    SourcePane(
-                                        tab = state.tab,
+                                }
+                                // r101: Explain keeps the code beside it (a tapped part lights up its lines there);
+                                // the code gets the room minus 380 dp, 360–700 dp
+                                LabTab.Explain -> Row(modifier = Modifier.fillMaxSize()) {
+                                    CodeTab(
+                                        model = editor,
+                                        state = editorState,
+                                        findOpen = findOpen,
+                                        onFindOpenChange = { findOpen = it },
+                                        highlight = state.highlight,
+                                        revealLine = state.revealLine,
+                                        modifier = Modifier.width(maxOf(360.dp, minOf(700.dp, room - 380.dp))).fillMaxHeight(),
+                                        errorLine = lastError.line,
+                                        errorCount = lastError.count,
+                                    )
+                                    VerticalDivider()
+                                    ExplainPane(
+                                        state = state,
+                                        model = model,
+                                        editorState = editorState,
+                                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                                    )
+                                }
+                                else -> SourcePane(
+                                    tab = state.tab,
+                                    state = state,
+                                    model = model,
+                                    editor = editor,
+                                    editorState = editorState,
+                                    query = query,
+                                    onQuery = { query = it },
+                                    askBeforeReplacing = actions.askBeforeReplacing,
+                                    onEditByTapping = editByTapping,
+                                    onLearnCodes = learnCodes,
+                                    onGoToLine = goToLine,
+                                    onUpdateTemplate = { confirmTemplateUpdate = true },
+                                    onFixAll = { confirmFixAll = true },
+                                    fixAllInBar = true,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
+                        }
+                        // KMK (r106): the phone (tabs in the bottom bar): Code = Parts chips · code · Test Run drawer
+                        else -> BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                            val drawerHeight = maxHeight * 0.6f
+                            if (state.tab == LabTab.Code) {
+                                Column(modifier = Modifier.fillMaxSize()) {
+                                    PartsChipRow(
+                                        parts = state.explain,
+                                        statuses = partStatuses,
+                                        selected = state.selectedPart,
+                                        onPart = model::showPart,
+                                        modifier = Modifier.padding(vertical = 4.dp),
+                                    )
+                                    CodeTab(
+                                        model = editor,
+                                        state = editorState,
+                                        findOpen = findOpen,
+                                        onFindOpenChange = { findOpen = it },
+                                        highlight = state.highlight,
+                                        revealLine = state.revealLine,
+                                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                                        errorLine = lastError.line,
+                                        errorCount = lastError.count,
+                                    )
+                                    TestRunDrawer(
                                         state = state,
                                         model = model,
                                         editor = editor,
                                         editorState = editorState,
                                         query = query,
-                                        onQuery = { query = it },
-                                        askBeforeReplacing = actions.askBeforeReplacing,
-                                    onEditByTapping = editByTapping,
-                                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                                        onGoToLine = goToLine,
+                                        openHeight = drawerHeight,
                                     )
                                 }
-                            }
-                        }
-                        else -> Column(modifier = Modifier.fillMaxSize()) {
-                            SecondaryTabRow(selectedTabIndex = state.tab.ordinal) {
-                                LabTab.entries.forEach { tab ->
-                                    Tab(
-                                        selected = state.tab == tab,
-                                        onClick = { model.setTab(tab) },
-                                        text = { Text(tab.label, fontSize = 12.sp, maxLines = 1) },
-                                    )
-                                }
-                            }
-                            if (state.tab == LabTab.Code) {
-                                CodeTab(
-                                    model = editor,
-                                    state = editorState,
-                                    findOpen = findOpen,
-                                    onFindOpenChange = { findOpen = it },
-                                    highlight = state.highlight,
-                                    revealLine = state.revealLine,
-                                    modifier = Modifier.fillMaxSize(),
-                                    onOpenInfo = { infoSheet = true },
-                                )
                             } else {
                                 SourcePane(
                                     tab = state.tab,
@@ -531,6 +754,11 @@ internal class SourceLabScreen(
                                     onQuery = { query = it },
                                     askBeforeReplacing = actions.askBeforeReplacing,
                                     onEditByTapping = editByTapping,
+                                    onLearnCodes = learnCodes,
+                                    onGoToLine = goToLine,
+                                    onUpdateTemplate = { confirmTemplateUpdate = true },
+                                    onFixAll = { confirmFixAll = true },
+                                    fixAllInBar = false,
                                     modifier = Modifier.fillMaxSize(),
                                 )
                             }
@@ -545,7 +773,7 @@ internal class SourceLabScreen(
 /** What the tablet rail (or the phone's ⋮) shows in the main area besides a source */
 internal enum class RailDest { Sources, Templates }
 
-/** The source tabs other than Code (the phone shows Code through [CodeTab]) */
+/** The source tabs other than Code (Code is [CodeTab], with the Parts outline and Test Run panel on a tablet) */
 @Composable
 private fun SourcePane(
     tab: LabTab,
@@ -556,8 +784,13 @@ private fun SourcePane(
     query: String,
     onQuery: (String) -> Unit,
     askBeforeReplacing: (String, () -> Unit) -> Unit,
-    modifier: Modifier,
     onEditByTapping: () -> Unit,
+    onLearnCodes: () -> Unit,
+    onGoToLine: (Int) -> Unit,
+    onUpdateTemplate: () -> Unit,
+    onFixAll: () -> Unit,
+    fixAllInBar: Boolean,
+    modifier: Modifier,
 ) {
     when (tab) {
         LabTab.Code, LabTab.Explain -> ExplainPane(state = state, model = model, editorState = editorState, modifier = modifier)
@@ -568,11 +801,23 @@ private fun SourcePane(
             editorState = editorState,
             query = query,
             onQuery = onQuery,
+            onGoToLine = onGoToLine,
             modifier = modifier,
             onEditByTapping = onEditByTapping,
         )
-        LabTab.Lint -> LintPane(state = state, model = model, editor = editor, modifier = modifier)
-        LabTab.Report -> ReportPane(state = state, model = model, modifier = modifier)
+        LabTab.Lint -> LintPane(
+            state = state,
+            model = model,
+            editor = editor,
+            editorState = editorState,
+            onGoToLine = onGoToLine,
+            // "Learn the codes" on filter-value-is-label: the builder on this source (Edit by tapping)
+            onLearnCodes = onLearnCodes,
+            onUpdateTemplate = onUpdateTemplate,
+            onFixAll = onFixAll,
+            fixAllInBar = fixAllInBar,
+            modifier = modifier,
+        )
         LabTab.History -> HistoryPane(
             state = state,
             model = model,
@@ -581,61 +826,7 @@ private fun SourcePane(
             askBeforeReplacing = askBeforeReplacing,
             modifier = modifier,
         )
-    }
-}
-
-@Composable
-private fun LabHeader(
-    state: SourceLabScreenModel.State,
-    editorState: SourceEditorScreenModel.State,
-    dest: RailDest,
-    onBack: () -> Unit,
-    onSave: (inPlace: Boolean) -> Unit,
-    menu: @Composable () -> Unit,
-) {
-    val source = state.source
-    val title = when {
-        dest == RailDest.Templates -> "Templates"
-        state.key == null -> "Source Lab"
-        editorState.saved -> editorState.name.ifBlank { "Source" }
-        else -> editorState.name.ifBlank { "New source" }
-    }
-    val subtitle = when {
-        dest == RailDest.Templates -> "the files the Lab writes sources from"
-        state.key == null -> buildString {
-            append("${state.sources.size} ${if (state.sources.size == 1) "source" else "sources"}")
-            state.rules?.let { append(" · rules v${it.version}") }
-            append(" · last re-test ${state.retestLast}")
-        }
-        else -> buildString {
-            append(if (editorState.anime) "Anime" else "Manga")
-            append(" · ").append(if (editorState.json) "JSON" else "JS")
-            if (source != null && source.version > 0) append(" · v${source.version}")
-            source?.lastRun?.let { append(" · tested ${SourceLabScreenModel.agoText(it.startedAt)}") }
-            if (!editorState.saved) append(" · not saved yet") else if (editorState.dirty) append(" · not saved")
-        }
-    }
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
-    ) {
-        IconButton(onClick = onBack) {
-            Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
-        }
-        Column(modifier = Modifier.weight(1f).padding(start = 4.dp, end = 8.dp)) {
-            Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        if (state.key != null && dest == RailDest.Sources) {
-            SaveSplitButton(state = state, editorState = editorState, onSave = onSave)
-        }
-        menu()
+        LabTab.Report -> ReportPane(state = state, model = model, modifier = modifier)
     }
 }
 
@@ -651,6 +842,8 @@ private fun SaveSplitButton(
     state: SourceLabScreenModel.State,
     editorState: SourceEditorScreenModel.State,
     onSave: (inPlace: Boolean) -> Unit,
+    // KMK (r106): the phone's top bar: the save icon alone (its description and ▾ name the version)
+    compact: Boolean = false,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf<String?>(null) }
@@ -659,9 +852,13 @@ private fun SaveSplitButton(
     val next = maxOf(history.lastN, history.versions.lastOrNull()?.n ?: 0) + 1
     val enabled = editorState.running == null
     if (!editorState.saved || current == 0 || History.updateBlockedReason(history) != null) {
-        FilledTonalButton(onClick = { onSave(false) }, enabled = enabled) {
-            Icon(Icons.Outlined.Save, contentDescription = null, modifier = Modifier.width(18.dp))
-            Text("  Save")
+        FilledTonalButton(
+            onClick = { onSave(false) },
+            enabled = enabled,
+            contentPadding = if (compact) PaddingValues(horizontal = 12.dp) else ButtonDefaults.ContentPadding,
+        ) {
+            Icon(Icons.Outlined.Save, contentDescription = if (compact) "Save" else null, modifier = Modifier.width(18.dp))
+            if (!compact) Text("  Save")
         }
         return
     }
@@ -674,8 +871,12 @@ private fun SaveSplitButton(
                 shape = RoundedCornerShape(topStart = 20.dp, bottomStart = 20.dp, topEnd = 4.dp, bottomEnd = 4.dp),
                 contentPadding = PaddingValues(start = 14.dp, end = 12.dp),
             ) {
-                Icon(Icons.Outlined.Save, contentDescription = null, modifier = Modifier.width(18.dp))
-                Text("  Save to v$current", maxLines = 1)
+                Icon(
+                    Icons.Outlined.Save,
+                    contentDescription = if (compact) "Save to v$current" else null,
+                    modifier = Modifier.width(18.dp),
+                )
+                Text(if (compact) " v$current" else "  Save to v$current", maxLines = 1)
             }
             Spacer(Modifier.width(2.dp))
             FilledTonalButton(
@@ -729,125 +930,6 @@ private fun SaveSplitButton(
                     },
                 ) { Text("Save as new") }
             },
-        )
-    }
-}
-
-/** The status strip: Home sums the sources up; a source shows its own state */
-@Composable
-private fun LabStrip(state: SourceLabScreenModel.State, editorState: SourceEditorScreenModel.State) {
-    if (state.key == null) {
-        val good = state.sources.count { it.health.state == HealthState.Good }
-        val attention = state.sources.count { it.health.state == HealthState.Attention }
-        val failing = state.sources.count { it.health.state == HealthState.Failing }
-        val (head, color) = when {
-            failing > 0 -> "Failing" to StripColor.Red
-            attention > 0 -> "Attention" to StripColor.Amber
-            good > 0 -> "Good" to StripColor.Green
-            else -> "New" to StripColor.Neutral
-        }
-        LabStatusStrip(
-            head = if (state.retestProgress != null) "Testing" else head,
-            color = if (state.retestProgress != null) StripColor.Blue else color,
-            figures = listOf(
-                "Sources" to state.sources.size.toString(),
-                "Good" to good.toString(),
-                "Attention" to attention.toString(),
-                "Failing" to failing.toString(),
-            ),
-        )
-        return
-    }
-    val source: LabSource? = state.source
-    val (head, color) = when {
-        state.running -> "Testing" to StripColor.Blue
-        !editorState.saved -> "New" to StripColor.Blue
-        source == null -> "New" to StripColor.Neutral
-        else -> when (source.health.state) {
-            HealthState.Good -> "Good" to StripColor.Green
-            HealthState.Attention -> "Attention" to StripColor.Amber
-            HealthState.Failing -> "Failing" to StripColor.Red
-            HealthState.Unknown -> "Untested" to StripColor.Neutral
-        }
-    }
-    val lintCount = state.lint?.findings?.count { !it.ignored } ?: source?.lastLint?.findings?.count { !it.ignored }
-    LabStatusStrip(
-        head = head,
-        color = color,
-        figures = listOf(
-            "Version" to (source?.version?.takeIf { it > 0 }?.let { "v$it" } ?: "—"),
-            "Last test" to (state.lastRun?.let { SourceLabScreenModel.agoText(it.startedAt).removeSuffix(" ago") } ?: "never"),
-            "Lint" to (lintCount?.toString() ?: "—"),
-            "Errors" to (source?.health?.errorsToday?.toString() ?: "0"),
-        ),
-    )
-}
-
-@Composable
-private fun LabRail(
-    state: SourceLabScreenModel.State,
-    dest: RailDest,
-    onSources: () -> Unit,
-    onNewSource: () -> Unit,
-    onRules: () -> Unit,
-    onTemplates: () -> Unit,
-    onRetest: () -> Unit,
-    onTab: (LabTab) -> Unit,
-    onLogs: () -> Unit,
-) {
-    NavigationRail {
-        NavigationRailItem(
-            selected = state.key == null && dest == RailDest.Sources,
-            onClick = onSources,
-            icon = { Icon(Icons.AutoMirrored.Outlined.List, contentDescription = null) },
-            label = { Text("Sources") },
-        )
-        NavigationRailItem(
-            selected = false,
-            onClick = onNewSource,
-            icon = { Icon(Icons.Outlined.Add, contentDescription = null) },
-            label = { Text("New source") },
-        )
-        NavigationRailItem(
-            selected = false,
-            onClick = onRules,
-            icon = { Icon(Icons.Outlined.Checklist, contentDescription = null) },
-            label = { Text("Rules file") },
-        )
-        NavigationRailItem(
-            selected = dest == RailDest.Templates,
-            onClick = onTemplates,
-            icon = { Icon(Icons.Outlined.Dashboard, contentDescription = null) },
-            label = { Text("Templates") },
-        )
-        NavigationRailItem(
-            selected = false,
-            onClick = onRetest,
-            enabled = state.retestProgress == null,
-            icon = { Icon(Icons.Outlined.Refresh, contentDescription = null) },
-            label = { Text("Re-test all") },
-        )
-        if (state.key != null && dest == RailDest.Sources) {
-            // A fixed width, never fillMaxWidth: the rail's Column is wrap-content (`widthIn(min = 80.dp)`) and is
-            // measured with the whole screen as its max, so a fillMaxWidth divider (M3's default) grew the rail to
-            // the full width and the content Column next to it got 0 dp (r96: empty panes once a source opened)
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp).width(56.dp))
-            LabTab.entries.forEach { tab ->
-                NavigationRailItem(
-                    selected = state.tab == tab,
-                    onClick = { onTab(tab) },
-                    icon = { Text(tab.label.take(1), style = MaterialTheme.typography.titleMedium) },
-                    label = { Text(tab.label) },
-                )
-            }
-        }
-        // r98: Logs at the bottom of the rail (the rail's Column fills the height, so the spacer takes what's left)
-        Spacer(Modifier.weight(1f))
-        NavigationRailItem(
-            selected = false,
-            onClick = onLogs,
-            icon = { Icon(Icons.Outlined.Terminal, contentDescription = null) },
-            label = { Text("Logs") },
         )
     }
 }

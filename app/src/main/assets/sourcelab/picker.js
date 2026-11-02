@@ -89,6 +89,13 @@
 // with via "split". (2) "suggestions" stays armed like Tags: a tap on a card inside a "You may like" / "Related"
 // section sends `suggest` { name (the section's heading), section, item (the section's repeated card, scoped under
 // the section), title, cover, coverAttr, count, order, samples }.
+//
+// r106 (Suggestions cards): a Suggestions tap also sends the section's "Load more" / "Show more" button when one sits
+// under it (`suggest.more` { button, text }); a Suggestions tap ON such a button sends `loadMore` { button, text,
+// section (the headings before it, nearest first, one per line) } instead of a section. .scanMore({ id, item, button,
+// text }) presses the button once (the picker lets that click through), waits until the section's cards stop growing
+// (10 s at most) and answers as a pick { via: "more", id, ok, before, after, requests (the page's fetch / XHR addresses
+// since the press), samples (titles of the new cards), reason }.
 (function () {
   var TOKEN = "";
   try {
@@ -928,6 +935,9 @@
       var t = ne ? textOf(ne) : snippetOf(cards[k]);
       if (t) samples.push(t.slice(0, 60));
     }
+    var more = null;
+    try { more = moreNear(sec.box); } catch (eMore) { more = null; }
+    if (more) send("log", "suggestions \"" + name + "\": load more button \"" + more.text + "\" " + more.button);
     return {
       name: name,
       section: section,
@@ -939,7 +949,73 @@
       count: cards.length,
       order: docIndex(sec.box),
       samples: samples,
+      more: more,
     };
+  }
+
+  // ---------- r106: a section's "Load more" button ----------
+
+  var MORE_TEXT = /^(load|show|see|view|get)\s+more\b|^more(\s+(videos|titles|results|items|posts|movies|shows|episodes))?$|^(mehr|plus|m\u00e1s|lagi|thêm)\b/i;
+  var MORE_CONTROLS = "button, a, [role=button], input[type=button], input[type=submit]";
+
+  // [el] (or the control around it) when it is a "Load more" / "Show more" button: a short text saying so, and no link
+  // to another page ("See more" opening a full list page is a link, not a load more)
+  function loadMoreButton(el) {
+    if (!el || el.nodeType !== 1 || el.id === "__lab-badge") return null;
+    var b = (el.closest ? el.closest(MORE_CONTROLS) : null) || el;
+    // a box around the real control (a wrapper div saying "Load more") is not it: its control is
+    if (b === el && !(el.matches && el.matches(MORE_CONTROLS)) && el.querySelector && el.querySelector(MORE_CONTROLS)) return null;
+    var t = String(textOf(b) || b.getAttribute("value") || b.getAttribute("aria-label") || "").replace(/[\s\u25be\u25bc\u2304\u203a\u00bb+]+$/, "").trim();
+    if (!t || t.length > 40 || !MORE_TEXT.test(t)) return null;
+    if (b.tagName.toLowerCase() === "a") {
+      var h = String(b.getAttribute("href") || "").trim();
+      if (h && !/^(#|javascript:)/i.test(h)) {
+        try { if (new URL(h, location.href).pathname !== location.pathname) return null; } catch (eU) { return null; }
+      }
+    }
+    return b;
+  }
+
+  function moreInfo(b) {
+    var t = String(textOf(b) || b.getAttribute("value") || b.getAttribute("aria-label") || "").trim().slice(0, 40);
+    return { button: exactPath(b), text: t };
+  }
+
+  // The Load more button of a section: inside its box, else in the next two elements after it or after its parent
+  function moreNear(box) {
+    var roots = [box];
+    for (var n = box.nextElementSibling, hop = 0; n && hop < 2; n = n.nextElementSibling, hop++) roots.push(n);
+    var parent = box.parentElement;
+    if (parent && !/^(body|html)$/i.test(parent.tagName)) {
+      for (var m = parent.nextElementSibling, hop2 = 0; m && hop2 < 1; m = m.nextElementSibling, hop2++) roots.push(m);
+    }
+    for (var i = 0; i < roots.length; i++) {
+      var own = loadMoreButton(roots[i]) === roots[i] ? [roots[i]] : [];
+      var cands = own;
+      try { cands = own.concat(Array.prototype.slice.call(roots[i].querySelectorAll(MORE_CONTROLS))); } catch (e) { /* nothing */ }
+      for (var k = 0; k < cands.length && k < 200; k++) {
+        var b = loadMoreButton(cands[k]);
+        if (b && shown(b)) return moreInfo(b);
+      }
+    }
+    return null;
+  }
+
+  // The headings before [el] in its surroundings, nearest first (the app finds the section they name)
+  function headingsBefore(el) {
+    var out = [];
+    var node = el.parentElement;
+    for (var up = 0; node && up < 6 && !/^(body|html)$/i.test(node.tagName) && out.length < 30; up++, node = node.parentElement) {
+      var hs = [];
+      try { hs = Array.prototype.slice.call(node.querySelectorAll("h1, h2, h3, h4, h5, h6, [class*=title], [class*=heading], [class*=head]")); } catch (e) { hs = []; }
+      for (var i = hs.length - 1; i >= 0 && out.length < 30; i--) {
+        var h = hs[i];
+        if (!(h.compareDocumentPosition(el) & 4) || !headingLike(h)) continue;
+        var t = headingText(h).slice(0, 60);
+        if (t && out.indexOf(t) < 0) out.push(t);
+      }
+    }
+    return out;
   }
 
   // ---------- r103: document order, unlabelled rows, the site's menus ----------
@@ -1166,8 +1242,13 @@
           send("log", "tags: " + rows.length + " rows (" + rows.map(function (r) { return r.label; }).join(", ").slice(0, 120) + ")");
         }
       }
-      // r104: a Suggestions tap: the section around the card
-      if (forLabel === "suggestions" || via === "hold") {
+      // r106: a Suggestions tap on a section's Load more button: that button, not a section
+      var moreBtn = forLabel === "suggestions" ? loadMoreButton(el) : null;
+      if (moreBtn) {
+        d.loadMore = moreInfo(moreBtn);
+        d.loadMore.section = headingsBefore(moreBtn).join("\n");
+        send("log", "suggestions: load more button \"" + d.loadMore.text + "\" " + d.loadMore.button);
+      } else if (forLabel === "suggestions" || via === "hold") {
         var sg = null;
         try { sg = suggestionOf(el); } catch (eSg) { send("log", "suggestions not read: " + eSg.message); sg = null; }
         d.suggest = sg;
@@ -2159,7 +2240,9 @@
     return t && t.nodeType === 3 ? t.parentElement : t;
   }
   // r101: taps are the picker's in Pick mode, and in Browse mode too while a group pick waits for its tap
-  function taking() { return mode === "pick" || groupOn || menuOn; }
+  // r106: true while scanMore presses a Load more button: that click goes to the site, not to the picker
+  var bypass = false;
+  function taking() { return !bypass && (mode === "pick" || groupOn || menuOn); }
 
   // touchstart on an interactive target is prevented (no focus, no menu, no click), so it is picked on touchend
   var touch = null;            // { x, y, target, interactive, moved }
@@ -2499,6 +2582,77 @@
       var els = selector ? queryAll(selector) : [];
       for (var i = 0; i < els.length; i++) els[i].classList.remove("__lab-kept");
       return els.length;
+    },
+    // r106: "Scan it now": presses a section's Load more once (the click reaches the site), waits until the cards
+    // of [item] stop growing (10 s at most) and answers { via: "more", id, ok, before, after, requests, samples, reason }
+    scanMore: function (req) {
+      req = req || {};
+      var id = String(req.id || "");
+      var item = String(req.item || "");
+      function answer(o) {
+        o.via = "more";
+        o.id = id;
+        o.pageUrl = location.href;
+        send("pick", JSON.stringify(o));
+        send("log", "scan more: " + (o.ok ? o.before + " \u2192 " + o.after + " cards, " + (o.requests || []).length + " requests" : o.reason));
+      }
+      function cards() {
+        var r = jsoupAll(item);
+        if (r === null) r = queryAll(item.replace(/:(matchesOwn|matches|containsOwn|contains)\([^()]*\)/g, ""));
+        return r;
+      }
+      var btn = null;
+      try { btn = req.button ? document.querySelector(String(req.button)) : null; } catch (e) { btn = null; }
+      if (btn && !loadMoreButton(btn)) btn = null;
+      if (!btn) {
+        var all = queryAll(MORE_CONTROLS);
+        for (var i = 0; i < all.length && !btn; i++) {
+          var b = loadMoreButton(all[i]);
+          if (b && shown(b) && (!req.text || textOf(b).indexOf(String(req.text)) === 0)) btn = b;
+        }
+      }
+      if (!btn) {
+        answer({ ok: false, before: 0, after: 0, requests: [], samples: [], reason: "the button isn't on this page (open a title page that has it)" });
+        return "none";
+      }
+      var before = cards();
+      try { performance.setResourceTimingBufferSize(2000); performance.clearResourceTimings(); } catch (eP) { /* an old engine */ }
+      bypass = true;
+      try { btn.click(); } catch (eC) { send("log", "scan more: the press failed: " + eC.message); } finally { bypass = false; }
+      var started = Date.now();
+      var last = before.length;
+      var stableSince = 0;
+      function finish(now) {
+        var reqs = [];
+        try {
+          reqs = performance.getEntriesByType("resource").filter(function (e) {
+            return /^(xmlhttprequest|fetch|other)$/i.test(String(e.initiatorType || ""));
+          }).map(function (e) { return e.name; });
+        } catch (eR) { reqs = []; }
+        var fresh = now.filter(function (c) { return before.indexOf(c) < 0; });
+        var samples = [];
+        for (var k = 0; k < fresh.length && samples.length < 6; k++) {
+          var holder = fresh[k].querySelector("h1, h2, h3, h4, h5, h6, [class*=title], [class*=name]") || fresh[k];
+          var t = textOf(holder).slice(0, 60);
+          if (t) samples.push(t);
+        }
+        var grew = now.length > before.length;
+        answer({
+          ok: grew, before: before.length, after: now.length, requests: reqs.slice(-20), samples: samples,
+          reason: grew ? "" : "no new cards appeared within 10 s",
+        });
+      }
+      function poll() {
+        var now = cards();
+        if (now.length > before.length) {
+          if (now.length !== last) { last = now.length; stableSince = Date.now(); }
+          else if (Date.now() - stableSince > 700) { finish(now); return; }
+        }
+        if (Date.now() - started > 10000) { finish(now); return; }
+        setTimeout(poll, 250);
+      }
+      setTimeout(poll, 300);
+      return "pressing";
     },
     // r100: the choices a filter on [param] can take, sent through LabPicker.options (console "LABOPTS:"):
     // a <select name=param>'s options, else the values of links whose address carries param= (max 60). Works in

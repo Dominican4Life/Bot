@@ -842,7 +842,8 @@ internal object TestRuns {
 
     private fun shortUrl(url: String): String = url.substringAfter("://").take(70)
 
-    private val NET_LINE = Regex("""^\[net\](?:\[[^\]]*\])?\s+(\w+)\s+(\S+)\s+->\s+(\d+|null)(?:\s+in\s+(\d+)ms)?(\s+\(through the browser\))?""")
+    // KMK (r106): `· 3412 bytes` at the end is the reply's size (JsRuntime's fetch logs it)
+    private val NET_LINE = Regex("""^\[net\](?:\[[^\]]*\])?\s+(\w+)\s+(\S+)\s+->\s+(\d+|null)(?:\s+in\s+(\d+)ms)?(\s+\(through the browser\))?(?:\s+·\s+(\d+) bytes)?""")
     private val FETCH_FAILED = Regex("""^\[warn\](?:\[[^\]]*\])?\s+fetch failed:\s*(.*)$""")
 
     /** `[net] GET url -> 200 in 85ms`, `[net][popular] …`, `(through the browser)`, `[warn] fetch failed: …` */
@@ -854,6 +855,7 @@ internal object TestRuns {
                 status = m.groupValues[3].toIntOrNull(),
                 ms = m.groupValues[4].toLongOrNull() ?: 0L,
                 viaBrowser = m.groupValues[5].isNotEmpty(),
+                bytes = m.groupValues[6].toLongOrNull(),
             )
         }
         FETCH_FAILED.find(line)?.let { m ->

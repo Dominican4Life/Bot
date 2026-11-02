@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.ui.sourcelab.newsource
 
 import android.annotation.SuppressLint
+import android.graphics.Bitmap
 import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
@@ -16,6 +17,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -27,21 +29,21 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.automirrored.outlined.ArrowForward
-import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.ArrowDownward
 import androidx.compose.material.icons.outlined.ArrowUpward
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Code
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.MoreVert
-import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -55,6 +57,9 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -69,13 +74,15 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -85,20 +92,24 @@ import androidx.compose.ui.viewinterop.AndroidView
 import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
-import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.util.Screen
 import eu.kanade.presentation.util.isTabletUi
 import eu.kanade.tachiyomi.jssource.lab.Derive
 import eu.kanade.tachiyomi.jssource.lab.LabFlowScreen
 import eu.kanade.tachiyomi.jssource.lab.PickCheck
 import eu.kanade.tachiyomi.network.NetworkHelper
-import eu.kanade.tachiyomi.ui.sourcelab.LabStatusStrip
-import eu.kanade.tachiyomi.ui.sourcelab.StripColor
+import eu.kanade.tachiyomi.util.system.AppLog
+import eu.kanade.tachiyomi.util.system.copyToClipboard
 import eu.kanade.tachiyomi.util.system.setDefaultSettings
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import tachiyomi.presentation.core.components.material.Scaffold
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.net.URLEncoder
 import java.util.UUID
 
 /**
@@ -131,11 +142,25 @@ import java.util.UUID
  *
  * r104: the Tags card shows "Split into rows" on a restored group that reads whole rows or labels; a Suggestions card
  * (like Tags) lists the sections tapped as Suggestions ("You may like", "Related videos") with remove.
+ *
+ * r106 (W1, mockups `scratchpad/design106/project/TLabels`, `TTitle`, `TTags`, `TCode`, `TAddress`; the views are in
+ * BuilderChrome.kt): the stat strip and the edit banner are gone (the banner's note shows once as a snackbar). One top
+ * bar: back, title + source · host, the step pills (tap: go back / Next), "N of M picked · +k", Undo, Save ▾, ⋮ (Check
+ * each pick, Kind, Format, previous step, leave). The address bar sits over the page only with its icons inside (Search
+ * / Back · Forward · Reload, Go when edited, Stop while loading); words search the site. The right panel (below the
+ * page on a phone) has the tabs Labels · Title page (Tags and Suggestions open sub-views) · Lists & filters (W2's
+ * BuilderExtrasPane) · Code (what the Lab derived, readable, copyable); its footer holds the step's next action. The
+ * tab follows the step. While a label is armed one strip over the page's bottom says "Tapping for X · hint · Stop".
  */
 internal class BuilderScreen(
     private val startUrl: String? = null,
     private val anime: Boolean = false,
     private val editKey: String? = null,
+    /**
+     * r106 fix: the panel's tab to open first: "labels" | "title" | "filters" | "code" (null = the step's tab); the
+     * code editor's Lint "Learn the codes" opens the builder on "filters"
+     */
+    private val startTab: String? = null,
 ) : Screen(), LabFlowScreen {
 
     /**
@@ -188,14 +213,40 @@ internal class BuilderScreen(
         }
     }
 
+
     @SuppressLint("SetJavaScriptEnabled")
     @Composable
     override fun Content() {
         val navigator = LocalNavigator.currentOrThrow
         val model = rememberScreenModel { BuilderScreenModel(startUrl, anime, editKey) }
         val state by model.state.collectAsState()
+        val extrasState by model.extras.state.collectAsState()
         val tablet = isTabletUi()
         val holder = remember { arrayOfNulls<WebView>(1) }
+        val context = LocalContext.current
+        val focusManager = LocalFocusManager.current
+        val snackbar = remember { SnackbarHostState() }
+        // r106: the page's loading progress (the address bar's Stop and its thin line); 100 = not loading
+        var progress by remember { mutableIntStateOf(100) }
+        // r106: the panel's tab, the step it last followed, and the Title page tab's sub-view ("tags" / "suggestions")
+        val firstTab = tabOf(startTab)
+        var tab by rememberSaveable { mutableIntStateOf(firstTab ?: TAB_LABELS) }
+        // r106 fix: a start tab isn't overridden by the first step's tab (the tab follows later step changes)
+        var tabStep by rememberSaveable { mutableStateOf(if (firstTab != null) model.state.value.step.name else "") }
+        var titleSub by rememberSaveable { mutableStateOf<String?>(null) }
+        val panelScroll = rememberScrollState()
+        // r106 (phone): bumped to open a peeked sheet to half (a menu card to look at, the helper's verdict)
+        var sheetOpenTick by remember { mutableIntStateOf(0) }
+        // r106 (W2): the Lists & filters pane's scroll requests already handled (-1: none seen yet)
+        var handledScrollTick by rememberSaveable { mutableIntStateOf(-1) }
+        // r106 fix: a start tab of Lists & filters opens the phone's sheet once
+        var startShown by rememberSaveable { mutableStateOf(false) }
+        LaunchedEffect(Unit) {
+            if (!startShown && firstTab != null) {
+                startShown = true
+                if (firstTab == TAB_LISTS) sheetOpenTick++
+            }
+        }
 
         LaunchedEffect(state.delivered) {
             // r102: Edit by tapping goes back to the source it saved (one screen); a new source leaves the Lab flow
@@ -222,9 +273,49 @@ internal class BuilderScreen(
             if (state.pickerScript == null || state.pageUrl == null) return@LaunchedEffect
             holder[0]?.let { inject(it, model) }
         }
-        // r102: the armed label, told to the page's picker as it changes (and before picker.js on every injection)
+        // r102: the armed label, told to the page's picker as it changes (and before picker.js on every injection).
+        // r106: arming Tags or Suggestions shows its sub-view in the Title page tab
         LaunchedEffect(state.armed) {
             holder[0]?.evaluateJavascript(armScript(state.armed), null)
+            val armedNow = state.armed
+            if (armedNow == "tags" || armedNow == "suggestions") {
+                tab = TAB_TITLE
+                titleSub = armedNow
+            }
+        }
+        // r106: the tab follows the step (List page → Labels; Title page and the video step → Title page) when the
+        // step changes; the owner can switch tabs any time
+        LaunchedEffect(state.step) {
+            val name = state.step.name
+            if (tabStep != name) {
+                tabStep = name
+                tab = if (state.step == BuilderScreenModel.Step.ListPage) TAB_LABELS else TAB_TITLE
+            }
+        }
+        // r106 (W2): a new menu card, or one that starts learning / reading ("menu:<id>", "pending"): the panel shows
+        // Lists & filters (W2's pane scrolls the card into view); on a phone the sheet opens to half
+        LaunchedEffect(extrasState.scrollTick) {
+            val tick = extrasState.scrollTick
+            if (handledScrollTick == -1) {
+                handledScrollTick = tick
+                return@LaunchedEffect
+            }
+            if (tick == handledScrollTick) return@LaunchedEffect
+            handledScrollTick = tick
+            val target = extrasState.scrollTarget.orEmpty()
+            // r106 fix: only new cards and learning switch the tab / open the sheet (not every sub-menu read of a
+            // "Read all N", nor a question on a card the owner is looking at)
+            if (extrasState.scrollReveal && (target.startsWith("menu:") || target == "pending")) {
+                tab = TAB_LISTS
+                sheetOpenTick++
+            }
+        }
+        // r106: Edit by tapping's note ("Editing X: your picks are back", "edited by hand since") shows once, as a
+        // snackbar (r102–r105: a banner over the page)
+        LaunchedEffect(state.banner) {
+            val text = state.banner ?: return@LaunchedEffect
+            snackbar.showSnackbar(text, actionLabel = "OK", duration = SnackbarDuration.Long)
+            model.dismissBanner()
         }
         // Android Back: the page's own history first, then this screen only (back to New source, not out of the Lab)
         BackHandler(enabled = true) {
@@ -251,242 +342,596 @@ internal class BuilderScreen(
             }
         }
 
-        // r101: the title page's own fields are optional: counted apart ("5 of 8 · +2")
+        // r101: the title page's own fields are optional: counted apart ("5 of 8 picked · +2")
         val picked = state.picks.count { it.pick.label !in BuilderScreenModel.optionalLabels }
         val extraPicked = state.picks.size - picked
         val wanted = BuilderScreenModel.Step.ListPage.labels.size + BuilderScreenModel.Step.TitlePage.labels.size + 1 -
             BuilderScreenModel.optionalLabels.size
-        Scaffold(
-            topBar = {
-                AppBar(
-                    title = if (state.editKey != null) "Edit by tapping" else "Build by tapping",
-                    subtitle = (state.editName?.let { "$it · " } ?: "") +
-                        "${state.host} · ${stepTitle(state)} · step ${state.step.number} of 3",
-                    navigateUp = {
-                        if (state.step != BuilderScreenModel.Step.ListPage) model.previousStep() else navigator.pop()
-                        Unit
-                    },
-                    navigationIcon = Icons.AutoMirrored.Outlined.ArrowBack,
-                )
-            },
-        ) { padding ->
-            Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-                LabStatusStrip(
-                    head = "Picking",
-                    color = StripColor.Blue,
-                    figures = listOf(
-                        "Picked" to ("$picked of $wanted" + (if (extraPicked > 0) " · +$extraPicked" else "")),
-                        "Kind" to if (state.anime) "Anime" else "Manga",
-                        "Step" to "${state.step.number} / 3",
-                    ),
-                )
-                if (state.busy != null) LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp))
-                // r102: Edit by tapping says what came back (or what was read from the code)
-                EditBanner(state, model)
-                UrlRow(state, model, holder)
-                // r103: one line, only until the first pick (the "Tapping for…" rows are gone: the page gets the room)
-                if (state.picks.isEmpty() && state.raws.isEmpty() && state.pending == null && state.armed == null) {
-                    Text(
-                        "Tap a label in Labels${if (tablet) " (right)" else " (below the page)"}, then tap it on the page; or " +
-                            "long-press anything on the page and name it after.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
+        val pickedText = "$picked of $wanted picked" + if (extraPicked > 0) " · +$extraPicked" else ""
+        // r100 (W3): a filter's choices are read from the page (a <select>, or links carrying the parameter)
+        val askOptions: (String) -> Unit = { param ->
+            holder[0]?.evaluateJavascript(
+                "window.__labPicker && window.__labPicker.optionsFor(${JsonPrimitive(param)})",
+                null,
+            )
+            Unit
+        }
+        // r100: the helper card shows after a label while no other tap waits for one
+        val showHelper = state.helper && state.pending == null && state.helperFor?.let { state.checks[it] } != null
+        LaunchedEffect(showHelper) {
+            if (showHelper) sheetOpenTick++
+        }
+        // r106: the armed strip over the page's bottom (a label, or "Pick a menu on the site")
+        val armed = state.armed
+        val armedWhat: String? = when {
+            armed == "tags" -> "Tags"
+            armed == "suggestions" -> "Suggestions"
+            armed != null -> labelName(armed)
+            extrasState.groupMode -> "a menu on the site"
+            else -> null
+        }
+        val armedHint = when {
+            armed == "tags" -> "one tap on the details gives every row"
+            armed == "suggestions" -> "tap a card in a “You may like” section"
+            armed != null -> "tap ${whatToTap(armed)}"
+            else -> "a heading, a dropdown's button or an entry"
+        }
+        val stopArmed: () -> Unit = { if (model.state.value.armed != null) model.arm(null) else model.extras.setGroupMode(false) }
+        val notice = state.notice
+        // r106: the address bar (mock TAddress)
+        val pageUrl = state.pageUrl
+        val loading = progress < 100
+        val edited = state.url.isNotBlank() && state.url.trim() != pageUrl && state.url.trim() != state.loadUrl
+        val go: () -> Unit = {
+            val target = addressFor(model.state.value, model.extras.state.value.searchPath)
+            if (target != null) model.load(target)
+            focusManager.clearFocus()
+        }
+        val copyAll: () -> Unit = {
+            val selection = model.state.value.selection
+            if (selection != null && selection.derived.isNotEmpty()) {
+                context.copyToClipboard("Build by tapping", selection.derived.entries.joinToString("\n") { (key, value) -> "$key = $value" })
+            }
+        }
+        // r106: the Save split button (W2's write(inPlace)): Edit by tapping saves to the open version ("Save to v3",
+        // overwritten in place; its Baseline asks first) and ▾ = a new version; a new source is written (and opens in
+        // the code editor). No open version (no History, or blocked): the main button saves a new version
+        val saveEnabled = state.busy == null && (state.editKey != null || state.picks.isNotEmpty() || state.fromCode.isNotEmpty())
+        val openVersion = state.openVersion
+        val saveInPlace = state.editKey != null && openVersion != null
+        val saveMain: () -> Unit = { model.write(inPlace = saveInPlace) }
+        val saveMenu = if (state.editKey != null) {
+            listOf(
+                BuilderSaveItem(
+                    "Save as a new version (v${state.nextVersion})",
+                    if (openVersion != null) "Keeps v$openVersion as it is and adds v${state.nextVersion}" else "History gets the new version",
+                    { model.write(inPlace = false) },
+                ),
+                BuilderSaveItem("Leave without saving", "What you picked here is dropped", { navigator.pop() }),
+            )
+        } else {
+            listOf(
+                BuilderSaveItem("Write the source now", "With what is picked so far; it opens in the code editor", { model.write(inPlace = false) }),
+                BuilderSaveItem("Leave without writing", "What you picked here is dropped", { navigator.pop() }),
+            )
+        }
+        val onStep: (Int) -> Unit = { number ->
+            val now = model.state.value.step.number
+            when {
+                number < now -> repeat(now - number) { model.previousStep() }
+                // r106 fix: 1 → 3 goes on step by step, as long as each step lets it (a refused step stays put)
+                number > now -> {
+                    var guard = 0
+                    while (model.state.value.step.number < number && guard++ < 3) {
+                        val before = model.state.value.step
+                        model.nextStep()
+                        if (model.state.value.step == before) break
+                    }
+                }
+            }
+        }
+        val onBack: () -> Unit = {
+            if (model.state.value.step != BuilderScreenModel.Step.ListPage) model.previousStep() else navigator.pop()
+        }
+
+        Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { padding ->
+            BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(padding)) {
+                val wideBar = maxWidth >= 1000.dp
+                val narrow = maxWidth < 600.dp
+                val panelWidth = if (maxWidth >= 1100.dp) 460.dp else 400.dp
+                Column(modifier = Modifier.fillMaxSize()) {
+                    TopBar(
+                        state = state,
+                        model = model,
+                        wide = wideBar,
+                        phone = !tablet,
+                        undoInMenu = maxWidth < 400.dp,
+                        pickedText = pickedText,
+                        saveLabel = when {
+                            state.editKey == null -> if (narrow) "Write" else "Write the source"
+                            openVersion != null -> if (narrow) "Save v$openVersion" else "Save to v$openVersion"
+                            narrow -> "Save"
+                            else -> "Save as v${state.nextVersion}"
+                        },
+                        saveEnabled = saveEnabled,
+                        saveMenu = saveMenu,
+                        onSave = saveMain,
+                        onBack = onBack,
+                        onStep = onStep,
+                        onLeave = { navigator.pop() },
                     )
-                }
-                // r99: Up / Down move the pick on the page; picker.js sends the new element back as a pick
-                PickHint(state, model) { direction ->
-                    holder[0]?.evaluateJavascript("window.__labPicker && window.__labPicker.$direction()", null)
-                    Unit
-                }
-                // r100 (W3): a filter's choices are read from the page (a <select>, or links carrying the parameter)
-                val askOptions: (String) -> Unit = { param ->
-                    holder[0]?.evaluateJavascript(
-                        "window.__labPicker && window.__labPicker.optionsFor(${JsonPrimitive(param)})",
-                        null,
-                    )
-                    Unit
-                }
-                // r100: the helper card shows after a label while no other tap waits for one
-                val showHelper = state.helper && state.pending == null && state.helperFor?.let { state.checks[it] } != null
-                if (tablet) {
-                    Row(modifier = Modifier.fillMaxSize()) {
-                        WebCard(
-                            model,
-                            holder,
-                            onCreated = { webGeneration++ },
-                            modifier = Modifier.weight(1f).fillMaxHeight().padding(start = 16.dp, bottom = 16.dp),
-                        ) {
-                            // r103: "Tapping for: X · Stop" (and a refused Tags tap's note) over the top of the page
-                            TopBars(state, model)
-                            // Over the bottom of the page, as in the mockups
-                            if (showHelper) {
-                                HelperCard(
-                                    state,
+                    if (state.busy != null) {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    } else {
+                        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
+                    }
+                    val addressBar: @Composable (Modifier) -> Unit = { barModifier ->
+                        BuilderAddressBar(
+                            text = state.url,
+                            pageOpen = pageUrl != null,
+                            edited = edited,
+                            canGoBack = state.canGoBack,
+                            canGoForward = state.canGoForward,
+                            loading = loading,
+                            progress = progress,
+                            onText = model::setUrl,
+                            onBack = { holder[0]?.takeIf { it.canGoBack() }?.goBack() },
+                            onForward = { holder[0]?.takeIf { it.canGoForward() }?.goForward() },
+                            onReload = { holder[0]?.reload() },
+                            onStop = {
+                                holder[0]?.stopLoading()
+                                progress = 100
+                            },
+                            onGo = go,
+                            modifier = barModifier,
+                        )
+                    }
+                    if (tablet) {
+                        Row(modifier = Modifier.fillMaxSize()) {
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.weight(1f).fillMaxHeight().padding(start = 12.dp, top = 10.dp, bottom = 10.dp),
+                            ) {
+                                addressBar(Modifier.fillMaxWidth())
+                                // r99: Up / Down move the pick on the page; picker.js sends the new element back as a pick
+                                PickHint(state, model) { direction ->
+                                    holder[0]?.evaluateJavascript("window.__labPicker && window.__labPicker.$direction()", null)
+                                    Unit
+                                }
+                                WebCard(
                                     model,
-                                    wide = true,
-                                    modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(16.dp),
-                                )
+                                    holder,
+                                    onCreated = { webGeneration++ },
+                                    onProgress = { progress = it },
+                                    modifier = Modifier.fillMaxWidth().weight(1f),
+                                ) {
+                                    if (notice != null) {
+                                        BuilderNoticeBar(notice, model::dismissNotice, Modifier.align(Alignment.TopCenter).padding(8.dp))
+                                    }
+                                    Column(
+                                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                                        modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(12.dp),
+                                    ) {
+                                        // r100: the helper card over the bottom of the page, as in the mockups
+                                        if (showHelper) HelperCard(state, model, wide = true, modifier = Modifier.fillMaxWidth())
+                                        if (armedWhat != null) BuilderArmedStrip(armedWhat, armedHint, stopArmed)
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Box(modifier = Modifier.width(1.dp).fillMaxHeight().background(MaterialTheme.colorScheme.outlineVariant))
+                            Column(modifier = Modifier.width(panelWidth).fillMaxHeight()) {
+                                BuilderPanelTabs(TAB_NAMES, tab, { tab = it })
+                                Column(
+                                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .weight(1f)
+                                        .verticalScroll(panelScroll)
+                                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                                ) {
+                                    PanelBody(state, model, tab, titleSub, { titleSub = it }, askOptions)
+                                }
+                                PanelFooter(state, model, tab, copyAll, saveMain)
                             }
                         }
-                        Column(
-                            modifier = Modifier
-                                .width(400.dp)
-                                .fillMaxHeight()
-                                .verticalScroll(rememberScrollState())
-                                .padding(horizontal = 16.dp),
-                        ) {
-                            TagsCard(state, model)
-                            SuggestionsCard(state, model)
-                            LabelsPane(state, model)
-                            Spacer(Modifier.height(12.dp))
-                            HelperSwitch(state, model)
-                            Spacer(Modifier.height(12.dp))
-                            BuilderExtrasPane(
-                                extras = model.extras,
-                                pageUrl = state.pageUrl,
-                                siteUrl = state.site,
-                                onAskOptions = askOptions,
-                                codeSearchPath = state.fromCode["searchPath"],
-                            )
-                            Spacer(Modifier.height(12.dp))
-                            DerivedCard(state)
-                        }
-                    }
-                } else {
-                    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-                        WebCard(
-                            model,
-                            holder,
-                            onCreated = { webGeneration++ },
-                            modifier = Modifier.fillMaxWidth().height(420.dp).padding(horizontal = 16.dp),
-                        ) {
-                            TopBars(state, model)
-                        }
-                        // On a phone the page is small: the helper goes under it instead of over it
-                        if (showHelper) {
-                            HelperCard(state, model, wide = false, modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 10.dp))
-                        }
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            TagsCard(state, model)
-                            SuggestionsCard(state, model)
-                            LabelsPane(state, model)
-                            Spacer(Modifier.height(12.dp))
-                            HelperSwitch(state, model)
-                            Spacer(Modifier.height(12.dp))
-                            BuilderExtrasPane(
-                                extras = model.extras,
-                                pageUrl = state.pageUrl,
-                                siteUrl = state.site,
-                                onAskOptions = askOptions,
-                                codeSearchPath = state.fromCode["searchPath"],
-                            )
-                            Spacer(Modifier.height(12.dp))
-                            DerivedCard(state)
-                        }
+                    } else {
+                        // r106 (phone): the page on top (about 55 %, its address bar over it), the panel as a draggable
+                        // sheet below with the same tabs; arming a label drops the sheet to its peek
+                        BuilderPhoneSheet(
+                            tabs = TAB_NAMES,
+                            tab = tab,
+                            onTab = { tab = it },
+                            tapping = armedWhat != null,
+                            openTick = sheetOpenTick,
+                            page = { pageModifier ->
+                                Column(modifier = pageModifier) {
+                                    addressBar(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 6.dp))
+                                    PickHint(state, model) { direction ->
+                                        holder[0]?.evaluateJavascript("window.__labPicker && window.__labPicker.$direction()", null)
+                                        Unit
+                                    }
+                                    WebCard(
+                                        model,
+                                        holder,
+                                        onCreated = { webGeneration++ },
+                                        onProgress = { progress = it },
+                                        modifier = Modifier.fillMaxWidth().weight(1f).padding(start = 12.dp, end = 12.dp, bottom = 8.dp),
+                                    ) {
+                                        if (notice != null) {
+                                            BuilderNoticeBar(notice, model::dismissNotice, Modifier.align(Alignment.TopCenter).padding(8.dp))
+                                        }
+                                        if (armedWhat != null) {
+                                            BuilderArmedStrip(
+                                                armedWhat,
+                                                armedHint,
+                                                stopArmed,
+                                                Modifier.align(Alignment.BottomCenter).padding(8.dp),
+                                            )
+                                        }
+                                    }
+                                }
+                            },
+                            body = {
+                                // On a phone the helper's verdict sits at the top of the sheet (the page is small)
+                                if (showHelper) HelperCard(state, model, wide = false, modifier = Modifier.fillMaxWidth())
+                                PanelBody(state, model, tab, titleSub, { titleSub = it }, askOptions)
+                            },
+                            footer = { PanelFooter(state, model, tab, copyAll, saveMain) },
+                        )
                     }
                 }
             }
         }
 
+        // r106 (W2): Save to the open version when it is the Baseline asks first (the code editor's r103 question)
+        val confirm = state.saveConfirm
+        if (confirm != null) {
+            AlertDialog(
+                onDismissRequest = model::cancelSave,
+                title = { Text("Overwrite v${state.openVersion ?: ""}?") },
+                text = { Text(confirm) },
+                confirmButton = { TextButton(onClick = model::confirmSave) { Text("Overwrite") } },
+                dismissButton = {
+                    TextButton(
+                        onClick = {
+                            model.cancelSave()
+                            model.write(inPlace = false)
+                        },
+                    ) { Text("Save as new") }
+                },
+            )
+        }
         val error = state.error
         if (error != null) {
             AlertDialog(
                 onDismissRequest = model::clearError,
-                title = { Text("Build by tapping") },
+                title = { Text(if (state.editKey != null) "Edit by tapping" else "Build by tapping") },
                 text = { Text(error) },
                 confirmButton = { TextButton(onClick = model::clearError) { Text("OK") } },
             )
         }
     }
 
-    /** The browser bar: Back · Forward · Refresh, the address, Go */
-    @Composable
-    private fun UrlRow(state: BuilderScreenModel.State, model: BuilderScreenModel, holder: Array<WebView?>) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
-            IconButton(onClick = { holder[0]?.takeIf { it.canGoBack() }?.goBack() }, enabled = state.canGoBack) {
-                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
-            }
-            IconButton(onClick = { holder[0]?.takeIf { it.canGoForward() }?.goForward() }, enabled = state.canGoForward) {
-                Icon(Icons.AutoMirrored.Outlined.ArrowForward, contentDescription = "Forward")
-            }
-            IconButton(onClick = { holder[0]?.reload() }, enabled = state.pageUrl != null) {
-                Icon(Icons.Outlined.Refresh, contentDescription = "Refresh")
-            }
-            OutlinedTextField(
-                value = state.url,
-                onValueChange = model::setUrl,
-                singleLine = true,
-                placeholder = { Text("https://…") },
-                textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-                modifier = Modifier.weight(1f),
-            )
-            Spacer(Modifier.width(8.dp))
-            OutlinedButton(onClick = { model.load(state.url) }, enabled = state.url.isNotBlank()) { Text("Go") }
+    /**
+     * r106: what the address bar's Enter / Go loads: an address as typed (the model adds https://); words (no dot, or
+     * spaces) search the site: its recorded search (Lists & filters), the edited source's own, Derive's guess, else
+     * `/search?q=`. Before any page is open, the text is loaded as is.
+     */
+    private fun addressFor(state: BuilderScreenModel.State, recordedSearch: String?): String? {
+        val text = state.url.trim()
+        if (text.isEmpty()) return null
+        val address = "://" in text || (' ' !in text && '.' in text) || text.startsWith("localhost")
+        if (address || (state.pageUrl == null && state.loadUrl == null)) return text
+        val path = listOfNotNull(recordedSearch, state.fromCode["searchPath"], state.selection?.derived?.get("searchPath"))
+            .map { it.trim() }
+            .firstOrNull { "{q}" in it }
+            ?: "/search?q={q}"
+        val words = runCatching { URLEncoder.encode(text, "UTF-8") }.getOrDefault(text)
+        val filled = path.replace("{q}", words).replace("{page}", "1")
+        AppLog.add('D', "lab", "Builder: address bar words searched on the site ($path)")
+        return if (filled.startsWith("http://") || filled.startsWith("https://")) {
+            filled
+        } else {
+            state.site.trimEnd('/') + if (filled.startsWith("/")) filled else "/$filled"
         }
     }
 
     /**
-     * r103: over the top of the page: one slim "Tapping for: <Label> · Stop" bar while a label (or "Pick a menu on the
-     * site") is armed, and a short note (a Tags tap in the site's menu, kept while the helper is off) with its OK
+     * r106: the top bar (mock TLabels): back, "Edit by tapping" + source · host, the step pills, "N of M picked", Undo,
+     * Save ▾, ⋮. [wide]: one row (as in the mockups); else two rows (the pills and the count go to the second).
      */
     @Composable
-    private fun BoxScope.TopBars(state: BuilderScreenModel.State, model: BuilderScreenModel) {
-        val extrasState by model.extras.state.collectAsState()
-        val armed = state.armed
-        val what = when {
-            armed == "tags" -> "Tags (a tap on the details makes a group per row)"
-            armed == "suggestions" -> "Suggestions (each section you tap is a group)"
-            armed != null -> PickCheck.labelName(armed, state.anime)
-            extrasState.groupMode -> "a menu on the site (a heading, a dropdown's button or an entry)"
-            else -> null
-        }
-        val notice = state.notice
-        if (what == null && notice == null) return
-        Column(
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().padding(8.dp),
-        ) {
-            if (what != null) {
-                SlimBar(
-                    text = "Tapping for: $what",
-                    action = "Stop",
-                    container = MaterialTheme.colorScheme.primary,
-                    content = MaterialTheme.colorScheme.onPrimary,
+    private fun TopBar(
+        state: BuilderScreenModel.State,
+        model: BuilderScreenModel,
+        wide: Boolean,
+        phone: Boolean,
+        undoInMenu: Boolean,
+        pickedText: String,
+        saveLabel: String,
+        saveEnabled: Boolean,
+        saveMenu: List<BuilderSaveItem>,
+        onSave: () -> Unit,
+        onBack: () -> Unit,
+        onStep: (Int) -> Unit,
+        onLeave: () -> Unit,
+    ) {
+        val stepsScroll = rememberScrollState()
+        val current = state.step.number
+        val steps = listOf(
+            BuilderStepPill(1, "List page", done = current > 1, current = current == 1),
+            BuilderStepPill(2, "Title page", done = current > 2, current = current == 2),
+            BuilderStepPill(3, if (state.anime) "Video" else "Pages", done = false, current = current == 3),
+        )
+        val title = if (state.editKey != null) "Edit by tapping" else "Build by tapping"
+        val subtitle = listOfNotNull(state.editName, state.host.ifBlank { null }).joinToString(" · ").ifBlank { stepTitle(state) }
+        val undoEnabled = state.picks.isNotEmpty() || state.pending != null
+        if (wide) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxWidth().height(60.dp).padding(start = 6.dp, end = 12.dp),
+            ) {
+                IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back") }
+                TitleBlock(title, subtitle, Modifier.widthIn(max = 240.dp))
+                Spacer(Modifier.weight(1f))
+                BuilderStepPills(steps, onStep)
+                Spacer(Modifier.weight(1f))
+                BuilderPill(pickedText)
+                IconButton(onClick = model::undo, enabled = undoEnabled) {
+                    Icon(Icons.AutoMirrored.Outlined.Undo, contentDescription = "Undo")
+                }
+                BuilderSaveButton(saveLabel, saveEnabled, onSave, saveMenu)
+                MoreMenu(state, model, onLeave, onUndo = null)
+            }
+        } else if (phone) {
+            // r106 (phone): back, the title with the step indicator ("2/3 · Title page ▾", the picked count under it;
+            // tap to switch steps), Undo when there is room (else in ⋮), Save ▾, ⋮
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(start = 2.dp, end = 2.dp),
+            ) {
+                IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back") }
+                BuilderStepIndicator(title, steps, pickedText, onStep, Modifier.weight(1f))
+                if (!undoInMenu) {
+                    IconButton(onClick = model::undo, enabled = undoEnabled) {
+                        Icon(Icons.AutoMirrored.Outlined.Undo, contentDescription = "Undo")
+                    }
+                }
+                BuilderSaveButton(saveLabel, saveEnabled, onSave, saveMenu)
+                MoreMenu(state, model, onLeave, onUndo = if (undoInMenu && undoEnabled) model::undo else null)
+            }
+        } else {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 4.dp),
                 ) {
-                    if (armed != null) model.arm(null) else model.extras.setGroupMode(false)
+                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back") }
+                    TitleBlock(title, subtitle, Modifier.weight(1f).padding(end = 4.dp))
+                    IconButton(onClick = model::undo, enabled = undoEnabled) {
+                        Icon(Icons.AutoMirrored.Outlined.Undo, contentDescription = "Undo")
+                    }
+                    BuilderSaveButton(saveLabel, saveEnabled, onSave, saveMenu)
+                    MoreMenu(state, model, onLeave, onUndo = null)
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(stepsScroll)
+                        .padding(start = 8.dp, end = 12.dp, bottom = 6.dp),
+                ) {
+                    BuilderStepPills(steps, onStep)
+                    BuilderPill(pickedText)
                 }
             }
-            if (notice != null) {
-                SlimBar(
-                    text = notice,
-                    action = "OK",
-                    container = MaterialTheme.colorScheme.tertiaryContainer,
-                    content = MaterialTheme.colorScheme.onTertiaryContainer,
-                    onAction = model::dismissNotice,
+        }
+    }
+
+    @Composable
+    private fun TitleBlock(title: String, subtitle: String, modifier: Modifier) {
+        Column(modifier = modifier) {
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+
+    /**
+     * r106: ⋮ holds what lived in the panel: the helper ("Check each pick"), Kind (Manga / Anime), Format (JS / JSON),
+     * back to the previous step, and leaving
+     */
+    @Composable
+    private fun MoreMenu(state: BuilderScreenModel.State, model: BuilderScreenModel, onLeave: () -> Unit, onUndo: (() -> Unit)?) {
+        var open by remember { mutableStateOf(false) }
+        Box {
+            IconButton(onClick = { open = true }) { Icon(Icons.Outlined.MoreVert, contentDescription = "More") }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                // r106 (phone, narrow): Undo lives here when the top bar has no room for it
+                if (onUndo != null) {
+                    DropdownMenuItem(
+                        text = { Text("Undo") },
+                        leadingIcon = { Icon(Icons.AutoMirrored.Outlined.Undo, contentDescription = null) },
+                        onClick = {
+                            open = false
+                            onUndo()
+                        },
+                    )
+                    HorizontalDivider()
+                }
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text("Check each pick")
+                            Text(
+                                "Every label is checked and a better match suggested",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    },
+                    trailingIcon = { Switch(checked = state.helper, onCheckedChange = model::setHelper) },
+                    onClick = { model.setHelper(!state.helper) },
+                )
+                HorizontalDivider()
+                MenuHead("Kind")
+                MenuChoice("Manga", !state.anime) { model.setAnime(false) }
+                MenuChoice("Anime", state.anime) { model.setAnime(true) }
+                HorizontalDivider()
+                MenuHead("Format")
+                MenuChoice("JS", !state.json) { model.setJson(false) }
+                MenuChoice("JSON", state.json) { model.setJson(true) }
+                HorizontalDivider()
+                if (state.step != BuilderScreenModel.Step.ListPage) {
+                    DropdownMenuItem(
+                        text = { Text("Back to the previous step") },
+                        onClick = {
+                            open = false
+                            model.previousStep()
+                        },
+                    )
+                }
+                DropdownMenuItem(
+                    text = { Text(if (state.editKey != null) "Leave without saving" else "Leave the builder") },
+                    onClick = {
+                        open = false
+                        onLeave()
+                    },
                 )
             }
         }
     }
 
     @Composable
-    private fun SlimBar(text: String, action: String, container: Color, content: Color, onAction: () -> Unit) {
-        Surface(shape = RoundedCornerShape(10.dp), color = container, shadowElevation = 4.dp, modifier = Modifier.fillMaxWidth()) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 12.dp)) {
-                Icon(Icons.Outlined.TouchApp, contentDescription = null, tint = content, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = content,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
+    private fun MenuHead(text: String) {
+        Text(
+            text,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 2.dp),
+        )
+    }
+
+    @Composable
+    private fun MenuChoice(text: String, selected: Boolean, onClick: () -> Unit) {
+        DropdownMenuItem(
+            text = { Text(text) },
+            leadingIcon = {
+                if (selected) {
+                    Icon(Icons.Outlined.Check, contentDescription = null)
+                } else {
+                    Spacer(Modifier.size(24.dp))
+                }
+            },
+            onClick = onClick,
+        )
+    }
+
+    /** r106: the panel's body for [tab] (the Title page tab shows its Tags / Suggestions sub-view when one is open) */
+    @Composable
+    private fun PanelBody(
+        state: BuilderScreenModel.State,
+        model: BuilderScreenModel,
+        tab: Int,
+        titleSub: String?,
+        onTitleSub: (String?) -> Unit,
+        askOptions: (String) -> Unit,
+    ) {
+        // r106 fix: each tab keeps its saved state (open sections, fields) while another tab is shown
+        val tabStates = rememberSaveableStateHolder()
+        tabStates.SaveableStateProvider(tab) {
+            when (tab) {
+                TAB_LABELS -> LabelsTab(state, model)
+                TAB_TITLE -> when (titleSub) {
+                    "tags" -> TagsView(state, model, onBack = { onTitleSub(null) })
+                    "suggestions" -> SuggestionsView(state, model, onBack = { onTitleSub(null) })
+                    else -> TitleTab(state, model, onOpen = { onTitleSub(it) })
+                }
+                TAB_LISTS -> BuilderExtrasPane(
+                    extras = model.extras,
+                    pageUrl = state.pageUrl,
+                    siteUrl = state.site,
+                    onAskOptions = askOptions,
+                    codeSearchPath = state.fromCode["searchPath"],
                 )
-                TextButton(onClick = onAction) { Text(action, color = content) }
+                else -> CodeTab(state)
+            }
+        }
+    }
+
+    /** r106: the panel's footer: the step's next action (Code tab: Open in the code editor · Copy all) */
+    @Composable
+    private fun PanelFooter(state: BuilderScreenModel.State, model: BuilderScreenModel, tab: Int, onCopyAll: () -> Unit, onSave: () -> Unit) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+            ) {
+                if (tab == TAB_CODE) {
+                    // A new source is written and opens in the code editor; Edit by tapping saves, then goes back to it
+                    // r106 fix: Edit by tapping saves like the top bar's Save (to the open version, in place)
+                    OutlinedButton(
+                        onClick = if (state.editKey != null) onSave else ({ model.write(inPlace = false) }),
+                        enabled = state.busy == null && (state.picks.isNotEmpty() || state.editKey != null || state.fromCode.isNotEmpty()),
+                    ) {
+                        Icon(Icons.Outlined.Code, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (state.editKey != null) "Save, open code" else "Open in editor", maxLines = 1)
+                    }
+                    Spacer(Modifier.weight(1f))
+                    OutlinedButton(onClick = onCopyAll, enabled = state.selection?.derived?.isNotEmpty() == true) {
+                        Icon(Icons.Outlined.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Copy all", maxLines = 1)
+                    }
+                } else {
+                    BuilderMuted(stepSummary(state), modifier = Modifier.weight(1f), maxLines = 2)
+                    // The last step saves like the top bar's Save (to the open version when editing)
+                    val last = state.step == BuilderScreenModel.Step.ChapterPage
+                    Button(onClick = if (last) onSave else model::nextStep, enabled = state.busy == null) {
+                        Text(
+                            when (state.step) {
+                                BuilderScreenModel.Step.ListPage -> "Next: open a title →"
+                                BuilderScreenModel.Step.TitlePage ->
+                                    if (state.singleEpisode) "Next: pick the video →" else "Next: open a chapter →"
+                                BuilderScreenModel.Step.ChapterPage -> when {
+                                    state.editKey == null -> "Write the source"
+                                    state.openVersion != null -> "Save to v${state.openVersion}"
+                                    else -> "Save to this source"
+                                }
+                            },
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /** "List page done · 4 of 4", "Title page · 4 picked", "Video frame picked" */
+    private fun stepSummary(state: BuilderScreenModel.State): String = when (state.step) {
+        BuilderScreenModel.Step.ListPage -> {
+            val labels = BuilderScreenModel.Step.ListPage.labels
+            val done = labels.count { state.done(it) }
+            (if (done == labels.size) "List page done" else "List page") + " · $done of ${labels.size}"
+        }
+        BuilderScreenModel.Step.TitlePage -> "Title page · ${BuilderScreenModel.Step.TitlePage.labels.count { state.done(it) }} picked"
+        BuilderScreenModel.Step.ChapterPage -> {
+            val label = if (state.anime) "video" else "image"
+            when {
+                state.done(label) -> "${labelName(label)} picked"
+                state.anime -> "Tap the player, then save"
+                else -> "Tap a page picture, then save"
             }
         }
     }
@@ -587,19 +1032,21 @@ internal class BuilderScreen(
         model: BuilderScreenModel,
         holder: Array<WebView?>,
         onCreated: () -> Unit,
+        /** r106: the page's loading progress (0–100) for the address bar's Stop and its thin line */
+        onProgress: (Int) -> Unit,
         modifier: Modifier,
         overlay: @Composable BoxScope.() -> Unit = {},
     ) {
         val userAgent = remember { Injekt.get<NetworkHelper>().defaultUserAgentProvider() }
         Surface(
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(14.dp),
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             color = MaterialTheme.colorScheme.surfaceContainerLowest,
             modifier = modifier,
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
                 AndroidView(
-                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp)),
+                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(14.dp)),
                     factory = { context ->
                         // On the main thread: AndroidView's factory runs there. Same settings, cookies and user agent
                         // as the source's own requests (JsRender / JsBrowserFetch), pictures on.
@@ -612,6 +1059,11 @@ internal class BuilderScreen(
                             addJavascriptInterface(Bridge(model), "LabPicker")
                             // r98: picker.js's fallback when the bridge isn't there: console.log("LABPICK:<token>:" + json)
                             webChromeClient = object : WebChromeClient() {
+                                // r106: the address bar's Stop and progress line
+                                override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                                    onProgress(newProgress)
+                                }
+
                                 override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
                                     val text = consoleMessage?.message() ?: return false
                                     // r98 fix: only lines that carry this screen's token; any other is the page's own
@@ -664,9 +1116,15 @@ internal class BuilderScreen(
                                     return null
                                 }
 
+                                // r106: a page starts: the address bar shows Stop until it finishes
+                                override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                                    onProgress(10)
+                                }
+
                                 // r102: the WebView's own address (view.url), not the callback's: after Back a late
                                 // callback could put the previous page in the bar
                                 override fun onPageFinished(view: WebView?, url: String?) {
+                                    onProgress(100)
                                     view ?: return
                                     model.onPageLoaded(view.url ?: url, view.canGoBack(), view.canGoForward(), finished = true)
                                     inject(view, model)
@@ -690,250 +1148,308 @@ internal class BuilderScreen(
                         }
                     },
                 )
-                // r100: the helper card (tablet), drawn over the page
+                // r100: the helper card (tablet), r106: the armed strip and the notice, drawn over the page
                 overlay()
             }
         }
     }
 
+    /**
+     * r106: the Labels tab (mock TLabels): the list page's labels, the episodes' (Chapter link, Date, Number), "This
+     * page is the only episode" and Kind. A row arms its label (tap again to stop); with a tap waiting, it names it.
+     */
     @Composable
-    private fun LabelsPane(state: BuilderScreenModel.State, model: BuilderScreenModel) {
-        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Labels", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                    Text(
-                        when {
-                            state.pending != null -> "now tap a label"
-                            state.armed != null -> "tap the page · tap the row again to stop"
-                            state.picks.isEmpty() -> "tap a label, then tap it on the page"
-                            else -> labelsSummary(state)
+    private fun LabelsTab(state: BuilderScreenModel.State, model: BuilderScreenModel) {
+        BuilderMuted(
+            if (state.pending != null) {
+                "A tap is waiting: tap the label it is (or Not this, above the page)."
+            } else {
+                "Tap a label to arm it, then tap that thing on the page. Each pick is checked on every card."
+            },
+        )
+        BuilderSectionHead("List page")
+        BuilderCard {
+            BuilderScreenModel.Step.ListPage.labels.forEach { label -> LabelLine(state, model, label) }
+        }
+        BuilderSectionHead(if (state.singleEpisode) "Episodes · one episode" else "Episodes")
+        BuilderCard {
+            BuilderScreenModel.Step.TitlePage.labels
+                .filter { it !in BuilderScreenModel.optionalLabels }
+                .forEach { label -> LabelLine(state, model, label) }
+        }
+        BuilderCard {
+            // r99: a title page that is its own only episode (one video per page, no episode list)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable { model.setSingleEpisode(!state.singleEpisode) }
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("This page is the only episode", style = MaterialTheme.typography.bodyLarge)
+                    BuilderMuted(
+                        if (state.singleEpisode) {
+                            "No chapter link needed: Date / Number are read on this page, and the video frame is picked on it next" +
+                                if (state.json) ". Written as JS (the JSON format lists episodes from links)." else "."
+                        } else {
+                            "Turn on when the title has one video and no episode list"
                         },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                val all = state.allLabels
-                all.forEach { label ->
-                    // r101: the title page's own fields, under their own heading (none is needed)
-                    if (label == BuilderScreenModel.optionalLabels.firstOrNull { it in all }) {
-                        Text(
-                            "Title page details · optional",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 10.dp, bottom = 2.dp),
-                        )
-                    }
-                    val pick = state.pick(label)
-                    val here = label in state.labels
-                    // r98: with a tap waiting, the labels take it (the same as the chips above the page); r102: every
-                    // label, on any page; with no tap waiting a row arms its label ("Tapping for…")
-                    val choosable = state.pending != null
-                    val armedHere = state.armed == label
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(
-                                when {
-                                    choosable || armedHere -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
-                                    else -> Color.Transparent
-                                },
-                            )
-                            .clickable {
-                                if (choosable) model.label(label) else model.arm(if (armedHere) null else label)
-                            }
-                            .padding(vertical = 6.dp),
-                    ) {
-                        // r100: the helper's verdict per row: ✓ green, ! amber, i blue; ○ grey when not picked
-                        val check = if (pick != null) state.checks[label] else null
-                        StatusGlyph(
-                            level = check?.level,
-                            picked = pick != null || state.done(label),
-                            idleColor = if (choosable) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.outline,
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Text(labelName(label), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.width(110.dp))
-                        Text(
-                            text = when {
-                                choosable -> "tap here: it is the ${labelName(label).lowercase()}"
-                                armedHere -> "tapping for this now: tap ${whatToTap(label)} · tap again to stop"
-                                label == "tags" && state.tagGroups.isNotEmpty() ->
-                                    "${state.tagGroups.size} ${if (state.tagGroups.size == 1) "group" else "groups"}: " +
-                                        state.tagGroups.joinToString(", ") { it.name }
-                                label == "suggestions" && state.suggestionGroups.isNotEmpty() ->
-                                    "${state.suggestionGroups.size} ${if (state.suggestionGroups.size == 1) "section" else "sections"}: " +
-                                        state.suggestionGroups.joinToString(", ") { it.name }
-                                pick != null -> pick.likeSelector.substringAfterLast(" > ") + " · ${pick.pick.count}"
-                                state.fromCodeOnly(label) -> "from the code"
-                                state.singleEpisode && label == "chapter" -> "not needed: this page is the episode"
-                                here && state.nextLabel == label -> "next: tap here, then ${whatToTap(label)}"
-                                here && label in BuilderScreenModel.optionalLabels -> "optional: tap here, then ${whatToTap(label)}"
-                                here -> "tap here, then tap it on the page"
-                                label in BuilderScreenModel.Step.TitlePage.labels -> "on a title page: tap here, then tap it"
-                                label in BuilderScreenModel.Step.ListPage.labels -> "on the list page: tap here, then tap it"
-                                else -> "on an episode page: tap here, then tap it"
-                            },
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 12.sp,
-                            color = if (pick != null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
-                        )
-                        if (pick != null || (label == "tags" && state.tagGroups.isNotEmpty()) ||
-                            (label == "suggestions" && state.suggestionGroups.isNotEmpty())
-                        ) {
-                            IconButton(onClick = { model.removePick(label) }, modifier = Modifier.size(28.dp)) {
-                                Icon(Icons.Outlined.Close, contentDescription = "Remove", modifier = Modifier.size(16.dp))
-                            }
-                        }
-                    }
-                    HorizontalDivider()
-                }
-                // r99: a title page that is its own only episode (one video per page, no episode list)
-                if (state.step == BuilderScreenModel.Step.TitlePage || state.singleEpisode) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { model.setSingleEpisode(!state.singleEpisode) }
-                            .padding(top = 10.dp, bottom = 4.dp),
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("This page is the only episode", style = MaterialTheme.typography.bodyLarge)
-                            Text(
-                                if (state.singleEpisode) {
-                                    "No chapter link needed: Date / Number are read on this page, and the video frame is picked on it next" +
-                                        if (state.json) ". Written as JS (the JSON format lists episodes from links)." else "."
-                                } else {
-                                    "Turn on when the title has one video and no episode list"
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        Switch(checked = state.singleEpisode, onCheckedChange = model::setSingleEpisode)
-                    }
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 12.dp)) {
-                    FilterChip(selected = !state.anime, onClick = { model.setAnime(false) }, label = { Text("Manga") })
-                    FilterChip(selected = state.anime, onClick = { model.setAnime(true) }, label = { Text("Anime") })
-                    Spacer(Modifier.weight(1f))
-                    FilterChip(selected = !state.json, onClick = { model.setJson(false) }, label = { Text("JS") })
-                    FilterChip(selected = state.json, onClick = { model.setJson(true) }, label = { Text("JSON") })
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
-                    Button(onClick = model::nextStep, enabled = state.busy == null, modifier = Modifier.weight(1f)) {
-                        Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            when (state.step) {
-                                BuilderScreenModel.Step.ListPage -> "Next: open a title"
-                                BuilderScreenModel.Step.TitlePage -> if (state.singleEpisode) "Next: pick the video here" else "Next: open a chapter"
-                                BuilderScreenModel.Step.ChapterPage -> if (state.editKey != null) "Save to this source" else "Write the source"
-                            },
-                        )
-                    }
-                    OutlinedButton(onClick = model::undo, enabled = state.picks.isNotEmpty() || state.pending != null) {
-                        Icon(Icons.AutoMirrored.Outlined.Undo, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Undo")
-                    }
-                }
-                if (state.editKey != null && state.step != BuilderScreenModel.Step.ChapterPage) {
-                    // r102: Edit by tapping saves from any step (a new History version of the same source)
-                    Button(onClick = model::write, enabled = state.busy == null, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                        Text("Save to this source")
-                    }
-                } else if (state.step != BuilderScreenModel.Step.ChapterPage) {
-                    TextButton(onClick = model::write, enabled = state.picks.isNotEmpty() && state.busy == null, modifier = Modifier.padding(top = 4.dp)) {
-                        Text("Write the source with what is picked so far")
-                    }
-                }
+                Spacer(Modifier.width(8.dp))
+                Switch(checked = state.singleEpisode, onCheckedChange = model::setSingleEpisode)
             }
-        }
-    }
-
-    /** r102: Edit by tapping: what came back from the saved source (or was read from its code) */
-    @Composable
-    private fun EditBanner(state: BuilderScreenModel.State, model: BuilderScreenModel) {
-        val text = state.banner ?: return
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.secondaryContainer,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 12.dp)) {
-                Text(
-                    text,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                    modifier = Modifier.weight(1f).padding(vertical = 8.dp),
-                )
-                IconButton(onClick = model::dismissBanner) {
-                    Icon(Icons.Outlined.Close, contentDescription = "Close", tint = MaterialTheme.colorScheme.onSecondaryContainer)
-                }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
+            ) {
+                Text("Kind", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                BuilderPill("Anime", selected = state.anime, onClick = { model.setAnime(true) })
+                BuilderPill("Manga", selected = !state.anime, onClick = { model.setAnime(false) })
             }
         }
     }
 
     /**
-     * r102: the Tags card (mockup 2): one row per group (the Details row's name, its first values, ⋮ → Rename /
-     * Remove) and where its values go (Tags · Description · Both). Shown while there are groups or Tags is armed.
+     * One label's row: ● armed, ✓ / ! / i by the helper's verdict, ✓ picked (or from the code), – not needed, ○ not
+     * picked; the selector chip and count when picked, else what to do; ✕ removes the pick.
      */
     @Composable
-    private fun TagsCard(state: BuilderScreenModel.State, model: BuilderScreenModel) {
-        // Remembered before any return (Compose rule)
+    private fun LabelLine(state: BuilderScreenModel.State, model: BuilderScreenModel, label: String) {
+        val colors = MaterialTheme.colorScheme
+        val helper = helperColors()
+        val pick = state.pick(label)
+        // r98: with a tap waiting, the rows take it; r102/r103: otherwise a row arms its label ("Tapping for…")
+        val choosable = state.pending != null
+        val armedHere = state.armed == label
+        val check = if (pick != null) state.checks[label] else null
+        val notNeeded = state.singleEpisode && label == "chapter"
+        val mark = when {
+            armedHere -> "●"
+            check != null -> glyph(check.level)
+            pick != null || state.done(label) -> "✓"
+            notNeeded -> "–"
+            else -> "○"
+        }
+        val markColor = when {
+            armedHere -> colors.primary
+            check != null -> helper.of(check.level)
+            pick != null || state.done(label) -> helper.ok
+            else -> colors.outline
+        }
+        val hint = when {
+            choosable -> "tap: it is the ${labelName(label).lowercase()}"
+            armedHere -> "tap it on the page"
+            pick != null -> null
+            state.fromCodeOnly(label) -> "from the code"
+            notNeeded -> "not needed: one episode"
+            label == "bigCover" -> "uses the list's cover"
+            state.nextLabel == label -> "next: tap to arm"
+            else -> "tap to arm"
+        }
+        val remove: (() -> Unit)? = if (pick != null) ({ model.removePick(label) }) else null
+        BuilderLabelRow(
+            glyph = mark,
+            glyphColor = markColor,
+            name = labelName(label),
+            selector = pick?.let { BuilderScreenModel.shortSelector(it.likeSelector) },
+            count = pick?.pick?.count,
+            hint = hint,
+            highlighted = choosable || armedHere,
+            onClick = { if (choosable) model.label(label) else model.arm(if (armedHere) null else label) },
+            onRemove = remove,
+        )
+    }
+
+    /**
+     * r106: the Title page tab (mock TTitle): Cover, Description, Author, Status, Video frame (Page image on manga),
+     * then Tags and Suggestions, each opening its sub-view, and "Check each pick"
+     */
+    @Composable
+    private fun TitleTab(state: BuilderScreenModel.State, model: BuilderScreenModel, onOpen: (String) -> Unit) {
+        val colors = MaterialTheme.colorScheme
+        val ok = builderOkColor()
+        val warn = builderWarnColor()
+        BuilderMuted(
+            if (state.pending != null) {
+                "A tap is waiting: tap the label it is."
+            } else {
+                "All optional. Tap a label, then tap that part of the title page."
+            },
+        )
+        BuilderCard {
+            listOf("bigCover", "description", "author", "status", if (state.anime) "video" else "image")
+                .forEach { label -> LabelLine(state, model, label) }
+        }
+        BuilderCard {
+            val tags = state.tagGroups
+            val tagsArmed = state.armed == "tags"
+            BuilderLabelRow(
+                glyph = when {
+                    tagsArmed -> "●"
+                    tags.isNotEmpty() -> "✓"
+                    else -> "○"
+                },
+                glyphColor = when {
+                    tagsArmed -> colors.primary
+                    tags.isNotEmpty() -> ok
+                    else -> colors.outline
+                },
+                name = "Tags",
+                selector = null,
+                count = null,
+                hint = null,
+                highlighted = tagsArmed || state.pending != null,
+                onClick = { if (state.pending != null) model.label("tags") else onOpen("tags") },
+                onRemove = null,
+                subtitle = if (tags.isEmpty()) {
+                    "Tap the details: one group per row"
+                } else {
+                    "${tags.size} ${if (tags.size == 1) "row" else "rows"}: " + tags.joinToString(", ") { it.name }
+                },
+                trailing = { BuilderLinkButton("Open ›", { onOpen("tags") }) },
+            )
+            val groups = state.suggestionGroups
+            val suggestionsArmed = state.armed == "suggestions"
+            val late = groups.count { it.late.isNotBlank() }
+            val warned = groups.any { it.lateWarning.isNotBlank() }
+            BuilderLabelRow(
+                glyph = when {
+                    suggestionsArmed -> "●"
+                    warned -> "!"
+                    groups.isNotEmpty() -> "✓"
+                    else -> "○"
+                },
+                glyphColor = when {
+                    suggestionsArmed -> colors.primary
+                    warned -> warn
+                    groups.isNotEmpty() -> ok
+                    else -> colors.outline
+                },
+                name = "Suggestions",
+                selector = null,
+                count = null,
+                hint = null,
+                highlighted = suggestionsArmed || state.pending != null,
+                onClick = { if (state.pending != null) model.label("suggestions") else onOpen("suggestions") },
+                onRemove = null,
+                subtitle = if (groups.isEmpty()) {
+                    "Tap a card in a “You may like” section"
+                } else {
+                    "${groups.size} ${if (groups.size == 1) "section" else "sections"}" +
+                        if (late > 0) " · $late ${if (late == 1) "loads" else "load"} after the page" else ""
+                },
+                trailing = { BuilderLinkButton("Open ›", { onOpen("suggestions") }) },
+            )
+        }
+        BuilderCard {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable { model.setHelper(!state.helper) }
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Check each pick", style = MaterialTheme.typography.bodyLarge)
+                    BuilderMuted("Every label is checked and a better match is suggested")
+                }
+                Spacer(Modifier.width(8.dp))
+                Switch(checked = state.helper, onCheckedChange = model::setHelper)
+            }
+        }
+    }
+
+    /** r106: the sub-views' arm button: arms [label] (Stop while armed); with a tap waiting, names it [label] */
+    @Composable
+    private fun ArmButton(state: BuilderScreenModel.State, model: BuilderScreenModel, label: String, idleText: String) {
+        when {
+            state.pending != null -> Button(onClick = { model.label(label) }) { Text("Use the tap waiting") }
+            state.armed == label -> OutlinedButton(onClick = { model.arm(null) }) { Text("Stop tapping") }
+            else -> Button(onClick = { model.arm(label) }) {
+                Icon(Icons.Outlined.TouchApp, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(idleText)
+            }
+        }
+    }
+
+    /**
+     * r106: the Tags sub-view (mock TTags; r102–r104's Tags card): one row per group in page order with Tags /
+     * Description / Both; hold a row to rename or remove it; "Split into rows" on a restored whole-row group
+     */
+    @Composable
+    private fun TagsView(state: BuilderScreenModel.State, model: BuilderScreenModel, onBack: () -> Unit) {
+        // Remembered before anything else (Compose rule)
+        var held by remember { mutableStateOf<Int?>(null) }
         var renaming by remember { mutableStateOf<Int?>(null) }
         var renameText by remember { mutableStateOf("") }
-        if (state.tagGroups.isEmpty() && state.armed != "tags") return
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = MaterialTheme.colorScheme.surfaceContainer,
-            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Tags", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                    Text(
-                        when {
-                            state.tagGroups.isEmpty() -> "tap a row of the details"
-                            state.armed == "tags" -> "${state.tagGroups.size} ${if (state.tagGroups.size == 1) "group" else "groups"} \u00b7 tap more to add"
-                            else -> "${state.tagGroups.size} ${if (state.tagGroups.size == 1) "group" else "groups"}"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                state.tagGroups.forEachIndexed { index, group ->
+        val groups = state.tagGroups
+        BuilderSubHead(
+            "Tags",
+            if (groups.isEmpty()) "no rows yet" else "${groups.size} ${if (groups.size == 1) "row" else "rows"}, in page order",
+            onBack,
+        )
+        ArmButton(state, model, "tags", "Tap the details on the page")
+        BuilderMuted("Where each row shows on the title screen: as tappable Tags, as a line in the Description, or both.")
+        if (groups.isNotEmpty()) {
+            BuilderCard {
+                groups.forEachIndexed { index, group ->
                     key(index, group.selector) {
-                        TagGroupRow(
-                            index = index,
-                            group = group,
-                            model = model,
-                            onRename = {
-                                renameText = group.name
-                                renaming = index
-                            },
+                        if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        BuilderTagRow(
+                            name = group.name,
+                            values = group.values.take(3).joinToString(", ") +
+                                if (group.values.size > 3) " … (${group.values.size})" else "",
+                            target = group.target,
+                            onTarget = { target -> model.setTagGroupTarget(index, target) },
+                            onHold = { held = index },
+                            splitNote = Derive.needsSplit(group),
+                            onSplit = { model.splitTagGroup(index) },
                         )
                     }
                 }
-                Text(
-                    "A tap on the details (a row, its label or its value) makes one group per row, named by its label " +
-                        "(Cast, Maker\u2026); rename it with \u22ee. Rows with links show as tags (\u201cCast: Reina Ohara\u201d), " +
-                        "plain rows (Code, Duration\u2026) go to the description; change it per row. Tapping again adds missing rows only.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 8.dp),
-                )
             }
         }
-        val index = renaming
-        if (index != null) {
+        BuilderMuted(
+            "A tap on the details (a row, its label or its value) makes one group per row, named by its label. " +
+                "Hold a row to rename or remove it. Tapping the details again only adds rows that are missing.",
+        )
+        val heldIndex = held
+        if (heldIndex != null) {
+            val group = groups.getOrNull(heldIndex)
+            AlertDialog(
+                onDismissRequest = { held = null },
+                title = { Text(group?.name ?: "Row") },
+                text = { Text(group?.values?.take(5)?.joinToString(", ").orEmpty().ifEmpty { "No values read yet" }) },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            renameText = group?.name.orEmpty()
+                            renaming = heldIndex
+                            held = null
+                        },
+                    ) { Text("Rename") }
+                },
+                dismissButton = {
+                    Row {
+                        TextButton(
+                            onClick = {
+                                model.removeTagGroup(heldIndex)
+                                held = null
+                            },
+                        ) { Text("Remove") }
+                        TextButton(onClick = { held = null }) { Text("Cancel") }
+                    }
+                },
+            )
+        }
+        val renameIndex = renaming
+        if (renameIndex != null) {
             AlertDialog(
                 onDismissRequest = { renaming = null },
                 title = { Text("Rename the group") },
@@ -943,7 +1459,7 @@ internal class BuilderScreen(
                 confirmButton = {
                     TextButton(
                         onClick = {
-                            model.renameTagGroup(index, renameText)
+                            model.renameTagGroup(renameIndex, renameText)
                             renaming = null
                         },
                         enabled = renameText.isNotBlank(),
@@ -954,168 +1470,127 @@ internal class BuilderScreen(
         }
     }
 
-    /** r104: the Suggestions card: one row per section tapped as Suggestions (its name, cards, first titles, remove) */
+    /**
+     * r106: the Suggestions sub-view (mock TSuggest): ‹ back, the arm button, then W2's `SuggestionsSection` (one card
+     * per section: in the page / loads later / Load more)
+     */
     @Composable
-    private fun SuggestionsCard(state: BuilderScreenModel.State, model: BuilderScreenModel) {
-        if (state.suggestionGroups.isEmpty() && state.armed != "suggestions") return
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = MaterialTheme.colorScheme.surfaceContainer,
-            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Suggestions", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                    Text(
-                        when {
-                            state.suggestionGroups.isEmpty() -> "tap a card in a \u201cYou may like\u201d section"
-                            state.armed == "suggestions" -> "${state.suggestionGroups.size} \u00b7 tap another section to add"
-                            else -> "${state.suggestionGroups.size} ${if (state.suggestionGroups.size == 1) "section" else "sections"}"
+    private fun SuggestionsView(state: BuilderScreenModel.State, model: BuilderScreenModel, onBack: () -> Unit) {
+        val groups = state.suggestionGroups
+        BuilderSubHead("Suggestions", "${groups.size} ${if (groups.size == 1) "section" else "sections"}", onBack)
+        ArmButton(state, model, "suggestions", "Tap a card of a section on the page")
+        // W2's sections (BuilderSuggestions.kt): in the page / loads later / Load more
+        SuggestionsSection(model)
+    }
+
+    /**
+     * r106: the Code tab (mock TCode): what the Lab derived, as readable rows (label, the selector in a mono chip, tap
+     * = copy, and what it means); JSON lists summed up ("8 rows · Code, Type…") with "Show the selectors ›"
+     */
+    @Composable
+    private fun CodeTab(state: BuilderScreenModel.State) {
+        var open by remember { mutableStateOf(setOf<String>()) }
+        val context = LocalContext.current
+        val selection = state.selection
+        BuilderMuted("What the Lab wrote from your picks. Tap a value to copy it.")
+        if (selection == null || selection.derived.isEmpty()) {
+            BuilderMuted("Nothing yet: every value comes here with the reason it was chosen.")
+        } else {
+            // r99: `warning…` entries (an Item that doesn't hold the title, a player that isn't one) first, in red
+            val (warnings, values) = selection.derived.entries.partition { it.key.startsWith("warning") }
+            warnings.forEach { entry ->
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            entry.value,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                        Text(
+                            selection.reasons[entry.key].orEmpty(),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                    }
+                }
+            }
+            BuilderCard {
+                values.forEachIndexed { index, entry ->
+                    val key = entry.key
+                    val rows = listRows(entry.value)
+                    if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    BuilderDerivedRow(
+                        label = derivedName(key),
+                        value = entry.value,
+                        meaning = selection.reasons[key].orEmpty(),
+                        summary = rows?.let { list ->
+                            if (list.isEmpty()) {
+                                "none"
+                            } else {
+                                "${list.size} ${if (list.size == 1) "row" else "rows"} · " + list.joinToString(", ") { it.first }
+                            }
                         },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        expanded = key in open,
+                        onCopy = { text -> context.copyToClipboard(key, text) },
+                        onToggle = { open = if (key in open) open - key else open + key },
+                        details = rows.orEmpty(),
                     )
-                }
-                state.suggestionGroups.forEachIndexed { index, group ->
-                    key(index, group.item) {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                            Text("\u2713", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, modifier = Modifier.width(22.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    "${group.name} \u00b7 ${group.count} cards",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Text(
-                                    group.values.joinToString(", ").ifBlank { group.item },
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                // r105: a section the site's script fills in later
-                                if (group.late.isNotBlank()) {
-                                    Text(
-                                        "Loads later: read from ${group.late}",
-                                        fontSize = 12.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                } else if (group.lateWarning.isNotBlank()) {
-                                    Text(group.lateWarning, fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
-                                }
-                            }
-                            IconButton(onClick = { model.removeSuggestionGroup(index) }, modifier = Modifier.size(32.dp)) {
-                                Icon(Icons.Outlined.Close, contentDescription = "Remove", modifier = Modifier.size(16.dp))
-                            }
-                        }
-                    }
-                }
-                // r104 fix: the anime title screen merges the groups into its one Suggestions row
-                Text(
-                    "Each section you tap (one of its cards) is a group named by its heading; " + if (state.anime) {
-                        "the title screen shows all their titles together in its one Suggestions row."
-                    } else {
-                        "the title screen lists its titles under that name."
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 8.dp),
-                )
-            }
-        }
-    }
-
-    @Composable
-    private fun TagGroupRow(index: Int, group: Derive.TagGroup, model: BuilderScreenModel, onRename: () -> Unit) {
-        var menu by remember { mutableStateOf(false) }
-        val scroll = rememberScrollState()
-        Column(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("\u2713", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, modifier = Modifier.width(22.dp))
-                Text(group.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(110.dp))
-                Text(
-                    group.values.take(3).joinToString(", ") + if (group.values.size > 3) " \u2026 (${group.values.size})" else "",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-                Box {
-                    IconButton(onClick = { menu = true }, modifier = Modifier.size(32.dp)) {
-                        Icon(Icons.Outlined.MoreVert, contentDescription = "More", modifier = Modifier.size(18.dp))
-                    }
-                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        DropdownMenuItem(
-                            text = { Text("Rename") },
-                            onClick = {
-                                menu = false
-                                onRename()
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Remove") },
-                            onClick = {
-                                menu = false
-                                model.removeTagGroup(index)
-                            },
-                        )
-                    }
-                }
-            }
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier.padding(start = 22.dp).horizontalScroll(scroll),
-            ) {
-                listOf("tags" to "Tags", "description" to "Description", "both" to "Both").forEach { (target, name) ->
-                    FilterChip(
-                        selected = group.target == target,
-                        onClick = { model.setTagGroupTarget(index, target) },
-                        label = { Text(name) },
-                    )
-                }
-            }
-            // r104: a restored group that reads whole rows ("Code FC2-PPV…") or the rows' labels ("Code, Type…")
-            if (Derive.needsSplit(group)) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 22.dp, top = 4.dp)) {
-                    Text(
-                        "Reads whole rows or their labels",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.weight(1f),
-                    )
-                    OutlinedButton(onClick = { model.splitTagGroup(index) }) { Text("Split into rows") }
                 }
             }
         }
     }
 
-    /** r100: "Check each pick" (the helper), its own small card in the side pane as in the mockups */
-    @Composable
-    private fun HelperSwitch(state: BuilderScreenModel.State, model: BuilderScreenModel) {
-        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { model.setHelper(!state.helper) }
-                    .padding(16.dp),
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Helper", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        if (state.helper) "Check each pick: every label is checked and a better match suggested" else "Check each pick",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Spacer(Modifier.width(8.dp))
-                Switch(checked = state.helper, onCheckedChange = model::setHelper)
+    /** A JSON list value (tagGroups, suggestionGroups …) as (name, selector) rows; null when it isn't one */
+    private fun listRows(value: String): List<Pair<String, String>>? {
+        if (!value.trimStart().startsWith("[")) return null
+        val array = runCatching { Json.parseToJsonElement(value) as? JsonArray }.getOrNull() ?: return null
+        return array.mapIndexed { index, element ->
+            val obj = element as? JsonObject
+            if (obj == null) {
+                "#${index + 1}" to element.toString()
+            } else {
+                val name = (obj["name"] as? JsonPrimitive)?.contentOrNull ?: "#${index + 1}"
+                val selector = listOf("selector", "item", "path", "link")
+                    .firstNotNullOfOrNull { field -> (obj[field] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() } }
+                    ?: obj.toString()
+                name to selector
             }
         }
+    }
+
+    /** The Code tab's names for Derive's keys (the key itself when unknown) */
+    private fun derivedName(key: String): String = when (key) {
+        "itemSelector" -> "Item"
+        "titleSelector" -> "Title"
+        "coverSelector" -> "Cover"
+        "coverAttr" -> "Cover from"
+        "popularPath" -> "Popular"
+        "latestPath" -> "Latest"
+        "searchPath" -> "Search"
+        "nextSelector" -> "Next page"
+        "urlPattern" -> "Title links"
+        "singleEpisode" -> "One episode"
+        "chapterSelector" -> "Chapter"
+        "chapterUrlPattern" -> "Chapter links"
+        "dateSelector" -> "Date"
+        "numberSelector" -> "Number"
+        "detailsCover" -> "Title cover"
+        "detailsCoverAttr" -> "Title cover from"
+        "descriptionSelector" -> "Description"
+        "tagsSelector", "tagGroups" -> "Tags"
+        "suggestionGroups" -> "Suggestions"
+        "authorSelector" -> "Author"
+        "statusSelector" -> "Status"
+        "imageSelector" -> "Page image"
+        "imageAttr" -> "Image from"
+        "videoFrame" -> "Video"
+        "videoNote" -> "Video note"
+        else -> key
     }
 
     /**
@@ -1310,20 +1785,6 @@ internal class BuilderScreen(
         }
     }
 
-    /** A Labels row's status: ✓ ! i by the helper's verdict, ✓ when picked with no verdict, ○ when not picked */
-    @Composable
-    private fun StatusGlyph(level: PickCheck.Level?, picked: Boolean, idleColor: Color) {
-        val colors = helperColors()
-        val (text, color) = when {
-            level != null -> glyph(level) to colors.of(level)
-            picked -> "\u2713" to MaterialTheme.colorScheme.primary
-            else -> "\u25CB" to idleColor
-        }
-        Box(contentAlignment = Alignment.Center, modifier = Modifier.size(24.dp)) {
-            Text(text, color = color, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-        }
-    }
-
     private class HelperColors(val ok: Color, val warn: Color, val info: Color) {
         fun of(level: PickCheck.Level): Color = when (level) {
             PickCheck.Level.Ok -> ok
@@ -1368,20 +1829,6 @@ internal class BuilderScreen(
         else -> ""
     }
 
-    /** "Labels" head: "2 picked · all good", "1 picked · 1 to check", "5 picked · 1 note" */
-    private fun labelsSummary(state: BuilderScreenModel.State): String {
-        val levels = state.picks.mapNotNull { state.checks[it.pick.label]?.level }
-        val warn = levels.count { it == PickCheck.Level.Warn }
-        val info = levels.count { it == PickCheck.Level.Info }
-        val tail = when {
-            warn > 0 -> "$warn to check"
-            info > 0 -> if (info == 1) "1 note" else "$info notes"
-            levels.isNotEmpty() -> "all good"
-            else -> "tap the page, then a label"
-        }
-        return "${state.picks.size} picked · $tail"
-    }
-
     private fun whatToTap(label: String): String = when (label) {
         "item" -> "a whole card"
         "title" -> "a title link"
@@ -1401,55 +1848,23 @@ internal class BuilderScreen(
         else -> "it on the page"
     }
 
-    @Composable
-    private fun DerivedCard(state: BuilderScreenModel.State) {
-        val selection = state.selection
-        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text("What the Lab derived", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                if (selection == null || selection.derived.isEmpty()) {
-                    Text(
-                        "Nothing yet: every value below comes with the reason it was chosen.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 6.dp),
-                    )
-                } else {
-                    // r99: `warning…` entries (an Item that doesn't hold the title, a player that isn't one) first, in red
-                    val (warnings, values) = selection.derived.entries.partition { it.key.startsWith("warning") }
-                    warnings.forEach { (key, value) ->
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = MaterialTheme.colorScheme.errorContainer,
-                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                        ) {
-                            Column(modifier = Modifier.padding(10.dp)) {
-                                Text(value, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onErrorContainer)
-                                Text(selection.reasons[key].orEmpty(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
-                            }
-                        }
-                    }
-                    values.forEach { (key, value) ->
-                        Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-                            Row {
-                                Text(key, style = MaterialTheme.typography.labelLarge, modifier = Modifier.width(120.dp))
-                                Text(value.ifEmpty { "(none)" }, fontFamily = FontFamily.Monospace, fontSize = 12.sp, modifier = Modifier.weight(1f))
-                            }
-                            Text(
-                                selection.reasons[key].orEmpty(),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(start = 120.dp, top = 2.dp),
-                            )
-                        }
-                        HorizontalDivider()
-                    }
-                }
-            }
-        }
-    }
-
     private companion object {
+        // r106: the panel's tabs
+        const val TAB_LABELS = 0
+        const val TAB_TITLE = 1
+        const val TAB_LISTS = 2
+        const val TAB_CODE = 3
+        val TAB_NAMES = listOf("Labels", "Title page", "Lists & filters", "Code")
+
+        /** r106 fix: [BuilderScreen]'s startTab name as a tab (null = none / unknown) */
+        fun tabOf(name: String?): Int? = when (name?.trim()?.lowercase()) {
+            "labels" -> TAB_LABELS
+            "title" -> TAB_TITLE
+            "filters" -> TAB_LISTS
+            "code" -> TAB_CODE
+            else -> null
+        }
+
         const val PICK_PREFIX = "LABPICK:"
         const val LOG_PREFIX = "LABLOG:"
         const val OPTS_PREFIX = "LABOPTS:"

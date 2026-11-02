@@ -32,6 +32,8 @@ import eu.kanade.tachiyomi.jssource.str
 import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -89,6 +91,12 @@ import java.util.Locale
  * ([splitTagGroup]: picker.js `rowsFor`, answered as a pick with via "split"). The **Suggestions** label stays armed
  * like Tags: each tapped card's section ("You may like", "Related videos") is a [Derive.SuggestionGroup]
  * ([State.suggestionGroups], Derive writes `suggestionGroups` for generic-list v7's getRelated).
+ *
+ * r106 (Suggestions as cards, BuilderSuggestions.kt): a section that loads late is read from its own address or "with
+ * the browser" ([setSuggestionRead]: generic-list v9 opens the title page in the hidden browser), "Look for the address
+ * again" ([findLateAgain]); a section's "Load more" button (found by picker.js, or tapped with Suggestions armed) can
+ * be pressed up to 3 times by the source ([setLoadMorePresses]); "Scan it now" ([scanLoadMore]) presses it once in the
+ * page and keeps the request that brought the new cards ([BuilderLateSections.findMore]).
  */
 internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean, private val editKey: String? = null) :
     StateScreenModel<BuilderScreenModel.State>(State(url = startUrl.orEmpty(), anime = anime, editKey = editKey)) {
@@ -149,6 +157,10 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
         val rows: List<DetailRow> = emptyList(),
         /** r104: a Suggestions tap: the section's group (picker.js `suggest`), null when no section was found */
         val suggest: Derive.SuggestionGroup? = null,
+        /** r106: a Suggestions tap on a section's "Load more" button (picker.js `loadMore`), null = not one */
+        val loadMore: Derive.LoadMore? = null,
+        /** r106: the headings before that button, nearest first, one per line ("" = none: the last section tapped) */
+        val loadMoreSection: String = "",
     ) {
         fun info(): PickInfo = PickInfo(
             tag = tag,
@@ -275,6 +287,20 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
         val tagOrderBefore: List<String> = emptyList(),
         /** r104: the title page's sections tapped as Suggestions, one group each, in the order tapped */
         val suggestionGroups: List<Derive.SuggestionGroup> = emptyList(),
+        /** r106: the section ([Derive.SuggestionGroup.item]) whose Load more is being scanned or looked up, null = none */
+        val suggestionBusy: String? = null,
+        /**
+         * r106: Edit by tapping: the History version the source's code is now ("Save to v3" overwrites it in place, as
+         * the code editor's Save does since r103); null = a new source, or one with no History version yet
+         */
+        val openVersion: Int? = null,
+        /** r106: the number "Save as new version" gives (the next ever given); 1 for a new source */
+        val nextVersion: Int = 1,
+        /**
+         * r106: Save to the open version waits for this question (the open version is the source's Baseline, the r103
+         * wording of [History.overwriteConfirm]): [confirmSave] overwrites it, [cancelSave] doesn't; null = none
+         */
+        val saveConfirm: String? = null,
     ) {
         val site: String get() = (pageUrl ?: loadUrl ?: url).let { Detector.normalize(it) }
         val host: String get() = site.removePrefix("https://").removePrefix("http://")
@@ -407,6 +433,8 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
                     .onFailure { AppLog.add('W', "lab", "extras: page finish not passed on: ${it.message}") }
             }
         }
+        // r106 fix: a page that (re)loaded while "Scan it now" waited for its answer won't answer: the card stops waiting
+        if (finished) scanGaveUp("The page changed while pressing it; try again")
         runCatching { followStep(url) }
             .onFailure { AppLog.add('W', "lab", "Builder: step not followed: ${it.message}") }
     }
@@ -542,7 +570,14 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
             }.orEmpty().take(30),
             rows = o.arr("rows")?.let { detailRowsOf(it) }.orEmpty(),
             suggest = o.obj("suggest")?.let { suggestionOf(it) },
+            loadMore = o.obj("loadMore")?.let { loadMoreOf(it) },
+            loadMoreSection = o.obj("loadMore")?.str("section")?.trim().orEmpty(),
         )
+        // r106: picker.js `scanMore`'s answer ("Scan it now")
+        if (raw.via == "more") {
+            onScanMore(o)
+            return
+        }
         // r104: picker.js `rowsFor`'s answer ("Split into rows")
         if (raw.via == "split") {
             onSplit(o.str("split").orEmpty(), raw.rows)
@@ -619,6 +654,8 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
     fun onPickerLog(text: String) {
         AppLog.add('D', "lab", "picker $text")
         if (text.startsWith("learn:")) runCatching { extras.onLearnLog(text) } // r102 fix: learn.js's press outcome
+        // r106 fix: "Scan it now" found that the Load more is a link to this page's next page (not pressed)
+        if (text.startsWith(SCAN_LINK)) runCatching { onScanLink(text.removePrefix(SCAN_LINK)) }
         // r100 fix pass: picker.js logs "up: …" / "down: …" only when it can't move (a move sends a pick instead):
         // the helper's Up / Down then has nothing to re-label, so the next real tap isn't labelled by surprise
         if ((text.startsWith("up: ") || text.startsWith("down: ")) && state.value.relabel != null) {
@@ -639,6 +676,12 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
      * the label most likely means (`suggest`).
      */
     private fun applyLabel(label: String, raw: RawPick) {
+        // r106: a Suggestions tap on a section's "Load more" button: that section's card offers to press it
+        val more = raw.loadMore
+        if (label == "suggestions" && more != null) {
+            onLoadMoreTapped(more, raw.loadMoreSection)
+            return
+        }
         // r104: a Suggestions tap outside a section with a heading makes nothing (the note says what to tap)
         val suggestion = if (label == "suggestions") raw.suggest?.takeIf { it.item.isNotBlank() } else null
         if (label == "suggestions" && suggestion == null) {
@@ -945,16 +988,39 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
             count = o.int("count") ?: 0,
             order = o.int("order") ?: -1,
             values = o.arr("samples")?.mapNotNull { (it as? JsonPrimitive)?.content }.orEmpty().take(3),
+            // r106: the section's "Load more" button, when picker.js found one under it
+            more = o.obj("more")?.let { loadMoreOf(it) },
         )
+    }
+
+    /** r106: picker.js's `{ button, text }` of a Load more button */
+    private fun loadMoreOf(o: JsonObject): Derive.LoadMore? {
+        val button = o.str("button")?.trim().orEmpty()
+        if (button.isEmpty()) return null
+        return Derive.LoadMore(button = button, text = o.str("text")?.trim().orEmpty().take(40))
     }
 
     /** r104: the same section again (same item selector or name) replaces its group, keeping its name; else it is added */
     private fun withSuggestion(groups: List<Derive.SuggestionGroup>, group: Derive.SuggestionGroup): List<Derive.SuggestionGroup> {
         val i = groups.indexOfFirst { it.item == group.item || it.name.equals(group.name, ignoreCase = true) }
         if (i < 0) return groups + group
-        // r105: the same section again keeps the late address found for it
-        val late = if (groups[i].item == group.item) groups[i].late else ""
-        return groups.toMutableList().also { it[i] = group.copy(name = groups[i].name, late = late) }
+        // r105: the same section again keeps the late address found for it. r106: and how it is read, its Load more
+        val same = groups[i].item == group.item
+        val old = groups[i]
+        val more = when {
+            old.more == null -> group.more
+            group.more == null || old.more.button == group.more.button -> old.more
+            else -> group.more
+        }
+        return groups.toMutableList().also {
+            it[i] = group.copy(
+                name = old.name,
+                late = if (same) old.late else "",
+                lateNote = if (same) old.lateNote else "",
+                read = if (same) old.read else "",
+                more = more,
+            )
+        }
     }
 
     /**
@@ -971,7 +1037,12 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
             } catch (e: Exception) {
                 AppLog.add('W', "lab", "Builder: suggestions ${group.item}: the raw page wasn't read (${e.message ?: e.javaClass.simpleName})")
                 null
-            } ?: return@launchIO
+            }
+            if (outcome == null) {
+                // in the page itself (or the page couldn't be read): the card's "looking…" ends
+                mutableState.update { it.copy(suggestionBusy = if (it.suggestionBusy == group.item) null else it.suggestionBusy) }
+                return@launchIO
+            }
             // r105 fix: the check ran on IO; the state change and rederive (which the screen and the WebView follow) on Main
             withContext(Dispatchers.Main) {
                 var changed = false
@@ -982,13 +1053,259 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
                     changed = true
                     s.copy(
                         suggestionGroups = s.suggestionGroups.toMutableList().also {
-                            it[i] = it[i].copy(late = outcome.late, lateWarning = outcome.warning)
+                            it[i] = it[i].copy(late = outcome.late, lateWarning = outcome.warning, lateNote = outcome.note)
                         },
+                        suggestionBusy = if (s.suggestionBusy == group.item) null else s.suggestionBusy,
                     )
                 }
                 if (changed) rederive()
             }
         }
+    }
+
+    // ---------- r106: Suggestions cards (BuilderSuggestions.kt) ----------
+
+    private fun updateSuggestion(index: Int, change: (Derive.SuggestionGroup) -> Derive.SuggestionGroup): Derive.SuggestionGroup? {
+        var out: Derive.SuggestionGroup? = null
+        mutableState.update { s ->
+            val g = s.suggestionGroups.getOrNull(index) ?: return@update s
+            val n = change(g)
+            out = n
+            s.copy(suggestionGroups = s.suggestionGroups.toMutableList().also { it[index] = n })
+        }
+        return out
+    }
+
+    /** The title page a section was tapped on (its pick's page), else the page shown */
+    private fun suggestionPage(): String = state.value.raws["suggestions"]?.pageUrl?.takeIf { it.startsWith("http") }
+        ?: state.value.pageUrl.orEmpty()
+
+    /**
+     * r106: how the source reads a section that loads late: "" = from the address it comes from (when found),
+     * "browser" = the title page in the hidden browser, waiting for the cards (generic-list v9, slower, always works)
+     */
+    fun setSuggestionRead(index: Int, read: String) {
+        val r = if (read == "browser") "browser" else ""
+        val g = updateSuggestion(index) { it.copy(read = r) } ?: return
+        AppLog.add('I', "lab", "Builder: suggestions \"${g.name}\" read ${if (r == "browser") "with the browser" else "from its own address (${g.late.ifBlank { "none found" }})"}")
+        rederive()
+    }
+
+    /** r106: "Look for the address again": the raw page and the page's requests are checked again (open the title first) */
+    fun findLateAgain(index: Int) {
+        val g = state.value.suggestionGroups.getOrNull(index) ?: return
+        val page = suggestionPage()
+        if (!page.startsWith("http")) return
+        mutableState.update { it.copy(suggestionBusy = g.item) }
+        AppLog.add('D', "lab", "Builder: suggestions \"${g.name}\": looking for its address again on $page")
+        checkLateSection(g, page)
+    }
+
+    /** r106: "Also press it" Off / 1× / 2× / 3× of a section's Load more */
+    fun setLoadMorePresses(index: Int, presses: Int) {
+        val n = presses.coerceIn(0, 3)
+        val g = updateSuggestion(index) { g -> g.more?.let { g.copy(more = it.copy(presses = n)) } ?: g } ?: return
+        AppLog.add('I', "lab", "Builder: suggestions \"${g.name}\": press Load more ${if (n == 0) "off" else "$n×"}")
+        rederive()
+    }
+
+    /** r106: the card's "Load more" row closed: the button is forgotten */
+    fun forgetLoadMore(index: Int) {
+        updateSuggestion(index) { it.copy(more = null) } ?: return
+        rederive()
+    }
+
+    /**
+     * r106: "Scan it now": the page presses the section's Load more once (picker.js `scanMore`), counts the cards
+     * before and after and sends the requests the press made; [onScanMore] keeps the one that brought them
+     */
+    fun scanLoadMore(index: Int) {
+        val g = state.value.suggestionGroups.getOrNull(index) ?: return
+        val more = g.more ?: return
+        mutableState.update { it.copy(suggestionBusy = g.item) }
+        // r106 fix: no answer within 15 s (the press opened another page, the picker is gone…): the card stops waiting
+        scanWaiting = g.item
+        scanTimeout?.cancel()
+        scanTimeout = screenModelScope.launchIO {
+            delay(SCAN_TIMEOUT_MS)
+            if (scanWaiting == g.item) scanGaveUp("No answer from the page; try again")
+        }
+        val req = JsonObject(
+            mapOf(
+                "id" to JsonPrimitive(g.item),
+                "item" to JsonPrimitive(g.item),
+                "button" to JsonPrimitive(more.button),
+                "text" to JsonPrimitive(more.text),
+            ),
+        )
+        AppLog.add('I', "lab", "Builder: suggestions \"${g.name}\": scan Load more (${more.button})")
+        // r106 fix: a Load more that is a link (`<a href="?page=2">`, same path) would open the next page instead of
+        // adding cards: it isn't pressed, its address is sent back ([onScanLink]) and becomes the request directly
+        val button = JsonPrimitive(more.button)
+        val id = JsonPrimitive(g.item)
+        page(
+            "var lb=null;try{lb=document.querySelector($button);}catch(e){lb=null;}" +
+                "var la=lb&&lb.closest?lb.closest('a[href]'):null;var lh=la?String(la.getAttribute('href')||'').trim():'';" +
+                "if(lh&&!/^(#|javascript:)/i.test(lh)){var lu='';try{lu=new URL(lh,location.href).href;}catch(e){lu='';}" +
+                "window.__labPicker.log('$SCAN_LINK'+JSON.stringify({id:$id,href:lu,pageUrl:location.href}));}" +
+                "else if (window.__labPicker.scanMore) window.__labPicker.scanMore($req); else window.__labPicker.log('scanMore: not in this picker');",
+        )
+    }
+
+    /** r106 fix: the item whose "Scan it now" waits for the page's answer (null = none), and its 15 s timeout */
+    @Volatile
+    private var scanWaiting: String? = null
+
+    @Volatile
+    private var scanTimeout: Job? = null
+
+    /** r106 fix: the scan waiting for the page ends without an answer: its card says [why] and isn't busy any more */
+    private fun scanGaveUp(why: String) {
+        val item = scanWaiting ?: return
+        scanWaiting = null
+        scanTimeout?.cancel()
+        scanTimeout = null
+        val index = state.value.suggestionGroups.indexOfFirst { it.item == item }
+        if (index >= 0) updateSuggestion(index) { g -> g.more?.let { g.copy(more = it.copy(scanned = why)) } ?: g }
+        mutableState.update { it.copy(suggestionBusy = if (it.suggestionBusy == item) null else it.suggestionBusy) }
+        AppLog.add('W', "lab", "Builder: load more scan: $why")
+    }
+
+    /**
+     * r106 fix: the section's Load more is a link to this page with another page number (`?page=2`): that address is
+     * the request template (with {page}); none found = it can't be pressed for more (its presses go Off)
+     */
+    private fun onScanLink(json: String) {
+        val o = runCatching { jsJson.parseToJsonElement(json) as? JsonObject }.getOrNull() ?: return
+        val item = o.str("id").orEmpty()
+        if (item.isEmpty() || scanWaiting != item) return
+        scanWaiting = null
+        scanTimeout?.cancel()
+        scanTimeout = null
+        val href = o.str("href").orEmpty()
+        val pageUrl = o.str("pageUrl").orEmpty().ifBlank { suggestionPage() }
+        val paged = if (href.startsWith("http")) {
+            BuilderLateSections.pagedOf(BuilderLateSections.templateOf(href, pageUrl, null), href, 0)
+        } else {
+            null
+        }
+        val origin = pageUrl.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}" }.orEmpty()
+        val shown = if (href.startsWith("http")) BuilderExtrasLogic.relative(href, origin) else href
+        AppLog.add('I', "lab", "Builder: load more is a link to $href → ${paged?.first ?: "no page number"}")
+        screenModelScope.launchIO {
+            withContext(Dispatchers.Main) {
+                val i = state.value.suggestionGroups.indexOfFirst { it.item == item }
+                if (i >= 0) {
+                    updateSuggestion(i) { cur ->
+                        val m = cur.more ?: return@updateSuggestion cur
+                        cur.copy(
+                            more = if (paged != null) {
+                                m.copy(
+                                    request = paged.first,
+                                    from = paged.second,
+                                    step = paged.third,
+                                    presses = if (m.presses == 0) 1 else m.presses,
+                                    scanned = "Scanned: it's a link to the next page ($shown), the next pages are read from that address",
+                                )
+                            } else {
+                                m.copy(
+                                    request = "",
+                                    presses = 0,
+                                    scanned = "It's a link that opens another page ($shown), with no page number: it can't add cards here",
+                                )
+                            },
+                        )
+                    }
+                    rederive()
+                }
+                mutableState.update { it.copy(suggestionBusy = if (it.suggestionBusy == item) null else it.suggestionBusy) }
+            }
+        }
+    }
+
+    /** r106: picker.js `scanMore`'s answer: `{ via: "more", id, ok, before, after, requests, samples, reason, pageUrl }` */
+    private fun onScanMore(o: JsonObject) {
+        val item = o.str("id").orEmpty()
+        // r106 fix: the page answered: the 15 s timeout is off
+        if (scanWaiting == item) {
+            scanWaiting = null
+            scanTimeout?.cancel()
+            scanTimeout = null
+        }
+        val before = o.int("before") ?: 0
+        val after = o.int("after") ?: 0
+        val pageUrl = o.str("pageUrl").orEmpty()
+        val requests = o.arr("requests")?.mapNotNull { (it as? JsonPrimitive)?.content }.orEmpty()
+        val samples = o.arr("samples")?.mapNotNull { (it as? JsonPrimitive)?.content }.orEmpty().take(6)
+        val index = state.value.suggestionGroups.indexOfFirst { it.item == item }
+        if (index < 0) {
+            mutableState.update { it.copy(suggestionBusy = null) }
+            return
+        }
+        val added = after - before
+        AppLog.add('I', "lab", "Builder: load more scan: $before → $after cards, ${requests.size} requests (${o.str("reason").orEmpty()})")
+        if (o.bool("ok") != true || added <= 0) {
+            val why = o.str("reason")?.takeIf { it.isNotBlank() } ?: "no new cards appeared"
+            updateSuggestion(index) { g -> g.more?.let { g.copy(more = it.copy(scanned = "Pressed it once: $why")) } ?: g }
+            mutableState.update { it.copy(suggestionBusy = null) }
+            return
+        }
+        val g = state.value.suggestionGroups[index]
+        screenModelScope.launchIO {
+            val found = try {
+                BuilderLateSections.findMore(g.item, samples, pageUrl.ifBlank { suggestionPage() }, requests, before)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLog.add('W', "lab", "Builder: load more address not checked: ${e.message ?: e.javaClass.simpleName}")
+                null
+            }
+            withContext(Dispatchers.Main) {
+                val i = state.value.suggestionGroups.indexOfFirst { it.item == item }
+                if (i >= 0) {
+                    updateSuggestion(i) { cur ->
+                        val m = cur.more ?: return@updateSuggestion cur
+                        cur.copy(
+                            more = m.copy(
+                                request = found?.request.orEmpty(),
+                                from = found?.from ?: 2,
+                                step = found?.step ?: 1,
+                                perPress = added,
+                                presses = if (m.presses == 0) 1 else m.presses,
+                                scanned = "Scanned: 1 press → $added more cards" + if (found != null) {
+                                    " (from ${found.shown})"
+                                } else {
+                                    " (no address found: the browser presses it)"
+                                },
+                            ),
+                        )
+                    }
+                    rederive()
+                }
+                mutableState.update { it.copy(suggestionBusy = null) }
+            }
+        }
+    }
+
+    /**
+     * r106: a Suggestions tap on a "Load more" button: the section it sits under (by heading, else the last one tapped)
+     * gets it; nothing else is added
+     */
+    private fun onLoadMoreTapped(more: Derive.LoadMore, section: String) {
+        val groups = state.value.suggestionGroups
+        if (groups.isEmpty()) {
+            mutableState.update { it.copy(pending = null, notice = "Tap a card of the section first, then its \u201cLoad more\u201d button.") }
+            return
+        }
+        // the headings before the button, nearest first: the first one that names a section
+        val headings = section.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        val index = headings.firstNotNullOfOrNull { h -> groups.indexOfFirst { it.name.equals(h, ignoreCase = true) }.takeIf { it >= 0 } }
+            ?: groups.lastIndex
+        val g = updateSuggestion(index) { it.copy(more = (it.more?.takeIf { m -> m.button == more.button } ?: more)) } ?: return
+        mutableState.update { it.copy(pending = null, notice = null) }
+        AppLog.add('I', "lab", "Builder: suggestions \"${g.name}\": Load more button ${more.button} (\"${more.text}\")")
+        page("window.__labPicker.keep(${JsonPrimitive(more.button)});")
+        rederive()
     }
 
     /** r104: the Suggestions card's remove (the last one gone = no Suggestions pick) */
@@ -1523,7 +1840,10 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
                     json = builder.bool("json") ?: info.json,
                 )
             }
-            banner = if (editedByHand(key, code)) {
+            // r106: a build saved in place keeps the hash of the code it wrote (its History note can't say "by tapping")
+            val written = builder.int("codeHash")
+            val byHand = if (written != null) written != code.trimEnd().hashCode() else editedByHand(key, code)
+            banner = if (byHand) {
                 // r102 fix: Save to this source regenerates from the picks: the hand edits would go (History keeps them)
                 AppLog.add('I', "lab", "Builder: edit ${info.name} ($key): its code was edited by hand after it was built")
                 "This source was edited by hand after it was built; Save to this source rewrites it from your picks " +
@@ -1572,6 +1892,7 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
         }
         // r103: a banner closed before this finished stays closed
         mutableState.update { it.copy(editName = info.name, banner = if (it.bannerDismissed) null else banner) }
+        refreshVersions(key)
         rederive()
     }
 
@@ -1596,9 +1917,11 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
      * Save to this source: the regenerated code under the same key (a new History version; the id, library and
      * downloads stay), keeping the source's own `id` line and its name, language and icon.
      */
-    private suspend fun saveInto(info: JsSourceInfo, generated: eu.kanade.tachiyomi.jssource.lab.GeneratedSource) {
+    private suspend fun saveInto(info: JsSourceInfo, generated: eu.kanade.tachiyomi.jssource.lab.GeneratedSource, inPlace: Boolean = false) {
         var code = generated.code
         info.customId?.let { code = LabStore.injectId(code, generated.json, it) }
+        // r106: the saved builder state remembers the code it wrote (Edit by tapping's "edited by hand" check)
+        val lab = withCodeHash(generated.lab, code)
         val saved = manager.save(
             key = info.key,
             code = code,
@@ -1610,9 +1933,11 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
                 lang = info.lang,
                 iconUrl = info.iconUrl,
                 baseUrl = info.baseUrl,
-                lab = generated.lab.toJson(),
+                lab = lab.toJson(),
             ),
-            note = "Edited by tapping",
+            // r106: Save to the open version: overwritten in place (History.updateCurrent through LabStore.onSaved; a
+            // source with no version yet gets a new one with this note), as the code editor's Save does since r103
+            note = if (inPlace) LabStore.UPDATE_NOTE + "Edited by tapping" else "Edited by tapping",
         )
         if (generated.explain.isNotEmpty()) {
             runCatching {
@@ -1630,10 +1955,64 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
         if (info.customId != null && saved.customId != info.customId) {
             AppLog.add('W', "lab", "Builder: ${info.name} had id ${info.customId}, the saved code has ${saved.customId}")
         }
-        AppLog.add('I', "lab", "Builder: edited ${saved.name} (${info.key})")
+        AppLog.add('I', "lab", "Builder: edited ${saved.name} (${info.key})" + if (inPlace) " in place (v${state.value.openVersion ?: "?"})" else " as a new version")
+        refreshVersions(info.key)
     }
 
+    /** r106: `builder.codeHash` added to the saved builder state in [lab]'s picks */
+    private fun withCodeHash(lab: eu.kanade.tachiyomi.jssource.lab.LabMeta, code: String): eu.kanade.tachiyomi.jssource.lab.LabMeta {
+        val picks = lab.picks as? JsonObject ?: return lab
+        val builder = picks.obj("builder") ?: return lab
+        val hashed = JsonObject(builder + ("codeHash" to JsonPrimitive(code.trimEnd().hashCode())))
+        return lab.copy(picks = JsonObject(picks + ("builder" to hashed)))
+    }
+
+    /** r106: the open version and the next number of [key]'s History, for "Save to vN" / "Save as new version (vM)" */
+    private fun refreshVersions(key: String) {
+        val index = runCatching { History.index(key) }.getOrNull() ?: return
+        val open = History.currentOf(index).takeIf { it > 0 && History.updateBlockedReason(index) == null }
+        val next = maxOf(index.lastN, index.versions.lastOrNull()?.n ?: 0) + 1
+        mutableState.update { it.copy(openVersion = open, nextVersion = next) }
+    }
+
+    /**
+     * r106: Save. [inPlace] true (editing a source) = to the open version ([State.openVersion]), overwritten in place;
+     * its Baseline asks first ([State.saveConfirm], the r103 question). false = a new version. A new source is
+     * always written as new (v1). [write] with no arguments = a new version, as before
+     */
+    fun write(inPlace: Boolean) {
+        val s = state.value
+        val key = s.editKey
+        if (!inPlace || key == null || s.openVersion == null) {
+            writeSource(inPlace = false)
+            return
+        }
+        val question = runCatching { History.overwriteConfirm(History.index(key)) }.getOrNull()
+        if (question != null) {
+            AppLog.add('D', "lab", "Builder: save to v${s.openVersion}: asking first ($question)")
+            mutableState.update { it.copy(saveConfirm = question) }
+            return
+        }
+        writeSource(inPlace = true)
+    }
+
+    /** r106: the Baseline question's Overwrite */
+    fun confirmSave() {
+        if (state.value.saveConfirm == null) return
+        mutableState.update { it.copy(saveConfirm = null) }
+        writeSource(inPlace = true)
+    }
+
+    /** r106: the Baseline question closed without overwriting (its "Save as new" calls [write] (false) after) */
+    fun cancelSave() = mutableState.update { it.copy(saveConfirm = null) }
+
     companion object {
+        /** r106 fix: how long "Scan it now" waits for the page's answer (picker.js gives up after 10 s itself) */
+        const val SCAN_TIMEOUT_MS = 15_000L
+
+        /** r106 fix: the picker log line of a Load more that is a link ([onScanLink]) */
+        const val SCAN_LINK = "scanlink: "
+
         /** r102: placeholder ← the generic-list code's `var NAME` (what an older source's code tells the builder) */
         val CODE_VARS: Map<String, String> = linkedMapOf(
             "POPULAR_PATH" to "popularPath",
@@ -1831,8 +2210,10 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
         }
     }
 
-    /** Done: the generic-list template filled with the derived values, handed to Half A */
-    fun write() {
+    /** Done: the generic-list template filled with the derived values, handed to Half A (a new version when editing) */
+    fun write() = write(inPlace = false)
+
+    private fun writeSource(inPlace: Boolean) {
         val s = state.value
         val selection = s.selection ?: withCode(Derive.derive(s.site, s.anime, s.picks, s.singleEpisode, s.tagGroups, s.suggestionGroups), s)
         // r99: the JSON format has no way to say "the title page is the one episode": written as JS then
@@ -1908,7 +2289,7 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
                     )
                 }
                 if (editing != null) {
-                    saveInto(editing, generated)
+                    saveInto(editing, generated, inPlace)
                     mutableState.update { it.copy(busy = null, delivered = true) }
                     return@launchIO
                 }

@@ -349,10 +349,9 @@ internal object PickCheck {
                 add(pick.suggestName.isNotBlank(), "section “${pick.suggestName}”", "no section with a heading around it")
                 if (pick.suggestName.isNotBlank()) add(pick.suggestCount >= 2, "${pick.suggestCount} cards", "only ${pick.suggestCount} card")
                 add(pick.linkCount >= 1 || pick.tag == "a", "links to a title", "no link")
-                // r104 fix: the anime title screen merges the groups into its one Suggestions row
-                okBody = "Group “${pick.suggestName}”: its ${pick.suggestCount} cards " + (
-                    if (anime) "join the title screen's Suggestions row (one row for all sections)" else "are listed under that name on the title screen"
-                    ) + ". Tap a card of another section to add it."
+                // r106: anime and manga title screens both show one named row per section
+                okBody = "Group “${pick.suggestName}”: its ${pick.suggestCount} cards are listed under that name on the title screen. " +
+                    "Tap a card of another section to add it."
                 warnBody = youTapped + "Tap one card (picture or title) inside a section like “You may like” or “Related videos”."
             }
             "author", "status" -> {

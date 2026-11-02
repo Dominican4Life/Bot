@@ -118,6 +118,8 @@ internal fun TestConsole(
     val names = remember(steps) { steps.filter { it.id.isNotEmpty() }.associate { it.id to it.name } }
     val errors = remember(rows) { rows.count { it.level == "E" } }
     val warnings = remember(rows) { rows.count { it.level == "W" } }
+    // KMK (r106): each chip shows how many lines it has ("All 14", "Errors 0", "Network 9")
+    val chipCounts = remember(rows) { ConsoleFilter.entries.associateWith { f -> rows.count { f.matches(it) } } }
     val shown = remember(rows, chip, search) {
         rows.withIndex().filter { (_, r) ->
             chip.matches(r) && (search.isBlank() || r.text.contains(search, ignoreCase = true))
@@ -144,7 +146,7 @@ internal fun TestConsole(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceContainerLow),
+            .background(MaterialTheme.colorScheme.surfaceContainerLowest),
     ) {
         HorizontalDivider()
         Row(
@@ -155,6 +157,7 @@ internal fun TestConsole(
                 .padding(start = 12.dp, end = 4.dp),
         ) {
             Text(
+                // KMK (r106): "Console · 14 lines · 1 error", open ▴ / close ▾ on the right
                 "Console · ${rows.size} ${if (rows.size == 1) "line" else "lines"}",
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
@@ -214,7 +217,7 @@ internal fun TestConsole(
                     .padding(horizontal = 12.dp),
             ) {
                 ConsoleFilter.entries.forEach { f ->
-                    FilterChip(selected = chip == f, onClick = { chip = f }, label = { Text(f.label) })
+                    FilterChip(selected = chip == f, onClick = { chip = f }, label = { Text("${f.label} ${chipCounts[f] ?: 0}") })
                 }
             }
             OutlinedTextField(
@@ -307,6 +310,7 @@ private fun ConsoleLine(row: ConsoleRow, expanded: Boolean, onToggle: () -> Unit
     }
     val body = if (net != null) {
         "${net.method} ${pathOf(net.url)} → ${net.status ?: net.error ?: "no reply"}" +
+            (net.bytes?.let { " · ${bytesText(it)}" }.orEmpty()) +
             (if (net.ms > 0) " · ${net.ms} ms" else "") +
             (if (net.viaBrowser) " · browser" else "")
     } else {

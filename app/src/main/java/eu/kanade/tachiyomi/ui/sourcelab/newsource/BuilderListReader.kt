@@ -290,6 +290,35 @@ internal object BuilderListReader {
         return null
     }
 
+    /**
+     * r106: a directory's first page as its card shows it: the names of its list ([entries]), the highest page number its
+     * pager links to ([pages], 1 = none) and whether a next page is found ("Name list with pages found (1, 2, 3 … 22)")
+     */
+    @Immutable
+    data class Probe(val entries: Int, val pages: Int, val hasNext: Boolean, val note: String)
+
+    suspend fun probe(url: String): Probe {
+        val referer = Detector.normalize(url) + "/"
+        val fetched = fetch(url, referer)
+        if (fetched.first >= 400) return Probe(0, 1, false, "the site answered ${fetched.first}")
+        val doc = withContext(Dispatchers.Default) { Jsoup.parse(fetched.second, url) }
+        val (_, links) = pageLinks(doc, url, null)
+        val next = nextPage(doc, url, emptySet())
+        val host = url.toHttpUrlOrNull()?.host
+        var highest = 1
+        for (a in doc.select("a[href]")) {
+            val n = a.text().trim().toIntOrNull() ?: continue
+            if (n < 2 || n > 10_000) continue
+            val abs = a.absUrl("href")
+            val u = abs.toHttpUrlOrNull() ?: continue
+            val last = u.pathSegments.lastOrNull { it.isNotEmpty() }
+            if (u.host != host || (pageNumber(abs) != n && last != n.toString())) continue
+            if (n > highest) highest = n
+        }
+        val pages = if (next != null) maxOf(highest, 2) else highest
+        return Probe(links.size, pages, next != null, if (links.isEmpty()) "no list of names found on its first page" else "")
+    }
+
     /** The pause range in seconds from the migration setting ("1-3"), within 0–10 and on half seconds; else 1–3 */
     fun defaultPause(): ClosedFloatingPointRange<Float> {
         val saved = runCatching { Injekt.get<SourcePreferences>().migrationDelay().get() }.getOrNull().orEmpty()

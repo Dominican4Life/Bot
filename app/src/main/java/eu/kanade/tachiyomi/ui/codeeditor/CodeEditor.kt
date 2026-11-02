@@ -88,6 +88,10 @@ fun CodeEditor(
     highlight: IntRange? = null,
     revealLine: Int? = null,
     // KMK <--
+    // KMK --> (r106) the line of the last Test Run error (1-based) gets a red band; the cursor's line and column
+    errorLine: Int? = null,
+    onCursorChange: ((line: Int, column: Int) -> Unit)? = null,
+    // KMK <--
 ) {
     var value by remember { mutableStateOf(TextFieldValue(code)) }
     LaunchedEffect(code) {
@@ -120,8 +124,26 @@ fun CodeEditor(
     var revealTick by remember { mutableIntStateOf(0) }
     // KMK (r96): the highlighted part as a character range of the current text
     val highlightChars = remember(value.text, highlight) { highlight?.let { lineRangeToChars(value.text, it) } }
-    val transformation = remember(syntax, matches, current, dark, highlightChars) {
-        FindHighlight(syntax, matches, current.takeIf { matches.isNotEmpty() }, dark, highlightChars)
+    // KMK (r106): the last error's line as a character range
+    val errorChars = remember(value.text, errorLine) { errorLine?.let { lineRangeToChars(value.text, it..it) } }
+    val transformation = remember(syntax, matches, current, dark, highlightChars, errorChars) {
+        FindHighlight(syntax, matches, current.takeIf { matches.isNotEmpty() }, dark, highlightChars, errorChars)
+    }
+    // KMK (r106): Ln / Col for the status line
+    val cursorAt = value.selection.start
+    LaunchedEffect(cursorAt, value.text, onCursorChange != null) {
+        val report = onCursorChange ?: return@LaunchedEffect
+        val text = value.text
+        val at = cursorAt.coerceIn(0, text.length)
+        var line = 1
+        var lineStart = 0
+        for (i in 0 until at) {
+            if (text[i] == '\n') {
+                line++
+                lineStart = i + 1
+            }
+        }
+        report(line, at - lineStart + 1)
     }
     // KMK (r96): scrolls to a line the Explain pane asked for (once per change of the line)
     LaunchedEffect(revealLine, layout != null) {
@@ -356,13 +378,24 @@ private class FindHighlight(
     private val dark: Boolean,
     // KMK (r96): the Explain pane's part, as a faint band under the colours
     private val highlight: IntRange? = null,
+    // KMK (r106): the line of the last Test Run error, as a red band
+    private val error: IntRange? = null,
 ) : VisualTransformation {
     override fun filter(text: AnnotatedString): TransformedText {
         val coloured = syntax.filter(text).text
-        if (matches.isEmpty() && highlight == null) return TransformedText(coloured, OffsetMapping.Identity)
+        if (matches.isEmpty() && highlight == null && error == null) return TransformedText(coloured, OffsetMapping.Identity)
         val length = coloured.length
         val marked = buildAnnotatedString {
             append(coloured)
+            error?.let { band ->
+                if (band.first < length && band.last >= band.first) {
+                    addStyle(
+                        SpanStyle(background = if (dark) Color(0x55FF5449) else Color(0x33D32F2F)),
+                        band.first,
+                        (band.last + 1).coerceAtMost(length),
+                    )
+                }
+            }
             highlight?.let { band ->
                 if (band.first < length && band.last >= band.first) {
                     addStyle(
@@ -408,14 +441,17 @@ private data class SyntaxColors(
     val key: Color,
     val number: Color,
     val comment: Color,
+    // KMK (r106): function names (calls and `name: function` keys)
+    val function: Color,
 ) {
     companion object {
         val Dark = SyntaxColors(
             keyword = Color(0xFFC792EA),
-            string = Color(0xFFC3E88D),
+            string = Color(0xFFA5D6A7),
             key = Color(0xFF82AAFF),
             number = Color(0xFFF78C6C),
-            comment = Color(0xFF7F8C98),
+            comment = Color(0xFF7C8190),
+            function = Color(0xFF82AAFF),
         )
         val Light = SyntaxColors(
             keyword = Color(0xFF7B30D0),
@@ -423,6 +459,7 @@ private data class SyntaxColors(
             key = Color(0xFF1565C0),
             number = Color(0xFFD84315),
             comment = Color(0xFF808080),
+            function = Color(0xFF0B57D0),
         )
     }
 }
@@ -464,6 +501,8 @@ private class SyntaxHighlight(private val json: Boolean, private val colors: Syn
                         }
                     }
                     value.first().isDigit() -> SpanStyle(color = colors.number)
+                    // KMK (r106): an identifier that isn't a keyword is a function name (a call or a method key)
+                    value !in KEYWORDS -> if (json) null else SpanStyle(color = colors.function)
                     !json || value in JSON_WORDS -> SpanStyle(color = colors.keyword)
                     else -> null
                 }
@@ -474,10 +513,19 @@ private class SyntaxHighlight(private val json: Boolean, private val colors: Syn
 
     private companion object {
         val JSON_WORDS = setOf("true", "false", "null")
+
+        // KMK (r106): the keyword alternative below, as a set (an identifier match outside it is a function name)
+        val KEYWORDS = setOf(
+            "var", "let", "const", "function", "async", "await", "return", "if", "else", "for", "while", "do", "of",
+            "in", "new", "try", "catch", "finally", "throw", "true", "false", "null", "undefined", "this", "typeof",
+            "instanceof", "break", "continue", "switch", "case", "default", "class", "extends",
+        )
         val TOKENS = Regex(
             """//[^\n]*|/\*[\s\S]*?\*/|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`|""" +
                 """\b\d+(?:\.\d+)?\b|\b(?:var|let|const|function|async|await|return|if|else|for|while|do|of|in|new|try|catch|""" +
-                """finally|throw|true|false|null|undefined|this|typeof|instanceof|break|continue|switch|case|default|class|extends)\b""",
+                """finally|throw|true|false|null|undefined|this|typeof|instanceof|break|continue|switch|case|default|class|extends)\b|""" +
+                // KMK (r106): a name followed by "(" (a call) or by ": function" / ": async function" (a method key)
+                """\b[A-Za-z_$][\w$]*(?=\s*\(|\s*:\s*(?:async\s+)?function\b)""",
         )
     }
 }

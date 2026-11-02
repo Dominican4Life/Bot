@@ -74,6 +74,9 @@ internal data class LabHistoryIndex(
     val currentN: Int? = null,
     // KMK (r98): the highest version number ever given, so a deleted number is never reused (0 = read from versions)
     val lastN: Int = 0,
+    // KMK (r106): the version made the baseline with History's "Make vN the baseline"; null = the implied one
+    // (History.baselineOf: the "Baseline" note, else the generated-from version, else the first version)
+    val baselineN: Int? = null,
 )
 // generatedFrom = the version the code was generated from (never trimmed)
 
@@ -112,6 +115,8 @@ internal data class TestRequest(
     val ms: Long,
     val viaBrowser: Boolean = false,
     val error: String? = null,
+    // KMK (r106): the reply's size in bytes (the body as read; Content-Length when it wasn't read); null = unknown
+    val bytes: Long? = null,
 )
 
 @Serializable

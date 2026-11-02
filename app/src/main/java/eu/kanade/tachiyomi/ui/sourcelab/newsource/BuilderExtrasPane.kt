@@ -1,8 +1,11 @@
 package eu.kanade.tachiyomi.ui.sourcelab.newsource
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -10,11 +13,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.TouchApp
@@ -37,6 +45,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -44,11 +53,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 import kotlin.math.roundToLong
 
 /**
@@ -69,6 +80,13 @@ import kotlin.math.roundToLong
  *
  * r104: each filter card has ▲ / ▼ (the order the source and the Browse sheet use); a filter the source can't use yet
  * says so in red ("Not in the source yet — …"); a filter made from another page's links says it opens that page.
+ *
+ * r106 (mockups Main / Learn / Learned / Links / Directory / TFilters): Filters is one "Pick a menu on the site" button,
+ * a card per picked menu with only its fitting buttons (Learn the codes with its pause and progress inside the card,
+ * Make filter / Add as tabs, Read all pages, a heading's sub-menus with Read all N; Replace "<name>" / Keep both when a
+ * name is taken), then the filters as compact rows in Browse order (tap = the editor). The r102 Learn card above the
+ * pane and "Fetch the full list of this page" are gone. A card asked for by the model ([BuilderExtras.scrollTarget])
+ * opens Filters and brings itself into view inside the builder's scrolling panel.
  */
 @Composable
 internal fun BuilderExtrasPane(
@@ -82,22 +100,36 @@ internal fun BuilderExtrasPane(
 ) {
     val s by extras.state.collectAsState()
     LaunchedEffect(siteUrl) { extras.setSite(siteUrl) }
-    var open by rememberSaveable { mutableStateOf("") }
+    // r106 fix: the open section lives in the model (a tab switch disposes this pane: it comes back as it was)
+    val open = s.openSection
     // r101: the page "Read the whole list" reads (null: the dialog is closed); r103: the menu group's name for it
     var readUrl by rememberSaveable { mutableStateOf<String?>(null) }
     var readName by rememberSaveable { mutableStateOf<String?>(null) }
     fun toggle(section: String) {
-        open = if (open == section) "" else section
+        extras.setOpenSection(if (extras.state.value.openSection == section) "" else section)
     }
     // r101: closing the Filters section (or opening another) ends "Pick a list on the site"
     LaunchedEffect(open) {
         if (open != "filters" && extras.state.value.groupMode) extras.setGroupMode(false)
     }
 
+    // r106: a menu card that appears or starts working opens Filters (the card then scrolls itself into view)
+    // (once per request: coming back to the pane later doesn't open it again. r106 fix: the request handled is kept in
+    // the model, so a tab switch, which disposes this pane, doesn't count an old request as new)
+    LaunchedEffect(s.scrollTick) {
+        val now = extras.state.value
+        val target = now.scrollTarget
+        if (now.scrollTick > now.scrollOpened) {
+            if (target != null && (target.startsWith("menu:") || target == "pending")) extras.setOpenSection("filters")
+            extras.scrollOpened(now.scrollTick)
+        }
+    }
+    // r106: learning runs on its card inside Filters: a run started elsewhere opens Filters too
+    LaunchedEffect(s.learnGroup?.menuId, s.learnGroup?.name) {
+        if (s.learnGroup != null) extras.setOpenSection("filters")
+    }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = modifier.fillMaxWidth()) {
         if (s.menuHint) MenuHintCard(text = s.menuHintText, onDismiss = extras::dismissMenuHint)
-        val learnGroup = s.learnGroup
-        if (learnGroup != null) LearnCard(learnGroup, s.learn, extras, siteUrl)
         Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text("Lists and options", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
@@ -370,6 +402,16 @@ private fun ListRow(
     }
 }
 
+/**
+ * r106 (mockups Main / Learn / Learned / Links / Directory / TFilters): ONE "Pick a menu on the site" button; every
+ * picked menu is a card ([MenuCard]) with only the buttons it needs; then the filters in Browse order as compact rows
+ * ([FilterRow]: tap to edit, ▲▼). A filter whose name is taken asks Replace / Keep both on its card ([ReplaceBox]).
+ */
+/**
+ * r106 (mockups Main / Learn / Learned / Links / Directory / TFilters): ONE "Pick a menu on the site" button; every
+ * picked menu is a card ([MenuCard]) with only the buttons it needs; then the filters in Browse order as compact rows
+ * ([FilterRow]: tap to edit, ▲▼). A filter whose name is taken asks Replace / Keep both on its card ([ReplaceBox]).
+ */
 @Composable
 private fun FiltersSection(
     s: BuilderExtras,
@@ -379,20 +421,20 @@ private fun FiltersSection(
     codeSearchPath: String?,
     onReadList: (String, String?) -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 12.dp)) {
+    // r106: the filter whose editor is open (one at a time), by key + name (indices move with ▲▼)
+    var editing by rememberSaveable { mutableStateOf<String?>(null) }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(bottom = 12.dp)) {
         Hint(
-            "Pick a menu on the site: tap a menu's heading (Trending, Types…), a dropdown's button (Year: All ▾) or one " +
-                "entry of a list; each group of it gets a card below and becomes its own filter. Side menus that fold " +
-                "count too (open the menu first with nothing armed). Or change a sort or a filter on the site with " +
-                "nothing armed: when the address changes, the Lab offers the changed part.",
+            "Tap a menu, a dropdown or one entry of a list on the site. Each one gets a card here with only the buttons " +
+                "it needs. Side menus that fold count too (open the menu first with nothing armed).",
         )
         if (s.groupMode) {
             Surface(
-                shape = RoundedCornerShape(8.dp),
+                shape = RoundedCornerShape(12.dp),
                 color = MaterialTheme.colorScheme.tertiaryContainer,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 12.dp)) {
                     Text(
                         "Tap a menu's heading, a dropdown's button or one entry of a list on the site",
                         style = MaterialTheme.typography.bodySmall,
@@ -403,91 +445,735 @@ private fun FiltersSection(
                 }
             }
         } else {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                OutlinedButton(onClick = { extras.setGroupMode(true) }) {
-                    Icon(Icons.Outlined.TouchApp, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Pick a menu on the site")
-                }
-                TextButton(onClick = { pageUrl?.let { onReadList(it, null) } }, enabled = pageUrl != null) {
-                    Text("Fetch the full list of this page")
-                }
+            Button(onClick = { extras.setGroupMode(true) }, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Outlined.TouchApp, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Pick a menu on the site")
             }
         }
-        // r103: one card per menu group of the last menu picked
-        s.menuGroups.forEach { group -> MenuGroupCard(group, extras, onReadList) }
+        // r106: a filter made without a card (a list picked the r101 way) that asks Replace / Keep both
+        // r106 fix: every question without its card (one per card; the card closed or replaced by a new pick)
+        s.pendings.values.filter { p -> p.menuId == null || s.menuGroups.none { it.id == p.menuId } }.forEach { p ->
+            key("pending:${p.menuId ?: BuilderExtrasLogic.NO_CARD}") {
+                ReplaceBox(p, extras, p.menuId == null && s.scrollTarget == "pending", s.scrollTick, scrollDoneTick = s.scrollDone)
+            }
+        }
+        // A list picked the r101 / r102 way (no card): its learning shows here
+        val looseLearn = s.learnGroup?.takeIf { g -> g.menuId == null || s.menuGroups.none { it.id == g.menuId } }
+        if (looseLearn != null) {
+            CardBox(active = s.learn?.running == true, target = null, scrollTarget = s.scrollTarget, scrollTick = s.scrollTick) {
+                LearnSection(looseLearn, s.learn, extras, s, menuId = null)
+            }
+        }
+        val top = s.menuGroups.filter { g -> g.parent == null || s.menuGroups.none { it.id == g.parent } }
+        if (top.isNotEmpty()) SectionLabel("Menus you picked")
+        top.forEach { group ->
+            key(group.id) { MenuCard(group, s, extras, nested = false) }
+        }
         val offer = s.listOffer
         if (offer != null) {
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(modifier = Modifier.padding(10.dp)) {
-                    Text(
-                        "\"${offer.text}\" opens a list page",
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    Text(
-                        offer.url,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 12.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Row {
-                        TextButton(onClick = { onReadList(offer.url, null) }) { Text("Fetch the full list") }
-                        TextButton(onClick = extras::dismissListOffer) { Text("Not now") }
-                    }
+            CardBox(active = false, target = null, scrollTarget = s.scrollTarget, scrollTick = s.scrollTick) {
+                Text("“${offer.text}” opens a list page", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                MonoLine(offer.url)
+                Row {
+                    TextButton(onClick = { onReadList(offer.url, null) }) { Text("Fetch the full list") }
+                    TextButton(onClick = extras::dismissListOffer) { Text("Not now") }
                 }
             }
         }
         s.offers.forEach { offer ->
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(modifier = Modifier.padding(10.dp)) {
+            CardBox(active = false, target = null, scrollTarget = s.scrollTarget, scrollTick = s.scrollTick) {
+                MonoLine("The address changed ${offer.param}=${offer.seen.joinToString(", ").ifEmpty { "…" }}", lines = 2)
+                Row {
+                    TextButton(onClick = {
+                        extras.acceptOffer(offer.param)
+                        onAskOptions(offer.param)
+                    }) { Text("Make this a filter") }
+                    TextButton(onClick = { extras.dismissOffer(offer.param) }) { Text("Not a filter") }
+                }
+            }
+        }
+        // r106: the filters in Browse order, compact (tap one to edit it)
+        val searchPath = s.searchPath ?: codeSearchPath
+        SectionLabel("Your filters · in Browse order")
+        if (s.filters.isEmpty()) {
+            Hint("None yet: pick a menu on the site, or add one by hand.")
+        } else {
+            BuiltInListRow(s)
+        }
+        val groupNames = s.filters.map { it.group.trim() }.filter { it.isNotEmpty() }.distinct()
+        s.filters.forEachIndexed { index, filter ->
+            val group = filter.group.trim()
+            if (group.isNotEmpty() && s.filters.getOrNull(index - 1)?.group?.trim() != group) {
+                val members = s.filters.filter { it.group.trim() == group }
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                    Text("$group · group", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(8.dp))
                     Text(
-                        "The address changed ${offer.param}=${offer.seen.joinToString(", ").ifEmpty { "…" }}",
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 12.sp,
-                        maxLines = 2,
+                        members.joinToString(" · ") { it.name.ifBlank { it.key } },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
                     )
-                    Row {
-                        TextButton(onClick = {
-                            extras.acceptOffer(offer.param)
-                            onAskOptions(offer.param)
-                        }) { Text("Make this a filter") }
-                        TextButton(onClick = { extras.dismissOffer(offer.param) }) { Text("Not a filter") }
+                }
+            }
+            val id = "${filter.key}|${filter.name}|$index"
+            key(id) {
+                FilterRow(
+                    index = index,
+                    count = s.filters.size,
+                    filter = filter,
+                    searchPath = searchPath,
+                    indent = group.isNotEmpty(),
+                    expanded = editing == id,
+                    onToggle = { editing = if (editing == id) null else id },
+                    extras = extras,
+                )
+                if (editing == id) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            FilterEditor(s.rev, index, s.filters.size, filter, searchPath, extras, onAskOptions, groupNames)
+                        }
                     }
                 }
             }
         }
-        // r105: the Browse sheet starts with the built-in "List" (Popular, Latest, the tabs)
         if (s.filters.isNotEmpty()) {
-            Hint(
-                "The Browse sheet starts with \u201cList\u201d (Popular, Latest — picked at first — and the tabs). A page " +
-                    "filter picks another list (only the first one changed applies); extras add their code to whichever list is shown.",
-            )
-        }
-        val groupNames = s.filters.map { it.group.trim() }.filter { it.isNotEmpty() }.distinct()
-        s.filters.forEachIndexed { index, filter ->
-            // r105: a group's heading above its first filter
-            val group = filter.group.trim()
-            if (group.isNotEmpty() && s.filters.getOrNull(index - 1)?.group?.trim() != group) {
-                Text(group, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-            }
-            FilterEditor(s.rev, index, s.filters.size, filter, s.searchPath ?: codeSearchPath, extras, onAskOptions, groupNames)
-            HorizontalDivider()
+            Hint("Tap a filter to edit its name, options and role. Use ▲ ▼ to change the order (a group's filters stay together).")
         }
         TextButton(onClick = extras::addFilter) {
             Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))
             Text("Add a filter by hand")
         }
+    }
+}
+
+@Composable
+private fun SectionLabel(text: String) {
+    Text(
+        text.uppercase(),
+        fontFamily = FontFamily.Monospace,
+        fontSize = 11.sp,
+        letterSpacing = 0.8.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 6.dp),
+    )
+}
+
+@Composable
+private fun MonoLine(text: String, lines: Int = 1, color: Color = Color.Unspecified) {
+    Text(
+        text,
+        fontFamily = FontFamily.Monospace,
+        fontSize = 12.sp,
+        color = if (color == Color.Unspecified) MaterialTheme.colorScheme.onSurfaceVariant else color,
+        maxLines = lines,
+        overflow = TextOverflow.Ellipsis,
+    )
+}
+
+/** The mockups' green "learned / made" tick */
+private val OkGreen = Color(0xFF7FD99A)
+
+/** The mockups' amber warning */
+private val WarnAmber = Color(0xFFF2B33D)
+
+/**
+ * r106: a card of the Filters section: rounded, a primary outline while it works ([active]); when [target] is the
+ * model's scroll target ([BuilderExtras.scrollTarget]) it brings itself into view on every new request
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun CardBox(
+    active: Boolean,
+    target: String?,
+    scrollTarget: String?,
+    scrollTick: Int,
+    nested: Boolean = false,
+    /** r106 fix: the last request already brought into view ([BuilderExtras.scrollDone]) and how to say one was */
+    scrollDoneTick: Int = 0,
+    onScrolled: (Int) -> Unit = {},
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val requester = remember { BringIntoViewRequester() }
+    val wanted = target != null && scrollTarget == target
+    LaunchedEffect(scrollTick, wanted) {
+        // r106 fix: a request already brought into view (before a tab switch) isn't done again: no jump to an old card
+        if (wanted && scrollTick > 0 && scrollTick > scrollDoneTick) {
+            delay(120)
+            runCatching { requester.bringIntoView() }
+            onScrolled(scrollTick)
+        }
+    }
+    Surface(
+        shape = RoundedCornerShape(if (nested) 12.dp else 16.dp),
+        color = if (nested) MaterialTheme.colorScheme.surfaceContainerHighest else MaterialTheme.colorScheme.surfaceContainerHigh,
+        border = if (active) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
+        modifier = Modifier.fillMaxWidth().bringIntoViewRequester(requester),
+    ) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(horizontal = if (nested) 12.dp else 14.dp, vertical = if (nested) 10.dp else 12.dp),
+            content = content,
+        )
+    }
+}
+
+/** r106: what a card's kind line says ("Dropdown · 9 entries · buttons, not links") */
+private fun kindLine(g: MenuGroup, kids: Int): String {
+    val probe = g.probe
+    return when (g.kind) {
+        "buttons" -> "Dropdown · ${g.items.size} entries · buttons, not links"
+        "select" -> "Dropdown · ${g.items.size} entries · its values are the codes"
+        "links" -> "Links · ${g.items.size} entries · each opens its own list"
+        "heading" -> "Heading · $kids sub-menus"
+        else -> when {
+            probe == null -> "A list page"
+            probe.state == "reading" -> "Name list · reading its first page…"
+            probe.state == "failed" -> "Couldn't read its first page (${probe.note})"
+            probe.pages > 1 || probe.hasNext ->
+                "Name list with pages found (1, 2, 3 … ${if (probe.pages > 2) probe.pages.toString() else "more"}) · ${probe.entries} names on page 1"
+            probe.entries > 0 -> "Name list · ${probe.entries} names on one page"
+            else -> "No list of names found on it" + if (probe.note.isNotBlank()) " (${probe.note})" else ""
+        }
+    }
+}
+
+/**
+ * r106: one picked menu as a card (mock Main): its name and kind, then only what fits: a dropdown of buttons learns its
+ * codes here ([LearnSection]), links make a filter or tabs, a directory reads all its pages ([ReadSection]); a heading's
+ * sub-menus are rows inside it (each its own small card) with "Read all N"
+ */
+@Composable
+private fun MenuCard(group: MenuGroup, s: BuilderExtras, extras: BuilderExtrasModel, nested: Boolean) {
+    val kids = s.menuGroups.filter { it.parent == group.id }
+    val learning = s.learnGroup?.takeIf { it.menuId == group.id }
+    val pending = s.pendings[group.id]
+    val reading = group.read?.running == true || kids.any { it.read?.running == true }
+    CardBox(
+        active = learning != null || pending != null || reading,
+        target = "menu:${group.id}",
+        scrollTarget = s.scrollTarget,
+        scrollTick = s.scrollTick,
+        nested = nested,
+        scrollDoneTick = s.scrollDone,
+        onScrolled = extras::scrollDone,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                val made = group.made
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (!made.isNullOrEmpty()) {
+                        Text("✓ ", color = OkGreen, fontWeight = FontWeight.Bold)
+                    }
+                    Text(
+                        group.name.ifBlank { "Menu" } + when {
+                            kids.isNotEmpty() && group.kind == "heading" -> " · group"
+                            made == "tabs" -> " · added as tabs"
+                            !made.isNullOrEmpty() -> " · filter made"
+                            else -> ""
+                        },
+                        style = if (nested) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Text(
+                    kindLine(group, kids.size),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            IconButton(onClick = { extras.dismissMenuGroup(group.id) }, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Outlined.Close, contentDescription = "Not this", modifier = Modifier.size(16.dp))
+            }
+        }
+        if (group.made == "") {
+            Text("No filter could be made of it (see the note above)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        }
+        when {
+            learning != null -> LearnSection(learning, s.learn, extras, s, menuId = group.id)
+            pending != null -> ReplaceBox(pending, extras, false, s.scrollTick, inCard = true)
+            else -> MenuActions(group, extras)
+        }
+        if (kids.isNotEmpty()) {
+            if (group.kind == "heading") {
+                Hint(
+                    "A heading with ${kids.size} sub-menus. Each one becomes a filter inside “${group.name.ifBlank { "this group" }}” in Browse.",
+                )
+            }
+            kids.forEach { kid -> key(kid.id) { MenuCard(kid, s, extras, nested = true) } }
+            val readable = kids.filter { it.href != null && it.made.isNullOrEmpty() && it.read?.running != true }
+            if (readable.size >= 2) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedButton(onClick = { extras.readAllUnder(group.id) }, enabled = !reading) { Text("Read all ${readable.size}") }
+                    Spacer(Modifier.width(8.dp))
+                    Hint("one after another, with the pause you set")
+                }
+            }
+        }
+    }
+}
+
+/** r106: a card's own buttons by its kind (nothing learning or asking on it) */
+@Composable
+private fun MenuActions(group: MenuGroup, extras: BuilderExtrasModel) {
+    val read = group.read
+    // (remembered before any branch: no remember inside a condition)
+    var start by remember(group.id) { mutableStateOf(false) }
+    when (group.kind) {
+        "buttons" -> {
+            if (!group.made.isNullOrEmpty()) return
+            if (!start) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Button(onClick = { start = true }) {
+                        Icon(Icons.Outlined.TouchApp, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Learn the codes")
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Hint("presses each entry, reads the address")
+                }
+            } else {
+                PauseAndStart(
+                    extras = extras,
+                    startLabel = "Learn the codes",
+                    onStart = { min, max -> extras.startMenuLearn(group.id, min, max) },
+                    onCancel = { start = false },
+                )
+            }
+        }
+        "select" -> Row {
+            Button(onClick = { extras.makeMenuFilter(group.id) }) { Text(if (group.made.isNullOrEmpty()) "Make filter" else "Make it again") }
+        }
+        "links" -> {
+            group.items.take(3).forEach { item ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(item.text.ifBlank { item.value.orEmpty() }, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Spacer(Modifier.width(8.dp))
+                    MonoLine(item.href?.let { BuilderExtrasLogic.relative(it, it.toSiteOrigin()) }.orEmpty())
+                }
+            }
+            if (group.items.size > 3) Hint("… and ${group.items.size - 3} more")
+            if (group.made.isNullOrEmpty()) {
+                Hint("Links: each entry opens its own list, so there's nothing to learn. A filter of them picks the list.")
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Button(onClick = { extras.makeMenuFilter(group.id) }) { Text(if (group.made.isNullOrEmpty()) "Make filter" else "Make it again") }
+                OutlinedButton(onClick = { extras.addMenuAsTabs(group.id) }) { Text("Add as tabs instead") }
+            }
+        }
+        "directory" -> {
+            val probe = group.probe
+            when {
+                read != null && read.running -> ReadSection(group, read, extras)
+                read != null -> {
+                    Text(
+                        "${read.entries} names · ${read.page} page${if (read.page == 1) "" else "s"} read" +
+                            (group.href?.let { " · " + BuilderExtrasLogic.relative(it, it.toSiteOrigin()) } ?: ""),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (read.entries > 0) OkGreen else MaterialTheme.colorScheme.error,
+                    )
+                    read.reason?.let { Hint("Stopped: $it") }
+                    TextButton(onClick = { extras.readMenuGroup(group.id) }) { Text("Read again") }
+                }
+                probe == null || probe.state == "reading" -> Unit
+                probe.pages > 1 || probe.hasNext -> {
+                    Button(onClick = { extras.readMenuGroup(group.id) }) { Text("Read all pages") }
+                    Hint(
+                        "${BuilderExtrasLogic.READ_PAGES} pages at most. Any other name you type in Browse still works: " +
+                            "it's turned into the site's address form.",
+                    )
+                }
+                else -> Button(onClick = { extras.readMenuGroup(group.id, maxPages = 1) }) { Text("Make filter") }
+            }
+        }
+        else -> Unit
+    }
+}
+
+/** r106: "Read all pages" running on a card: page k of the limit, names so far, Stop */
+@Composable
+private fun ReadSection(group: MenuGroup, read: GroupRead, extras: BuilderExtrasModel) {
+    LinearProgressIndicator(
+        progress = { (read.page.toFloat() / read.maxPages.coerceAtLeast(1)).coerceIn(0f, 1f) },
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            "Reading page ${read.page} of ${read.maxPages} at most · ${read.entries} names so far",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        OutlinedButton(onClick = { extras.stopRead(group.id) }) { Text("Stop") }
+    }
+}
+
+/** r106: the pause slider and Start shown once on the card before learning (mock Learn, "Before it starts") */
+@Composable
+private fun PauseAndStart(extras: BuilderExtrasModel, startLabel: String, onStart: (Long, Long) -> Unit, onCancel: () -> Unit) {
+    var pause by remember { mutableStateOf(extras.pauseSeconds().let { (a, b) -> a.coerceIn(0f, 10f)..b.coerceIn(0f, 10f) }) }
+    fun seconds(v: Float): String = if (v == v.toInt().toFloat()) v.toInt().toString() else v.toString()
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Pause between presses", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        MonoLine("${seconds(pause.start)} – ${seconds(pause.endInclusive)} s")
+    }
+    RangeSlider(
+        value = pause,
+        onValueChange = { pause = it },
+        valueRange = 0f..10f,
+        // half-second stops, as in "Read the whole list"
+        steps = 19,
+    )
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Button(onClick = { onStart((pause.start * 1000f).roundToLong(), (pause.endInclusive * 1000f).roundToLong()) }) { Text(startLabel) }
+        OutlinedButton(onClick = onCancel) { Text("Not now") }
+    }
+}
+
+private fun learnDone(status: String): Boolean = status == "learned" || status == "nochange" || status == "filled" || status == "missed" || status == "missing"
+
+/**
+ * r106: learning on its card (mocks Learn / Learned): while it runs, the progress and one row per entry (✓ code,
+ * pressing…, waiting · ) with Stop; when done, what it learned: the address name, every code, Works on (Any list / This
+ * page only / Search too) and Make filter, or Replace "<name>" / Keep both when a filter has its name
+ */
+@Composable
+private fun LearnSection(group: LearnGroup, run: LearnRun?, extras: BuilderExtrasModel, s: BuilderExtras, menuId: Int?) {
+    // Everything remembered up front (no remember inside a condition): the preview of a finished run, the card's Works
+    // on choice and the filters it would replace
+    val preview = remember(run, s.filters, s.pageRule) { if (run == null || run.running) null else extras.learnedPreview() }
+    var role by remember(run, preview) { mutableStateOf(if (preview?.mode == "path") "page" else preview?.role?.ifEmpty { null } ?: "extra") }
+    var searchToo by remember(run, preview) { mutableStateOf(preview?.onSearch == true) }
+    val made = preview?.copy(role = role)
+    val clash = remember(made, s.filters) { if (made == null) emptyList() else extras.learnedConflicts(made) }
+    if (run == null) {
+        Text(
+            if (group.hasLinks) "Check where each entry of “${group.name}” goes" else "Learn the codes of “${group.name}”",
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Hint(
+            "The Lab presses each entry for you in this page and writes down the address it opens, then comes back " +
+                "(${group.entries.size} entries).",
+        )
+        PauseAndStart(
+            extras = extras,
+            startLabel = if (group.hasLinks) "Check them" else "Learn the codes",
+            onStart = { min, max -> if (menuId != null) extras.startMenuLearn(menuId, min, max) else extras.startLearn(min, max) },
+            onCancel = extras::dismissLearn,
+        )
+        return
+    }
+    val codes = preview?.options?.filter { it.value.isNotEmpty() }?.associate { it.label to it.value }.orEmpty()
+    val done = run.rows.count { learnDone(it.status) }
+    if (run.running) {
+        Text("${run.name} · learning the codes", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+        Hint("Pressing each entry on the page and reading the address it makes")
+        LinearProgressIndicator(
+            progress = { done.toFloat() / run.rows.size.coerceAtLeast(1) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Text(
+            "$done of ${run.rows.size} · ${secondsMs(run.pauseMinMs)}–${secondsMs(run.pauseMaxMs)} s between presses",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    } else {
+        Text(
+            "${run.name} · ${run.rows.count { it.status == "learned" || it.status == "filled" }} codes learned",
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.SemiBold,
+        )
+        if (preview != null) {
+            Hint(
+                if (preview.mode == "path") {
+                    "The address's path changed: it picks the list"
+                } else if (preview.role == "page") {
+                    "The entries open another page: it picks the list"
+                } else {
+                    "Only the part after ? changed, so it works on any list"
+                },
+            )
+            if (preview.mode != "path" && preview.param.isNotBlank()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Address name", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    MonoLine(preview.param, color = MaterialTheme.colorScheme.onSurface)
+                }
+            }
+        }
+    }
+    Column {
+        run.rows.take(MAX_LEARN_ROWS).forEach { row -> LearnRowLine(row, codes, group.pageUrl, s.lastUrl) }
+        if (run.rows.size > MAX_LEARN_ROWS) Hint("+ ${run.rows.size - MAX_LEARN_ROWS} more")
+    }
+    val note = run.note ?: run.pattern?.let { "Pattern found: $it — the rest are filled in without pressing." }
+    if (note != null && !run.running) {
+        Text(note, style = MaterialTheme.typography.bodySmall, color = if (run.pattern != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    if (run.running) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(onClick = extras::stopLearn) { Text("Stop") }
+            Spacer(Modifier.width(8.dp))
+            Hint("keeps what it learned so far")
+        }
+        return
+    }
+    if (preview == null || made == null) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (menuId != null) OutlinedButton(onClick = { extras.startMenuLearn(menuId, run.pauseMinMs, run.pauseMaxMs) }) { Text("Learn again") }
+            TextButton(onClick = extras::dismissLearn) { Text("Close") }
+        }
+        return
+    }
+    Hint("“Site default” is added on top by itself, so picking nothing sends nothing. Entries whose address didn't change stay grey and are left out.")
+    // Works on: Any list (an extra) / This page only (picks the list: this page with the code) / Search too
+    val canPage = preview.mode == "path" || "{value}" in preview.linkPath
+    if (preview.mode != "path") {
+        Text("Works on", style = MaterialTheme.typography.bodyMedium)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            FilterChip(selected = role == "extra", onClick = { role = "extra" }, label = { Text("Any list") })
+            FilterChip(selected = role == "page", enabled = canPage, onClick = { role = "page" }, label = { Text("This page only") })
+            FilterChip(selected = searchToo, enabled = role == "extra", onClick = { searchToo = !searchToo }, label = { Text("Search too") })
+        }
+    }
+    if (clash.isNotEmpty()) {
+        ConflictText(made.name, clash)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Button(onClick = { extras.makeLearnedFilter(role, searchToo && role == "extra", onConflict = true) }) {
+                Text("Replace “${clash.first().name.ifBlank { made.name }}”")
+            }
+            OutlinedButton(onClick = { extras.makeLearnedFilter(role, searchToo && role == "extra", onConflict = false) }) { Text("Keep both") }
+        }
+    } else {
+        Button(onClick = { extras.makeLearnedFilter(role, searchToo && role == "extra") }) { Text("Make “${made.name}” filter") }
+    }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (menuId != null) TextButton(onClick = { extras.startMenuLearn(menuId, run.pauseMinMs, run.pauseMaxMs) }) { Text("Learn again") }
+        TextButton(onClick = extras::dismissLearn) { Text("Close") }
+    }
+}
+
+private fun secondsMs(ms: Long): String {
+    val v = ms / 500L / 2f
+    return if (v == v.toInt().toFloat()) v.toInt().toString() else v.toString()
+}
+
+/** r106: the amber note over Replace / Keep both: which filters have the name, and what they send */
+@Composable
+private fun ConflictText(name: String, clash: List<ExtrasFilter>) {
+    val first = clash.first()
+    val what = if (BuilderExtrasLogic.sendsLabels(first)) " (it sends the words, not the codes)" else ""
+    Row(verticalAlignment = Alignment.Top) {
+        Text("! ", color = WarnAmber, fontWeight = FontWeight.Bold)
+        Text(
+            if (clash.size == 1) {
+                "You already have a filter named “${first.name.ifBlank { first.key }}”$what. Replacing it means Browse shows one “$name”."
+            } else {
+                "You already have ${clash.size} filters with this name or address name (${clash.joinToString(", ") { it.name.ifBlank { it.key } }}). Replace takes their place."
+            },
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
+}
+
+/** r106: a filter waiting for Replace / Keep both (made from a card, or from a list picked the r101 way) */
+@Composable
+private fun ReplaceBox(p: PendingFilter, extras: BuilderExtrasModel, scroll: Boolean, tick: Int, inCard: Boolean = false, scrollDoneTick: Int = 0) {
+    val body: @Composable ColumnScope.() -> Unit = {
+        Text("“${p.filter.name}” is ready", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+        ConflictText(p.filter.name, p.conflicts)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            // r106 fix: the answer goes to this card's question (one per card)
+            Button(onClick = { extras.resolvePending(true, p.menuId) }) { Text("Replace “${p.conflicts.first().name.ifBlank { p.filter.name }}”") }
+            OutlinedButton(onClick = { extras.resolvePending(false, p.menuId) }) { Text("Keep both") }
+            TextButton(onClick = { extras.dismissPending(p.menuId) }) { Text("Not now") }
+        }
+    }
+    if (inCard) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp), content = body)
+    } else {
+        CardBox(
+            active = true,
+            target = "pending",
+            scrollTarget = if (scroll) "pending" else null,
+            scrollTick = tick,
+            scrollDoneTick = scrollDoneTick,
+            onScrolled = extras::scrollDone,
+            content = body,
+        )
+    }
+}
+
+@Composable
+private fun LearnRowLine(row: LearnRow, codes: Map<String, String>, pageUrl: String, siteUrl: String?) {
+    val site = siteUrl?.toSiteOrigin().orEmpty().ifEmpty { pageUrl.toSiteOrigin() }
+    val (mark, right) = when (row.status) {
+        "pressing" -> "◌" to "pressing…"
+        "waiting" -> "·" to ""
+        "nochange" -> "–" to "no change"
+        "missed" -> "?" to "no address"
+        "missing" -> "✕" to "not found on the page" // r102 fix: never made the filter's "Any"
+        "filled" -> "✓" to (codes[row.text] ?: row.url?.let { BuilderExtrasLogic.relative(it, site) + " (filled in)" }.orEmpty())
+        else -> "✓" to (codes[row.text] ?: row.url?.let { BuilderExtrasLogic.relative(it, site) }.orEmpty())
+    }
+    val color = when (row.status) {
+        "learned", "filled" -> OkGreen
+        "pressing" -> MaterialTheme.colorScheme.primary
+        "missing" -> MaterialTheme.colorScheme.error
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Text(mark, color = color, fontWeight = FontWeight.Bold, modifier = Modifier.width(20.dp))
+        Text(
+            row.text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (row.status == "waiting" || row.status == "nochange") MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (right.isNotEmpty()) {
+            Spacer(Modifier.width(8.dp))
+            Text(
+                right,
+                fontFamily = if (row.status == "learned" || row.status == "filled") FontFamily.Monospace else FontFamily.Default,
+                fontSize = 12.sp,
+                color = color,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 200.dp),
+            )
+        }
+    }
+}
+
+private const val MAX_LEARN_ROWS = 12
+
+/** r106: the Browse sheet's built-in "List" as the first row of the filters (not editable) */
+@Composable
+private fun BuiltInListRow(s: BuilderExtras) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text("List", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "Built in · " + listOf(s.popularName.ifBlank { "Popular" }, s.latestName.ifBlank { "Latest" }).joinToString(", ") +
+                    if (s.tabs.isEmpty()) ", your tabs" else ", " + s.tabs.joinToString(", ") { it.name.ifBlank { it.path } },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        RoleChip("Picks the list")
+    }
+}
+
+@Composable
+private fun RoleChip(text: String) {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = Color.Transparent,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Text(
+            text,
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+        )
+    }
+}
+
+/** r106: what a filter row says under its name: what it sends ✓, why it isn't in the source, or that it sends labels */
+private fun rowSummary(f: ExtrasFilter): String {
+    val values = f.options.filter { it.value.isNotEmpty() }.map { it.value }
+    val more = if (values.size > 2) " …" else ""
+    return when {
+        f.mode == "path" -> f.path.ifBlank { "…" }.substringBefore("{value}") + "…"
+        "{value}" in f.linkPath && f.role == "page" -> f.linkPath.substringBefore("{value}") + values.firstOrNull().orEmpty() + more
+        f.param.isNotBlank() -> "${f.param} = " + values.take(2).joinToString(", ") + more
+        else -> values.take(3).joinToString(", ") + more
+    }
+}
+
+/**
+ * r106: one filter as a compact row (mock Main "Your filters"): name, ✓ what it sends (or the problem in red, or the
+ * amber "Sends labels: learn the codes"), its role chip, ▲▼; tap opens its editor under it
+ */
+@Composable
+private fun FilterRow(
+    index: Int,
+    count: Int,
+    filter: ExtrasFilter,
+    searchPath: String?,
+    indent: Boolean,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    extras: BuilderExtrasModel,
+) {
+    val problem = BuilderExtrasLogic.filterProblem(filter)
+    val labels = problem == null && BuilderExtrasLogic.sendsLabels(filter)
+    val role = BuilderExtrasLogic.roleOf(filter, searchPath)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onToggle)
+            .padding(start = if (indent) 14.dp else 0.dp, top = 4.dp, bottom = 4.dp),
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                filter.name.ifBlank { filter.key.ifBlank { "Filter ${index + 1}" } },
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            when {
+                problem != null -> Text(problem, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                labels -> Text("Sends labels: learn the codes", style = MaterialTheme.typography.bodySmall, color = WarnAmber)
+                filter.noLinkAddress -> Text("Pick this menu again: its own page wasn't saved", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                else -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        rowSummary(filter),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    Text(" ✓", color = OkGreen, fontSize = 12.sp)
+                }
+            }
+        }
+        Spacer(Modifier.width(6.dp))
+        RoleChip(if (role == "page") "Picks the list" else "Added to any list")
+        IconButton(onClick = { extras.moveFilter(index, -1) }, enabled = index > 0, modifier = Modifier.size(30.dp)) {
+            Icon(Icons.Outlined.KeyboardArrowUp, contentDescription = "Move up", modifier = Modifier.size(18.dp))
+        }
+        IconButton(onClick = { extras.moveFilter(index, 1) }, enabled = index < count - 1, modifier = Modifier.size(30.dp)) {
+            Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = "Move down", modifier = Modifier.size(18.dp))
+        }
+        Icon(
+            if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+            contentDescription = if (expanded) "Close the editor" else "Edit",
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp),
+        )
     }
 }
 
@@ -778,194 +1464,6 @@ private fun MenuHintCard(text: String?, onDismiss: () -> Unit) {
             Row {
                 Spacer(Modifier.weight(1f))
                 TextButton(onClick = onDismiss) { Text("OK") }
-            }
-        }
-    }
-}
-
-private fun learnDone(status: String): Boolean = status == "learned" || status == "nochange" || status == "filled" || status == "missed" || status == "missing"
-
-@Composable
-private fun LearnCard(group: LearnGroup, run: LearnRun?, extras: BuilderExtrasModel, siteUrl: String) {
-    var pause by remember { mutableStateOf(BuilderListReader.defaultPause()) }
-    fun seconds(v: Float): String = if (v == v.toInt().toFloat()) v.toInt().toString() else v.toString()
-    fun secondsMs(ms: Long): String = seconds(ms / 500L / 2f)
-    Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    if (group.hasLinks) "Check where each entry goes" else "Learn this list",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    "${group.name} · ${group.entries.size} entries",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Hint(
-                if (group.hasLinks) {
-                    "The Lab presses each entry for you in this page and writes down the address it really opens, then comes back."
-                } else {
-                    "These are buttons, not links, so the Lab can't see where they go. It presses each one for you in this " +
-                        "page and writes down the address it leads to, then comes back."
-                },
-            )
-            if (run == null) {
-                Text(
-                    "Pause between presses: ${seconds(pause.start)}–${seconds(pause.endInclusive)} s",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                RangeSlider(
-                    value = pause,
-                    onValueChange = { pause = it },
-                    valueRange = 0f..10f,
-                    // half-second stops, as in "Read the whole list"
-                    steps = 19,
-                )
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Button(
-                        onClick = {
-                            extras.startLearn(
-                                (pause.start * 1000f).roundToLong(),
-                                (pause.endInclusive * 1000f).roundToLong(),
-                            )
-                        },
-                    ) {
-                        Icon(Icons.Outlined.TouchApp, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text(if (group.hasLinks) "Check them" else "Learn this list")
-                    }
-                    TextButton(onClick = extras::dismissLearn) { Text("Not now") }
-                }
-            } else {
-                val shown = run.rows.filter { it.status != "waiting" }
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    shown.take(MAX_LEARN_ROWS).forEach { row -> LearnRowLine(row, group.pageUrl, siteUrl) }
-                    if (shown.size > MAX_LEARN_ROWS) Hint("… and ${shown.size - MAX_LEARN_ROWS} more")
-                }
-                val done = run.rows.count { learnDone(it.status) }
-                val total = run.rows.size.coerceAtLeast(1)
-                LinearProgressIndicator(
-                    progress = { done.toFloat() / total },
-                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                )
-                Text(
-                    "$done of ${run.rows.size} · pause ${secondsMs(run.pauseMinMs)}–${secondsMs(run.pauseMaxMs)} s between presses",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                val note = run.note ?: run.pattern?.let { "Pattern found: $it — the rest are filled in without pressing." }
-                if (note != null) {
-                    Text(
-                        note,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (run.pattern != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    if (run.running) OutlinedButton(onClick = extras::stopLearn) { Text("Stop") }
-                    Button(
-                        onClick = extras::makeLearnedFilter,
-                        enabled = run.rows.count { it.url != null || it.status == "nochange" } >= 2,
-                    ) {
-                        Text("Make \"${run.name}\" filter")
-                    }
-                    if (!run.running) TextButton(onClick = extras::dismissLearn) { Text("Close") }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun LearnRowLine(row: LearnRow, pageUrl: String, siteUrl: String) {
-    val url = row.url
-    val (mark, where) = when (row.status) {
-        "pressing" -> "…" to "pressing…"
-        "nochange" -> "–" to "no change (${BuilderExtrasLogic.relative(pageUrl, siteUrl)})"
-        "missed" -> "?" to "no address"
-        "missing" -> "✕" to "not found on the page" // r102 fix: never made the filter's "Any"
-        "filled" -> "✓" to (url?.let { BuilderExtrasLogic.relative(it, siteUrl) + " (filled in)" } ?: "")
-        else -> "✓" to (url?.let { BuilderExtrasLogic.relative(it, siteUrl) } ?: "")
-    }
-    Text(
-        "$mark ${row.text} → $where",
-        fontFamily = FontFamily.Monospace,
-        fontSize = 12.sp,
-        color = when (row.status) {
-            "pressing" -> MaterialTheme.colorScheme.primary
-            "nochange", "missed" -> MaterialTheme.colorScheme.onSurfaceVariant
-            "missing" -> MaterialTheme.colorScheme.error
-            else -> MaterialTheme.colorScheme.onSurface
-        },
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-    )
-}
-
-private const val MAX_LEARN_ROWS = 12
-
-/**
- * r103: one menu group picked on the site: "<Heading> — N options: a, b, c…" and its actions: Make filter (its
- * entries only), Learn addresses (entries without links: the Learn card presses them), Fetch the full list (the
- * group's own link is a list page: read it all, then Dropdown or Text box with suggestions)
- */
-@Composable
-private fun MenuGroupCard(group: MenuGroup, extras: BuilderExtrasModel, onReadList: (String, String?) -> Unit) {
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(modifier = Modifier.padding(start = 10.dp, end = 4.dp, top = 8.dp, bottom = 4.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        group.name.ifBlank { "Menu" } + if (group.items.isEmpty()) " — a list page" else " — ${group.items.size} options",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    val sample = group.items.take(4).joinToString(", ") { it.text.ifBlank { it.value.orEmpty() } } +
-                        if (group.items.size > 4) "…" else ""
-                    val where = if (group.headingPath.size > 1) group.headingPath.joinToString(" › ") + " · " else ""
-                    Text(
-                        where + sample.ifEmpty { group.href?.let { BuilderExtrasLogic.relative(it, it.toSiteOrigin()) }.orEmpty() },
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                IconButton(onClick = { extras.dismissMenuGroup(group.id) }, modifier = Modifier.size(32.dp)) {
-                    Icon(Icons.Outlined.Close, contentDescription = "Not this", modifier = Modifier.size(16.dp))
-                }
-            }
-            val made = group.made
-            if (made != null) {
-                Text(
-                    if (made.isEmpty()) "No filter could be made of it (see the note above)" else "✓ Filter made ($made)",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (made.isEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                )
-            }
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                if (group.items.size >= 2) {
-                    TextButton(onClick = { extras.makeMenuFilter(group.id) }) { Text("Make filter") }
-                }
-                if (group.items.size >= 2 && group.noLinks) {
-                    TextButton(onClick = { extras.learnMenuGroup(group.id) }) { Text("Learn addresses") }
-                }
-                val href = group.href
-                if (href != null) {
-                    TextButton(onClick = { onReadList(href, group.name) }) { Text("Fetch the full list") }
-                }
             }
         }
     }

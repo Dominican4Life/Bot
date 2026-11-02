@@ -40,8 +40,11 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.File
 
-/** The tabs of an open source; the phone shows them as a tab row, the tablet as the rail's "Open source" group */
-internal enum class LabTab(val label: String) { Code("Code"), Explain("Explain"), Test("Test"), Lint("Lint"), Report("Report"), History("History") }
+/**
+ * The tabs of an open source; the phone shows them as a tab row, the tablet as the rail's "this source" group.
+ * KMK (r106): History before Report, the order of the approved rail (nothing stores the ordinal).
+ */
+internal enum class LabTab(val label: String) { Code("Code"), Explain("Explain"), Test("Test"), Lint("Lint"), History("History"), Report("Report") }
 
 /**
  * KMK (r96): the Source Lab's state around the Code editor's model: the source list with health, the open source's
@@ -77,8 +80,17 @@ internal class SourceLabScreenModel(
         val revealLine: Int? = null,
         val selectedPart: String? = null,
         val history: LabHistoryIndex = LabHistoryIndex(),
+        /** The History row shown on the right; [EDITOR_VERSION] = the editor's unsaved edits */
         val selectedVersion: Int? = null,
         val diff: List<History.DiffLine> = emptyList(),
+        // KMK --> (r106) History's compare: what the selected row is compared with, and the parts the diff touches
+        /** The other side: a version number, [EDITOR_VERSION], or null while reading / when there is nothing to compare */
+        val compareWith: Int? = null,
+        /** "v3 → v4", "v3 → your edits"; empty while reading */
+        val diffTitle: String = "",
+        val diffParts: List<PartChange> = emptyList(),
+        val diffReady: Boolean = false,
+        // KMK <--
         val reportOptions: IssueReport.Options = IssueReport.Options(),
         val reportPlan: List<IssueReport.Entry> = emptyList(),
         val reportBuilding: Boolean = false,
@@ -124,6 +136,10 @@ internal class SourceLabScreenModel(
                 history = LabHistoryIndex(),
                 selectedVersion = null,
                 diff = emptyList(),
+                compareWith = null,
+                diffTitle = "",
+                diffParts = emptyList(),
+                diffReady = false,
                 reportPlan = emptyList(),
                 reportFile = null,
                 idNote = null,
@@ -294,6 +310,69 @@ internal class SourceLabScreenModel(
         return true
     }
 
+    // KMK --> (r106) Lint: fix previews and "Fix all"
+
+    /** The findings "Fix all" applies: not ignored, on a line, applicable once, and their rule has a replacement */
+    fun safeFixes(findings: List<LintFinding>): List<LintFinding> {
+        val rules = state.value.rules?.rules.orEmpty()
+        return findings.filter { f ->
+            !f.ignored && f.applicable && f.line != null && rules.firstOrNull { it.id == f.ruleId }?.apply != null
+        }
+    }
+
+    /**
+     * What applying [finding] to [code] changes, as a line diff (null when the rule has no replacement or it no longer
+     * applies exactly once). Reads the source's explain file: call it off the main thread.
+     */
+    fun previewFix(code: String, json: Boolean, finding: LintFinding): List<History.DiffLine>? {
+        val rule = state.value.rules?.rules?.firstOrNull { it.id == finding.ruleId } ?: return null
+        if (rule.apply == null) return null
+        val key = state.value.key
+        val fixed = runCatching {
+            val explain = key?.let { LabStore.explain(it)?.entries }
+            Lint.apply(code, finding, rule, json, explain)
+        }.getOrNull() ?: return null
+        return History.diff(code, fixed)
+    }
+
+    /**
+     * "Fix all N safe fixes": every [safeFixes] finding is applied to the editor's code, bottom line first so the
+     * lines of the ones above don't move. Fixes that no longer apply are skipped and counted. Not saved (the owner saves).
+     */
+    fun applyAllFixes(editor: SourceEditorScreenModel, findings: List<LintFinding>) {
+        val rules = state.value.rules ?: return
+        val todo = safeFixes(findings).sortedByDescending { it.line ?: 0 }
+        if (todo.isEmpty()) return
+        val s = editor.state.value
+        val key = state.value.key
+        val explain = runCatching { key?.let { LabStore.explain(it)?.entries } }.getOrNull()
+        var code = s.code
+        val applied = ArrayList<String>()
+        todo.forEach { finding ->
+            val rule = rules.rules.firstOrNull { it.id == finding.ruleId } ?: return@forEach
+            val fixed = runCatching { Lint.apply(code, finding, rule, s.json, explain) }
+                .onFailure { AppLog.add('W', "lab", "Fix all: ${rule.id} failed: $it") }
+                .getOrNull()
+            if (fixed != null && fixed != code) {
+                code = fixed
+                applied.add(rule.id)
+            }
+        }
+        if (applied.isEmpty()) {
+            message("None of the fixes applies any more: the code changed since the lint. Run Lint again.")
+            return
+        }
+        editor.setCode(code)
+        editor.saveNote = "Lint fixes applied: ${applied.distinct().joinToString(", ")}"
+        AppLog.add('I', "lab", "Fix all on $key: applied ${applied.size} of ${todo.size} (${applied.joinToString(", ")})")
+        val skipped = todo.size - applied.size
+        message(
+            "Applied ${applied.size} ${if (applied.size == 1) "fix" else "fixes"}" +
+                (if (skipped > 0) " ($skipped no longer applied)" else "") + ". Save to keep them.",
+        )
+    }
+    // KMK <--
+
     // ---------- Rules file ----------
 
     fun loadRules() {
@@ -353,14 +432,50 @@ internal class SourceLabScreenModel(
 
     // ---------- History ----------
 
-    fun selectVersion(n: Int?, currentCode: String) {
+    /**
+     * KMK (r106): History's compare. Row [n] (a version, or [EDITOR_VERSION] for the editor's unsaved edits) is compared
+     * with [against]: null = the one before it (the editor's edits: the open version; the oldest version: the editor),
+     * else a version number or [EDITOR_VERSION]. The older side is the diff's "old" text, so '+' reads "added since".
+     * [json] places the changed lines in parts.
+     */
+    fun selectVersion(n: Int?, currentCode: String, against: Int? = null, json: Boolean = false) {
         val key = state.value.key ?: return
-        mutableState.update { it.copy(selectedVersion = n, diff = emptyList()) }
+        mutableState.update {
+            it.copy(selectedVersion = n, diff = emptyList(), compareWith = null, diffTitle = "", diffParts = emptyList(), diffReady = false)
+        }
         if (n == null) return
         screenModelScope.launchIO {
-            val old = History.code(key, n) ?: return@launchIO
-            val diff = History.diff(old, currentCode)
-            mutableState.update { if (it.key == key && it.selectedVersion == n) it.copy(diff = diff) else it }
+            val history = state.value.history
+            val numbers = history.versions.map { it.n }
+            val base: Int? = against ?: when (n) {
+                EDITOR_VERSION -> History.currentOf(history).takeIf { it in numbers }
+                else -> numbers.filter { it < n }.maxOrNull() ?: EDITOR_VERSION
+            }
+            fun textOf(v: Int): String? = if (v == EDITOR_VERSION) currentCode else History.code(key, v)
+            fun nameOf(v: Int): String = if (v == EDITOR_VERSION) "your edits" else "v$v"
+            val result = runCatching {
+                val mine = textOf(n) ?: return@runCatching null
+                if (base == null || base == n) return@runCatching Triple(History.diff(mine, mine), "${nameOf(n)} · nothing to compare with", emptyList<PartChange>())
+                val other = textOf(base) ?: return@runCatching null
+                // The editor is always the newer side; between versions, the lower number is the older one
+                val selectedIsNewer = n == EDITOR_VERSION || (base != EDITOR_VERSION && n > base)
+                val (oldN, newN) = if (selectedIsNewer) base to n else n to base
+                val (oldText, newText) = if (selectedIsNewer) other to mine else mine to other
+                val diff = History.diff(oldText, newText)
+                val explain = runCatching { LabStore.explain(key)?.entries }.getOrNull()
+                val parts = runCatching {
+                    LabDiff.partChanges(diff, PartIndex.of(oldText, json, explain), PartIndex.of(newText, json, explain))
+                }.getOrDefault(emptyList())
+                Triple(diff, "${nameOf(oldN)} → ${nameOf(newN)}", parts)
+            }.onFailure { AppLog.add('W', "lab", "History compare of $key v$n failed: ${it.message}") }.getOrNull()
+            mutableState.update {
+                if (it.key != key || it.selectedVersion != n) return@update it
+                if (result == null) {
+                    it.copy(diffReady = true, diffTitle = "${nameOf(n)} couldn't be read", compareWith = base)
+                } else {
+                    it.copy(diff = result.first, diffTitle = result.second, diffParts = result.third, compareWith = base, diffReady = true)
+                }
+            }
         }
     }
 
@@ -421,6 +536,25 @@ internal class SourceLabScreenModel(
                 message("Not updated: ${e.message}")
             } finally {
                 mutableState.update { it.copy(updatingTemplate = false) }
+            }
+        }
+    }
+
+    /** KMK (r106): History's "Make vN the baseline" (the caller asked first); the timeline re-reads */
+    fun makeBaseline(n: Int) {
+        val key = state.value.key ?: return
+        val name = state.value.source?.name?.ifBlank { null } ?: key
+        screenModelScope.launchIO {
+            val ok = runCatching { History.setBaseline(key, n) }
+                .onFailure { AppLog.add('W', "lab", "Making v$n the baseline of $name failed: ${it.message}") }
+                .getOrDefault(false)
+            if (ok) {
+                AppLog.add('I', "lab", "Baseline of $name is now v$n")
+                LabStore.invalidate(key)
+                loadSource(key)
+                message("v$n is the baseline now")
+            } else {
+                message("Couldn't make v$n the baseline (the version is gone)")
             }
         }
     }
@@ -588,6 +722,9 @@ internal class SourceLabScreenModel(
     }
 
     companion object {
+        /** KMK (r106): History's "unsaved edits" row (version numbers start at 1) */
+        const val EDITOR_VERSION = 0
+
         fun agoText(time: Long): String {
             if (time <= 0L) return "never"
             val minutes = (System.currentTimeMillis() - time) / 60_000

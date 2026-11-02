@@ -638,7 +638,14 @@ class JsRuntime private constructor(
                 if (testing) {
                     val code = (result["statusCode"] as? Number)?.toInt() ?: result["statusCode"]?.toString()?.toIntOrNull()
                     val failed = if (code == null || code >= 400) (result["body"] as? String)?.take(2048) else null
-                    log("net", "$method $url -> ${result["statusCode"]} (through the browser)", netDetail(plainHeaders, null, failed))
+                    // KMK (r106): the reply's size for the Test Run (`· N bytes`, parsed by TestRuns.parseNetLine)
+                    val size = (result["body"] as? String)?.toByteArray()?.size
+                        ?: (result["bodyBase64"] as? String)?.let { it.length / 4 * 3 }
+                    log(
+                        "net",
+                        "$method $url -> ${result["statusCode"]} (through the browser)" + (size?.let { " · $it bytes" }.orEmpty()),
+                        netDetail(plainHeaders, null, failed),
+                    )
                 }
                 return result
             }
@@ -663,7 +670,13 @@ class JsRuntime private constructor(
                     } else {
                         null
                     }
-                    log("net", "$method $url -> ${response.code} in ${took}ms", netDetail(plainHeaders, response.headers, failed))
+                    // KMK (r106): the reply's size for the Test Run: the body as read, else Content-Length
+                    val size = read.getOrNull()?.size?.toLong() ?: response.body.contentLength().takeIf { it >= 0 }
+                    log(
+                        "net",
+                        "$method $url -> ${response.code} in ${took}ms" + (size?.let { " · $it bytes" }.orEmpty()),
+                        netDetail(plainHeaders, response.headers, failed),
+                    )
                 }
                 val responseHeaders = response.headers.names().associate { name ->
                     name.lowercase() to response.headers.values(name).joinToString(",")

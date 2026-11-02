@@ -1,4 +1,4 @@
-// @version 8
+// @version 9
 // Generic list template of the Source Lab, written for {{name}} ({{baseUrl}}) from what was tapped in Build by
 // tapping (or filled by hand). Lists are pages of ITEM cards, chapters / episodes are the links of CHAPTER on a
 // title page, pages are the IMAGE pictures of a chapter page, videos the VIDEO_FRAME of an episode page.
@@ -21,6 +21,9 @@
 // applies), "extra" filters add their parameter (type=censored) on top of whichever list is chosen; filters can sit
 // in named groups (Collections); suggestion covers skip placeholders; a section the site's script fills in later is
 // read from the address it really comes from.
+// r106 (v9): a suggestions section the site loads later can be read "with the browser" (the title page opened in the
+// app's hidden browser until its cards show); a section's "Load more" button can be pressed up to 3 times: the next
+// pages are asked for at the address one press uses ({page} filled), or the hidden browser presses it.
 
 /*@part id="headers"*/
 // Headers and constants: the site as Referer on every picture; the selectors the builder derived (each with
@@ -53,9 +56,10 @@ var STATUS = "{{statusSelector}}";
 // r102: the title page's rows tapped as Tags groups: [{ name, selector, target }], target "tags" (genres "name: value"),
 // "description" (a "name: value, value" line under the description) or "both"; "[]" when none were tapped
 var TAG_GROUPS = JSON.parse("{{tagGroups}}" || "[]");
-// r104: the title page's sections tapped as Suggestions: [{ name, item, link, title, cover, coverAttr, late }] ("[]" =
-// none); getRelated (part "extras") lists each section's cards under its name (r105: "late" = the address a section
-// the site's script fills in comes from)
+// r104: the title page's sections tapped as Suggestions: [{ name, item, link, title, cover, coverAttr, late, read, wait,
+// more }] ("[]" = none); getRelated (part "extras") lists each section's cards under its name (r105: "late" = the
+// address a section the site's script fills in comes from; r106: read "browser" = the hidden browser shows the page
+// until "wait" matches; more = { button, text, presses, request, from, step, wait }: its Load more button)
 var SUGGESTION_GROUPS = JSON.parse("{{suggestionGroups}}" || "[]");
 // r100: "Lists and options" of Build by tapping: the names of the Popular / Latest buttons (empty = the app's own),
 // extra tabs [{ name, path }], filters [{ key, name, type, role, group, param, path, onSearch, options, on }] (r105:
@@ -499,6 +503,10 @@ var extension = {
 // {seg1} … the title address's parts, {path}, {url}, {attr:name} or {attr:selector|name} filled) is read from that
 // address. Covers take the first real picture address (data-src, data-lazy-src, data-original, srcset, src), never a
 // placeholder (data:, blank.gif, spacer.gif, placeholder.png…, or one picture every card of a section has).
+// r106 (v9): a section with read "browser" is read from the title page as the app's hidden browser shows it (host.render,
+// waiting for its cards: slower, 2–4 s, but it works when no address was found); a section's "more" (its Load more
+// button, pressed up to "presses" times) adds the next pages: from "request" with {page} = from, from + step… (stops at
+// a page that adds nothing), else the hidden browser presses the button and the cards are read after.
 if (TABS.length) {
   extension.getCatalogs = function () {
     return TABS.map(function (t) { return { id: t.path, name: t.name || t.path, tab: true }; });
@@ -547,16 +555,9 @@ if (typeof SUGGESTION_GROUPS !== "undefined" && Array.isArray(SUGGESTION_GROUPS)
       var pics = list.map(function () { return null; });
       var seen = {};
       list.forEach(function (x) { seen[x.url] = true; });
-      try {
-        var from = doc;
-        var where = url;
-        if (g.late) {
-          // r105: the section comes from another address the page asks for after it loads
-          where = await lateAddress(g.late, url, doc);
-          from = await lateDoc(await get(where, { headers: { "X-Requested-With": "XMLHttpRequest" } }));
-        }
-        var els = g.item ? await from.select(g.item) : [];
-        if (!els.length && g.late) els = await shorterSelect(from, g.item);
+      // the cards of [els] not listed yet; how many were added
+      var addCards = async function (els) {
+        var added = 0;
         for (var i = 0; i < els.length; i++) {
           var card = els[i];
           var a = card.tag === "a" ? card : (g.link ? await card.selectOne(g.link) : null) || (await card.selectOne("a[href]"));
@@ -573,9 +574,45 @@ if (typeof SUGGESTION_GROUPS !== "undefined" && Array.isArray(SUGGESTION_GROUPS)
           seen[href] = true;
           list.push({ url: href, title: title, coverUrl: coverOf(img, g.coverAttr) });
           pics.push({ img: img, attr: g.coverAttr });
+          added++;
+        }
+        return added;
+      };
+      try {
+        var more = g.more && g.more.presses > 0 ? g.more : null;
+        var presses = more ? Math.min(3, Math.max(0, +more.presses || 0)) : 0;
+        // r106: no address for the next pages: the hidden browser presses Load more while it shows the page
+        var browserPresses = more && !more.request ? presses : 0;
+        var from = doc;
+        var where = url;
+        if (g.read === "browser" || browserPresses) {
+          // r106: the title page as the hidden browser shows it (the section filled in by the site's script)
+          where = url + " (in the browser)";
+          from = await renderedSection(url, g, browserPresses);
+        } else if (g.late) {
+          // r105: the section comes from another address the page asks for after it loads
+          where = await lateAddress(g.late, url, doc);
+          from = await lateDoc(await get(where, { headers: { "X-Requested-With": "XMLHttpRequest" } }));
+        }
+        var els = g.item ? await from.select(g.item) : [];
+        if (!els.length && g.late && g.read !== "browser" && !browserPresses) els = await shorterSelect(from, g.item);
+        await addCards(els);
+        // r106: Load more's next pages from the address one press asks for
+        if (more && more.request && presses) {
+          var step = Math.max(1, +more.step || 1);
+          var first = +more.from || 2;
+          for (var p = 0; p < presses; p++) {
+            var at = await lateAddress(String(more.request).split("{page}").join(String(first + p * step)), url, doc);
+            var page = await lateDoc(await get(at, { headers: { "X-Requested-With": "XMLHttpRequest" } }));
+            var mels = await page.select(g.item);
+            if (!mels.length) mels = await shorterSelect(page, g.item);
+            var got = await addCards(mels);
+            console.log("Suggestions " + name + ": Load more " + (p + 1) + " → " + got + " more from " + at);
+            if (!got) break;
+          }
         }
         sameCoverAgain(list, pics, "Suggestions " + name);
-        if (g.late && !list.length) console.log("Suggestions " + name + ": nothing read from " + where);
+        if ((g.late || g.read === "browser") && !list.length) console.log("Suggestions " + name + ": nothing read from " + where);
       } catch (e) {
         console.log("Suggestions " + name + " weren't read: " + (e && e.message));
       }
@@ -593,7 +630,8 @@ if (typeof SUGGESTION_GROUPS !== "undefined" && Array.isArray(SUGGESTION_GROUPS)
 // source has that setting), absolute addresses and the last number of a text.
 // r105 (v8): the filters as search() uses them (filterPlan: the built-in List first, each filter's role), a page
 // filter's address with the page number in the list paths' style, picture addresses without placeholders (coverOf),
-// and the address / reply of a section that loads later.
+// and the address / reply of a section that loads later. r106 (v9): a section read in the hidden browser
+// (renderedSection, with its Load more pressed by pressScript).
 async function get(url, options) {
   var o = options || {};
   var headers = Object.assign({ Referer: BASE + "/" }, o.headers || {});
@@ -846,6 +884,56 @@ async function shorterSelect(doc, css) {
     } catch (e) { /* the next shorter one */ }
   }
   return [];
+}
+// r106 (v9): the title page as the app's hidden browser shows it, waiting (20 s at most) for the section's cards ("wait":
+// the item selector a browser can read); with [presses], its Load more button is pressed that many times first, each
+// time waiting until more cards show (5 s at most). r106 fix: a browser can't read Jsoup's :matchesOwn(…), so "wait"
+// matches any section's cards: pressScript then finds the section's heading by its own text and waits (12 s at most)
+// for at least one card under it, and counts only those cards for each press
+async function renderedSection(url, g, presses) {
+  var wait = String(g.wait || (g.more && g.more.wait) || g.item || "").replace(/:(matchesOwn|matches|containsOwn|contains)\([^()]*\)/g, "").trim();
+  var head = headTestOf(g.item);
+  var options = { timeout: 20000 };
+  if (wait) options.waitFor = wait;
+  if (presses || head) options.script = pressScript(presses ? g.more.button : "", presses ? g.more.text : "", wait, presses, head);
+  var r = await host.render(url, options);
+  if (r && r.timedOut) console.log("Suggestions " + (g.name || "") + ": the browser didn't show them within 20 s");
+  if (presses) console.log("Suggestions " + (g.name || "") + ": Load more pressed " + (r && r.result) + " of " + presses + " times");
+  else if (head && r && String(r.result) === "0") console.log("Suggestions " + (g.name || "") + ": the browser showed no card under \"" + (head.text || head.re) + "\"");
+  return host.parse((r && r.html) || "");
+}
+// r106 fix: the heading test of an item selector: the first Jsoup text pseudo-class (:matchesOwn(re), :matches(re),
+// :containsOwn(text), :contains(text)) and the element it is on ("h2.section__title"); null = none
+function headTestOf(item) {
+  var m = /([A-Za-z0-9_\-.#*]*):(matchesOwn|matches|containsOwn|contains)\(([^()]*)\)/.exec(String(item || ""));
+  if (!m) return null;
+  var regex = m[2] === "matchesOwn" || m[2] === "matches";
+  return { css: m[1] || "*", own: /Own$/.test(m[2]), re: regex ? m[3] : "", text: regex ? "" : m[3].trim() };
+}
+// The script for the hidden browser (by the section's heading when [head] is given, else every match of [wait]):
+// waits for a card, then presses a Load more button [presses] times (by its css path, else by its text), each time
+// until more cards show. Its result: the presses done, or the cards found when there is nothing to press
+function pressScript(button, text, wait, presses, head) {
+  return "(function(){var sel=" + JSON.stringify(String(button || "")) + ",txt=" + JSON.stringify(String(text || "")) +
+    ",wait=" + JSON.stringify(String(wait || "")) + ",want=" + (+presses || 0) + ",done=0,head=" + JSON.stringify(head || null) + ",re=null;" +
+    "if(head&&head.re){try{re=new RegExp(head.re);}catch(e){head=null;}}" +
+    "function all(css,root){try{return Array.prototype.slice.call((root||document).querySelectorAll(css));}catch(e){return [];}}" +
+    "function own(el){var s='';for(var i=0;i<el.childNodes.length;i++){if(el.childNodes[i].nodeType===3)s+=el.childNodes[i].nodeValue;}return s.replace(/\\s+/g,' ').trim();}" +
+    "function hit(el){var t=head.own?own(el):String(el.textContent||'').replace(/\\s+/g,' ').trim();" +
+    "return re?re.test(t):t.toLowerCase().indexOf(String(head.text).toLowerCase())>=0;}" +
+    "function count(){if(!wait)return 0;var cards=all(wait);if(!head)return cards.length;var n=0;" +
+    "all(head.css).filter(hit).forEach(function(h){for(var anc=h.parentElement,up=0;anc&&up<6;anc=anc.parentElement,up++){" +
+    "var rivals=all(h.tagName,anc).filter(function(r){return r!==h&&(h.compareDocumentPosition(r)&4)&&!cards.some(function(k){return k.contains(r);});});" +
+    "var mine=cards.filter(function(c){return anc.contains(c)&&(h.compareDocumentPosition(c)&4)&&!rivals.some(function(r){return r.compareDocumentPosition(c)&4;});});" +
+    "if(mine.length){n+=mine.length;break;}}});return n;}" +
+    "function find(){var b=null;try{b=sel?document.querySelector(sel):null;}catch(e){b=null;}if(b)return b;if(!txt)return null;" +
+    "var all2=document.querySelectorAll('button,a,[role=button],input[type=button]');for(var i=0;i<all2.length;i++){" +
+    "var t=String(all2[i].textContent||all2[i].value||'').replace(/\\s+/g,' ').trim();if(t.indexOf(txt)===0)return all2[i];}return null;}" +
+    "return new Promise(function(res){var t0=Date.now();" +
+    "function step(){if(done>=want)return res(want?done:count());var b=find();if(!b)return res(done);" +
+    "var before=count();try{b.click();}catch(e){return res(done);}done++;var t1=Date.now();" +
+    "(function check(){if(count()>before||Date.now()-t1>5000)return setTimeout(step,300);setTimeout(check,200);})();}" +
+    "(function first(){if(count()>=1||Date.now()-t0>12000)return step();setTimeout(first,250);})();});})()";
 }
 async function cards(html) {
   var doc = await host.parse(html);

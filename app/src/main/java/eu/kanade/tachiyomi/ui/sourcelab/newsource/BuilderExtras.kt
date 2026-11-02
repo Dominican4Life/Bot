@@ -54,6 +54,14 @@ import kotlin.random.Random
  * "multi" for "Multiple" are read, never guessed); longer lists use a pattern checked on two more presses. Filters sit
  * in groups ([ExtrasFilter.group]: a sub-menu's filter in its parent menu's group, "Move to group…"). Filters made
  * before r105 (no role) are written in the v7 shape and the template reads them as before.
+ *
+ * r106 (the owner's mockups "Filters as menu cards"): every picked menu is a card with only the buttons it needs
+ * ([MenuGroup.kind]): a dropdown of buttons learns its codes on the card itself (pause, progress rows, Stop; the r102
+ * Learn card at the top is gone), links make a filter or tabs, a directory reads its first page by itself
+ * ([DirProbe]) and offers "Read all pages" on the card ([GroupRead]), a heading of sub-menus is one card with a row per
+ * sub-menu and "Read all N". A filter whose name (or address parameter) another filter already has is not added
+ * silently: [PendingFilter] asks Replace "<name>" / Keep both (the owner's two "Sort" filters). The pane scrolls a
+ * card into view when it appears or starts working ([BuilderExtras.scrollTarget]).
  */
 
 @Immutable
@@ -159,10 +167,72 @@ internal data class MenuGroup(
     val pageUrl: String,
     val param: String? = null,
     val made: String? = null,
+    /** r106: the card of the heading this sub-menu sits under (shown as a row of that card), null = a card of its own */
+    val parent: Int? = null,
+    /** r106: a directory's first page, read when the card appears (null = not read: no own link) */
+    val probe: DirProbe? = null,
+    /** r106: "Read all pages" on this card, running or done */
+    val read: GroupRead? = null,
 ) {
     /** Every entry is a button / text without a link: "Learn addresses" can find where each goes */
     val noLinks: Boolean get() = items.isNotEmpty() && items.none { !it.href.isNullOrBlank() }
+
+    /**
+     * r106: what the card offers: "select" (a `<select>` with a name: its values are the codes, Make filter), "buttons"
+     * (entries without links: Learn the codes), "links" (Make filter / Add as tabs), "directory" (its own link opens a
+     * list of names: Read all pages) or "heading" (only sub-menus: one row each)
+     */
+    val kind: String
+        get() = when {
+            items.size >= 2 && param != null -> "select"
+            items.size >= 2 && noLinks -> "buttons"
+            items.size >= 2 -> "links"
+            href != null -> "directory"
+            else -> "heading"
+        }
 }
+
+/**
+ * r106: a directory card's first page (BuilderListReader.probe): [state] reading|done|failed, how many names it
+ * holds, the highest page number its pager shows ([pages], 1 = none) and whether it has a next page
+ */
+@Immutable
+internal data class DirProbe(
+    val state: String,
+    val entries: Int = 0,
+    val pages: Int = 1,
+    val hasNext: Boolean = false,
+    val note: String = "",
+)
+
+/** r106: "Read all pages" of a card: running, the page being read, the names so far, the page limit, why it ended */
+@Immutable
+internal data class GroupRead(
+    val running: Boolean,
+    val page: Int,
+    val entries: Int,
+    val maxPages: Int,
+    val reason: String? = null,
+)
+
+/**
+ * r106: a filter that has the name (or the address parameter) of filters already there ([conflicts]): the card it came
+ * from ([menuId], null = no card) asks Replace "<name>" / Keep both before it is added
+ */
+@Immutable
+internal data class PendingFilter(
+    val filter: ExtrasFilter,
+    val conflicts: List<ExtrasFilter>,
+    val menuId: Int?,
+    val from: String,
+    /** "learned" = made from a learning run (its card closes when the filter is added) */
+    val kind: String = "",
+    /**
+     * r106 fix: the filters the new one replaces whatever the answer (a learned list's texts-only filter), found when it
+     * asked: Keep both still drops them, as an answer-free make would
+     */
+    val replaced: List<ExtrasFilter> = emptyList(),
+)
 
 /** r102: one entry of a picked list, for "Learn this list": its text, its css path when the page sent one, its link */
 @Immutable
@@ -181,6 +251,8 @@ internal data class LearnGroup(
     val entries: List<LearnEntry>,
     /** Some entries are links: the card offers "Check where each entry goes" instead of "Learn this list" */
     val hasLinks: Boolean,
+    /** r106: the menu card this list was picked on (its learning shows inside that card), null = a group pick */
+    val menuId: Int? = null,
 )
 
 /**
@@ -250,10 +322,34 @@ internal data class BuilderExtras(
      * whose menu the site adds only when it opens); null = the r102 text
      */
     val menuHintText: String? = null,
-)
+    /**
+     * r106 fix: the filters waiting for Replace / Keep both (their name is taken), one per card: by the card's id
+     * ([BuilderExtrasLogic.NO_CARD] = made without a card). Only the answer (or Not now / the card closed) clears one
+     */
+    val pendings: Map<Int, PendingFilter> = emptyMap(),
+    /** r106: what the pane scrolls into view ("menu:<id>", "pending"), with [scrollTick] bumped on every request */
+    val scrollTarget: String? = null,
+    val scrollTick: Int = 0,
+    /**
+     * r106 fix: the request at [scrollTick] wants the panel to show Lists & filters (a new card, learning starting);
+     * false = scroll only when the pane is already shown (a sub-menu's read, a question on a card)
+     */
+    val scrollReveal: Boolean = false,
+    /** r106 fix: the last request the pane opened Filters for / brought into view (coming back doesn't redo it) */
+    val scrollOpened: Int = 0,
+    val scrollDone: Int = 0,
+    /** r106 fix: the pane's open section, kept here so a tab switch doesn't lose it */
+    val openSection: String = "",
+) {
+    /** The filter waiting without a card, else the first waiting one (r106 single-slot readers) */
+    val pending: PendingFilter? get() = pendings[BuilderExtrasLogic.NO_CARD] ?: pendings.values.firstOrNull()
+}
 
 /** Pure functions of "Lists and options", kept apart from the model so they can be checked on their own */
 internal object BuilderExtrasLogic {
+
+    /** r106 fix: the [BuilderExtras.pendings] key of a filter made without a menu card */
+    const val NO_CARD = 0
 
     const val NO_PAGE_MESSAGE = "This page has no page number in its address: the Lab will try ?page=2 for more"
 
@@ -989,6 +1085,52 @@ internal object BuilderExtrasLogic {
         a.type == b.type && a.key.isNotEmpty() && a.key == b.key && a.mode == b.mode &&
             if (a.mode == "path") a.path == b.path else a.param.isNotBlank() && a.param == b.param
 
+    /**
+     * r106: [b] is [a]'s list made again (r104: it replaces [a], keeping its place): the same filter ([sameFilter]) whose
+     * option labels mostly agree. The owner's old Sort (Today, This week, This month: his Trending menu) and a learned
+     * Sort dropdown (Release date, Recently added…) are two lists, never one replacing the other
+     */
+    fun sameList(a: ExtrasFilter, b: ExtrasFilter): Boolean {
+        if (!sameFilter(a, b)) return false
+        fun labels(f: ExtrasFilter) = f.options.filter { it.value.isNotEmpty() }.map { it.label.trim().lowercase() }.toSet()
+        val la = labels(a)
+        val lb = labels(b)
+        if (la.isEmpty() || lb.isEmpty()) return true
+        return la.intersect(lb).size * 2 >= minOf(la.size, lb.size)
+    }
+
+    /**
+     * r106: the filters [made] would stand beside under the same name in the Browse sheet, or that send the same address
+     * parameter: Replace / Keep both is asked. A remake of the same list ([sameList]) and what [replaces] says are
+     * replaced as before, never asked
+     */
+    fun conflicts(filters: List<ExtrasFilter>, made: ExtrasFilter, replaces: (ExtrasFilter) -> Boolean = { false }): List<ExtrasFilter> {
+        val name = made.name.trim()
+        val param = made.param.trim()
+        return filters.filter { f ->
+            if (sameList(f, made) || replaces(f)) return@filter false
+            val sameName = name.isNotEmpty() && f.name.trim().equals(name, ignoreCase = true)
+            val sameParam = param.isNotEmpty() && made.mode != "path" && f.mode != "path" && f.param.trim() == param &&
+                !(made.role == "page" && f.role == "page")
+            sameName || sameParam
+        }
+    }
+
+    /**
+     * r106 (lint `filter-value-is-label`): a dropdown / sort that sends its labels as codes ("Release date" for
+     * release_date): most options have a value equal to their label with a space or a capital in it
+     */
+    fun sendsLabels(f: ExtrasFilter): Boolean {
+        if (f.type != "select" && f.type != "sort") return false
+        val real = f.options.filter { it.value.isNotEmpty() }
+        if (real.size < 2) return false
+        val labelLike = real.count { o -> o.value == o.label.trim() && (o.value.any(Char::isWhitespace) || o.value.any(Char::isUpperCase)) }
+        return labelLike * 2 >= real.size || (f.askParam && f.param.isBlank())
+    }
+
+    /** r106: a list read in full is a text box with suggestions when it is longer than a dropdown reads well */
+    fun formFor(entries: Int): String = if (entries > 60) "autocomplete" else "select"
+
     /** [base], or base2, base3… when another filter has it */
     fun uniqueKey(base: String, taken: Collection<String>): String {
         val b = base.trim().ifEmpty { "filter" }
@@ -1006,6 +1148,9 @@ internal object BuilderExtrasLogic {
     }
 
     const val MAX_GROUP_OPTIONS = 400
+
+    /** r106: "Read all pages" on a card reads up to this many pages ("30 pages at most") */
+    const val READ_PAGES = 30
 
     /** r103: a text box with suggestions keeps more of a long list (every actress, every maker) */
     const val MAX_SUGGESTIONS = 3000
@@ -1045,7 +1190,8 @@ internal object BuilderExtrasLogic {
      */
     fun menuGroupsOf(groups: List<JsonObject>, pageUrl: String, firstId: Int): List<MenuGroup> {
         val out = ArrayList<MenuGroup>()
-        fun walk(g: JsonObject, parents: List<String>) {
+        // r106: [parentId] = the card of the heading above (a sub-menu is a row of that card)
+        fun walk(g: JsonObject, parents: List<String>, parentId: Int?) {
             val rawHeading = g.str("heading").orEmpty()
             val path = g.arr("headingPath")?.mapNotNull { (it as? JsonPrimitive)?.content }?.filter { it.isNotBlank() }
                 ?: (parents + rawHeading).filter { it.isNotBlank() }
@@ -1058,9 +1204,14 @@ internal object BuilderExtrasLogic {
                 ?: path.lastOrNull()?.let(::cleanHeading)
                 ?: href?.let(::nameFromUrl)
                 ?: ""
-            if (items.size >= 2 || href != null) {
+            val subs = g.arr("subgroups")?.mapNotNull { it as? JsonObject }.orEmpty()
+            // r106: a heading holding only sub-menus (Collections → Genre, Actress, Maker, Series) is a card too
+            val heading = items.size < 2 && href == null && subs.size >= 2
+            var mine: Int? = null
+            if (items.size >= 2 || href != null || heading) {
+                mine = firstId + out.size
                 out += MenuGroup(
-                    id = firstId + out.size,
+                    id = mine,
                     name = name,
                     headingPath = path.map { cleanHeading(it) ?: it },
                     opener = g.str("opener")?.trim()?.takeIf { it.isNotEmpty() },
@@ -1069,11 +1220,12 @@ internal object BuilderExtrasLogic {
                     items = items.take(MAX_GROUP_OPTIONS),
                     pageUrl = pageUrl,
                     param = g.str("param")?.trim()?.takeIf { it.isNotEmpty() },
+                    parent = parentId,
                 )
             }
-            g.arr("subgroups")?.forEach { sub -> (sub as? JsonObject)?.let { walk(it, path) } }
+            subs.forEach { walk(it, path, mine ?: parentId) }
         }
-        groups.forEach { walk(it, emptyList()) }
+        groups.forEach { walk(it, emptyList(), null) }
         return out
     }
 
@@ -1802,7 +1954,7 @@ internal class BuilderExtrasModel {
      * (a dropdown) or "autocomplete" (a text box with the entries as suggestions, up to
      * [BuilderExtrasLogic.MAX_SUGGESTIONS]); [name] the menu group's name (else the address's last word)
      */
-    fun onListRead(url: String, result: BuilderListReader.Result, form: String = "select", name: String? = null) {
+    fun onListRead(url: String, result: BuilderListReader.Result, form: String = "select", name: String? = null, menuId: Int? = null) {
         val suggest = form == "autocomplete"
         val entries = result.items.map { BuilderExtrasLogic.GroupEntry(it.text, it.href, null) }
         val derived = BuilderExtrasLogic.deriveGroup(
@@ -1826,7 +1978,9 @@ internal class BuilderExtrasModel {
             "extras full list of $url as ${if (suggest) "a text box with suggestions" else "a dropdown"}" +
                 (made?.let { " (${it.role.ifEmpty { "role as before" }} ${it.path.ifEmpty { it.param }}${if (group.isNotEmpty()) ", group $group" else ""})" } ?: ""),
         )
-        applyDerived(derived.copy(filter = made, listUrl = null), "the whole list (${result.pages} pages)")
+        val added = applyDerived(derived.copy(filter = made, listUrl = null), "the whole list (${result.pages} pages)", menuId = menuId)
+        // r106: the card says it made its filter (unless it asks Replace / Keep both)
+        if (menuId != null) afterMade(added, menuId, "")
     }
 
     /**
@@ -1888,8 +2042,13 @@ internal class BuilderExtrasModel {
                     null
                 },
                 rev = s.rev + 1,
+                // r106: the first new card scrolls into view
+                scrollTarget = cards.firstOrNull()?.let { "menu:${it.id}" } ?: s.scrollTarget,
+                scrollTick = if (cards.isEmpty()) s.scrollTick else s.scrollTick + 1,
+                scrollReveal = if (cards.isEmpty()) s.scrollReveal else true,
             )
         }
+        probeCards(cards)
         AppLog.add(
             'I',
             "lab",
@@ -1899,7 +2058,7 @@ internal class BuilderExtrasModel {
     }
 
     /** r103: a menu group card's "Make filter": a filter of that group's entries only (r101 derivation) */
-    fun makeMenuFilter(id: Int) {
+    fun makeMenuFilter(id: Int, onConflict: Boolean? = null) {
         val s = mutable.value
         val g = s.menuGroups.firstOrNull { it.id == id } ?: return
         val entries = g.items.map { BuilderExtrasLogic.GroupEntry(it.text, it.href, it.value) }
@@ -1916,12 +2075,53 @@ internal class BuilderExtrasModel {
         // r105: a sub-menu's filter sits in its parent menu's group (Collections ▸ Genres)
         val parent = g.headingPath.dropLast(1).lastOrNull()?.let(BuilderExtrasLogic::cleanHeading).orEmpty()
         val grouped = derived.filter?.let { if (parent.isNotEmpty()) it.copy(group = parent) else it }
-        applyDerived(derived.copy(filter = grouped, listUrl = null), "the menu group \"${g.headingPath.joinToString(" › ")}\"")
-        val made = derived.filter
-        mutable.update { st ->
-            st.copy(menuGroups = st.menuGroups.map { if (it.id == id) it.copy(made = made?.key?.ifEmpty { "?" } ?: "") else it })
+        val made = applyDerived(
+            derived.copy(filter = grouped, listUrl = null),
+            "the menu group \"${g.headingPath.joinToString(" › ")}\"",
+            onConflict = onConflict,
+            menuId = id,
+        )
+        // r106: waiting for Replace / Keep both: the card asks, nothing is marked yet
+        val waiting = made == null && mutable.value.pendings.containsKey(id)
+        if (!waiting) {
+            mutable.update { st ->
+                st.copy(menuGroups = st.menuGroups.map { if (it.id == id) it.copy(made = made?.key?.ifEmpty { "?" } ?: "") else it })
+            }
         }
+        requestScroll("menu:$id", reveal = false)
         outlineGroup(g)
+    }
+
+    /**
+     * r106: a links card's "Add as tabs instead": each entry's page becomes a tab (Browse's buttons at the top), with
+     * the page rule; pages already a tab are skipped
+     */
+    fun addMenuAsTabs(id: Int) {
+        val s = mutable.value
+        val g = s.menuGroups.firstOrNull { it.id == id } ?: return
+        val base = g.pageUrl.toHttpUrlOrNull()
+        val added = ArrayList<ExtrasTab>()
+        g.items.forEach { item ->
+            val href = item.href?.trim()?.takeIf { it.isNotEmpty() && !it.startsWith("javascript:", ignoreCase = true) } ?: return@forEach
+            val abs = base?.resolve(href)?.toString() ?: href
+            if (!abs.startsWith("http")) return@forEach
+            val path = BuilderExtrasLogic.pathOf(abs, siteFor(abs), s.pageRule).path
+            if (s.tabs.any { it.path == path } || added.any { it.path == path }) return@forEach
+            added += ExtrasTab(BuilderExtrasLogic.cleanLabel(item.text).ifEmpty { nameFromPath(path) }, path)
+        }
+        if (added.isEmpty()) {
+            mutable.update { it.copy(message = "None of \"${g.name.ifBlank { "this menu" }}\"'s entries is a new page to add as a tab") }
+            return
+        }
+        mutable.update { st ->
+            st.copy(
+                tabs = st.tabs + added,
+                menuGroups = st.menuGroups.map { if (it.id == id) it.copy(made = "tabs") else it },
+                message = "Added ${added.size} tab${if (added.size == 1) "" else "s"}: ${added.joinToString(", ") { it.name }}",
+                rev = st.rev + 1,
+            )
+        }
+        AppLog.add('I', "lab", "extras menu \"${g.name}\" as tabs: ${added.joinToString(", ") { "${it.name} = ${it.path}" }}")
     }
 
     /** r103: "Learn addresses": the group's entries become the list "Learn this list" presses (its card opens) */
@@ -1940,13 +2140,193 @@ internal class BuilderExtrasModel {
             name = g.name.ifBlank { "List" },
             entries = entries,
             hasLinks = entries.any { e -> e.href?.let { !it.startsWith("javascript:", ignoreCase = true) } == true },
+            menuId = id,
         )
-        mutable.update { it.copy(learnGroup = group, learn = null, rev = it.rev + 1) }
+        mutable.update {
+            it.copy(learnGroup = group, learn = null, rev = it.rev + 1, scrollTarget = "menu:$id", scrollTick = it.scrollTick + 1, scrollReveal = true)
+        }
         AppLog.add('D', "lab", "extras learn the menu group \"${g.name.ifBlank { "List" }}\": ${entries.size} entries, menu button ${g.opener ?: "(none)"}")
         outlineGroup(g)
     }
 
-    fun dismissMenuGroup(id: Int) = mutable.update { s -> s.copy(menuGroups = s.menuGroups.filter { it.id != id }) }
+    /**
+     * r106: the card's "Learn the codes" with the pause set on the card: the card's entries are pressed one at a time
+     * (the progress rows show inside the card), the card scrolled into view
+     */
+    fun startMenuLearn(id: Int, pauseMinMs: Long, pauseMaxMs: Long) {
+        if (learnJob?.isActive == true) return
+        setReadPause(pauseMinMs, pauseMaxMs)
+        if (mutable.value.learnGroup?.menuId != id) learnMenuGroup(id)
+        if (mutable.value.learnGroup?.menuId != id) return
+        startLearn(pauseMinMs, pauseMaxMs)
+        requestScroll("menu:$id")
+    }
+
+    /**
+     * r106: asks the pane to scroll [target] ("menu:<id>", "pending") into view. r106 fix: [reveal] = the panel switches
+     * to Lists & filters (and a phone's sheet opens) for it: new cards and learning only, not every read or question
+     */
+    fun requestScroll(target: String, reveal: Boolean = true) =
+        mutable.update { it.copy(scrollTarget = target, scrollTick = it.scrollTick + 1, scrollReveal = reveal) }
+
+    /** r106 fix: the pane opened Filters for the request at [tick] (a tab switch back doesn't open it again) */
+    fun scrollOpened(tick: Int) = mutable.update { if (it.scrollOpened >= tick) it else it.copy(scrollOpened = tick) }
+
+    /** r106 fix: the card asked for at [tick] was brought into view (coming back to the pane doesn't jump to it) */
+    fun scrollDone(tick: Int) = mutable.update { if (it.scrollDone >= tick) it else it.copy(scrollDone = tick) }
+
+    /** r106 fix: the pane's open section ("" = none), kept across tab switches */
+    fun setOpenSection(section: String) = mutable.update { if (it.openSection == section) it else it.copy(openSection = section) }
+
+    // ---------- r106: directories on their cards (probe, Read all pages) ----------
+
+    /** r106: the pause between pages / presses the owner set last (a card's slider), null = the app's default */
+    @Volatile
+    private var pauseRange: Pair<Long, Long>? = null
+
+    fun setReadPause(minMs: Long, maxMs: Long) {
+        pauseRange = minOf(minMs, maxMs).coerceAtLeast(0L) to maxOf(minMs, maxMs).coerceAtLeast(0L)
+    }
+
+    private fun readPause(): Pair<Long, Long> = pauseRange ?: runCatching {
+        val r = BuilderListReader.defaultPause()
+        (r.start * 1000f).toLong() to (r.endInclusive * 1000f).toLong()
+    }.getOrDefault(1_000L to 3_000L)
+
+    /** r106: the pause the cards show before anything was set (seconds) */
+    fun pauseSeconds(): Pair<Float, Float> = readPause().let { (a, b) -> a / 1000f to b / 1000f }
+
+    private val readStops = java.util.concurrent.ConcurrentHashMap<Int, Boolean>()
+
+    /**
+     * r106 fix: the heading card whose "Read all N" is running, null = none. Only then does a sub-menu's Stop stop
+     * its parent too (a single card's Stop or "Not this" never stops the siblings)
+     */
+    @Volatile
+    private var readAllParent: Int? = null
+
+    @Volatile
+    private var readJob: Job? = null
+
+    /** r106: the directory cards of a new menu pick read their first page (one after another): names and pages */
+    private fun probeCards(cards: List<MenuGroup>) {
+        val todo = cards.filter { it.href != null && (it.kind == "directory" || it.items.isEmpty()) }
+        if (todo.isEmpty()) return
+        mutable.update { s -> s.copy(menuGroups = s.menuGroups.map { g -> if (todo.any { it.id == g.id }) g.copy(probe = DirProbe("reading")) else g }) }
+        scope.launch {
+            for (g in todo) {
+                val url = g.href ?: continue
+                val probe = try {
+                    val p = BuilderListReader.probe(url)
+                    DirProbe("done", p.entries, p.pages, p.hasNext, p.note)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    DirProbe("failed", note = e.message ?: e.javaClass.simpleName)
+                }
+                AppLog.add('D', "lab", "extras directory \"${g.name}\" $url: ${probe.state}, ${probe.entries} names, pages ${probe.pages}${if (probe.hasNext) ", next page" else ""} ${probe.note}".trim())
+                mutable.update { s -> s.copy(menuGroups = s.menuGroups.map { if (it.id == g.id) it.copy(probe = probe) else it }) }
+            }
+        }
+    }
+
+    /**
+     * r106: a card's "Read all pages" (or "Make filter" of a one-page directory, [maxPages] 1): its own link's list is
+     * read page after page with the pause the owner set, the progress on the card; the names become a filter (a text
+     * box with suggestions when long) in the card's parent group
+     */
+    fun readMenuGroup(id: Int, maxPages: Int = BuilderExtrasLogic.READ_PAGES) {
+        if (readJob?.isActive == true) return
+        val g = mutable.value.menuGroups.firstOrNull { it.id == id } ?: return
+        if (g.href == null) return
+        readStops.remove(id)
+        // r106 fix: a parent flag left by an earlier Stop / Read all doesn't stop this card before its first page
+        g.parent?.let { readStops.remove(it) }
+        readJob = scope.launch { readOne(g, maxPages) }
+    }
+
+    /** r106: a heading card's "Read all N": its sub-menus' directories one after another, with the same pause */
+    fun readAllUnder(parentId: Int, maxPages: Int = BuilderExtrasLogic.READ_PAGES) {
+        if (readJob?.isActive == true) return
+        val waiting = mutable.value.pendings
+        // r106 fix: a sub-menu still asking Replace / Keep both keeps its question (it isn't read again)
+        val kids = mutable.value.menuGroups.filter { it.parent == parentId && it.href != null && it.made.isNullOrEmpty() && !waiting.containsKey(it.id) }
+        if (kids.isEmpty()) return
+        kids.forEach { readStops.remove(it.id) }
+        readStops.remove(parentId)
+        readAllParent = parentId
+        AppLog.add('I', "lab", "extras read all ${kids.size} lists under \"${mutable.value.menuGroups.firstOrNull { it.id == parentId }?.name.orEmpty()}\"")
+        readJob = scope.launch {
+            try {
+                for (k in kids) {
+                    if (readStops[parentId] == true) break
+                    // r106 fix: a card closed meanwhile is skipped; one that asks leaves its question open and the
+                    // run goes on to the next
+                    val card = mutable.value.menuGroups.firstOrNull { it.id == k.id } ?: continue
+                    if (!card.made.isNullOrEmpty() || readStops[k.id] == true) continue
+                    readOne(card, maxPages)
+                }
+            } finally {
+                if (readAllParent == parentId) readAllParent = null
+                readStops.remove(parentId)
+            }
+        }
+    }
+
+    /**
+     * r106: the card's Stop: the read ends after the current page and keeps what it read. r106 fix: it stops the
+     * parent's "Read all N" only while that run is going (else the siblings stay readable)
+     */
+    fun stopRead(id: Int) {
+        readStops[id] = true
+        val all = readAllParent
+        if (all != null && (all == id || mutable.value.menuGroups.firstOrNull { it.id == id }?.parent == all)) readStops[all] = true
+        AppLog.add('D', "lab", "extras read: stop asked on card $id")
+    }
+
+    private suspend fun readOne(g: MenuGroup, maxPages: Int) {
+        val url = g.href ?: return
+        val (low, high) = readPause()
+        fun show(r: GroupRead) = mutable.update { s -> s.copy(menuGroups = s.menuGroups.map { if (it.id == g.id) it.copy(read = r) else it }) }
+        show(GroupRead(running = true, page = 1, entries = 0, maxPages = maxPages))
+        // r106 fix: scrolled to, but the panel doesn't switch tabs for every sub-menu read
+        requestScroll("menu:${g.parent ?: g.id}", reveal = false)
+        val result = try {
+            BuilderListReader.read(
+                url = url,
+                maxPages = maxPages,
+                pauseMinMs = low,
+                pauseMaxMs = high,
+                onProgress = { page, entries -> show(GroupRead(running = true, page = page + 1, entries = entries, maxPages = maxPages)) },
+                shouldStop = { readStops[g.id] == true || (g.parent != null && g.parent == readAllParent && readStops[g.parent] == true) },
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            AppLog.add('W', "lab", "extras read ${g.name}: ${e.message ?: e.javaClass.simpleName}")
+            show(GroupRead(running = false, page = 0, entries = 0, maxPages = maxPages, reason = "couldn't be read (${e.message ?: "an error"})"))
+            return
+        }
+        show(GroupRead(running = false, page = result.pages, entries = result.items.size, maxPages = maxPages, reason = result.reason))
+        if (result.items.isEmpty()) return
+        // r106 fix: a card closed ("Not this") while it was read makes nothing
+        if (mutable.value.menuGroups.none { it.id == g.id }) return
+        onListRead(url, result, BuilderExtrasLogic.formFor(result.items.size), g.name.ifBlank { null }, menuId = g.id)
+    }
+
+    fun dismissMenuGroup(id: Int) {
+        // r106: its learning or reading stops with it; a filter it was asking about is dropped
+        if (mutable.value.learnGroup?.menuId == id) dismissLearn()
+        // r106 fix: only this card's read (and its sub-menus') stops: never its parent's, so the siblings stay readable
+        val gone = mutable.value.menuGroups.filter { it.id == id || it.parent == id }.map { it.id }.toSet() + id
+        gone.forEach { readStops[it] = true }
+        mutable.update { s ->
+            s.copy(
+                menuGroups = s.menuGroups.filter { it.id !in gone },
+                pendings = s.pendings.filterKeys { it !in gone },
+            )
+        }
+    }
 
     /** Dashed green on this group's entries only */
     private fun outlineGroup(g: MenuGroup) {
@@ -1959,24 +2339,61 @@ internal class BuilderExtrasModel {
 
     fun dismissListOffer() = mutable.update { it.copy(listOffer = null) }
 
+    /**
+     * Adds [derived]'s filter. r106: when filters with its name (or its address parameter) are there
+     * ([BuilderExtrasLogic.conflicts]): [onConflict] null = ask on the card ([PendingFilter], nothing added yet), true =
+     * Replace them (the new one takes the first one's place and group), false = Keep both. Returns the filter added,
+     * or null (none made, or waiting for the answer)
+     */
     private fun applyDerived(
         derived: BuilderExtrasLogic.GroupDerived,
         from: String,
         /** r102: other filters the new one replaces (the texts-only filter of a list that was then learned) */
         replaces: (ExtrasFilter) -> Boolean = { false },
-    ) {
+        onConflict: Boolean? = null,
+        menuId: Int? = null,
+        kind: String = "",
+    ): ExtrasFilter? {
+        val f = derived.filter
+        if (f != null && onConflict == null) {
+            val clash = BuilderExtrasLogic.conflicts(mutable.value.filters, f, replaces)
+            if (clash.isNotEmpty()) {
+                val replaced = mutable.value.filters.filter(replaces)
+                mutable.update { s ->
+                    s.copy(
+                        // r106 fix: one question per card ("Read all N" asks on each sub-menu that clashes)
+                        pendings = s.pendings + ((menuId ?: BuilderExtrasLogic.NO_CARD) to PendingFilter(f, clash, menuId, from, kind, replaced)),
+                        message = derived.note.ifEmpty { null },
+                        groupMode = false,
+                        scrollTarget = if (menuId != null) "menu:$menuId" else "pending",
+                        scrollTick = s.scrollTick + 1,
+                        scrollReveal = false,
+                        rev = s.rev + 1,
+                    )
+                }
+                AppLog.add('I', "lab", "extras filter \"${f.name}\" from $from: ${clash.size} filter(s) with its name or parameter (${clash.joinToString(", ") { it.name }}): Replace or Keep both asked")
+                return null
+            }
+        }
+        val clash = if (f != null && onConflict == true) BuilderExtrasLogic.conflicts(mutable.value.filters, f, replaces) else emptyList()
         var added: ExtrasFilter? = null
         mutable.update { s ->
             added = null
-            val f = derived.filter
             val filters = if (f == null) {
                 s.filters
             } else {
                 // r104 fix: a filter made again (the same list) keeps its place in the order the owner set. r105 fix:
-                // and its group, "Also while searching for words" and a role set on its card
-                val at = s.filters.indexOfFirst { sameFilter(it, f) || replaces(it) }
-                val others = s.filters.filterNot { sameFilter(it, f) || replaces(it) }
-                val kept = s.filters.getOrNull(at)?.let { BuilderExtrasLogic.keepOwnerSettings(it, f) } ?: f
+                // and its group, "Also while searching for words" and a role set on its card. r106: the same list
+                // only ([BuilderExtrasLogic.sameList]); Replace takes the replaced filter's place and group
+                val gone: (ExtrasFilter) -> Boolean = { old -> BuilderExtrasLogic.sameList(old, f) || replaces(old) || old in clash }
+                val at = s.filters.indexOfFirst(gone)
+                val others = s.filters.filterNot(gone)
+                val old = s.filters.getOrNull(at)
+                val kept = when {
+                    old == null -> f
+                    old in clash -> f.copy(group = old.group.ifBlank { f.group })
+                    else -> BuilderExtrasLogic.keepOwnerSettings(old, f)
+                }
                 val made = if (kept.key.isEmpty()) kept else kept.copy(key = BuilderExtrasLogic.uniqueKey(kept.key, others.map { it.key }))
                 added = made
                 // r105 fix: a group's filters stay together (the builder's headings as the Browse sheet's)
@@ -1992,14 +2409,62 @@ internal class BuilderExtrasModel {
                 rev = s.rev + 1,
             )
         }
-        val f = added
-        if (f != null) {
-            val where = if (f.mode == "path") f.path else f.param.ifEmpty { "(parameter to type)" }
-            AppLog.add('I', "lab", "extras filter ${f.key.ifEmpty { "?" }} (${f.type}, ${f.mode} $where, ${f.options.size} options) from $from")
+        val made = added
+        if (made != null) {
+            val where = if (made.mode == "path") made.path else made.param.ifEmpty { "(parameter to type)" }
+            AppLog.add('I', "lab", "extras filter ${made.key.ifEmpty { "?" }} (${made.type}, ${made.mode} $where, ${made.options.size} options) from $from")
+            if (clash.isNotEmpty()) AppLog.add('I', "lab", "extras filter \"${made.name}\" replaced ${clash.joinToString(", ") { "\"${it.name}\"" }}")
         } else {
             AppLog.add('D', "lab", "extras no filter from $from: ${derived.note}")
         }
         derived.listUrl?.let { AppLog.add('D', "lab", "extras offer: read the whole list of $it") }
+        return made
+    }
+
+    /**
+     * r106: the card's Replace "<name>" ([replace] true) or Keep both (false) for the waiting filter. A learned list's
+     * card closes; a menu card says the filter was made
+     */
+    fun resolvePending(replace: Boolean, menuId: Int? = null) {
+        val p = pendingFor(menuId) ?: return
+        val key = p.menuId ?: BuilderExtrasLogic.NO_CARD
+        // r106 fix: the filters it replaces whatever the answer (a learned list's texts-only one) are still dropped
+        val replaced = p.replaced
+        val made = applyDerived(
+            BuilderExtrasLogic.GroupDerived(p.filter, "", null, "", p.filter.options.size, "pending"),
+            p.from,
+            replaces = { old -> replaced.any { r -> r == old || (r.key.isNotEmpty() && r.key == old.key && r.name == old.name) } },
+            onConflict = replace,
+        )
+        AppLog.add('I', "lab", "extras filter \"${p.filter.name}\": ${if (replace) "Replace" else "Keep both"}")
+        mutable.update { s -> s.copy(pendings = s.pendings - key, message = null) }
+        afterMade(made, p.menuId, p.kind)
+    }
+
+    /** r106: the waiting filter's card closed without an answer ("Not now"): nothing is added */
+    fun dismissPending(menuId: Int? = null) {
+        val p = pendingFor(menuId) ?: return
+        val key = p.menuId ?: BuilderExtrasLogic.NO_CARD
+        mutable.update { it.copy(pendings = it.pendings - key) }
+    }
+
+    /** r106 fix: the question of card [menuId]; null = the one without a card, else the first one waiting */
+    private fun pendingFor(menuId: Int?): PendingFilter? {
+        val all = mutable.value.pendings
+        return if (menuId != null) all[menuId] else all[BuilderExtrasLogic.NO_CARD] ?: all.values.firstOrNull()
+    }
+
+    /** r106: after a card's filter was added: the card says so; a learned list's run is closed */
+    private fun afterMade(made: ExtrasFilter?, menuId: Int?, kind: String) {
+        if (made == null) return
+        mutable.update { st ->
+            st.copy(
+                menuGroups = if (menuId == null) st.menuGroups else st.menuGroups.map { if (it.id == menuId) it.copy(made = made.key.ifEmpty { "?" }) else it },
+                learnGroup = if (kind == "learned") null else st.learnGroup,
+                learn = if (kind == "learned") null else st.learn,
+                offers = if (kind == "learned" && made.mode == "param") st.offers.filter { it.param != made.param } else st.offers,
+            )
+        }
     }
 
     /**
@@ -2038,7 +2503,7 @@ internal class BuilderExtrasModel {
     /** r102: the card's "Not now": forget the picked list (a run in progress is stopped) */
     fun dismissLearn() {
         stopLearning = true
-        mutable.update { it.copy(learnGroup = null, learn = null) }
+        mutable.update { it.copy(learnGroup = null, learn = null, pendings = it.pendings.filterValues { p -> p.kind != "learned" }) }
     }
 
     /** r102: the card's Stop: the run ends after the current press, keeping what it learned */
@@ -2231,12 +2696,15 @@ internal class BuilderExtrasModel {
         if (!onPage(base)) runCatching { loadPage(base) }
     }
 
-    /** "Make "Year" filter": what was learned becomes a filter (the r101 derivation: param / path / sort) */
-    fun makeLearnedFilter() {
+    /**
+     * r106: what the learning run would make, without adding it (the card's "Learned" view: the address name, every
+     * code, Works on, and Replace / Keep both when [BuilderExtrasLogic.conflicts] finds filters with its name); null =
+     * nothing to make yet
+     */
+    fun learnedPreview(): ExtrasFilter? {
         val s = mutable.value
-        val run = s.learn ?: return
-        val group = s.learnGroup ?: return
-        stopLearning = true
+        val run = s.learn ?: return null
+        val group = s.learnGroup ?: return null
         // r105: only the entries that changed the address give the parameter and its codes: the list page itself
         // ("All", no change) has none of the dropdown's other parameters (sort=recent…), so it would hide which one
         // the entries change; it becomes the empty first option below
@@ -2258,7 +2726,7 @@ internal class BuilderExtrasModel {
         // A "no change" entry ("All") names the empty option. r105 fix: a Sort's too ("Release date" when the list page
         // already shows that order): picking it sends nothing, the site's own order
         val anyLabel = run.rows.firstOrNull { it.status == "nochange" }?.text
-        val made = derived.filter?.let { f ->
+        return derived.filter?.let { f ->
             if (anyLabel == null) {
                 f
             } else {
@@ -2266,6 +2734,42 @@ internal class BuilderExtrasModel {
                 val options = withEmpty.map { if (it.value.isEmpty()) it.copy(label = anyLabel) else it }
                 f.copy(options = options, optionsText = BuilderExtrasLogic.formatOptions(options))
             }
+        }?.let { f ->
+            // r106: a sub-menu learned on its card sits in its parent menu's group
+            val parent = s.menuGroups.firstOrNull { it.id == group.menuId }?.headingPath?.dropLast(1)?.lastOrNull()
+                ?.let(BuilderExtrasLogic::cleanHeading).orEmpty()
+            if (parent.isNotEmpty() && f.group.isEmpty()) f.copy(group = parent) else f
+        }
+    }
+
+    /** r106: the filters the learned one would replace or stand beside ([learnedPreview]'s Replace "<name>") */
+    fun learnedConflicts(made: ExtrasFilter): List<ExtrasFilter> {
+        val texts = mutable.value.learn?.rows?.map { it.text }?.toSet().orEmpty()
+        return BuilderExtrasLogic.conflicts(mutable.value.filters, made) { old -> textsOnly(old, texts) }
+    }
+
+    /** the texts-only filter made when the list was picked (r102): the learned one replaces it */
+    private fun textsOnly(old: ExtrasFilter, texts: Set<String>): Boolean =
+        old.askParam && old.param.isBlank() && old.options.count { it.label in texts } >= 2
+
+    /**
+     * "Make "Year" filter": what was learned becomes a filter (the r101 derivation: param / path / sort). r106: [role]
+     * the card's Works on ("extra" = Any list, "page" = This page only: its own page with the code; null = as derived),
+     * [onSearch] its Search too, [onConflict] Replace (true) / Keep both (false) / ask (null) when filters have its name
+     */
+    fun makeLearnedFilter(role: String? = null, onSearch: Boolean? = null, onConflict: Boolean? = null) {
+        val s = mutable.value
+        val group = s.learnGroup ?: return
+        val run = s.learn ?: return
+        stopLearning = true
+        val derivedFilter = learnedPreview()
+        val made = derivedFilter?.let { f ->
+            var out = f
+            if (role != null && role != f.role && (role != "page" || f.mode == "path" || "{value}" in f.linkPath)) {
+                out = out.copy(role = role, roleSet = true)
+            }
+            if (onSearch != null) out = out.copy(onSearch = onSearch)
+            out
         }
         made?.let { f ->
             AppLog.add(
@@ -2280,19 +2784,16 @@ internal class BuilderExtrasModel {
             )
         }
         val texts = run.rows.map { it.text }.toSet()
-        applyDerived(derived.copy(filter = made, listUrl = null), "the learned list \"${group.name}\"") { old ->
-            // the texts-only filter made when the list was picked
-            old.askParam && old.param.isBlank() && old.options.count { it.label in texts } >= 2
-        }
-        if (made != null) {
-            mutable.update { st ->
-                st.copy(
-                    learnGroup = null,
-                    learn = null,
-                    offers = if (made.mode == "param") st.offers.filter { it.param != made.param } else st.offers,
-                )
-            }
-        }
+        val derived = BuilderExtrasLogic.GroupDerived(made, if (made == null) "No entry of \"${group.name}\" changed the address: no filter was made." else "", null, "", made?.options?.size ?: 0, "learned")
+        val added = applyDerived(
+            derived,
+            "the learned list \"${group.name}\"",
+            replaces = { old -> textsOnly(old, texts) },
+            onConflict = onConflict,
+            menuId = group.menuId,
+            kind = "learned",
+        )
+        afterMade(added, group.menuId, "learned")
     }
 
     private fun currentUrl(): String = seen.value.url.ifEmpty { mutable.value.lastUrl.orEmpty() }
@@ -2794,6 +3295,7 @@ internal class BuilderExtrasModel {
         const val PRESS_ALL = 30
         const val PATTERN_CHECKS = 2
         const val CHANGE_MS = 6_000L
+
         const val LOAD_MS = 15_000L
         const val SETTLE_MS = 700L
 

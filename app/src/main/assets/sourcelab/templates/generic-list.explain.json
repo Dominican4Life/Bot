@@ -88,13 +88,13 @@
     },
     "extras": {
       "title": "Tabs, filters and settings",
-      "text": "Added only when \"Lists and options\" recorded some: tabs become buttons at the top of Browse (getCatalogs / getCatalog with the same cards), filters the filter sheet: the built-in “List” first, then dropdowns, sort lists, checkboxes, text and text boxes with suggestions, each with its role (page / extra); filters with a group name sit under that heading. Settings become the source's settings (read with host.preference.get(\"key\")). Sections tapped as Suggestions add getRelated: each section's cards on the title page (link, name, picture without placeholders), returned as named groups; a section the site's script fills in after the page loads is read from the address it really comes from (the title's address parts filled in).",
+      "text": "Added only when \"Lists and options\" recorded some: tabs become buttons at the top of Browse (getCatalogs / getCatalog with the same cards), filters the filter sheet: the built-in “List” first, then dropdowns, sort lists, checkboxes, text and text boxes with suggestions, each with its role (page / extra); filters with a group name sit under that heading. Settings become the source's settings (read with host.preference.get(\"key\")). Sections tapped as Suggestions add getRelated: each section's cards on the title page (link, name, picture without placeholders), returned as named groups; a section the site's script fills in after the page loads is read from the address it really comes from (the title's address parts filled in), or with the hidden browser when that was chosen (slower, waits for the cards); a section's Load more button can be pressed up to 3 times (the next pages from the address one press asks for, else pressed in the hidden browser).",
       "optional": true,
       "ruleIds": []
     },
     "helpers": {
       "title": "Helpers",
-      "text": "One request with the site as Referer, the list path with {page} / {q} filled, the value a filter sends, the filters as search uses them (the built-in List first, each filter's role), a page filter's address with the page number in the list paths' style, a parameter set in an address, picture addresses without data: or placeholder images, a late section's address and reply, the shared card parser (titles with a hidden word left out when the source has that setting), absolute addresses and the last number of a text.",
+      "text": "One request with the site as Referer, the list path with {page} / {q} filled, the value a filter sends, the filters as search uses them (the built-in List first, each filter's role), a page filter's address with the page number in the list paths' style, a parameter set in an address, picture addresses without data: or placeholder images, a late section's address and reply, a section read in the hidden browser (its Load more pressed there), the shared card parser (titles with a hidden word left out when the source has that setting), absolute addresses and the last number of a text.",
       "ruleIds": []
     }
   },
@@ -141,6 +141,13 @@
         "helpers"
       ],
       "note": "Filters have a role: page filters pick the list (a “List” filter first: Popular, Latest, tabs), extra filters (type, year, sort…) add their code to whichever list is chosen; filters can sit in groups; suggestion covers skip placeholders; a suggestions section the site loads later is read from its own address. Dropdowns and sorts start with an empty “Site default”, so the site’s own first option can be picked; a filter search stays on the list Browse was showing (Popular, Latest or a tab) unless List is changed; another list gets its page number as /N unless the lists use a page word (/page/N); a directory slug read with %XX isn’t encoded twice; covers named pixel-… or lazy-… and Cloudinary addresses (w_200,h_300) are kept, one picture on every card is skipped."
+    },
+    "9": {
+      "parts": [
+        "extras",
+        "helpers"
+      ],
+      "note": "Suggestions: a section the site loads later can be read with the browser (the title page in the hidden browser, waiting for its cards); a section's “Load more” can be pressed up to 3 times (the next pages from the address one press asks for, else pressed in the hidden browser). Each section is its own named row on the title screen, for anime and manga."
     }
   }
 }

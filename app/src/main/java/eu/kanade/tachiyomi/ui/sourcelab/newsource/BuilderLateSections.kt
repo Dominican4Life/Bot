@@ -29,10 +29,14 @@ import kotlin.coroutines.cancellation.CancellationException
  * as {path}, a value found in one of the page's attributes as {attr:name}, or {attr:selector|name} when the page's
  * first element with that attribute isn't the one holding it (generic-list v8 fills them per title).
  * Nothing found: a warning on the card ("filled by the site's script; not in the page").
+ *
+ * r106: the card says what the check saw ([Outcome.note]: "Checked: 12 cards in its reply"); a section's "Load more"
+ * button scanned in the WebView ([findMore]): the request one press made whose reply holds the new cards, as a template
+ * with `{page}` where its page number (or offset) is ([pagedOf]), so generic-list v9 asks for the next pages itself.
  */
 internal object BuilderLateSections {
 
-    data class Outcome(val late: String, val warning: String)
+    data class Outcome(val late: String, val warning: String, val note: String = "")
 
     private data class Seen(val url: String, val page: String, val at: Long)
 
@@ -93,7 +97,14 @@ internal object BuilderLateSections {
             if (hit) {
                 val late = templateOf(url, pageUrl, doc)
                 AppLog.add('I', "lab", "Builder: suggestions $item come from $url → $late")
-                return Outcome(late, "")
+                val n = count(reply, item).takeIf { it > 0 } ?: shorter(reply, item)
+                val seen = samples.count { s -> s.length >= 4 && reply.text().contains(s.take(30)) }
+                val note = when {
+                    n > 0 && samples.isNotEmpty() -> "Checked: $n cards in its reply, $seen of the ${samples.size} titles you see"
+                    n > 0 -> "Checked: $n cards in its reply"
+                    else -> "Checked: its reply holds the titles you see"
+                }
+                return Outcome(late, "", note)
             }
         }
         AppLog.add('W', "lab", "Builder: suggestions $item: no request of the page has the cards")
@@ -101,6 +112,103 @@ internal object BuilderLateSections {
     }
 
     private fun count(doc: Document, css: String): Int = runCatching { doc.select(css).size }.getOrDefault(0)
+
+    /** r106: what "Scan it now" found: the request template with {page}, the first press's page number and the step */
+    data class More(val request: String, val from: Int, val step: Int, val shown: String)
+
+    /**
+     * r106: after one press of a section's Load more in the WebView: the request whose reply holds the new cards
+     * ([samples]: titles of the cards it added; else the [item] selector), among [requests] (the page's own record of
+     * the press, newest last) and then the page's recorded requests; as a template ([templateOf]) with {page}
+     * ([pagedOf]). Null when no request has them or none has a page number (the hidden browser presses then)
+     */
+    suspend fun findMore(item: String, samples: List<String>, pageUrl: String, requests: List<String>, before: Int): More? {
+        val pageDoc = fetch(pageUrl)?.let { Jsoup.parse(it, pageUrl) }
+        val host = pageUrl.toHttpUrlOrNull()?.host?.removePrefix("www.")
+        val tries = (requests.asReversed() + requestsOn(pageUrl))
+            .map { it.trim() }
+            .filter { u ->
+                u.startsWith("http") && !ASSET.containsMatchIn(u) && !NOISE.containsMatchIn(u) && norm(u) != norm(pageUrl) &&
+                    (host == null || u.toHttpUrlOrNull()?.host?.endsWith(host) == true)
+            }
+            .distinct()
+            .take(TRIES)
+        for (url in tries) {
+            val body = try {
+                fetch(url, xhr = true)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null
+            } ?: continue
+            val reply = replyDoc(body, url)
+            val text = reply.text()
+            val hit = samples.filter { it.length >= 4 }.let { list -> list.isNotEmpty() && list.any { text.contains(it.take(30)) } } ||
+                (samples.isEmpty() && (count(reply, item) > 0 || shorter(reply, item) > 0))
+            AppLog.add('D', "lab", "Builder: load more try $url → ${if (hit) "has the new cards" else "no"}")
+            if (!hit) continue
+            val template = templateOf(url, pageUrl, pageDoc)
+            val paged = pagedOf(template, url, before)
+            if (paged == null) {
+                AppLog.add('I', "lab", "Builder: load more comes from $url, but it has no page number: the browser presses it")
+                return null
+            }
+            AppLog.add('I', "lab", "Builder: load more comes from $url → ${paged.first} (from ${paged.second}, step ${paged.third})")
+            return More(paged.first, paged.second, paged.third, BuilderExtrasLogic.relative(url, pageUrl.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}" }.orEmpty()))
+        }
+        AppLog.add('W', "lab", "Builder: load more: no request of the press holds the new cards (${tries.size} tried)")
+        return null
+    }
+
+    // r106 fix: only these names count (an id or a type that happens to be 2 isn't a page)
+    private val PAGE_NAMES = setOf("page", "p", "pg")
+    private val OFFSET_NAMES = setOf("offset", "start", "from", "skip")
+
+    /** r106 fix: the page a scan's single press asks for (its path number must be this one) */
+    private const val SCANNED_PAGE = 2
+
+    /**
+     * r106: [template] (a load-more request as a template) with `{page}` where [requestUrl]'s page number is: a page
+     * parameter (page=2 → {page}, from 2, step 1), an offset (offset=12 → from 12, step 12; [cards] the section's
+     * cards before the press when it is 0), or a path part after a page word / at the end. r106 fix: stricter, only
+     * the parameters page / p / pg / offset / start / from / skip, or a path number equal to the page the scan saw
+     * ([SCANNED_PAGE], step 1); anything else is null (the hidden browser presses the button instead)
+     */
+    fun pagedOf(template: String, requestUrl: String, cards: Int): Triple<String, Int, Int>? {
+        val req = requestUrl.toHttpUrlOrNull() ?: return null
+        val q = template.indexOf('?')
+        val path = if (q < 0) template else template.substring(0, q)
+        val query = if (q < 0) "" else template.substring(q + 1)
+        val pairs = query.split('&').filter { it.isNotEmpty() }.toMutableList()
+        fun setPage(name: String): Boolean {
+            val at = pairs.indexOfFirst { it.substringBefore('=') == name }
+            if (at < 0) return false
+            pairs[at] = name + "={page}"
+            return true
+        }
+        fun rebuilt(): String = path + if (pairs.isEmpty()) "" else "?" + pairs.joinToString("&")
+        for (name in req.queryParameterNames) {
+            val v = req.queryParameter(name)?.toIntOrNull() ?: continue
+            if (name.lowercase() in PAGE_NAMES && v >= 1 && setPage(name)) return Triple(rebuilt(), v, 1)
+        }
+        for (name in req.queryParameterNames) {
+            val v = req.queryParameter(name)?.toIntOrNull() ?: continue
+            if (name.lowercase() in OFFSET_NAMES && setPage(name)) {
+                val step = if (v > 0) v else cards.coerceAtLeast(1)
+                return Triple(rebuilt(), if (v > 0) v else step, step)
+            }
+        }
+        val segs = path.split('/')
+        for (i in segs.indices.reversed()) {
+            val v = segs[i].toIntOrNull() ?: continue
+            val word = segs.getOrNull(i - 1)?.lowercase()
+            if (v == SCANNED_PAGE && (word in PAGE_NAMES || i == segs.lastIndex)) {
+                val out = segs.toMutableList().also { it[i] = "{page}" }.joinToString("/")
+                return Triple(out + if (pairs.isEmpty()) "" else "?" + pairs.joinToString("&"), v, 1)
+            }
+        }
+        return null
+    }
 
     /** The template's shorterSelect: a reply holds the cards without the page around them */
     fun shorter(doc: Document, css: String): Int {

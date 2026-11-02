@@ -105,9 +105,12 @@ internal object History {
             json = json,
         )
         val generated = index.generatedFrom ?: n.takeIf { generatedFrom }
-        val kept = trim(key, index.versions + version, generated, n)
-        // The new version is the newest, so it is current: currentN goes back to null ("the newest")
-        write(key, LabHistoryIndex(kept, generated, currentN = null, lastN = n))
+        // KMK (r106 fix): the implied baseline (Baseline note / generated-from / first version) is kept too, not only baselineN
+        val baselineKeep = baselineOf(index.copy(versions = index.versions + version, generatedFrom = generated))
+        val kept = trim(key, index.versions + version, generated, n, baselineKeep)
+        // The new version is the newest, so it is current: currentN goes back to null ("the newest").
+        // KMK (r106): the baseline pointer is carried over
+        write(key, LabHistoryIndex(kept, generated, currentN = null, lastN = n, baselineN = index.baselineN))
         AppLog.add('I', "lab", "$key: history v$n ($note, +$added −$removed)")
         return version
     }
@@ -180,7 +183,37 @@ internal object History {
     fun overwriteConfirm(index: LabHistoryIndex): String? {
         val currentN = currentOf(index)
         val current = index.versions.firstOrNull { it.n == currentN } ?: return null
-        return if (current.note == BASELINE_NOTE) "v${current.n} is the original code from before the Lab. Overwrite it?" else null
+        return when {
+            current.note == BASELINE_NOTE -> "v${current.n} is the original code from before the Lab. Overwrite it?"
+            // KMK (r106): a version made the baseline by hand asks too
+            index.baselineN == current.n -> "v${current.n} is this source's baseline. Overwrite it?"
+            else -> null
+        }
+    }
+
+    /**
+     * KMK (r106): the source's baseline version: the one made the baseline in History ([LabHistoryIndex.baselineN])
+     * while it is kept, else the version noted "Baseline", else the generated-from version, else the first version
+     * (old sources). Null when there is no version.
+     */
+    fun baselineOf(index: LabHistoryIndex): Int? {
+        val kept = index.versions.map { it.n }.toSet()
+        return index.baselineN?.takeIf { it in kept }
+            ?: index.versions.firstOrNull { it.note.removeSuffix(UPDATED_SUFFIX) == BASELINE_NOTE }?.n
+            ?: index.generatedFrom?.takeIf { it in kept }
+            ?: index.versions.firstOrNull()?.n
+    }
+
+    /**
+     * KMK (r106): History's "Make vN the baseline": [n] becomes [LabHistoryIndex.baselineN] (never trimmed or deleted
+     * while it is). False when [n] isn't a kept version.
+     */
+    @Synchronized
+    fun setBaseline(key: String, n: Int): Boolean {
+        val index = index(key)
+        if (index.versions.none { it.n == n }) return false
+        write(key, index.copy(baselineN = n))
+        return true
     }
 
     /** KMK (r103): the note of the version [baseline] writes */
@@ -197,7 +230,11 @@ internal object History {
     fun baseline(key: String, code: String, json: Boolean): LabVersion? =
         // r98 fix: the "no versions yet" check is made inside append, on the index it writes, under History's lock
         // (the one every append takes), so a save that got there first is never followed by a Baseline
-        append(key, code, json, BASELINE_NOTE, onlyIfEmpty = true)
+        append(key, code, json, BASELINE_NOTE, onlyIfEmpty = true)?.also { v ->
+            // KMK (r106 fix): the Baseline written here is also the stored baseline pointer
+            val written = index(key)
+            if (written.baselineN == null && written.versions.any { it.n == v.n }) write(key, written.copy(baselineN = v.n))
+        }
 
     /**
      * KMK (r98 fix): when a Restore's [setCurrent] fails (the version went meanwhile), the newest version whose code
@@ -236,7 +273,9 @@ internal object History {
     fun delete(key: String, ns: Set<Int>): List<Int> {
         val index = index(key)
         val current = currentOf(index)
-        val victims = index.versions.filter { it.n in ns && it.n != current && it.n != index.generatedFrom }
+        // KMK (r106): nor the baseline (r106 fix: the implied one too, History.baselineOf)
+        val baseline = baselineOf(index)
+        val victims = index.versions.filter { it.n in ns && it.n != current && it.n != index.generatedFrom && it.n != baseline }
         if (victims.isEmpty()) return emptyList()
         victims.forEach { v -> runCatching { versionFile(key, v.n, v.json).delete() } }
         val gone = victims.map { it.n }.toSet()
@@ -271,11 +310,11 @@ internal object History {
     }
 
     /** Keeps the newest [CAP], the generated-from version, [keep] and the newest; deletes the files of the rest */
-    private fun trim(key: String, versions: List<LabVersion>, generatedFrom: Int?, keep: Int?): List<LabVersion> {
+    private fun trim(key: String, versions: List<LabVersion>, generatedFrom: Int?, keep: Int?, baseline: Int? = null): List<LabVersion> {
         if (versions.size <= CAP) return versions
         val newest = versions.last().n
         val out = versions.toMutableList()
-        val removable = out.filter { it.n != generatedFrom && it.n != newest && it.n != keep }.toMutableList()
+        val removable = out.filter { it.n != generatedFrom && it.n != newest && it.n != keep && it.n != baseline }.toMutableList()
         while (out.size > CAP && removable.isNotEmpty()) {
             val victim = removable.removeAt(0)
             out.remove(victim)

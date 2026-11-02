@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.jssource.lab
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -75,7 +76,41 @@ internal object Derive {
         val late: String = "",
         /** r105: the section isn't in the page and no request of the page had it (the card's warning); "" = none */
         val lateWarning: String = "",
+        /**
+         * r106: how the source reads a section that loads late: "" = from its own address ([late]) when one was found,
+         * "browser" = the title page opened in the hidden browser (host.render), waiting for the cards
+         */
+        val read: String = "",
+        /** r106: what the address check found ("Checked: 12 cards in its reply"), for the card; "" = nothing said */
+        val lateNote: String = "",
+        /** r106: the section's "Load more" / "Show more" button (picker.js), null = none found or tapped */
+        val more: LoadMore? = null,
     )
+
+    /**
+     * r106: a Suggestions section's "Load more" button: [button] its css path on the title page, [text] its label;
+     * [presses] how many times the source presses it (0 = off, up to 3); after "Scan it now": [request] the address one
+     * press asks for with `{page}` (and the late tokens {seg1}, {attr:…}), the page number of the first press [from]
+     * and [step] between presses ("" = no address found: the hidden browser presses the button), [perPress] the cards
+     * one press added and [scanned] the line the card shows
+     */
+    @Serializable
+    data class LoadMore(
+        val button: String,
+        val text: String = "",
+        val presses: Int = 0,
+        val request: String = "",
+        val from: Int = 2,
+        val step: Int = 1,
+        val perPress: Int = 0,
+        val scanned: String = "",
+    )
+
+    // No braces (ICU): Jsoup's text pseudo-classes, which a browser's querySelector can't read
+    private val TEXT_PSEUDO = Regex(""":(?:matchesOwn|matches|containsOwn|contains)\([^()]*\)""")
+
+    /** r106: [item] as a browser selector (host.render's waitFor): Jsoup's :matches(…) / :contains(…) left out */
+    fun browserSelector(item: String): String = item.replace(TEXT_PSEUDO, "").trim()
 
     /** r104: the `suggestionGroups` placeholder (name, item, link, title, cover, coverAttr of each group) */
     fun suggestionGroupsJson(groups: List<SuggestionGroup>): String = JsonArray(
@@ -88,10 +123,28 @@ internal object Derive {
                     "title" to JsonPrimitive(g.title),
                     "cover" to JsonPrimitive(g.cover),
                     "coverAttr" to JsonPrimitive(g.coverAttr.ifBlank { "src" }),
-                ) + if (g.late.isNotBlank()) mapOf("late" to JsonPrimitive(g.late.trim())) else emptyMap(),
+                ) + (if (g.late.isNotBlank()) mapOf("late" to JsonPrimitive(g.late.trim())) else emptyMap()) +
+                    // r106 (generic-list v9): a late section read in the hidden browser, waiting for its cards
+                    (if (g.read == "browser") mapOf("read" to JsonPrimitive("browser"), "wait" to JsonPrimitive(browserSelector(g.item))) else emptyMap()) +
+                    (g.more?.takeIf { it.presses > 0 && it.button.isNotBlank() }?.let { m -> mapOf("more" to moreJson(m, g.item)) } ?: emptyMap()),
             )
         },
     ).toString()
+
+    /** r106: a section's Load more as generic-list v9 reads it */
+    private fun moreJson(m: LoadMore, item: String): JsonObject {
+        val map = LinkedHashMap<String, JsonElement>()
+        map["button"] = JsonPrimitive(m.button)
+        if (m.text.isNotBlank()) map["text"] = JsonPrimitive(m.text.take(40))
+        map["presses"] = JsonPrimitive(m.presses.coerceIn(0, 3))
+        map["wait"] = JsonPrimitive(browserSelector(item))
+        if (m.request.isNotBlank() && "{page}" in m.request) {
+            map["request"] = JsonPrimitive(m.request.trim())
+            map["from"] = JsonPrimitive(m.from)
+            map["step"] = JsonPrimitive(m.step.coerceAtLeast(1))
+        }
+        return JsonObject(map)
+    }
 
     // No braces (ICU): a selector's last element: after the last " > ", "+", "~" or space
     private val LAST_SEGMENT = Regex("""[^\s>+~]+$""")
@@ -381,11 +434,8 @@ internal object Derive {
                 suggestionGroupsJson(related),
                 "${related.size} ${if (related.size == 1) "section" else "sections"} you tapped as Suggestions: " +
                     related.joinToString(", ") { "${it.name} (${it.count} cards)" } +
-                    if (anime) {
-                        ". The title screen shows all their titles together in its one Suggestions row (getRelated)"
-                    } else {
-                        ". The title screen shows their titles under these names (getRelated)"
-                    },
+                    // r106: anime and manga title screens both show one named row per section
+                    ". The title screen shows each section as its own named row (getRelated)",
             )
         }
         if (author != null) {

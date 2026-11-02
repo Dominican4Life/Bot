@@ -131,7 +131,12 @@ internal fun CodeTab(
     revealLine: Int?,
     modifier: Modifier = Modifier,
     onOpenInfo: (() -> Unit)? = null,
+    // KMK (r106): the last Test Run error's line (red band) and how many errors the run's console had
+    errorLine: Int? = null,
+    errorCount: Int = 0,
 ) {
+    // KMK (r106): the cursor's line and column for the status line
+    var cursor by remember { mutableStateOf(1 to 1) }
     Column(modifier = modifier) {
         if (onOpenInfo != null) {
             Row(
@@ -190,25 +195,45 @@ internal fun CodeTab(
             onCloseFind = { onFindOpenChange(false) },
             highlight = highlight,
             revealLine = revealLine,
+            errorLine = errorLine,
+            onCursorChange = { line, column -> cursor = line to column },
         )
         HorizontalDivider()
+        // KMK (r106): the status line: lines · Ln, Col … errors · format (· not saved · what runs)
         Row(
+            verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 3.dp),
+                .padding(horizontal = 12.dp, vertical = 4.dp),
         ) {
+            val lines = state.code.count { it == '\n' } + 1
             Text(
                 text = buildString {
-                    val lines = state.code.count { it == '\n' } + 1
-                    append("$lines lines · ${state.code.length} chars")
-                    append(" · ").append(if (state.json) "JSON declarative" else "JS extension")
-                    if (state.dirty) append(" · not saved")
-                    state.running?.let { append(" · ").append(it) }
+                    append("$lines lines")
+                    append("   Ln ${cursor.first}, Col ${cursor.second}")
+                    if (state.dirty) append("   not saved")
+                    state.running?.let { append("   ").append(it) }
                 },
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            if (errorCount > 0) {
+                Text(
+                    text = "● $errorCount ${if (errorCount == 1) "error" else "errors"}" +
+                        (errorLine?.let { " · line $it" }.orEmpty()) + "   ",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error,
+                    maxLines = 1,
+                )
+            }
+            Text(
+                text = if (state.json) "JSON declarative" else "JS extension",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
             )
         }
     }
