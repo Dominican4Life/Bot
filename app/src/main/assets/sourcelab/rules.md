@@ -1,6 +1,8 @@
 ---
-version: 14
-# Komikku Source Lab rules file, v14: the ultimate guide (built in from r102; v13 was r100). Body: sections 1–12 below, written for this fork.
+version: 15
+# Komikku Source Lab rules file, v15: the ultimate guide (built in from r105; v14 was r102, v13 r100). New in v15: filters that
+# pick the list, codes not labels, groups and directories (2.6), suggestions and sections that load later (3.6), Record and
+# convert's self-check and its TODOs (11.9), stalled extension installs (11.10). Body: sections 1–12 below, written for this fork.
 # Machine rules first; `check` is one of regex-in-code, selector-pattern, result-field,
 # compare-saved-chapter-urls, header-present, response-status, render-option, or text (read only).
 # `applies` tags this build computes: manga, anime, js, json, api, madara, cloudflare, apk-port, videos, all.
@@ -397,6 +399,34 @@ rules:
     params: { pattern: '(?:iframe|frame|player|embed|video)[^;]*?(?:pnonolet|pemsrv|juicyads|exoclick|exosrv|trafficjunky|trafficstars|tsyndicate|adsterra|popads|propellerads|magsrv|realsrv|clickadu|hilltopads|adspyglass|ero-advertising|onclickads|a-ads\.com|adnxs|doubleclick|googlesyndication)', unless: 'skip|ignore|block|exclude|AD_HOST|adHost|isAd|notAd|:not\(|\.test\(|!\s*/', flags: i }
     applies: [anime, videos]
 
+  # ---------- new in v15 (r105) ----------
+  - id: filter-value-is-label
+    severity: warn
+    check: regex-in-code
+    section: "2.6"
+    title: A filter option's value looks like a label, not the site's code
+    fix: "Sites send codes (most-viewed, multi, recent), not the words they show (Most Viewed). A value with a space, or a capitalised value equal to its label, was copied from the menu and the site answers it with nothing or everything. Pick the option on the site and read the address bar, or use Learn addresses in the builder: it presses the options and keeps the codes. If the site really sends this text, Ignore the rule."
+    snippet: "{ label: \"Most Viewed\", value: \"most-viewed\" }"
+    params: { pattern: '\bvalue\\?["'']?\s*:\s*\\?["''][^"''\\]*[ ][^"''\\]*\\?["'']|\blabel\\?["'']?\s*:\s*\\?["'']([A-Z][^"''\\]*)\\?["'']\s*,\s*\\?["'']?value\\?["'']?\s*:\s*\\?["'']\1\\?["'']' }
+    applies: [js]
+  - id: cover-src-before-lazy
+    severity: warn
+    check: regex-in-code
+    section: "3.6"
+    title: A cover read from src before its lazy-load attributes
+    fix: "img.attr(\"src\") || img.attr(\"data-src\") stops at the placeholder in src (a data:image/gif, loading.gif, a 1x1 picture), so lazy covers stay blank or all show the same picture. Read data-src, data-lazy-src, data-original, srcset first and src last, skipping data: and placeholder addresses. Suggestions of generic-list v7 did this: Update the template (v8 reads covers through coverOf)."
+    snippet: "var src = img.attr(\"data-src\") || img.attr(\"data-lazy-src\") || img.attr(\"data-original\") || img.attr(\"src\") || \"\";"
+    params: { pattern: '\.attr\(\s*[^()]*["'']src["'']\s*\)\s*\|\|\s*[\w.]*\.attr\(\s*["'']data-', unless: 'COVER_ATTR' }
+    applies: [js]
+  - id: converted-part-todo
+    severity: warn
+    check: regex-in-code
+    section: "11.9"
+    title: A part Record and convert left as TODO
+    fix: "This part only throws. The TODO line above it says why in one line (no data request recorded, the values in no reply, an encoded field, the extension builds the value itself); 11.9 says what to check for each. Record that step again (page 2 too) and use ⋮ › Convert again, or write the part from the recorded requests listed in the comment."
+    params: { pattern: 'was not converted from the recording' }
+    applies: [js]
+
   # ---------- text rules (read when the tags match) ----------
   - id: madara-ajax-headers
     severity: info
@@ -765,6 +795,55 @@ rules:
     section: "12"
     title: Run the checklist in section 12 before saving
     fix: "Lists, page 2, covers, a two-word search, a title, its chapters with numbers and dates, one chapter's pages or one episode's videos that play, no errors in the console, no {placeholder} left, Lint clean or ignored on purpose."
+  # ---------- new in v15: text rules (r105) ----------
+  - id: filter-roles
+    severity: info
+    check: text
+    section: "2.6"
+    title: Page filters pick the list, extras add to it
+    fix: "A dropdown that only changes a parameter of the page it is on (type=, year=, sort= on /en/recent) is an extra and works on every list. A menu whose entries open other pages (/en/all?sort=week, a type's own page) is a page filter. Only the first page filter changed from its default applies; the built-in List (Popular, Latest, the tabs) is used when none is."
+    applies: [js]
+  - id: filter-directory-autocomplete
+    severity: info
+    check: text
+    section: "2.6"
+    title: A long list of names is a directory, not a dropdown
+    fix: "Genres, people, makers or series on paginated directory pages become one page filter with a text box and suggestions: Fetch the full list reads the pages (with progress and Stop) and keeps name → slug; a name typed that isn't in it is sent as a slug (lowercase, spaces as -)."
+    applies: [js]
+  - id: filters-empty-base
+    severity: info
+    check: text
+    section: "2.6"
+    title: Filters on a page that lists nothing
+    fix: "When the Test Run's Filters step says \"filters are on a page with nothing listed\", the filters were recorded on the search page with no words, which many sites answer empty. Learn them on a list page (Latest, a tab) so they are extras of every list."
+  - id: search-words-extras-only
+    severity: info
+    check: text
+    section: "2.6"
+    title: A search with words only takes the search page's extras
+    fix: "Typed words open the search address; page filters and extras never seen on the search page are left out with a log line. Tick \"Also while searching for words\" on an extra only after checking the site's search accepts it."
+    applies: [js]
+  - id: suggestions-load-later
+    severity: info
+    check: text
+    section: "3.6"
+    title: A suggestions section the site's script fills in
+    fix: "If the section's cards are in WebView but not in view-source, the page's script fetched them. The builder looks for that request and reads the section from it (\"loads later\"); when it can't find one the card says so. Find the request in DevTools › Network while the section appears, or leave the group out."
+    applies: [js]
+  - id: converted-checked-count
+    severity: info
+    check: text
+    section: "11.9"
+    title: Read the "checked" line of each converted part
+    fix: "Record and convert runs each part it wrote on the recorded reply and compares it with what the extension returned: \"checked: 20 of 20 items match the extension's output\". Fewer than about 9 in 10, or a covers count below that, means the extension filters, sorts or builds values in its own code; check those items by hand."
+    applies: [apk-port]
+  - id: extension-install-stall
+    severity: info
+    check: text
+    section: "11.10"
+    title: A batch of extension installs that seems stuck
+    fix: "Android sometimes waits for a confirm nobody sees. From r105 a prompt left unanswered gets a \"Tap to approve\" notification, and the app gives up on that one extension after 60 s with no answer from Android (3 min when it is waiting for your confirm), logs it under extensions and goes on with the next; install the skipped one again on its own."
+    applies: [apk-port]
   # ---------- softened in v14: the app's global debug switch replaces a source's own (kept last, read rarely) ----------
   - id: console-log-unguarded
     severity: info
@@ -890,8 +969,24 @@ The New source builder's **Lists and options** card writes these without code; w
 - **Names.** `popularName` / `latestName` on the extension object rename the two buttons; left out, the app's names show. Generated code writes `popularName: TAB_POPULAR_NAME || undefined`. **Never declare a global `POPULAR_NAME` or `LATEST_NAME` that can be empty**: the app also reads those two globals as names, and an empty text counts as one (`name-global-can-be-empty`).
 - **Which list each button shows.** A list's address with `{page}` where the page number goes (`/trending?page={page}`, `/page/{page}/`); a page without a number in its address gets `page={page}` added, and the Test Run shows whether page 2 really differs (2.2).
 - **Tabs.** `getCatalogs()` returns `{ id, name, tab: true }` (the id can be the list's address), and `getCatalog(id, page)` loads it. Tab catalogs replace the Popular and Latest buttons with yours (2.4); add one only for a list the site really has.
-- **Filters.** `getFilters()` returns `{ key, name, type: "select", options: [{ label, value }] }`, `{ key, name, type: "checkbox" }` or `{ key, name, type: "text" }`. `search(query, page, filters)` adds each set value to the address as `key=value` (select: its value; checkbox: its "on" value; text when not blank; nothing when empty), URL-encoded, with `?` or `&` as the address needs. The builder offers a filter when two addresses of the same page differ in one query parameter (`sort=`, `genre=`), and fills the options from the page's own `<select>` or links. Check that a filter changes the site's answer (2.4).
+- **Filters.** `getFilters()` returns `{ key, name, type: "select", options: [{ label, value }] }`, `{ key, name, type: "checkbox" }`, `{ key, name, type: "text" }` or `{ key, name, type: "autocomplete", options }`, and from r105 (generic-list v8) each has a `role` and may sit in a group (2.6). An extra adds its value to the address as `param=value` (select: its value; checkbox: its "on" value; text when not blank; nothing when left at its default), URL-encoded, with `?` or `&` as the address needs; a page filter replaces the address. The builder offers a filter when two addresses of the same page differ in one query parameter (`sort=`, `genre=`), and reads the codes with **Learn addresses** (2.6). Check that a filter changes the site's answer (2.4).
 - **Settings.** `getSourcePreferences()` returns `{ key, title, type: "list" | "switch" | "text", entries, defaultValue }`; the code reads `await host.preference.get("key")` once per call. Ready-made in the builder: preferred quality (`quality`), preferred server (`server`) and "hide titles containing" (`hideWords`, comma-separated); `getVideoList` puts the preferred quality and server first rather than dropping the others.
+
+### 2.6 Filters that pick the list: roles, codes, groups, directories
+
+Many sites put the same dropdowns (Type, Year, Sort…) on every list page and change the address with them: `/en/recent?page=1&type=a&year=2025&sort=recent`, `/en/hot?page=1&type=b&sort=longest`. Their menus also open whole other lists: Trending ▸ This week → `/en/all?sort=week`, a type's own page → `/en/<type>`, a collection's entry → `/en/makers/<slug>`. Since r105 (generic-list v8) a filter says which of the two it is.
+
+- **Roles.** Every filter has a `role`:
+  - **List** (built in, first in the sheet): Popular, Latest and the source's tabs; Latest at first. It is the page a filter search browses when no other page filter is changed.
+  - **page**: picks which list is browsed. Its option is a whole address (`/en/all?sort=week`, `/en/<type>`) or fills `{value}` in its path (`/en/makers/{value}`). **Only one page filter applies**: the first one changed from its default, in sheet order; the others are left out with a log line.
+  - **extra**: adds `param=value` on top of whichever list is chosen (List, a tab or a page filter's list), only when changed from its default, so a page keeps its own sort otherwise.
+  - The page number keeps the style learned from the list paths (`?page=N`, `/page/N`, `/N`). Filters made before r105 have no role and keep working: a path filter is a page filter, a parameter filter an extra of the search page.
+- **Values are the site's codes, not its labels.** The menu shows "Most Viewed", the address says `sort=most-viewed`; it shows "Two or more", the address says `multi`. A value copied from the label is answered with nothing, or with everything (`filter-value-is-label` flags values with spaces, and capitalised values equal to their label). To find a code by hand: pick the option on the site and read the address bar; do it for two options and compare. The builder's **Learn addresses** does this on dropdowns and `<select>`s in the hidden browser: it picks the options (every one up to 30, else two checked against the option values, data attributes or link addresses), reads the address each gives, and keeps the parameter name and each option's code. It also decides the role: the path changed → page; only a parameter of the list page changed → extra, sent on every list (check it on a second list once, in the Test Run's Filters step or on the site). Menus whose entries are links (a type list, Trending) become page filters whose values are the links' paths.
+- **Groups.** A site menu with a heading and sub-menus (Collections ▸ Genres / People / Makers / Series) becomes a group: one heading in the Browse sheet with one filter per sub-menu under it, written `{ type: "group", name: "Collections", filters: [...] }` by `getFilters()`. In the builder each filter card shows its group; ▲▼ reorder inside and across groups; **Move to group…** and **Out of group** change it. Group children still arrive in `search` under their own keys (2.4).
+- **Directories.** A sub-menu entry that opens a directory (cards or rows linking to lists of one pattern, `/en/makers/<slug>`, often paginated, sometimes thousands of names) becomes a **page filter of type autocomplete**: a text box with suggestions, `path: "/en/makers/{value}"`. **Fetch the full list** follows the directory's next pages (you choose how many, with progress and Stop) and keeps label → slug, up to 3,000 suggestions. A name typed that isn't in the list is sent as a slug (lowercase, spaces and other signs as `-`) and logged; names starting with `-` are left out (no exclusions).
+- **A base page with nothing listed.** The Test Run's Filters step first loads the source with no filters. When that gives 0 titles it warns "filters are on a page with nothing listed": the filters were recorded on the search page with no words, which many sites answer empty. Learn them again on a list page (Latest, a tab) so they become extras of every list.
+- **Search with words** uses the search address plus only the extras learned on the search page (or ticked **Also while searching for words**); page filters and other extras are left out with a log line, because the search page doesn't take them.
+- **Check it.** Each try in the Filters step shows the filter's role and the address tried (`Sort (extra) = Longest → GET /en/recent?page=1&sort=longest → 24 titles`). An extra that gives the same list as no filter, or 0 titles, has a wrong code or doesn't work on that page.
 
 ## 3. Title pages
 
@@ -923,6 +1018,13 @@ Covers are the most common thing that "doesn't load":
 ### 3.5 webUrl and ids
 
 An entry's `url` is your key: whatever your code needs to find the title again, a path, an id or an API address; the app hands it back unchanged. **When it isn't the site's page, set `webUrl`** (`og:url`, `link[rel=canonical]`, or built from the slug): it is what WebView, Share and "Open in browser" open; without it the app opens `url` when it's a full address, else the site's base. Keep the same `url` format in lists, search, `getRelated` and details, or the same title shows twice in the library. When porting an APK keep its `url` format character for character (4.2).
+
+### 3.6 Suggestions (`getRelated`)
+
+- **Named groups.** `getRelated(url)` may return `{ "You may like": [...], "Related": [...] }`: the title screen shows one row per name, in order. The builder's **Suggestions** label makes one group per section you tap on the title page (generic-list v7+); give each the site's own heading. Entries are list entries (`url`, `title`, `coverUrl`) in the same `url` format as the lists (3.5); the title itself and repeats are left out.
+- **Covers are lazy here too.** Suggestion rows load late on most sites, so their `img` usually has a placeholder in `src` and the picture in `data-src`, `data-lazy-src`, `data-original` or `srcset`. Read those first and `src` last, and skip `data:` addresses and placeholder files (`placeholder`, `blank`, `lazy`, `loading`, `1x1`, `.svg`). An `a || b` chain that starts with `src` stops at the placeholder (`cover-src-before-lazy`); generic-list v8's `coverOf` reads them in the right order for lists and suggestions (3.4).
+- **Sections that load later.** A section whose cards are in WebView but not in `view-source:` was filled by the site's script after the page loaded, from a request of its own (HTML, or JSON holding HTML). The source only reads the page, so it finds nothing. After a Suggestions pick the builder reads the raw page; when the cards aren't there it looks through the requests the page made and keeps the one whose reply has them. The group is marked **loads later**, and its address becomes a template filled per title (`{seg1}`… the title address's parts, `{path}`, `{url}`, `{attr:name}` a value from the page). When no request has the cards the card warns that the section is filled by the site's script and isn't in the page: find the request in DevTools › Network while the section appears and put it in by hand, or leave the group out.
+- **Keep it cheap.** `getRelated` runs every time a title opens: one or two requests, the page already read for details when you can (10.1).
 
 ## 4. Chapters and episodes
 
@@ -1172,7 +1274,7 @@ The runtime holds a lock per call: **one call at a time per source**, so a slow 
 
 ### 11.1 Test Run steps
 
-**Run all** on the Test pane (or the nightly Re-test) runs: page 1 of each tab catalog (in Browse order) → Popular → Latest → search (the Test box, else the first title's first word of 3+ letters) → **Filters** (when the source has `getFilters`: up to 5 filters, each once with its first non-empty value through `search("", 1, { key: value })`, a Sort with its first two options; the step says how many titles came back and whether the list differs from the unfiltered first page, a Sort's two options from each other) → **Settings** (when it has `getSourcePreferences`: the keys and defaults, flagging entries without a key, keys used twice, a list without options or a default that isn't one of them, a switch whose default isn't true/false) → the first title's details (`getDetails` when the source has it) → its chapters or episodes → the first chapter's pages or the first episode's hosters. Each step gets its `[net]` lines (method, address, status, time, `BROWSER` when the hidden browser sent it), its `[warn]`/`[error]` lines and the first 60 objects as returned. Judgements: entries without `url`, or more than 20 % without a cover, turn a list step **Amber**; the title is Green with 6 of 8 fields; chapters are Green when every one has a number and a date; hosters are grouped by `server`. Then the probes: the first page image is fetched with HEAD (GET `Range: bytes=0-0` on 405), 403/404 → Amber, and once more without a Referer so the evidence says whether the Referer is what the server refuses; each hoster's first video is fetched for 2 KB (HLS through the relay) and counts as played when it starts with `#EXTM3U`, `ftyp`/`moov`, the MKV or MPEG magic, or has a `video/*` type. The run is saved only at the end; Lint runs after it. **The console** under the steps (tap its header to open it) holds every line of the run, live while it runs, grouped by step, each with its time since the start and its level (E red, W amber, I normal, D grey, requests as `GET /path → 200 · 340 ms`; tap a request for its headers and, when it failed, the first 2 KB of the reply; tap an error with `source.js:N` to open that line). Chips filter Errors / Warnings / Network / Logs, the box searches, **Copy** takes the lines shown and **Share** sends the whole console as a .txt. **Make sure you're testing the new code**: after pasting, check something only the new version has before running (one "fix" report was byte-for-byte the old one). Copy test addresses from the Test tab one at a time (two pasted together give a 404).
+**Run all** on the Test pane (or the nightly Re-test) runs: page 1 of each tab catalog (in Browse order) → Popular → Latest → search (the Test box, else the first title's first word of 3+ letters) → **Filters** (when the source has `getFilters`: the list with no filters first, then up to 6 filters, the built-in List first, each once with its first non-empty value through `search("", 1, { key: value })`, a Sort with its first two options; each try shows the filter's role and the address tried, how many titles came back and whether the list differs from the unfiltered first page, a Sort's two options from each other; an unfiltered list with 0 titles adds "filters are on a page with nothing listed", 2.6) → **Settings** (when it has `getSourcePreferences`: the keys and defaults, flagging entries without a key, keys used twice, a list without options or a default that isn't one of them, a switch whose default isn't true/false) → the first title's details (`getDetails` when the source has it) → its chapters or episodes → the first chapter's pages or the first episode's hosters. Each step gets its `[net]` lines (method, address, status, time, `BROWSER` when the hidden browser sent it), its `[warn]`/`[error]` lines and the first 60 objects as returned. Judgements: entries without `url`, or more than 20 % without a cover, turn a list step **Amber**; the title is Green with 6 of 8 fields; chapters are Green when every one has a number and a date; hosters are grouped by `server`. Then the probes: the first page image is fetched with HEAD (GET `Range: bytes=0-0` on 405), 403/404 → Amber, and once more without a Referer so the evidence says whether the Referer is what the server refuses; each hoster's first video is fetched for 2 KB (HLS through the relay) and counts as played when it starts with `#EXTM3U`, `ftyp`/`moov`, the MKV or MPEG magic, or has a `video/*` type. The run is saved only at the end; Lint runs after it. **The console** under the steps (tap its header to open it) holds every line of the run, live while it runs, grouped by step, each with its time since the start and its level (E red, W amber, I normal, D grey, requests as `GET /path → 200 · 340 ms`; tap a request for its headers and, when it failed, the first 2 KB of the reply; tap an error with `source.js:N` to open that line). Chips filter Errors / Warnings / Network / Logs, the box searches, **Copy** takes the lines shown and **Share** sends the whole console as a .txt. **Make sure you're testing the new code**: after pasting, check something only the new version has before running (one "fix" report was byte-for-byte the old one). Copy test addresses from the Test tab one at a time (two pasted together give a 404).
 
 ### 11.2 What each red step usually means
 
@@ -1210,7 +1312,7 @@ A `[net] … -> 200` line followed by an error means the site answered fine and 
 
 ### 11.4 Lint and this rules file
 
-Lint runs after every save and Test Run, never blocking either, with the machine rules of this file against the code and the last run. Seven check kinds: `regex-in-code` (a pattern per line, with `unless`, `near`, `part`, `flags: i`), `selector-pattern` (over string literals that look like selectors), `result-field` (`kind`: relative-url, same-status, date-zero, server-path, field-missing; over the last run's objects, optionally one `step`), `compare-saved-chapter-urls` (the run's chapters against the library's rows of the same title; silent under 3 matches, so it mostly speaks for titles you have in the library), `header-present` (`on`: videos | images), `response-status` (a code in the run's requests, unless the code matches `unless`), `render-option` (an option on `host.render` when the run met a bot check, or always with `always: true`). `check: text` rules are listed "to read" (the first three) when their `applies` tags match the source. **Tags this build computes:** `manga` or `anime`; `js` or `json`; `api` when the code has `/api/`, `/wp-json/`, `application/json` or `JSON.parse`; `madara` for `madara`, `wp-manga`, `manga_load_more` or `wp-admin/admin-ajax`; `cloudflare` when the last run met a browser retry or "bot check" in the console; `apk-port` for a source with an `id` line or imported from an extension; `videos`; `all`. Other tags in this file (`mangathemesia`, `mangareader`, `foolslide`, `keyoapp`, `wordpress`, `nextjs`, `hls`, `extractors`) are for reading and always sit next to a computed one. **Apply** changes the code in the editor only when the rule's `find` occurs exactly once in the finding's part; you still save. **Ignore** hides a rule per source. `getComments` / `getChapterComments` exist in the API but no Kotlin code calls them yet; `descramble`, novel `text` pages and `early` aren't supported (guide 08 §7.6). Rules file: **Source Lab › Rules file › Update from file** imports a file whose `version` is higher than the current one (a parse error names the line and keeps the old file); **Versions › Roll back** returns to an earlier import or to the built-in file (version 14 from r102). The Versions list shows which file is current; after importing a file, roll back to the built-in one to use a newer built-in.
+Lint runs after every save and Test Run, never blocking either, with the machine rules of this file against the code and the last run. Seven check kinds: `regex-in-code` (a pattern per line, with `unless`, `near`, `part`, `flags: i`), `selector-pattern` (over string literals that look like selectors), `result-field` (`kind`: relative-url, same-status, date-zero, server-path, field-missing; over the last run's objects, optionally one `step`), `compare-saved-chapter-urls` (the run's chapters against the library's rows of the same title; silent under 3 matches, so it mostly speaks for titles you have in the library), `header-present` (`on`: videos | images), `response-status` (a code in the run's requests, unless the code matches `unless`), `render-option` (an option on `host.render` when the run met a bot check, or always with `always: true`). `check: text` rules are listed "to read" (the first three) when their `applies` tags match the source. **Tags this build computes:** `manga` or `anime`; `js` or `json`; `api` when the code has `/api/`, `/wp-json/`, `application/json` or `JSON.parse`; `madara` for `madara`, `wp-manga`, `manga_load_more` or `wp-admin/admin-ajax`; `cloudflare` when the last run met a browser retry or "bot check" in the console; `apk-port` for a source with an `id` line or imported from an extension; `videos`; `all`. Other tags in this file (`mangathemesia`, `mangareader`, `foolslide`, `keyoapp`, `wordpress`, `nextjs`, `hls`, `extractors`) are for reading and always sit next to a computed one. **Apply** changes the code in the editor only when the rule's `find` occurs exactly once in the finding's part; you still save. **Ignore** hides a rule per source. `regex-in-code` patterns are ICU regexes in single-quoted YAML: write `''` for a quote and no bare braces. `getComments` / `getChapterComments` exist in the API but no Kotlin code calls them yet; `descramble`, novel `text` pages and `early` aren't supported (guide 08 §7.6). Rules file: **Source Lab › Rules file › Update from file** imports a file whose `version` is higher than the current one (a parse error names the line and keeps the old file); **Versions › Roll back** returns to an earlier import or to the built-in file (version 15 from r105). The Versions list shows which file is current; after importing a file, roll back to the built-in one to use a newer built-in.
 
 ### 11.5 Issue Report
 
@@ -1232,8 +1334,35 @@ Line numbers match your file. A `[net] … -> 200` then an error is a parsing bu
 - **Next** is one link to page 2 on the same site; **Chapter** links repeat and differ (a title that is its own only episode uses the single-episode switch); **Video** is the `iframe` or `video`, not the play button over it, and never an ad network's frame (6.8).
 - **Tapping for…** (from r102). The row under the address bar lists every label by page (List page, Title page, Episode/Chapter page, List for a filter). With nothing chosen the page works like a normal browser (scroll, open menus, follow links); tap a label to arm it, and the next tap on the page is that pick, never a navigation. A long press still picks without arming. The step follows the page you're on (a title's address → Title page), so open a title in the site itself and its labels are there.
 - **Tags in groups.** **Tags** stays armed: each row you tap on the title page (Cast, Maker, Genres, Release date…) becomes a group named after the row's own label, its values going to the tags, the description or both (rows of plain text such as a date go to the description). Re-tapping a row replaces its group; rename or remove one in the Tags card. The source writes them as `"Group: value"` genres (3.3) from `tagGroups`.
-- **Learn this list.** For a filter menu whose entries are buttons without links (a year or type dropdown the site's script runs), pick the list with **List for a filter**, then **Learn this list**: the builder presses each entry on the list page (opening the menu first), waits for the address to change and records it, with a short random pause between presses; after three it looks for the pattern (a query value or path part equal to the entry's text) and fills in the rest. An entry that changes nothing (like "All") becomes the filter's "Any". Tap the entries, not the menu's own button.
+- **Learn this list.** For a filter menu whose entries are buttons without links (a year or type dropdown the site's script runs), pick the list with **List for a filter**, then **Learn this list**: the builder presses each entry on the list page (opening the menu first), waits for the address to change and records it, with a short random pause between presses; after three it looks for the pattern (a query value or path part equal to the entry's text) and fills in the rest. An entry that changes nothing (like "All") becomes the filter's "Any". Tap the entries, not the menu's own button. From r105 **Learn addresses** does the same for dropdowns and `<select>`s (a `<select>` without a name too), keeps the codes the site sends rather than the labels, and sets each filter's role (2.6).
+- **Menus with sub-menus and directories.** Tapping a menu heading whose sub-menus are menus makes a group with one filter per sub-menu; a sub-menu that opens a paginated directory of names offers **Fetch the full list** and becomes a text box with suggestions (2.6).
+- **Suggestions.** Each section tapped with **Suggestions** is a named group; a card marked **loads later** reads the section from the request the page made for it, and a warning on the card means none was found (3.6).
 - **Edit by tapping.** A source made by the builder opens again in it from Test Run › **Edit** (next to Open in Browse), with its picks restored (older sources: what can be read from the code's settings at the top); **Save to this source** writes a new History version under the same key, so the library and downloads keep it.
+
+### 11.9 Record and convert: the self-check and its TODOs
+
+**Record and convert** runs an installed extension's lists, a title, its chapters and pages (or videos), records every request it makes with the replies, and writes a JS source from that evidence only.
+
+- **It checks its own work (r105).** For every list part (Popular, Latest, Search) and for the title, chapter and page parts it tries ways to read the reply from strict to loose, runs each on the recorded reply, and keeps the first whose output matches what the extension returned: the same addresses and titles in order for at least 9 in 10 items, and the covers after any change the extension made to them. Loosenings it may use: an array where at least 8 in 10 of the returned items map onto its entries; a fixed text before or after a field (a CDN folder before an image name, `?w=250` after it), with values that are already full addresses kept as they are; items wrapped one or two levels deep; an address built from an id with a fixed path in front; a description with a fixed label around it ("Synopsis: …").
+- **Read the `checked:` line.** Each written part starts with `// checked: N of M items match the extension's output` (covers counted too, and whether the code reverses its list). The file's header lists all of them. N close to M is a part you can trust; a lower N gets a TODO line saying the extension filters, sorts or adds items in its own code. Compare those items in Test Run with the extension in Browse.
+- **Every TODO says why, in one line**, above the recorded requests and a reply excerpt (the part throws "… was not converted from the recording" until it is written: `converted-part-todo`). The usual causes and what to do:
+
+| TODO says | What it means | Check or do |
+| --- | --- | --- |
+| no data request was recorded in this step | Only images, bot-check pages or failed requests were seen; or the extension read a cache | Clear the extension's cache or open a title it hasn't seen, pass a bot check in WebView first, record again |
+| none of the recorded replies holds the values | The data came from a request the app didn't see (a WebView of the extension's own, a second app) or from the extension's own code | Look at the listed requests; if the values aren't there, write the part from the site directly |
+| one long encoded string at … (a scrambled field) | The reply carries base64 / hex / encrypted text the extension decodes | Find the decode in the extension's code (key, mode) and write it with `host.crypto` (6.6), or read the site's page instead |
+| a piece of them …, so the extension builds them in its own code | The reply has an id or a folder name, and the extension puts the address together (image addresses most often) | Copy the pattern from one returned address (`"https://cdn/" + id + "/" + file`) and build it the same way |
+| no page number in the address: page 2 and on return nothing | Page 2 differs from page 1 nowhere the converter could see, often because the page number sits in a POST body (a GraphQL `variables.page`, a form `page=`) | Record with page 2 (Popular records it); check the body was recorded (bodies over 8 KB or streamed aren't, which is its own TODO) and put the page into the body by hand |
+| the search words are not in the recorded request | The extension changes the words (slug, upper case, a hash) | Write the search address from a real search on the site (2.3) |
+| the search was recorded with the default filters | How the extension sends filters is unknown | Read `filters` and add them (2.4, 2.6) |
+
+- **DNS lookups are ignored.** Requests that are DNS-over-HTTPS lookups (an `application/dns-message` reply, `/dns-query`, the public resolvers) are the app resolving the API's host, never the extension's data; from r105 they are left out of the recording and of the TODO listings.
+- **Convert again.** On a source made by Record and convert, ⋮ › **Convert again** records the same extension once more, converts it with the current converter and saves the result as a new History version of the same source (same key and id; your name, language, icon and address kept), then opens Test Run. Use it after an app update that improves the converter, or after fixing what a TODO pointed at. If the extension isn't installed any more it says so: install it again first.
+
+### 11.10 Extension installs that stall
+
+A batch of extension installs or updates can stop on one extension when Android waits for a confirm that never shows (the app was in the background, a system dialog nobody answered). From r105 the app posts a "Tap to approve" notification for a prompt left open, gives up on that extension after 60 s with no answer from Android (3 min while it waits for your confirm), logs it under `extensions` and moves on with the next. Install the skipped one again on its own.
 
 ## 12. Checklist before saving
 
@@ -1243,6 +1372,9 @@ Line numbers match your file. A `[net] … -> 200` then an error is a parsing bu
 - [ ] Covers show in the Test results; if not, lazy attributes and Referer (3.4, 5.3).
 - [ ] Every entry has `url` and `title`; no `{placeholder}` left in addresses.
 - [ ] Filters change the site's answer; no tabs or catalogs the site doesn't have (2.4).
+- [ ] Filter values are the site's codes, not its labels; each filter has the right role, and the unfiltered list isn't empty (2.6).
+- [ ] Suggestion groups show covers, and a section marked "loads later" really gives cards (3.6).
+- [ ] A converted source: every part's `checked:` line is close to its total, and no part is left as TODO (11.9).
 - [ ] The search address was copied from a real search on the site (2.3).
 - [ ] Button names on the extension object; no global `POPULAR_NAME` / `LATEST_NAME` (2.5).
 
