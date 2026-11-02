@@ -823,6 +823,14 @@ Commit e466a555 (CI green first time). Owner-approved mockups (Browse canvas: CS
 - Test Run: Suggestions step (Amber, never Red, on failure); Filters step tries collections and calls `getDirectory` page 1 for live ones.
 - Left open: hard-coded English strings in the new sheet parts; genre labels with plain trailing counts ("Tiktok 11") aren't cleaned.
 
+## Changes in r108 (2 November 2026)
+
+Commit after e466a555 (CI green). Fixes from the owner's r107 video.
+- **Source Lab home**: each row shows the source's icon (`JsIcons.bitmap(JsSourceManager.idOf(key))`, looked up again for up to 10 s while it downloads; letter tile until then).
+- **Lab top bar** (`LabChrome.LabTopBar`): title + badge sit in one `weight(1f)` row. Before, the title's `weight(1f, fill = false)` and a `Spacer(weight(1f))` split the free room in half whenever a badge showed, so the actions stopped short of the right edge. Don't put two weights in that row again.
+- **Directory page count** (`BuilderListReader.highestPage`): numbered and Last/» links count only when their path (without its page part, `listPathOf`) is the scanned directory's. r107's Last-link rule took a site-wide "»" link, so every directory got the main list's 2,257 pages.
+- **host.render** (`JsRender`): the hidden WebView is laid out 1080 × 2340 (it was 0 × 0, so lazy "load when scrolled into view" sections never loaded), and while `waitFor` isn't found after load the probe scrolls a screen at a time (back to the top at the end). Applies to every source without a template update.
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
