@@ -755,6 +755,33 @@ Commit e0705406. The two items held from r103 (cold start, History / Updates que
 
 - **What must not change**: built-ins publish before extensions, but nothing that can uninstall or drop data (SideloadFolder sync, download restore, library names) acts before `isInitialized`; fallback-counted recorder requests never teach hosts; search-page filters go only into the search address.
 
+## Changes in r105 (1 November 2026)
+
+Commit 156fe52d (rules file v15 first pushed alone as 49c0a821). Owner's r104 feedback: Record and convert still left AllManga's lists as TODO, filters sent labels to the search page, suggestion covers were empty and anime merged the groups, and installing ~26 extensions at once stalled. Writers from `scratchpad/r105/CONTRACT.md` (WA converter, WB filters/suggestions, WC anime suggestions, WD installer; WA/WB were stopped once mid-way and restarted), then a compile review, a behaviour test, two fix passes and a final compile check.
+
+### Record and convert
+- **Self-check** (`RecordedConverter`): each part is tried strict → loose (≥ 80 % array match, prefix/suffix learned per item with already-absolute values kept, items wrapped 1–2 levels, `"/x/" + id` urls, fixed labels, `a || b` fallbacks) and every candidate is evaluated in Kotlin on the recorded reply against what the extension returned; the first with ≥ 90 % urls/titles (and covers) wins, with a size rule (paged lists: not a tiny side array; others: 0.8–1.1 × returned) and the closest size preferred. Written parts carry `// checked: N of M`. A page number inside a POST body is recognised.
+- DNS-over-HTTPS requests (`isDnsRequest`) are ignored in recording and conversion; each TODO has one plain reason.
+- **Convert again** (`ui/sourcelab/ConvertAgain.kt`, source ⋮ menu): re-records the named extension and saves a new version under the same key/id, then runs Test Run.
+
+### Filters (generic-list v8)
+- Roles: a built-in **List** (Popular / Latest / tabs; default = the list being browsed, passed as `__from` by JsMangaSource/JsAnimeSource), **page** filters (pick the list; the first changed one wins) and **extra** filters (query params on any list; on search only when learned there). Groups (`type:"group"`) render in the Browse sheet. Parameter Select/Sort get an empty first option "Site default". Old v7 filters behave as before.
+- Builder: Learn addresses presses dropdown options and reads the real codes and role; directories fetch paginated lists into text boxes with suggestions (slug fallback); groups from sub-menus, "Move to group…", ▲▼ that keep groups together; re-made filters keep group / search switch / role set by hand.
+- Template: page-number style only after a page word; `%XX` values not re-encoded; Test Run warns when the unfiltered list is empty and shows each filter's role.
+
+### Suggestions
+- Covers skip placeholders (known file names, or the same picture on 3+ cards) and read lazy attributes; srcset-only comma split.
+- Sections filled by the site's script: the builder records the WebView's requests and stores the request whose reply holds the cards (`{attr:sel|name}` tokens); else a warning.
+- **Anime title screen**: one named row per JS source group, the arrow opens the full screen at that section; the full screen is split into sections (`AnimeSuggestions` cache shared). Non-JS sources unchanged.
+
+### Extension installs
+- Per-install watchdog: no status within 60 s after commit (3 min while Android waits for a confirm) → abandon, "Couldn't install … tap Update to retry", queue continues. A confirm prompt that can't open (app not visible) posts "Tap to approve the update of X". Session progress after the OK re-arms 60 s. Shizuku results are matched by package. The service stopping marks the active row as failed.
+- Logs: `I Installing X (n of N)`, `I Installed X in s`, `W Android asks to confirm X`, `E Couldn't install X: reason` (with session ids); the other kind's "package not found" lines are D.
+
+- **Rules file v15**: filters (2.6), suggestions (3.6), tag rows (3.7), Record and convert (11.9), install tip (11.10), new lint checks (`filter-value-is-label`, `cover-src-before-lazy`, `converted-part-todo`, `tag-group-whole-row`, `value-encoded-twice`).
+- **Not done**: re-checking a learned extra on a second list page; one tap on a menu heading fetching all its directories.
+- **What must not change**: converter candidates are only written after the check on the recorded reply; an untouched filter sends nothing (empty first option); install watchdogs are cancelled on every finish.
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
