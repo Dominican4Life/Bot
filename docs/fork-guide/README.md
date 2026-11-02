@@ -782,6 +782,21 @@ Commit 156fe52d (rules file v15 first pushed alone as 49c0a821). Owner's r104 fe
 - **Not done**: re-checking a learned extra on a second list page; one tap on a menu heading fetching all its directories.
 - **What must not change**: converter candidates are only written after the check on the recorded reply; an untouched filter sends nothing (empty first option); install watchdogs are cancelled on every finish.
 
+## Changes in r106 (2 November 2026)
+
+Commits 25c9bb16 + 57c03f37 (CI fix: `maxWidth` read inside a `Column` lambda of `BoxWithConstraints` — hoist it to a `val` before nested layout scopes). Owner-approved redesign from the mockup canvas (builder tablet/phone + code editor), writers W1 builder chrome, W2 builder logic/filters/suggestions, W3 code editor, then compile review, behaviour test, two fix passes.
+
+### Builder (Edit by tapping)
+- **Chrome** (`BuilderScreen.kt`, `BuilderChrome.kt`): stat strip and edit banner removed (banner = one snackbar); top bar with step pills, "N of M picked", Undo, Save split, ⋮ (Check each pick, Kind, Format); address bar over the page only with icons inside (search / back·forward·reload / Go when edited / Stop while loading); right panel tabs Labels · Title page (Tags and Suggestions sub-views) · Lists & filters · Code (readable derived values); armed strip over the page. Phone: step indicator, page on top, draggable bottom sheet (peek/half/full) that drops to peek while a label is armed. `BuilderScreen(startTab = "labels"|"title"|"filters"|"code")`; each tab keeps its own saved state.
+- **Save**: `write(inPlace)` saves over the open version (`History.updateCurrent`), asks first for a Baseline (`saveConfirm`); a `codeHash` in the saved builder state keeps the "edited by hand" check from firing after in-place saves.
+- **Filters**: one "Pick a menu on the site"; a card per menu with its actions (Learn the codes inside the card, Make filter / Add as tabs, Read all pages, group cards with Read all N); Replace / Keep both asked per card (`pending` per card id) when a filter with the same name or parameter exists; compact filter list; scroll requests (`scrollTarget`/`scrollTick`) switch to Lists & filters for new cards only.
+- **Suggestions** (`BuilderSuggestions.kt`, template generic-list v9): per-section cards; late sections from their own address or "Read with the browser" (`host.render`, waits for the section's own cards under its heading); Load more found by picker.js or tapped → Scan it now (15 s timeout) → presses 1–3× from the captured request (`{page}` only for page/p/pg/offset/start/from/skip or a path 2) or pressed in the hidden browser.
+
+### Code editor (Source Lab)
+- Home table with totals and filter chips; labelled rail (phone: bottom bar Code/Test/Lint/History/More); slim top bar replaces the status strip; Code view with Parts outline (dots = last test), colours, error line, Test Run side panel / phone drawer; Test with step detail and request **sizes** (`TestRequest.bytes`, JsRuntime logs `· N bytes`); Lint chips, previews, Fix all (bottom-up); History timeline, compare (`LabDiff.kt`), **Make baseline** (`baselineN` in the history index; trimming and delete spare `History.baselineOf`).
+
+- **What must not change**: nested layout lambdas inside `BoxWithConstraints` must not read `maxWidth`/`maxHeight` implicitly (CI error); a pending Replace question is cleared only by its answer; the baseline is never trimmed.
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
