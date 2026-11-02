@@ -57,12 +57,17 @@ import cafe.adriel.voyager.navigator.LocalNavigator
 import coil3.compose.AsyncImage
 import eu.kanade.tachiyomi.jssource.lab.ExplainEntry
 import eu.kanade.tachiyomi.jssource.lab.StepStatus
+import eu.kanade.tachiyomi.jssource.lab.TestItem
 import eu.kanade.tachiyomi.jssource.lab.TestRun
 import eu.kanade.tachiyomi.jssource.lab.TestRuns
 import eu.kanade.tachiyomi.jssource.lab.TestStep
 import eu.kanade.tachiyomi.ui.anime.source.AnimeSourceScreen
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreen
 import eu.kanade.tachiyomi.ui.codeeditor.SourceEditorScreenModel
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
 import tachiyomi.domain.source.interactor.GetRemoteManga
 
 /**
@@ -488,7 +493,59 @@ internal fun countWords(step: TestStep): String = when (step.id) {
     "pages" -> "${step.count} pages"
     TestRuns.STEP_FILTERS -> if (step.items.isEmpty()) "" else "${step.count} of ${step.items.size} change the list"
     TestRuns.STEP_SETTINGS -> "${step.count} ${if (step.count == 1) "setting" else "settings"}"
+    // KMK (r107): Suggestions: every card of every group, then how many groups
+    TestRuns.STEP_RELATED -> "${step.count} cards · ${step.items.size} ${if (step.items.size == 1) "group" else "groups"}"
     else -> "${step.count} titles"
+}
+
+/**
+ * KMK (r107): one group of the Suggestions step: its name and card count (or "failed" in red with the reason), the
+ * first titles below. The counts come from the item's raw `{ group, cards, titles, error? }` (TestRuns.relatedCheck).
+ */
+@Composable
+private fun RelatedGroupRow(item: TestItem) {
+    val raw = item.raw
+    val cards = (raw?.get("cards") as? JsonPrimitive)?.intOrNull ?: 0
+    val error = (raw?.get("error") as? JsonPrimitive)?.contentOrNull
+    val titles = (raw?.get("titles") as? JsonArray).orEmpty()
+        .mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.takeIf { t -> t.isNotBlank() } }
+    Column(modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                item.title,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                when {
+                    error != null -> "failed"
+                    cards == 1 -> "1 card"
+                    else -> "$cards cards"
+                },
+                style = MaterialTheme.typography.labelMedium,
+                fontFamily = FontFamily.Monospace,
+                color = when {
+                    error != null -> StripColor.Red.tint()
+                    cards == 0 -> StripColor.Amber.tint()
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                modifier = Modifier.padding(start = 8.dp),
+            )
+        }
+        val below = error ?: titles.joinToString(" · ").ifBlank { null }
+        if (below != null) {
+            Text(
+                below,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (error != null) StripColor.Red.tint() else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = if (error != null) 4 else 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
 }
 
 /** What came back: the covers of a list step with their titles, the first chapters, the video lines */
@@ -496,11 +553,18 @@ internal fun countWords(step: TestStep): String = when (step.id) {
 private fun CameBack(step: TestStep) {
     Column {
         Text(
-            "${step.items.size}${if (step.count > step.items.size) " of ${step.count}" else ""} came back",
+            if (step.id == TestRuns.STEP_RELATED) {
+                "${step.items.size} ${if (step.items.size == 1) "group" else "groups"} came back"
+            } else {
+                "${step.items.size}${if (step.count > step.items.size) " of ${step.count}" else ""} came back"
+            },
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        when (step.items.first().kind) {
+        // KMK (r107): Suggestions: one row per group (name, card count or why it failed, first titles)
+        if (step.id == TestRuns.STEP_RELATED) {
+            step.items.forEach { item -> RelatedGroupRow(item) }
+        } else when (step.items.first().kind) {
             "entry" -> FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),

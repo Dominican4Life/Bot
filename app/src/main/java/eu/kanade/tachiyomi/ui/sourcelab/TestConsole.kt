@@ -411,6 +411,7 @@ private fun stepLabel(step: String, names: Map<String, String>): String = names[
     step.isEmpty() -> "Before the steps"
     step == TestRuns.STEP_FILTERS -> "Filters"
     step == TestRuns.STEP_SETTINGS -> "Settings"
+    step == TestRuns.STEP_RELATED -> "Suggestions" // KMK (r107)
     step == StepId.VIDEO -> "Video"
     step.startsWith("tab:") -> "Tab ${step.removePrefix("tab:")}"
     else -> step.replaceFirstChar { it.uppercase() }

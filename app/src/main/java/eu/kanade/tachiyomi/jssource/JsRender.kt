@@ -31,6 +31,7 @@ internal object JsRender {
 
     private const val DEFAULT_TIMEOUT_MS = 20_000L
     private const val SETTLE_MS = 500L
+    private const val EVAL_TIMEOUT_MS = 10_000L // KMK (r107)
 
     @SuppressLint("SetJavaScriptEnabled")
     suspend fun render(context: Context, payload: JsonObject): Map<String, Any?> {
@@ -133,8 +134,16 @@ internal object JsRender {
     private fun JsonObject.strings(key: String): List<String> =
         arr(key)?.mapNotNull { (it as? JsonPrimitive)?.content }.orEmpty()
 
-    private suspend fun WebView.evalRaw(script: String): String? = suspendCancellableCoroutine { cont ->
-        evaluateJavascript(script) { cont.resume(it) }
+    /**
+     * KMK (r107): at most [EVAL_TIMEOUT_MS] per evaluation (null after). A page whose renderer is stuck (a heavy ad
+     * page in a hidden WebView) may never answer evaluateJavascript: the wait then never ended, the loops below never
+     * reached their own time limits, and the source's call held its engine for good (a title page's Suggestions
+     * spinning for ever, every later call of that source queued behind it)
+     */
+    private suspend fun WebView.evalRaw(script: String): String? = withTimeoutOrNull(EVAL_TIMEOUT_MS) {
+        suspendCancellableCoroutine { cont ->
+            evaluateJavascript(script) { if (cont.isActive) cont.resume(it) }
+        }
     }
 
     /** Runs a script that returns JSON.stringify(...) and reads it back */

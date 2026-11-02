@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -41,22 +42,31 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -136,6 +146,17 @@ private fun restoreOnce(context: Context) {
 private const val MIN_W_DP = 220
 private const val MIN_H_DP = 140
 
+// KMK (r107): wrap and text size of the floating window only (the `diagnostics` prefs file, like FLOAT_RECT_*)
+private const val FLOAT_WRAP = "float_wrap"
+private const val FLOAT_TEXT_SP = "float_text_sp"
+private const val TEXT_SP_DEFAULT = 10.5f
+private const val TEXT_SP_MIN = 8f
+private const val TEXT_SP_MAX = 18f
+private const val TEXT_SP_STEP = 1f
+
+/** KMK (r107): below this window width the time and level sit on their own line above the message */
+private const val NARROW_DP = 520
+
 @Composable
 private fun FloatingWindow(parent: IntSize) {
     val diag = remember { Diag.get() }
@@ -184,6 +205,22 @@ private fun FloatingWindow(parent: IntSize) {
     var problemsOnly by remember { mutableStateOf(false) }
     var tail by remember { mutableStateOf<List<LogEntry>>(emptyList()) }
     val listState = rememberLazyListState()
+    // KMK (r107): lines wrap to the window width and reflow on resize (↵ off = one line each + sideways scroll);
+    // A− / A+ change this window's text size only; both are remembered
+    var wrap by remember { mutableStateOf(diagPrefs(context).getBoolean(FLOAT_WRAP, true)) }
+    var textSp by remember {
+        mutableFloatStateOf(
+            diagPrefs(context).getFloat(FLOAT_TEXT_SP, TEXT_SP_DEFAULT).coerceIn(TEXT_SP_MIN, TEXT_SP_MAX),
+        )
+    }
+    val sideScroll = rememberScrollState()
+    // KMK (r107) fix: the widest row seen while not wrapped (px), again from 0 when wrap or the text size changes
+    var widest by remember(wrap, textSp) { mutableIntStateOf(0) }
+    val narrow = with(density) { rect[2].toDp() } < NARROW_DP.dp
+    fun setTextSize(value: Float) {
+        textSp = value.coerceIn(TEXT_SP_MIN, TEXT_SP_MAX)
+        diagPrefs(context).edit { putFloat(FLOAT_TEXT_SP, textSp) }
+    }
 
     DisposableEffect(Unit) {
         diag.setStripVisible(true)
@@ -260,6 +297,13 @@ private fun FloatingWindow(parent: IntSize) {
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
+            // KMK (r107): wrap toggle and text size
+            TextAction("↵", "Wrap lines", selected = wrap) {
+                wrap = !wrap
+                diagPrefs(context).edit { putBoolean(FLOAT_WRAP, wrap) }
+            }
+            TextAction("A−", "Smaller text", selected = false) { setTextSize(textSp - TEXT_SP_STEP) }
+            TextAction("A+", "Bigger text", selected = false) { setTextSize(textSp + TEXT_SP_STEP) }
             SmallAction(Icons.Outlined.Flag, "Mark") { diag.mark(null) }
             SmallAction(Icons.Outlined.KeyboardArrowDown, "Collapse") { FloatingLogState.collapsed.value = true }
             SmallAction(Icons.Outlined.Close, "Close") { toggleFloating(context, false) }
@@ -298,8 +342,32 @@ private fun FloatingWindow(parent: IntSize) {
             }
         }
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            LazyColumn(state = listState, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
-                items(tail.size, key = { i -> "${tail[i].time}_$i" }) { i -> TailRow(tail[i]) }
+            // KMK (r107): wrapped = rows as wide as the window (Text reflows when it is resized); not wrapped = the
+            // list is measured unbounded in width and scrolls sideways as one block
+            LazyColumn(
+                state = listState,
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .then(
+                        if (wrap) {
+                            Modifier
+                        } else {
+                            // KMK (r107) fix: as wide as the widest row seen (never narrower as rows scroll by),
+                            // so the sideways scroll doesn't jump
+                            Modifier
+                                .horizontalScroll(sideScroll)
+                                .widthIn(min = with(density) { widest.toDp() })
+                        },
+                    ),
+            ) {
+                items(tail.size, key = { i -> "${tail[i].time}_$i" }) { i ->
+                    // KMK (r107) fix: not wrapped, the widest row seen so far sets the list's width
+                    Box(modifier = if (wrap) Modifier else Modifier.onSizeChanged { if (it.width > widest) widest = it.width }) {
+                        TailRow(tail[i], wrap = wrap, narrow = narrow, textSp = textSp)
+                    }
+                }
             }
             // Resize handle
             Box(
@@ -345,6 +413,31 @@ private fun SmallAction(icon: ImageVector, label: String, onClick: () -> Unit) {
     ) { Icon(icon, contentDescription = label, modifier = Modifier.size(18.dp)) }
 }
 
+/** KMK (r107): a 28 dp text button in the title bar (↵ · A− · A+); [selected] tints it like the mockup's "on" state */
+@Composable
+private fun TextAction(text: String, label: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(28.dp)
+            .clip(CircleShape)
+            .background(if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
+            .clickable(onClickLabel = label, onClick = onClick),
+    ) {
+        Text(
+            text,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            color = if (selected) {
+                MaterialTheme.colorScheme.onSecondaryContainer
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+        )
+    }
+}
+
 @Composable
 private fun MiniChip(
     label: String,
@@ -366,9 +459,14 @@ private fun MiniChip(
     )
 }
 
+/**
+ * KMK (r107): one log line. The time and "level tag" are split off the text (exactly `AppLog.format()`); when
+ * [narrow] they sit on their own line above the message. With [wrap] the text wraps to the row width (reflowing
+ * as the window is resized), else it stays on one line (the list scrolls sideways). The text is never cut: what
+ * the row shows is the whole line.
+ */
 @Composable
-private fun TailRow(line: LogEntry) {
-    var open by remember { mutableStateOf(false) }
+private fun TailRow(line: LogEntry, wrap: Boolean, narrow: Boolean, textSp: Float) {
     val color = when {
         line.isMark -> MaterialTheme.colorScheme.primary
         line.level == 'E' -> DiagColors.problem
@@ -378,21 +476,85 @@ private fun TailRow(line: LogEntry) {
         line.level == 'D' -> MaterialTheme.colorScheme.onSurfaceVariant
         else -> MaterialTheme.colorScheme.onSurface
     }
-    Row(modifier = Modifier.fillMaxWidth().clickable { open = !open }) {
-        if (line.level == 'E' || line.isMark) {
-            Box(modifier = Modifier.width(2.dp).height(14.dp).background(color))
-            Spacer(Modifier.width(3.dp))
+    val timeColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+    val levelColor = when (line.level) {
+        'E' -> DiagColors.problem
+        'W' -> DiagColors.attention
+        'I' -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val text = line.text
+    val time = text.substringBefore(' ')
+    val head = "$time ${line.level} ${line.tag} "
+    // Fallback: a line that doesn't have the usual shape is shown whole, in one piece
+    val split = text.startsWith(head)
+    val message = if (split) text.substring(head.length) else text
+    val headText = buildAnnotatedString {
+        withStyle(SpanStyle(color = timeColor)) { append(time) }
+        append(" ")
+        withStyle(SpanStyle(color = levelColor)) { append("${line.level} ${line.tag}") }
+    }
+    val oneLine = buildAnnotatedString {
+        if (split) {
+            append(headText)
+            append(" ")
         }
-        Text(
-            line.text,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 10.5.sp,
-            lineHeight = 13.sp,
-            color = color,
-            fontWeight = if (line.isMark) FontWeight.Bold else FontWeight.Normal,
-            maxLines = if (open) Int.MAX_VALUE else 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        withStyle(SpanStyle(color = color)) { append(message) }
+    }
+    val fontSize = textSp.sp
+    val lineHeight = (textSp * 1.25f).sp
+    val weight = if (line.isMark) FontWeight.Bold else FontWeight.Normal
+    // KMK (r107) fix: the error / mark bar is drawn behind the row: a row sized by its intrinsic height measured each
+    // text on one unwrapped line per paragraph, so a wrapped message (a stack trace's long lines) was cut short
+    val bar = line.level == 'E' || line.isMark
+    Row(
+        modifier = Modifier
+            .then(if (wrap) Modifier.fillMaxWidth() else Modifier)
+            .then(
+                if (bar) {
+                    Modifier
+                        .drawBehind { drawRect(color, topLeft = Offset.Zero, size = Size(2.dp.toPx(), size.height)) }
+                        .padding(start = 5.dp)
+                } else {
+                    Modifier
+                },
+            ),
+    ) {
+        if (narrow && split) {
+            Column {
+                Text(
+                    headText,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = fontSize,
+                    lineHeight = lineHeight,
+                    softWrap = false,
+                    maxLines = 1,
+                    overflow = TextOverflow.Clip,
+                )
+                Text(
+                    message,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = fontSize,
+                    lineHeight = lineHeight,
+                    color = color,
+                    fontWeight = weight,
+                    softWrap = wrap,
+                    maxLines = if (wrap) Int.MAX_VALUE else 1,
+                    overflow = TextOverflow.Clip,
+                )
+            }
+        } else {
+            Text(
+                oneLine,
+                fontFamily = FontFamily.Monospace,
+                fontSize = fontSize,
+                lineHeight = lineHeight,
+                fontWeight = weight,
+                softWrap = wrap,
+                maxLines = if (wrap) Int.MAX_VALUE else 1,
+                overflow = TextOverflow.Clip,
+            )
+        }
     }
 }
 

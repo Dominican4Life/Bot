@@ -1,4 +1,4 @@
-// @version 9
+// @version 10
 // Generic list template of the Source Lab, written for {{name}} ({{baseUrl}}) from what was tapped in Build by
 // tapping (or filled by hand). Lists are pages of ITEM cards, chapters / episodes are the links of CHAPTER on a
 // title page, pages are the IMAGE pictures of a chapter page, videos the VIDEO_FRAME of an episode page.
@@ -24,6 +24,11 @@
 // r106 (v9): a suggestions section the site loads later can be read "with the browser" (the title page opened in the
 // app's hidden browser until its cards show); a section's "Load more" button can be pressed up to 3 times: the next
 // pages are asked for at the address one press uses ({page} filled), or the hidden browser presses it.
+// r107 (v10): a directory (genres, makers, people, series…) can be a "collection" filter: its entries keep their parts
+// apart (number, name, videos, views, likes, picture; never a Follow button), the site's own sort options and menus,
+// and getDirectory reads its pages one at a time as Browse scrolls ("live"); the built-in "List" stays in getFilters
+// (the app hides it; the list browsed still comes as "__from"); Suggestions read each section on its own (one that fails
+// never fails the others), log each section's outcome, and give the hidden browser 35 s at most in all.
 
 /*@part id="headers"*/
 // Headers and constants: the site as Referer on every picture; the selectors the builder derived (each with
@@ -117,6 +122,9 @@ var extension = {
   // as a list: each is matched to an option by its label or value (any case), a name not in the list is sent as a
   // slug ("Slice of Life" → slice-of-life, logged), names starting with "-" are left out; a page filter uses the first name, an
   // extra joins them with ",".
+  // r107 (v10): a "collection" filter (a directory's entries) is a page filter like a page autocomplete: the picked entry's
+  // value (a name typed that isn't one of its entries is sent as a slug, logged). Its sort and menus only order the
+  // app's drop-down; they are never sent here.
   search: async function (query, page, filters) {
     var list = typeof FILTERS !== "undefined" && Array.isArray(FILTERS) ? FILTERS : [];
     var groups = typeof TAG_GROUPS !== "undefined" && Array.isArray(TAG_GROUPS) ? TAG_GROUPS : [];
@@ -132,18 +140,18 @@ var extension = {
         var hit = null;
         var typed = null;
         plan.forEach(function (f) {
-          if (hit || f.builtIn || (f.type !== "select" && f.type !== "sort" && f.type !== "autocomplete")) return;
+          if (hit || f.builtIn || (f.type !== "select" && f.type !== "sort" && f.type !== "autocomplete" && f.type !== "collection")) return;
           if (String(f.name || "").trim().toLowerCase() !== ns && String(f.key || "").toLowerCase() !== ns) return;
           (f.options || []).forEach(function (o, index) {
             if (!hit && o && String(o.label || "").trim().toLowerCase() === tag.toLowerCase()) hit = { f: f, o: o, index: index };
           });
-          if (!hit && !typed && f.type === "autocomplete") typed = f;
+          if (!hit && !typed && (f.type === "autocomplete" || f.type === "collection")) typed = f;
         });
         if (!hit && typed) hit = { f: typed, o: { label: tag, value: slugOf(tag) }, index: -1 };
         if (hit) {
           filters = Object.assign({}, filters || {});
           filters[hit.f.key] = hit.f.type === "sort" ? { index: hit.index, value: hit.o.value, ascending: false } :
-            hit.f.type === "autocomplete" ? [hit.o.label] : hit.o.value;
+            hit.f.type === "autocomplete" ? [hit.o.label] : hit.f.type === "collection" && hit.index < 0 ? hit.o.label : hit.o.value;
           q = "";
           console.log("Tag " + tagged[1].trim() + ": " + tag + " → filter " + (hit.f.name || hit.f.key) + " = " + (hit.o.value || "(any)"));
         } else {
@@ -158,7 +166,7 @@ var extension = {
     var chosen = [];
     plan.forEach(function (f) {
       var raw = filters ? filters[f.key] : undefined;
-      var v = f.type === "autocomplete" ? suggestedValue(f, raw) : filterValue(f, raw);
+      var v = f.type === "autocomplete" || f.type === "collection" ? suggestedValue(f, raw) : filterValue(f, raw);
       if (f.builtIn) {
         var listDefault = f.options[f.defaultIndex].value;
         var here = f.options.some(function (o) { return o.value === from; }) ? from : listDefault;
@@ -507,6 +515,13 @@ var extension = {
 // waiting for its cards: slower, 2–4 s, but it works when no address was found); a section's "more" (its Load more
 // button, pressed up to "presses" times) adds the next pages: from "request" with {page} = from, from + step… (stops at
 // a page that adds nothing), else the hidden browser presses the button and the cards are read after.
+// r107 (v10): getFilters keeps the built-in List first (the app hides it; search still reads "__from"). A
+// "collection" filter goes to the app with its entries' parts ({ label, value, number, videos, views, likes, picture }:
+// only the parts in its "fields"), the site's sort options ("sorts"), its other menus ("menus"), "live" and "total";
+// getDirectory(key, page, sort, ascending, menus) reads one page of its directory ("directory": the page address with
+// {page}, the entry selector and each part's selector) with the site's sort / menus as address parameters. getRelated
+// reads the title page inside each section's try (a section that fails is logged, the others still come), logs each
+// section's outcome and gives the hidden browser 35 s at most for all its sections.
 if (TABS.length) {
   extension.getCatalogs = function () {
     return TABS.map(function (t) { return { id: t.path, name: t.name || t.path, tab: true }; });
@@ -519,12 +534,24 @@ if (FILTERS.length) {
   extension.getFilters = function () {
     var out = [];
     filterPlan(FILTERS).forEach(function (f) {
+      // r107 (v10): the List stays first (saved searches keep their filter positions); the app hides it in the sheet
       var shown = { key: f.key, name: f.name || f.key, type: f.type, role: f.role };
       if (f.type === "select" || f.type === "sort") shown.options = f.options || [];
       if (f.type === "autocomplete") {
         shown.options = f.options || [];
         shown.hint = "Type a name: " + (f.name || f.key);
         shown.prefixes = [];
+      }
+      if (f.type === "collection") {
+        shown.mode = "path";
+        shown.path = f.path || "";
+        shown.fields = Array.isArray(f.fields) && f.fields.length ? f.fields : ["title"];
+        shown.options = f.options || [];
+        shown.sorts = Array.isArray(f.sorts) ? f.sorts : [];
+        shown.reverse = f.reverse === true;
+        shown.menus = Array.isArray(f.menus) ? f.menus : [];
+        shown.live = f.live === true && !!(f.directory && f.directory.item);
+        shown.total = +f.total || 0;
       }
       if (f.defaultIndex) shown.defaultIndex = f.defaultIndex;
       if (!f.group) {
@@ -544,16 +571,57 @@ if (SETTINGS.length) {
     return SETTINGS;
   };
 }
+if (FILTERS.some(function (f) { return f && f.type === "collection" && f.directory && f.directory.item; })) {
+  // r107 (v10): one page of a collection's directory: { items: [{ label, value, number?, videos?, views?, likes?,
+  // picture? }], hasNext }. [sort] = one of its "sorts" values ("" = the site's own order), [ascending] is sent only
+  // when the site offers it ("reverse"), [menus] = { menuKey: value } (empty values left out)
+  extension.getDirectory = async function (key, page, sort, ascending, menus) {
+    var f = FILTERS.filter(function (x) { return x && x.key === key && x.type === "collection"; })[0];
+    if (!f || !f.directory || !f.directory.item) throw new Error("The filter " + key + " has no directory to read");
+    var d = f.directory;
+    var n = Math.max(1, Math.floor(+page || 1));
+    if (n > 1 && !d.page) return { items: [], hasNext: false };
+    var url = n === 1 ? pathFor(d.first || d.page, 1, "") : pathFor(d.page, n, "");
+    var s = String(sort === undefined || sort === null ? "" : sort).trim();
+    if (s && !d.sortParam && /^(\/|https?:)/i.test(s)) url = pathFor(withPageNumber(s, n), n, "");
+    else if (s) url = withParam(url, d.sortParam || "sort", s);
+    if (f.reverse === true && d.orderParam) url = withParam(url, d.orderParam, ascending ? (d.ascValue || "asc") : (d.descValue || "desc"));
+    Object.keys(menus && typeof menus === "object" ? menus : {}).forEach(function (k) {
+      var v = menus[k] === undefined || menus[k] === null ? "" : String(menus[k]).trim();
+      if (v) url = withParam(url, k, v);
+    });
+    var doc = await host.parse(await get(url));
+    var items = await directoryItems(f, doc);
+    var next = items.length > 0 ? await hasNextPage(doc, n) : false;
+    console.log("Directory " + (f.name || key) + " page " + n + ": " + items.length + " entries from " + url + (next ? "" : " (last page)"));
+    return { items: items, hasNext: next };
+  };
+}
 if (typeof SUGGESTION_GROUPS !== "undefined" && Array.isArray(SUGGESTION_GROUPS) && SUGGESTION_GROUPS.length) {
   extension.getRelated = async function (url) {
-    var doc = await host.parse(await get(url));
+    // r107 (v10): the title page is read inside a try: when it fails, the sections read with the browser still come
+    var doc = null;
+    var docError = "";
+    try {
+      doc = await host.parse(await get(url));
+    } catch (e) {
+      docError = (e && e.message) || String(e);
+      console.log("Suggestions: the title page wasn't read: " + docError);
+    }
     var out = {};
+    var started = Date.now();
+    // r107 (v10): the hidden browser gets 35 s at most for all the sections it reads
+    var browserBudget = 35000;
+    var browserUsed = 0;
     for (var gi = 0; gi < SUGGESTION_GROUPS.length; gi++) {
       var g = SUGGESTION_GROUPS[gi] || {};
       var name = String(g.name || "").trim() || "Suggestions";
       var list = out[name] || [];
+      var before = list.length;
       var pics = list.map(function () { return null; });
       var seen = {};
+      var t0 = Date.now();
+      var where = url;
       list.forEach(function (x) { seen[x.url] = true; });
       // the cards of [els] not listed yet; how many were added
       var addCards = async function (els) {
@@ -584,15 +652,24 @@ if (typeof SUGGESTION_GROUPS !== "undefined" && Array.isArray(SUGGESTION_GROUPS)
         // r106: no address for the next pages: the hidden browser presses Load more while it shows the page
         var browserPresses = more && !more.request ? presses : 0;
         var from = doc;
-        var where = url;
         if (g.read === "browser" || browserPresses) {
           // r106: the title page as the hidden browser shows it (the section filled in by the site's script)
+          var left = browserBudget - browserUsed;
+          if (left < 6000) throw new Error("the browser's 35 s for suggestions were used by the sections before it");
           where = url + " (in the browser)";
-          from = await renderedSection(url, g, browserPresses);
+          var b0 = Date.now();
+          try {
+            from = await renderedSection(url, g, browserPresses, left);
+          } finally {
+            browserUsed += Date.now() - b0;
+          }
         } else if (g.late) {
           // r105: the section comes from another address the page asks for after it loads
+          if (!doc && /\{attr:/.test(String(g.late))) throw new Error("its address needs the title page (" + docError + ")");
           where = await lateAddress(g.late, url, doc);
           from = await lateDoc(await get(where, { headers: { "X-Requested-With": "XMLHttpRequest" } }));
+        } else if (!doc) {
+          throw new Error("the title page wasn't read (" + docError + ")");
         }
         var els = g.item ? await from.select(g.item) : [];
         if (!els.length && g.late && g.read !== "browser" && !browserPresses) els = await shorterSelect(from, g.item);
@@ -612,13 +689,13 @@ if (typeof SUGGESTION_GROUPS !== "undefined" && Array.isArray(SUGGESTION_GROUPS)
           }
         }
         sameCoverAgain(list, pics, "Suggestions " + name);
-        if ((g.late || g.read === "browser") && !list.length) console.log("Suggestions " + name + ": nothing read from " + where);
+        console.log("Suggestions " + name + ": " + (list.length - before) + " cards from " + where + " in " + (Date.now() - t0) + " ms");
       } catch (e) {
-        console.log("Suggestions " + name + " weren't read: " + (e && e.message));
+        console.log("Suggestions " + name + " failed after " + (Date.now() - t0) + " ms: " + ((e && e.message) || String(e)));
       }
       if (list.length) out[name] = list;
-      else console.log("Suggestions " + name + ": no card found on " + url);
     }
+    console.log("Suggestions: " + Object.keys(out).length + " of " + SUGGESTION_GROUPS.length + " sections in " + (Date.now() - started) + " ms");
     return out;
   };
 }
@@ -631,7 +708,8 @@ if (typeof SUGGESTION_GROUPS !== "undefined" && Array.isArray(SUGGESTION_GROUPS)
 // r105 (v8): the filters as search() uses them (filterPlan: the built-in List first, each filter's role), a page
 // filter's address with the page number in the list paths' style, picture addresses without placeholders (coverOf),
 // and the address / reply of a section that loads later. r106 (v9): a section read in the hidden browser
-// (renderedSection, with its Load more pressed by pressScript).
+// (renderedSection, with its Load more pressed by pressScript). r107 (v10): a collection's directory entries
+// (directoryItems: each part from its own element; entryLabel, countIn, valueOfHref, hasNextPage).
 async function get(url, options) {
   var o = options || {};
   var headers = Object.assign({ Referer: BASE + "/" }, o.headers || {});
@@ -663,8 +741,10 @@ function filterValue(f, v) {
 function slugOf(t) {
   return String(t).toLowerCase().replace(/[^0-9a-zÀ-￿]+/g, "-").replace(/^-+|-+$/g, "");
 }
-// r103 (v6): the value an autocomplete filter sends: its names mapped to option values (a page filter: the first)
+// r103 (v6): the value an autocomplete filter sends: its names mapped to option values (a page filter: the first).
+// r107 (v10): a collection's pick (its entry's value, or { value } / { label }) the same way
 function suggestedValue(f, v) {
+  if (v && typeof v === "object" && !Array.isArray(v)) v = v.value !== undefined && v.value !== null && v.value !== "" ? v.value : v.label;
   var names = Array.isArray(v) ? v : (v === undefined || v === null || v === "" ? [] : [v]);
   var out = [];
   names.forEach(function (n) {
@@ -676,6 +756,11 @@ function suggestedValue(f, v) {
     (f.options || []).forEach(function (o) {
       if (!hit && o && (String(o.label || "").trim().toLowerCase() === low || String(o.value || "").toLowerCase() === low)) hit = o;
     });
+    // r107 fix: a collection's pick not in its stored entries (a live list's later page) is the entry's value as it is
+    if (!hit && f.type === "collection") {
+      if (out.indexOf(t) < 0) out.push(t);
+      return;
+    }
     var value = hit ? String(hit.value || "") : slugOf(t);
     if (!hit) console.log("Filter " + (f.name || f.key) + ": \"" + t + "\" isn't in its list: sent as " + value);
     if (value && out.indexOf(value) < 0) out.push(value);
@@ -889,15 +974,26 @@ async function shorterSelect(doc, css) {
 // the item selector a browser can read); with [presses], its Load more button is pressed that many times first, each
 // time waiting until more cards show (5 s at most). r106 fix: a browser can't read Jsoup's :matchesOwn(…), so "wait"
 // matches any section's cards: pressScript then finds the section's heading by its own text and waits (12 s at most)
-// for at least one card under it, and counts only those cards for each press
-async function renderedSection(url, g, presses) {
+// for at least one card under it, and counts only those cards for each press. r107 (v10): [budget] ms at most in all
+// (35 s shared by getRelated's sections): the page's wait, the first card's wait and the presses are cut to fit it
+async function renderedSection(url, g, presses, budget) {
   var wait = String(g.wait || (g.more && g.more.wait) || g.item || "").replace(/:(matchesOwn|matches|containsOwn|contains)\([^()]*\)/g, "").trim();
   var head = headTestOf(g.item);
-  var options = { timeout: 20000 };
+  var total = Math.max(6000, Math.min(35000, +budget || 35000));
+  var firstMs = Math.max(2000, Math.min(12000, Math.floor(total * 0.2)));
+  // each press waits 5 s at most for more cards (plus 0.3 s). r107 fix: the presses are counted first (with the page's
+  // 8 s at least), then the page gets what is left (8–20 s): one section keeps its 3 presses within 35 s
+  var fit = Math.max(0, Math.floor((total - 8000 - firstMs) / 5300));
+  if (presses > fit) {
+    console.log("Suggestions " + (g.name || "") + ": Load more pressed " + fit + " times instead of " + presses + " (35 s at most in the browser)");
+    presses = fit;
+  }
+  var load = Math.max(8000, Math.min(20000, total - firstMs - presses * 5300));
+  var options = { timeout: load };
   if (wait) options.waitFor = wait;
-  if (presses || head) options.script = pressScript(presses ? g.more.button : "", presses ? g.more.text : "", wait, presses, head);
+  if (presses || head) options.script = pressScript(presses ? g.more.button : "", presses ? g.more.text : "", wait, presses, head, firstMs);
   var r = await host.render(url, options);
-  if (r && r.timedOut) console.log("Suggestions " + (g.name || "") + ": the browser didn't show them within 20 s");
+  if (r && r.timedOut) console.log("Suggestions " + (g.name || "") + ": the browser didn't show them within " + Math.round(load / 1000) + " s");
   if (presses) console.log("Suggestions " + (g.name || "") + ": Load more pressed " + (r && r.result) + " of " + presses + " times");
   else if (head && r && String(r.result) === "0") console.log("Suggestions " + (g.name || "") + ": the browser showed no card under \"" + (head.text || head.re) + "\"");
   return host.parse((r && r.html) || "");
@@ -912,8 +1008,10 @@ function headTestOf(item) {
 }
 // The script for the hidden browser (by the section's heading when [head] is given, else every match of [wait]):
 // waits for a card, then presses a Load more button [presses] times (by its css path, else by its text), each time
-// until more cards show. Its result: the presses done, or the cards found when there is nothing to press
-function pressScript(button, text, wait, presses, head) {
+// until more cards show. Its result: the presses done, or the cards found when there is nothing to press. r107 (v10):
+// [firstMs] = how long it waits for the first card (12 s at most)
+function pressScript(button, text, wait, presses, head, firstMs) {
+  var firstWait = Math.max(1000, Math.min(12000, +firstMs || 12000));
   return "(function(){var sel=" + JSON.stringify(String(button || "")) + ",txt=" + JSON.stringify(String(text || "")) +
     ",wait=" + JSON.stringify(String(wait || "")) + ",want=" + (+presses || 0) + ",done=0,head=" + JSON.stringify(head || null) + ",re=null;" +
     "if(head&&head.re){try{re=new RegExp(head.re);}catch(e){head=null;}}" +
@@ -933,7 +1031,7 @@ function pressScript(button, text, wait, presses, head) {
     "function step(){if(done>=want)return res(want?done:count());var b=find();if(!b)return res(done);" +
     "var before=count();try{b.click();}catch(e){return res(done);}done++;var t1=Date.now();" +
     "(function check(){if(count()>before||Date.now()-t1>5000)return setTimeout(step,300);setTimeout(check,200);})();}" +
-    "(function first(){if(count()>=1||Date.now()-t0>12000)return step();setTimeout(first,250);})();});})()";
+    "(function first(){if(count()>=1||Date.now()-t0>" + firstWait + ")return step();setTimeout(first,250);})();});})()";
 }
 async function cards(html) {
   var doc = await host.parse(html);
@@ -960,6 +1058,145 @@ async function cards(html) {
   }
   sameCoverAgain(out, pics, "List covers");
   return out;
+}
+// r107 (v10): a collection's entries on one page of its directory: each card ("item"), its link (the entry's value is
+// the part of the link's address at {value} in the filter's path) and the parts kept in "fields", each read from its
+// own element ("parts": title { sel, own, attr }; number / videos / views / likes { sel, bare }; picture { sel, attr };
+// sel "" = the card itself). A Follow button is never read; the name never carries the counts.
+async function directoryItems(f, doc) {
+  var d = f.directory || {};
+  var parts = d.parts || {};
+  var fields = Array.isArray(f.fields) && f.fields.length ? f.fields : ["title"];
+  var els = d.item ? await doc.select(d.item) : [];
+  var out = [];
+  var seen = {};
+  for (var i = 0; i < els.length; i++) {
+    var card = els[i];
+    var a = null;
+    if (d.link) { try { a = await card.selectOne(d.link); } catch (e) { a = null; } }
+    if (!a) a = card.tag === "a" ? card : await card.selectOne("a[href]");
+    if (a && a.tag !== "a") a = (await a.selectOne("a[href]")) || a;
+    if (!a || !a.attr("href")) continue;
+    var value = valueOfHref(f.path, abs(a.attr("href")));
+    if (!value || seen[value]) continue;
+    // r107 fix: a number read from the name's own text ("01 Slice of Life": number and title the same element) isn't part
+    // of the name; the whole link's text ("FC FC2") without a logo's letters
+    var name = await partText(card, parts.title, false);
+    if (parts.number && parts.title && !parts.title.attr && parts.number.sel === parts.title.sel) name = name.replace(/^\s*#?\s*\d\d?\d?\d?\.?\s+(?=\S)/, "");
+    var label = entryLabel(name) || entryLabel(a.attr("title")) || dropInitials(entryLabel(a.text));
+    if (!label) continue;
+    seen[value] = true;
+    var item = { label: label, value: value };
+    var kinds = ["number", "videos", "views", "likes"];
+    for (var k = 0; k < kinds.length; k++) {
+      var p = parts[kinds[k]];
+      if (fields.indexOf(kinds[k]) < 0 || !p) continue;
+      var v = countIn(kinds[k], await partText(card, p, true), p.bare === true);
+      if (v) item[kinds[k]] = v;
+    }
+    if (fields.indexOf("picture") >= 0 && parts.picture) {
+      var img = await partEl(card, parts.picture);
+      if (img && img.tag !== "img") img = (await img.selectOne("img")) || img;
+      var pic = coverOf(img, parts.picture.attr);
+      if (pic) item.picture = pic;
+    }
+    out.push(item);
+  }
+  return out;
+}
+// A part's element inside a card (sel "" = the card itself), null when it has none
+async function partEl(card, p) {
+  if (!p) return null;
+  if (!p.sel) return card;
+  try { return await card.selectOne(p.sel); } catch (e) { return null; }
+}
+// A part's text: [whole] = all of it (a count), else the name: its attribute when it has one (alt, title), its own text
+// without its children's when "own" (a name with a count inside the same element)
+async function partText(card, p, whole) {
+  var el = await partEl(card, p);
+  if (!el) return "";
+  if (!whole && p.attr) {
+    var at = el.attr(p.attr);
+    if (at) return String(at).replace(/\s+/g, " ").trim();
+  }
+  var t = String(el.text || "");
+  if (!whole && p.own) {
+    try {
+      (await el.select("> *", { html: false })).forEach(function (c) {
+        var ct = String(c.text || "").trim();
+        if (ct) t = t.replace(ct, " ");
+      });
+    } catch (e) { /* the whole text */ }
+  }
+  return t.replace(/\s+/g, " ").trim();
+}
+// An entry's name without what a whole card adds to it: a Follow / Following button's words and trailing counts
+// ("Slice of Life 1,234 videos · 2.1M views + Follow Following" → "Slice of Life")
+function entryLabel(t) {
+  var s = String(t || "").replace(/\s+/g, " ").trim();
+  var before;
+  do {
+    before = s;
+    s = s.replace(/\s*[+＋]?\s*(?:follow(?:ing|ed)?|unfollow|subscribed?|unsubscribe)\s*$/i, "").trim();
+    s = s.replace(/\s*[·•|,]?\s*\d[\d.,]*(?:\s?[KMB](?![A-Za-z]))?\+?\s*(?:videos?|movies?|clips?|titles?|works?|items?|posts?|galleries|gallery|books?|mangas?|comics?|episodes?|views?|likes?|followers?|♥|❤)\s*$/i, "").trim();
+    s = s.replace(/\s*[·•|]\s*$/, "").trim();
+    // a thousands-grouped number alone at the end ("Drama 20,837"), never "Top 100" or a year
+    s = s.replace(/^(.*[^\s\d.,])\s+\d\d?\d?(?:,\d\d\d)+\s*$/, "$1").trim();
+  } while (s && s !== before);
+  return s;
+}
+// r107 fix: "FC FC2" → "FC2", "S- S-Cute" → "S-Cute": a logo's 1–3 characters before the name they start (any case)
+function dropInitials(t) {
+  var s = String(t || "");
+  var sp = s.indexOf(" ");
+  if (sp <= 0) return s;
+  var first = s.slice(0, sp);
+  var rest = s.slice(sp + 1).trim();
+  return first.length <= 3 && rest.length >= first.length && rest.toLowerCase().indexOf(first.toLowerCase()) === 0 ? rest : s;
+}
+// A count as the site shows it, its unit word dropped ("4,476 videos" → "4,476", "6.2M views" → "6.2M", "♥ 17.2K" →
+// "17.2K"); [bare] = the part is a number alone; a "number" is an entry's place (01, 02…)
+function countIn(kind, text, bare) {
+  var t = String(text || "");
+  var m = null;
+  if (kind === "number") m = /^\s*#?\s*(\d\d?\d?\d?)\.?(?!\d)/.exec(t);
+  else if (kind === "videos") m = /(\d[\d.,]*(?:\s?[KMB](?![A-Za-z]))?)\s*(?:videos?|movies?|clips?|titles?|works?|items?|posts?|galleries|gallery|books?|mangas?|comics?|episodes?)\b/i.exec(t);
+  else if (kind === "views") m = /(\d[\d.,]*(?:\s?[KMB](?![A-Za-z]))?)\s*views?\b/i.exec(t);
+  else if (kind === "likes") m = /(\d[\d.,]*(?:\s?[KMB](?![A-Za-z]))?)\s*(?:likes?\b|♥|❤)/i.exec(t) || /(?:♥|❤)\s*(\d[\d.,]*(?:\s?[KMB](?![A-Za-z]))?)/i.exec(t);
+  if (!m && bare && kind !== "number") m = /(\d[\d.,]*(?:\s?[KMB](?![A-Za-z]))?)/i.exec(t);
+  return m ? m[1].replace(/\s+/g, "").replace(/[.,]$/, "") : "";
+}
+// The value an entry's link gives a filter path: the part of its address at {value} (/en/makers/{value} → the
+// maker's slug, as the site writes it), or the {value} parameter's value (?genre={value})
+function valueOfHref(path, href) {
+  var p = String(path || "");
+  var h = String(href || "");
+  var q = p.indexOf("?");
+  var segs = (q < 0 ? p : p.slice(0, q)).split("/").filter(function (x) { return !!x; });
+  var at = segs.indexOf("{value}");
+  if (at >= 0) {
+    var hs = h.replace(/^https?:\/\/[^\/]+/i, "").split(/[?#]/)[0].split("/").filter(function (x) { return !!x; });
+    for (var i = 0; i < at; i++) {
+      if (segs[i].indexOf("{") < 0 && String(hs[i] || "").toLowerCase() !== segs[i].toLowerCase()) return "";
+    }
+    return hs[at] || "";
+  }
+  var m = /[?&]([^=&?#]+)=\{value\}/.exec(p);
+  if (!m) return "";
+  var mm = new RegExp("[?&]" + m[1].replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "=([^&#]*)").exec(h);
+  if (!mm) return "";
+  try { return decodeURIComponent(mm[1].replace(/\+/g, " ")); } catch (e) { return mm[1]; }
+}
+// A directory page has a next one: rel=next, a "Next" / › link, or a link reading the next page's number
+async function hasNextPage(doc, n) {
+  try {
+    if (await doc.selectOne("a[rel~=next][href], link[rel~=next][href]")) return true;
+    if (await doc.selectOne("a[href]:matchesOwn((?i)^\\s*(next|next page|›|»|>|→)\\s*$)")) return true;
+    return !!(await doc.selectOne("a[href]:matchesOwn(^\\s*" + (n + 1) + "\\s*$)"));
+  } catch (e) {
+    console.log("Directory: the next page wasn't looked for: " + (e && e.message));
+    return false;
+  }
 }
 function abs(href) {
   return href ? require("url").resolve(BASE, String(href).trim()) : null;

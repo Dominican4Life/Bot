@@ -48,6 +48,8 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
@@ -247,7 +249,16 @@ fun CodeEditor(
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     visualTransformation = transformation,
                     onTextLayout = { layout = it },
+                    // KMK (r107): keep this field out of autofill. Compose's semantic autofill sends the field's
+                    // whole text to the system AutofillManager (notifyValueChanged) when the field's semantics
+                    // change, e.g. on focus; a source of ~500 KB went over the 1 MB Binder limit and crashed the
+                    // app (TransactionTooLargeException). clearAndSetSemantics is the outermost semantics on this
+                    // node, so it drops the text field's own semantics (InputText, ContentDataType, SetText): the
+                    // autofill manager never sees a value. Typing, the IME, selection and focus don't use
+                    // semantics; only accessibility loses the field's text (it reads "Code").
+                    // Not disabled app-wide on purpose: the tracker logins use autofill (SettingsTrackingScreen).
                     modifier = Modifier
+                        .clearAndSetSemantics { contentDescription = "Code" }
                         .widthIn(min = 600.dp)
                         .fillMaxSize()
                         .padding(start = 8.dp, end = 24.dp, top = 8.dp, bottom = 200.dp),

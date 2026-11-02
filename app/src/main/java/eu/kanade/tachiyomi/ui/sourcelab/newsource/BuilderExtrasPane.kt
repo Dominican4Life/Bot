@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.ui.sourcelab.newsource
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
@@ -28,6 +30,7 @@ import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -36,7 +39,9 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RangeSlider
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -46,6 +51,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -54,12 +60,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil3.compose.AsyncImage
 import kotlinx.coroutines.delay
+import java.util.Locale
+import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
 /**
@@ -87,6 +97,11 @@ import kotlin.math.roundToLong
  * name is taken), then the filters as compact rows in Browse order (tap = the editor). The r102 Learn card above the
  * pane and "Fetch the full list of this page" are gone. A card asked for by the model ([BuilderExtras.scrollTarget])
  * opens Filters and brings itself into view inside the builder's scrolling panel.
+ *
+ * r107 (mocks CScan / BRead): a directory card shows its scan ([CollectionSection]): each part of an entry with a tick
+ * and page 1's example (Follow greyed, never kept), the drop-down row they give, the site's sort options as chips and
+ * its other menus, then Live, as you scroll / Read pages now (page range, pause, time it takes), and the progress card
+ * with Stop while pages are read. The built-in "List" row is gone (Browse's tabs pick the list).
  */
 @Composable
 internal fun BuilderExtrasPane(
@@ -499,7 +514,8 @@ private fun FiltersSection(
         if (s.filters.isEmpty()) {
             Hint("None yet: pick a menu on the site, or add one by hand.")
         } else {
-            BuiltInListRow(s)
+            // r107: no built-in List filter: Popular, Latest and the tabs are Browse's own buttons
+            Hint("Popular, Latest and your tabs are Browse's own buttons: they pick the list, so there's no List filter.")
         }
         val groupNames = s.filters.map { it.group.trim() }.filter { it.isNotEmpty() }.distinct()
         s.filters.forEachIndexed { index, filter ->
@@ -629,6 +645,7 @@ private fun CardBox(
 /** r106: what a card's kind line says ("Dropdown · 9 entries · buttons, not links") */
 private fun kindLine(g: MenuGroup, kids: Int): String {
     val probe = g.probe
+    val scanned = probe?.scan?.takeIf { it.ok }
     return when (g.kind) {
         "buttons" -> "Dropdown · ${g.items.size} entries · buttons, not links"
         "select" -> "Dropdown · ${g.items.size} entries · its values are the codes"
@@ -638,12 +655,22 @@ private fun kindLine(g: MenuGroup, kids: Int): String {
             probe == null -> "A list page"
             probe.state == "reading" -> "Name list · reading its first page…"
             probe.state == "failed" -> "Couldn't read its first page (${probe.note})"
+            // r107: scanned part by part
+            scanned != null -> "Directory · scanned · " + entriesText(scanned) +
+                if (probe.pages > 1) " · ${BuilderExtrasLogic.thousands(probe.pages)} pages" else " · one page"
             probe.pages > 1 || probe.hasNext ->
                 "Name list with pages found (1, 2, 3 … ${if (probe.pages > 2) probe.pages.toString() else "more"}) · ${probe.entries} names on page 1"
             probe.entries > 0 -> "Name list · ${probe.entries} names on one page"
             else -> "No list of names found on it" + if (probe.note.isNotBlank()) " (${probe.note})" else ""
         }
     }
+}
+
+/** r107: "25,786 entries" (shown by the site), "about 1,800 entries" (pages × page 1) or page 1's count */
+private fun entriesText(scan: BuilderListReader.DirScan): String = when {
+    scan.total > 0 -> "${BuilderExtrasLogic.thousands(scan.total)} entries"
+    scan.pages > 1 -> "about ${BuilderExtrasLogic.thousands(scan.entries.size * scan.pages)} entries"
+    else -> "${scan.entries.size} entries"
 }
 
 /**
@@ -716,9 +743,10 @@ private fun MenuCard(group: MenuGroup, s: BuilderExtras, extras: BuilderExtrasMo
             val readable = kids.filter { it.href != null && it.made.isNullOrEmpty() && it.read?.running != true }
             if (readable.size >= 2) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedButton(onClick = { extras.readAllUnder(group.id) }, enabled = !reading) { Text("Read all ${readable.size}") }
+                    OutlinedButton(onClick = { extras.readAllUnder(group.id) }, enabled = !reading) { Text("Make all ${readable.size}") }
                     Spacer(Modifier.width(8.dp))
-                    Hint("one after another, with the pause you set")
+                    // r107: each with the choices on its card (Live ones at once, the others read one after another)
+                    Hint("each as its card says: Live ones at once, the others read one after another")
                 }
             }
         }
@@ -775,8 +803,11 @@ private fun MenuActions(group: MenuGroup, extras: BuilderExtrasModel) {
         }
         "directory" -> {
             val probe = group.probe
+            val scan = probe?.scan?.takeIf { it.ok }
             when {
                 read != null && read.running -> ReadSection(group, read, extras)
+                // r107: scanned: the parts, sorts, menus and how Browse gets the names (mocks CScan / BRead)
+                scan != null -> CollectionSection(group, scan, read, extras)
                 read != null -> {
                     Text(
                         "${read.entries} names · ${read.page} page${if (read.page == 1) "" else "s"} read" +
@@ -802,21 +833,332 @@ private fun MenuActions(group: MenuGroup, extras: BuilderExtrasModel) {
     }
 }
 
-/** r106: "Read all pages" running on a card: page k of the limit, names so far, Stop */
+/**
+ * r106: "Read all pages" running on a card: page k of the limit, names so far, Stop. r107 (mock BRead's progress card):
+ * "<name> · reading page 14 of 40", the names so far, the countdown to the next page and the time left
+ */
 @Composable
 private fun ReadSection(group: MenuGroup, read: GroupRead, extras: BuilderExtrasModel) {
-    LinearProgressIndicator(
-        progress = { (read.page.toFloat() / read.maxPages.coerceAtLeast(1)).coerceIn(0f, 1f) },
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            now = System.currentTimeMillis()
+            delay(200)
+        }
+    }
+    val wait = (read.waitUntil - now).coerceAtLeast(0L)
+    val (low, high) = extras.pauseSeconds()
+    val perPage = if (read.pageMs > 0) read.pageMs else ((low + high) * 500f).toLong() + BuilderExtrasLogic.PAGE_FETCH_MS
+    val pagesLeft = (read.maxPages - read.page + 1).coerceAtLeast(0)
+    val leftMs = wait + (pagesLeft - if (wait > 0) 0 else 1).coerceAtLeast(0) * perPage + if (wait > 0) 0L else BuilderExtrasLogic.PAGE_FETCH_MS
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLowest,
         modifier = Modifier.fillMaxWidth(),
-    )
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "${group.name.ifBlank { "List" }} · reading page ${read.page} of ${read.maxPages}" +
+                        if (read.first > 1) " (site page ${read.first + read.page - 1})" else "",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
+                OutlinedButton(onClick = { extras.stopRead(group.id) }) { Text("Stop") }
+            }
+            LinearProgressIndicator(
+                progress = { ((read.page - 1).toFloat() / read.maxPages.coerceAtLeast(1)).coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text(
+                "${BuilderExtrasLogic.thousands(read.entries)} names so far" +
+                    (if (wait > 0) " · next page in ${String.format(Locale.US, "%.1f", wait / 1000f)} s" else "") +
+                    " · ${BuilderExtrasLogic.durationText(leftMs)} left",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** r107: a part's name on the scan card */
+private fun partName(kind: String, people: Boolean): String = when (kind) {
+    "number" -> "Number"
+    "title" -> if (people) "Name" else "Title"
+    "videos" -> "Videos"
+    "views" -> "Views"
+    "likes" -> "Likes"
+    "picture" -> "Picture"
+    "follow" -> "Follow"
+    else -> kind
+}
+
+/** r107: "4,476 videos · 6.2M views · 17.2K ♥" of the parts kept */
+private fun countsLine(e: BuilderListReader.DirEntry, fields: Collection<String>): String = listOfNotNull(
+    e.videos.takeIf { it.isNotEmpty() && "videos" in fields }?.let { "$it videos" },
+    e.views.takeIf { it.isNotEmpty() && "views" in fields }?.let { "$it views" },
+    e.likes.takeIf { it.isNotEmpty() && "likes" in fields }?.let { "$it ♥" },
+).joinToString(" · ")
+
+/**
+ * r107 (mocks CScan / BRead): a scanned directory on its card: each part of an entry with a tick and page 1's example
+ * (the name always kept, Follow greyed and never kept), the drop-down row they give, the sort options found on the page
+ * (they go behind Browse's sort button) and its other menus; then how Browse gets the names: Live, as you scroll (the
+ * source reads the site's pages as the drop-down scrolls) or Read pages now (the page range, the pause between pages
+ * and the time it takes); Make filter
+ */
+@Composable
+private fun CollectionSection(group: MenuGroup, scan: BuilderListReader.DirScan, read: GroupRead?, extras: BuilderExtrasModel) {
+    var pause by remember { mutableStateOf(extras.pauseSeconds().let { (a, b) -> a.coerceIn(0f, 10f)..b.coerceIn(0f, 10f) }) }
+    val choice = group.choice ?: BuilderExtrasLogic.defaultChoice(group.name, scan)
+    val people = BuilderExtrasLogic.peopleLike(group.name, scan.url)
+    val fields = choice.fields + "title"
+    val canLive = scan.pageTemplate != null || scan.pages <= 1
+    val live = choice.live && canLive
+    fun seconds(v: Float): String = if (v == v.toInt().toFloat()) v.toInt().toString() else v.toString()
+    fun set(c: DirChoice) = extras.setDirChoice(group.id, c)
+
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
-            "Reading page ${read.page} of ${read.maxPages} at most · ${read.entries} names so far",
+            entriesText(scan) + " · each entry has these parts. Tick what to keep.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.weight(1f),
         )
-        OutlinedButton(onClick = { extras.stopRead(group.id) }) { Text("Stop") }
+        Spacer(Modifier.width(8.dp))
+        MonoLine("page 1")
+    }
+    val first = scan.entries.first()
+    Column {
+        scan.parts.forEach { p ->
+            val never = p.kind == "follow"
+            val checked = !never && p.kind in fields
+            val dim = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Checkbox(
+                    checked = checked,
+                    onCheckedChange = if (never || p.kind == "title") {
+                        null
+                    } else {
+                        { on: Boolean -> set(choice.copy(fields = if (on) choice.fields + p.kind else choice.fields - p.kind)) }
+                    },
+                    enabled = !never,
+                )
+                Text(
+                    partName(p.kind, people),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (never) dim else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.width(76.dp),
+                )
+                if (p.kind == "picture" && checked && first.picture.isNotEmpty()) {
+                    AsyncImage(
+                        model = first.picture,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .padding(end = 8.dp)
+                            .size(30.dp)
+                            .clip(if (people) CircleShape else RoundedCornerShape(7.dp))
+                            .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                    )
+                }
+                Text(
+                    when {
+                        never -> "a button · never kept"
+                        p.kind == "picture" && !checked -> (if (people) "face" else "logo") + " · left out"
+                        else -> p.example
+                    },
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp,
+                    color = if (never || !checked) dim else MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+    Hint("In the drop-down:")
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLowest,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+        ) {
+            if ("number" in fields && first.number.isNotEmpty()) MonoLine(first.number)
+            if ("picture" in fields && first.picture.isNotEmpty()) {
+                AsyncImage(
+                    model = first.picture,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clip(if (people) CircleShape else RoundedCornerShape(7.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                )
+            }
+            Text(
+                first.label,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            val counts = countsLine(first, fields)
+            if (counts.isNotEmpty()) {
+                Text(counts, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            }
+        }
+    }
+    if (scan.sorts.isNotEmpty()) {
+        Hint("Sort found on the page (goes behind the ⇅ button):")
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            scan.sorts.forEach { o -> RoleChip(o.label) }
+        }
+    }
+    if (scan.menus.isNotEmpty()) {
+        Hint("The site's own menus found (the drop-down offers them too):")
+        Text(scan.menus.joinToString(" · ") { it.name }, style = MaterialTheme.typography.bodyMedium)
+    }
+    if (scan.sorts.isEmpty() && scan.menus.isEmpty()) Hint("No sort or menu found on this page: the drop-down keeps the site's order.")
+
+    // How Browse gets the names (mock BRead)
+    Text("How should Browse get the names?", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+    val recommended = scan.total > BuilderExtrasLogic.LIVE_ENTRIES || scan.pages > BuilderExtrasLogic.LIVE_PAGES
+    ModeRow(
+        selected = live,
+        enabled = canLive,
+        title = "Live, as you scroll",
+        tag = if (recommended && canLive) "recommended for big lists" else null,
+        text = if (canLive) {
+            "Browse reads the site's pages when the drop-down opens" +
+                (if (scan.sorts.isNotEmpty() || scan.menus.isNotEmpty()) ", with the site's own sort and menus" else "") +
+                ". Nothing to read now."
+        } else {
+            "Needs page numbers in the directory's address: none were found on its first page."
+        },
+        onClick = { set(choice.copy(live = true)) },
+    )
+    ModeRow(
+        selected = !live,
+        enabled = true,
+        title = "Read pages now and keep them",
+        tag = null,
+        text = "For short lists, or to type names offline with suggestions.",
+        onClick = { set(choice.copy(live = false)) },
+    )
+    if (!live) {
+        val pages = scan.pages.coerceAtLeast(1)
+        val perPage = scan.entries.size
+        val from = if (scan.pageTemplate == null) 1 else choice.from.coerceIn(1, pages)
+        val to = choice.to.coerceIn(from, pages)
+        val count = to - from + 1
+        if (pages > 1) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Pages to read", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                MonoLine(
+                    "$from – $to of ${BuilderExtrasLogic.thousands(pages)} · ${BuilderExtrasLogic.thousands(count * perPage)} names",
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+            }
+            // (a page range when page N has an address; else page 1 and its Next links, as many as set)
+            val steps = if (pages <= 101) (pages - 2).coerceAtLeast(0) else 0
+            if (scan.pageTemplate != null) {
+                RangeSlider(
+                    value = from.toFloat()..to.toFloat(),
+                    onValueChange = { r ->
+                        val a = r.start.roundToInt().coerceIn(1, pages)
+                        val b = r.endInclusive.roundToInt().coerceIn(a, pages)
+                        set(choice.copy(from = a, to = b))
+                    },
+                    valueRange = 1f..pages.toFloat(),
+                    steps = steps,
+                )
+            } else {
+                Slider(
+                    value = to.toFloat(),
+                    onValueChange = { v -> set(choice.copy(from = 1, to = v.roundToInt().coerceIn(1, pages))) },
+                    valueRange = 1f..pages.toFloat(),
+                    steps = steps,
+                )
+            }
+        }
+        val lowMs = (pause.start * 1000f).roundToLong()
+        val highMs = (pause.endInclusive * 1000f).roundToLong()
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Pause between pages", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+            MonoLine(
+                "${seconds(pause.start)} – ${seconds(pause.endInclusive)} s · ${BuilderExtrasLogic.readEstimate(count, lowMs, highMs)}",
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+        }
+        RangeSlider(
+            value = pause,
+            onValueChange = {
+                pause = it
+                extras.setReadPause((it.start * 1000f).roundToLong(), (it.endInclusive * 1000f).roundToLong())
+            },
+            valueRange = 0f..10f,
+            // half-second stops, as in "Read the whole list"
+            steps = 19,
+        )
+        Hint("Random pause inside the range, one page after another, with Stop.")
+    }
+    if (read != null && !read.running) {
+        Text(
+            "${BuilderExtrasLogic.thousands(read.entries)} names · ${read.page} page${if (read.page == 1) "" else "s"} read",
+            style = MaterialTheme.typography.bodySmall,
+            color = if (read.entries > 0) OkGreen else MaterialTheme.colorScheme.error,
+        )
+        read.reason?.let { Hint("Stopped: $it") }
+    }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Button(onClick = { extras.makeCollection(group.id) }) {
+            Text(
+                when {
+                    !group.made.isNullOrEmpty() -> "Make it again"
+                    live -> "Make filter"
+                    else -> "Read and make filter"
+                },
+            )
+        }
+    }
+}
+
+/** r107: one way to get the names (mock BRead): a radio, its title (and tag), what it means; tap anywhere to pick it */
+@Composable
+private fun ModeRow(selected: Boolean, enabled: Boolean, title: String, tag: String?, text: String, onClick: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerLowest,
+        border = if (selected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(enabled = enabled, onClick = onClick),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(end = 12.dp, top = 4.dp, bottom = 8.dp)) {
+            RadioButton(selected = selected, onClick = onClick, enabled = enabled)
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (enabled) Color.Unspecified else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (tag != null) {
+                        Text(" · $tag", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+                Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
     }
 }
 
@@ -1061,25 +1403,6 @@ private fun LearnRowLine(row: LearnRow, codes: Map<String, String>, pageUrl: Str
 
 private const val MAX_LEARN_ROWS = 12
 
-/** r106: the Browse sheet's built-in "List" as the first row of the filters (not editable) */
-@Composable
-private fun BuiltInListRow(s: BuilderExtras) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text("List", style = MaterialTheme.typography.bodyLarge)
-            Text(
-                "Built in · " + listOf(s.popularName.ifBlank { "Popular" }, s.latestName.ifBlank { "Latest" }).joinToString(", ") +
-                    if (s.tabs.isEmpty()) ", your tabs" else ", " + s.tabs.joinToString(", ") { it.name.ifBlank { it.path } },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        RoleChip("Picks the list")
-    }
-}
-
 @Composable
 private fun RoleChip(text: String) {
     Surface(
@@ -1101,7 +1424,12 @@ private fun RoleChip(text: String) {
 private fun rowSummary(f: ExtrasFilter): String {
     val values = f.options.filter { it.value.isNotEmpty() }.map { it.value }
     val more = if (values.size > 2) " …" else ""
+    val c = f.collection
     return when {
+        // r107: "Collection · live · 25,786 · /en/series/…"
+        f.type == "collection" && c != null -> "Collection · " +
+            (if (c.live) "live" else "${BuilderExtrasLogic.thousands(values.size)} kept") +
+            (if (c.total > 0) " of ${BuilderExtrasLogic.thousands(c.total)}" else "") + " · " + f.path.substringBefore("{value}") + "…"
         f.mode == "path" -> f.path.ifBlank { "…" }.substringBefore("{value}") + "…"
         "{value}" in f.linkPath && f.role == "page" -> f.linkPath.substringBefore("{value}") + values.firstOrNull().orEmpty() + more
         f.param.isNotBlank() -> "${f.param} = " + values.take(2).joinToString(", ") + more
@@ -1269,6 +1597,49 @@ private fun FilterEditor(
                 onClick = { extras.setFilterType(index, "autocomplete") },
                 label = { Text("Text box with suggestions") },
             )
+            // r107: a scanned directory's collection (parts, sorts, menus, live)
+            if (filter.collection != null) {
+                FilterChip(
+                    selected = filter.type == "collection",
+                    onClick = { extras.setFilterType(index, "collection") },
+                    label = { Text("Collection") },
+                )
+            }
+        }
+        val collection = filter.collection
+        if (filter.type == "collection" && collection != null) {
+            val canLive = collection.item.isNotEmpty() && (collection.page.isNotEmpty() || collection.pages <= 1)
+            SwitchRow(
+                title = "Live, as you scroll",
+                summary = if (canLive) {
+                    "Browse reads the directory's pages as its drop-down scrolls (the entries below are only page 1's or those read)"
+                } else {
+                    "Needs page numbers in the directory's address: scan it again from its menu card"
+                },
+                checked = collection.live,
+                onChange = { extras.setCollectionLive(index, it) },
+            )
+            val found = collection.parts.map { it.kind }.filter { it in BuilderExtrasLogic.COLLECTION_FIELDS && it != "title" }
+            if (found.isNotEmpty()) {
+                Text("Parts shown in the drop-down", style = MaterialTheme.typography.bodyMedium)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    found.forEach { kind ->
+                        FilterChip(
+                            selected = kind in collection.fields,
+                            onClick = { extras.setCollectionField(index, kind, kind !in collection.fields) },
+                            label = { Text(partName(kind, false)) },
+                        )
+                    }
+                }
+            }
+            if (collection.sorts.isNotEmpty() || collection.menus.isNotEmpty()) {
+                Hint(
+                    listOfNotNull(
+                        collection.sorts.takeIf { it.isNotEmpty() }?.let { l -> "Sort: " + l.joinToString(", ") { it.label } },
+                        collection.menus.takeIf { it.isNotEmpty() }?.let { l -> "Menus: " + l.joinToString(", ") { it.name } },
+                    ).joinToString(" · "),
+                )
+            }
         }
         if (!isPath && filter.askParam) {
             ExtrasField(
@@ -1281,7 +1652,7 @@ private fun FilterEditor(
             )
         }
         when (filter.type) {
-            "select", "sort", "autocomplete" -> {
+            "select", "sort", "autocomplete", "collection" -> {
                 ExtrasField(
                     rev,
                     "f$index.options",
@@ -1295,6 +1666,7 @@ private fun FilterEditor(
                     Text(
                         "${filter.options.size} options · " + when (filter.type) {
                             "autocomplete" -> "suggested while typing; an empty box is no filter"
+                            "collection" -> "the drop-down's entries, in this order (a name not in it is sent as a slug)"
                             // r104 fix: filtersJson puts an empty "Any" first for a filter that opens its own page
                             else -> if ((isPath || linkPage) && filter.options.none { it.value.isEmpty() }) {
                                 "the source adds an empty \u201cAny\u201d first: its page opens only when one is picked"

@@ -33,6 +33,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
 import okhttp3.Headers
 import okhttp3.Request
 import uy.kohesive.injekt.Injekt
@@ -260,6 +261,10 @@ internal object TestRuns {
         } else {
             skipped(StepId.TITLE, "Title", "this source has no getDetails")
         }
+        // KMK (r107): Suggestions: getRelated on the same title, when the source has it (no step otherwise)
+        if (runCatching { rt.has("getRelated") }.getOrDefault(false)) {
+            step(STEP_RELATED, "Suggestions · ${entry.title}") { relatedCheck(rt, entry.url) }
+        }
         val chapters = step(StepId.CHAPTERS, "${if (anime) "Episodes" else "Chapters"} of ${entry.title}") {
             chapters(rt.call("getChapterList", entry.url), anime)
         }
@@ -397,6 +402,8 @@ internal object TestRuns {
                 g.options.firstOrNull(::filled)?.let { listOf(it.label to JsonArray(listOf(it.value))) }.orEmpty()
             JsFilters.Type.Checkbox -> listOf((if (g.defaultChecked) "off" else "on") to JsonPrimitive(!g.defaultChecked))
             JsFilters.Type.TriState -> listOf("include" to JsonPrimitive(1))
+            // KMK (r107) fix: a collection sends its first entry's value, as the drop-down does
+            JsFilters.Type.Collection -> g.collection?.entries?.firstOrNull()?.let { listOf(it.label to JsonPrimitive(it.value)) }.orEmpty()
             // r105 fix: a Sort's empty "Site default" (first) sends nothing: its first two real orders are tried
             JsFilters.Type.Sort -> g.options.withIndex().filter { filled(it.value) }.take(2).map { iv ->
                 iv.value.label to buildJsonObject {
@@ -522,7 +529,96 @@ internal object TestRuns {
                 items.add(Item(title = "$name = $label", subtitle = "${outcome.address}$ARROW$verdict", kind = Kind.Other, url = ""))
             }
         }
+        // KMK (r107) fix: a live collection's directory: getDirectory's page 1 once (its own item, not a try)
+        val liveDirectory = groups.firstOrNull { it.type == JsFilters.Type.Collection && it.collection?.live == true }
+        if (liveDirectory != null && runCatching { rt.has("getDirectory") }.getOrDefault(false)) {
+            val verdict = try {
+                val r = rt.call("getDirectory", liveDirectory.key, 1, "", false, emptyMap<String, String>())
+                val n = JsMapping.list((r as? JsonObject)?.get("items") ?: r).size
+                if (n > 0) "$n entries on page 1" else "0 entries on page 1 · check the directory's card selector"
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                FAILED + (e.message ?: e.toString()).lineSequence().firstOrNull().orEmpty().take(120)
+            }
+            val line = "$DIRECTORY${liveDirectory.name}${ARROW}getDirectory$ARROW$verdict"
+            AppLog.add('D', "lab", "Test Run filter $line")
+            runCatching { rt.onConsole?.invoke(JsConsoleEntry(System.currentTimeMillis(), "info", STEP_FILTERS, line)) }
+            items.add(Item(title = "$DIRECTORY${liveDirectory.name}", subtitle = "getDirectory$ARROW$verdict", kind = Kind.Other, url = ""))
+        }
         return Result(title = "", ok = true, millis = 0, items = items, text = "${items.size} tries")
+    }
+
+    /** KMK (r107) fix: the Filters step's item for a live collection's getDirectory page 1 */
+    private const val DIRECTORY = "Directory · "
+
+    // ---------- Suggestions step (r107) ----------
+
+    const val STEP_RELATED = "related"
+
+    /** The text after this in the Suggestions result is why the title page itself wasn't read */
+    private const val PAGE_NOTE = " · title page: "
+
+    /** generic-list v10's console line for a section that failed (failed sections are left out of the result) */
+    private val RELATED_FAILED = Regex("""^Suggestions (.+?) failed after \d+ ms: (.*)$""", RegexOption.DOT_MATCHES_ALL)
+
+    /** generic-list v10's console line when the title page couldn't be read (sections read elsewhere may still come) */
+    private val RELATED_PAGE = Regex("""^Suggestions: the title page wasn't read: (.*)$""", RegexOption.DOT_MATCHES_ALL)
+
+    /**
+     * getRelated(url) gives one list or named groups `{ "You may like": [cards], … }`: one item per group with its
+     * card count and first title; groups the source left out because they failed (its console says
+     * "Suggestions <name> failed after N ms: <why>") are added as failed items. The raw object of each item is
+     * `{ group, cards, titles[≤5], error? }`.
+     */
+    private suspend fun relatedCheck(rt: JsRuntime, url: String): Result {
+        val started = System.currentTimeMillis()
+        val result = rt.call("getRelated", url)
+        val failures = LinkedHashMap<String, String>()
+        var pageError: String? = null
+        runCatching {
+            rt.consoleEntries.filter { it.at >= started }.forEach { e ->
+                RELATED_FAILED.find(e.text)?.let { m -> failures[m.groupValues[1]] = m.groupValues[2].trim() }
+                RELATED_PAGE.find(e.text)?.let { m -> pageError = m.groupValues[1].trim() }
+            }
+        }
+        val groups: List<Pair<String, JsonElement>> = when (result) {
+            is JsonObject -> result.entries.map { it.key to it.value }
+            else -> listOf("" to result)
+        }
+        val items = ArrayList<Item>()
+        val raws = ArrayList<JsonObject>()
+        groups.forEach { (name, value) ->
+            val shown = name.ifBlank { "One list" }
+            val ownError = ((value as? JsonObject)?.get("error") as? JsonPrimitive)?.contentOrNull
+            val cards = JsMapping.list(value)
+            val error = ownError ?: failures[name]?.takeIf { cards.isEmpty() }
+            val first = cards.firstOrNull()
+            val noUrl = cards.count { it.str("url").isNullOrBlank() }
+            val subtitle = when {
+                error != null -> FAILED + error.take(200)
+                cards.isEmpty() -> "0 cards"
+                else -> "${cards.size} cards · first: ${first?.str("title").orEmpty().take(80)}" +
+                    (if (noUrl > 0) " · $noUrl without url" else "")
+            }
+            items.add(Item(title = shown, subtitle = subtitle, imageUrl = first?.str("coverUrl"), kind = Kind.Other, url = first?.str("url").orEmpty()))
+            raws.add(groupRaw(shown, cards, error))
+        }
+        failures.filterKeys { failed -> groups.none { it.first == failed } }.forEach { (name, why) ->
+            items.add(Item(title = name, subtitle = FAILED + why.take(200), kind = Kind.Other, url = ""))
+            raws.add(groupRaw(name, emptyList(), why))
+        }
+        val total = raws.sumOf { (it["cards"] as? JsonPrimitive)?.intOrNull ?: 0 }
+        val text = "${items.size} ${if (items.size == 1) "group" else "groups"}, $total cards" +
+            (pageError?.let { PAGE_NOTE + it.take(160) }.orEmpty())
+        return Result(title = "", ok = true, millis = 0, items = items, text = text, raw = raws)
+    }
+
+    private fun groupRaw(name: String, cards: List<JsonObject>, error: String?): JsonObject = buildJsonObject {
+        put("group", JsonPrimitive(name))
+        put("cards", JsonPrimitive(cards.size))
+        put("titles", JsonArray(cards.take(5).map { JsonPrimitive(it.str("title").orEmpty()) }))
+        if (error != null) put("error", JsonPrimitive(error))
     }
 
     /** getSourcePreferences(): keys and defaults, and what the app can't use (no key, twice, bad default) */
@@ -691,6 +787,7 @@ internal object TestRuns {
         val partIds = when (id) {
             STEP_FILTERS -> listOf("getFilters", "search")
             STEP_SETTINGS -> listOf("getSourcePreferences")
+            STEP_RELATED -> listOf("getRelated")
             else -> PartIndex.partsOfStep(id, anime)
         }
         val requests = result.requests.mapNotNull(::parseNetLine)
@@ -715,7 +812,8 @@ internal object TestRuns {
         if (result.text?.startsWith(SKIPPED) == true) {
             return step(StepStatus.Skipped, 0, result.text.removePrefix(SKIPPED))
         }
-        if (!result.ok) return step(StepStatus.Red, 0, failureWords(result.text.orEmpty(), requests))
+        // KMK (r107) fix: Suggestions are optional: a failed getRelated is a warning (Amber), never Red
+        if (!result.ok) return step(if (id == STEP_RELATED) StepStatus.Amber else StepStatus.Red, 0, failureWords(result.text.orEmpty(), requests))
         val count = result.items.size
         return when {
             id.startsWith("tab:") || id == StepId.POPULAR || id == StepId.LATEST -> {
@@ -782,7 +880,11 @@ internal object TestRuns {
             id == STEP_FILTERS -> {
                 // r105: the empty unfiltered list is a warning of its own, not one of the tries
                 val emptyBase = result.items.firstOrNull { it.title == BASE_TITLE }
-                val tries = result.items.filter { it.title != BASE_TITLE }
+                val tries = result.items.filter { it.title != BASE_TITLE && !it.title.startsWith(DIRECTORY) }
+                // KMK (r107) fix: a live collection's getDirectory page 1, said after the tries (a failure makes it Amber)
+                val directory = result.items.firstOrNull { it.title.startsWith(DIRECTORY) }
+                val dirNote = directory?.let { " · ${it.title.removePrefix(DIRECTORY)}: ${verdictOf(it.subtitle)}" }.orEmpty()
+                val dirBad = directory != null && verdictOf(directory.subtitle).let { it.startsWith(FAILED) || it.startsWith("0 ") }
                 val warning = emptyBase?.let { "filters are on a page with nothing listed (${it.subtitle.orEmpty().substringBefore(ARROW)}) · " }.orEmpty()
                 val verdicts = tries.map { verdictOf(it.subtitle) }
                 val works = verdicts.count { WORKS in it || NOTHING_TO_COMPARE in it }
@@ -792,10 +894,10 @@ internal object TestRuns {
                     .take(2).joinToString(" · ") { "${it.title}$ARROW${it.subtitle}" }
                 val n = tries.size
                 when {
-                    n == 0 -> step(StepStatus.Amber, 0, warning + result.text.orEmpty())
-                    failed == n -> step(StepStatus.Red, 0, "${warning}every filter failed · ${off.take(240)}")
-                    works == n && emptyBase == null -> step(StepStatus.Green, works, "$works of $n tries change the list")
-                    else -> step(StepStatus.Amber, works, "$warning$works of $n tries change the list · ${off.take(240)}")
+                    n == 0 -> step(StepStatus.Amber, 0, warning + result.text.orEmpty() + dirNote)
+                    failed == n -> step(StepStatus.Red, 0, "${warning}every filter failed · ${off.take(240)}$dirNote")
+                    works == n && emptyBase == null && !dirBad -> step(StepStatus.Green, works, "$works of $n tries change the list$dirNote")
+                    else -> step(StepStatus.Amber, works, "$warning$works of $n tries change the list · ${off.take(240)}$dirNote")
                 }
             }
             id == STEP_SETTINGS -> {
@@ -813,6 +915,24 @@ internal object TestRuns {
                     else -> step(StepStatus.Green, count, result.text.orEmpty().take(160))
                 }
             }
+            // KMK (r107): Suggestions: count = all cards; Amber when any group failed or none came (optional)
+            id == STEP_RELATED -> {
+                val cards = result.raw.sumOf { (it["cards"] as? JsonPrimitive)?.intOrNull ?: 0 }
+                val failed = result.items.count { it.subtitle.orEmpty().startsWith(FAILED) }
+                val page = result.text.orEmpty().substringAfter(PAGE_NOTE, "").takeIf { it.isNotBlank() }
+                    ?.let { "title page not read: $it · " }.orEmpty()
+                val groups = result.items.joinToString(" · ") { item ->
+                    val sub = item.subtitle.orEmpty()
+                    if (sub.startsWith(FAILED)) "${item.title}: ${sub.take(160)}" else "${item.title} ${sub.substringBefore(" · ")}"
+                }
+                when {
+                    result.items.isEmpty() -> step(StepStatus.Amber, 0, "${page}getRelated gave no suggestions for this title")
+                    // KMK (r107) fix: optional: Amber even when every group failed
+                    failed == result.items.size -> step(StepStatus.Amber, 0, (page + groups).take(300))
+                    failed > 0 || cards == 0 -> step(StepStatus.Amber, cards, (page + groups).take(300))
+                    else -> step(StepStatus.Green, cards, (page + groups).take(300))
+                }
+            }
             else -> step(StepStatus.Green, count, result.text.orEmpty().take(120))
         }
     }
@@ -828,6 +948,7 @@ internal object TestRuns {
         id == StepId.HOSTERS -> "Hosters"
         id == STEP_FILTERS -> "Filters"
         id == STEP_SETTINGS -> "Settings"
+        id == STEP_RELATED -> "Suggestions"
         else -> result.title
     }
 

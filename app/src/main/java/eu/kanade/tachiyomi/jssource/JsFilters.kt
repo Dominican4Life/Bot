@@ -23,7 +23,15 @@ internal object JsFilters {
      * exclude (0, 1, 2). [Sort]: a list with an up or down arrow ({ index, value, ascending }). [Group]: a section
      * that opens and closes, holding any of these; each one inside sends its own key, as if it were outside.
      */
-    enum class Type { Select, MultiSelect, Checkbox, AutoComplete, Header, Separator, Text, TriState, Sort, Group }
+    /**
+     * KMK (r107): [Collection] is a site's directory (genres, makers, series, people…) picked from a drop-down list:
+     * each entry with its number / videos / views / likes / picture as the site shows them, the site's own sort
+     * options and menus, read page by page with the source's getDirectory when `live` (see [JsDirectory]). The
+     * picked entry's value goes to search() under the filter's key, like a page autocomplete's.
+     */
+    enum class Type {
+        Select, MultiSelect, Checkbox, AutoComplete, Header, Separator, Text, TriState, Sort, Group, Collection,
+    }
 
     data class Option(val label: String, val value: JsonElement)
 
@@ -48,10 +56,111 @@ internal object JsFilters {
         val defaultAscending: Boolean = false,
         /** Group: what it holds */
         val children: List<Group> = emptyList(),
+        // KMK (r107) -->
+        /** Collection: the directory's entries, sorts, menus and how it is read */
+        val collection: CollectionInfo? = null,
+        /** A Source Lab list source's filter role ("page" / "extra"); blank for other sources */
+        val role: String = "",
+        // KMK <--
     ) {
         /** The option picked at first, kept inside the list */
         val startIndex: Int get() = defaultIndex.coerceIn(0, (options.size - 1).coerceAtLeast(0))
     }
+
+    // KMK (r107) -->
+    /**
+     * One entry of a collection. [videos], [views], [likes] are the numbers as the site shows them ("4,476", "6.2M"),
+     * the units are added when shown. [picture] is an absolute image address
+     */
+    data class Entry(
+        val label: String,
+        val value: String,
+        val number: String? = null,
+        val videos: String? = null,
+        val views: String? = null,
+        val likes: String? = null,
+        val picture: String? = null,
+    )
+
+    /** A sort option or a menu option of a collection: what is shown and what getDirectory gets */
+    data class Choice(val label: String, val value: String)
+
+    /** One of the site's extra menus on a directory page (Height, Cup, Age…) */
+    data class Menu(val key: String, val name: String, val options: List<Choice>)
+
+    data class CollectionInfo(
+        val path: String,
+        /** The parts the source kept: number, title, videos, views, likes, picture */
+        val fields: List<String>,
+        val entries: List<Entry>,
+        val sorts: List<Choice>,
+        /** The site itself can list in ascending order (getDirectory gets `ascending`) */
+        val reverse: Boolean,
+        val menus: List<Menu>,
+        /** Entries are read page by page with getDirectory instead of [entries] */
+        val live: Boolean,
+        /** How many entries the site said it has (0 = unknown) */
+        val total: Int,
+    )
+
+    /**
+     * The source's built-in "List" filter (generic-list v8–v9): not shown since r107, the tabs pick the list. A blank
+     * header takes its place in the filter list, so saved searches (restored by position) still line up
+     */
+    const val BUILT_IN_LIST = "__list"
+
+    /**
+     * KMK (r107): a Source Lab list source (generic-list v8+), which reads the list Browse showed as `__from`: up to
+     * v9 its sheet had the built-in "List"; v10 leaves that out, but its filters still carry a role
+     */
+    fun readsFrom(groups: List<Group>): Boolean = flat(groups).any { it.key == BUILT_IN_LIST || it.role.isNotEmpty() }
+
+    /** KMK (r107): a group filter that is a section of the sheet (its own card), not a list of check boxes */
+    interface SectionGroup
+
+    fun entry(obj: JsonObject): Entry? {
+        val value = obj.str("value") ?: obj.str("id") ?: obj.str("slug")
+        // an "Any" option (empty value) is the drop-down's own empty pick, not an entry
+        if (value != null && value.isBlank()) return null
+        val label = obj.str("label") ?: obj.str("name") ?: obj.str("title") ?: value ?: return null
+        fun part(key: String): String? = obj.str(key)?.trim()?.takeIf { it.isNotEmpty() }
+        return Entry(
+            label = label.trim(),
+            value = value ?: label,
+            number = part("number"),
+            videos = part("videos"),
+            views = part("views"),
+            likes = part("likes"),
+            picture = part("picture")?.takeIf { it.startsWith("http://") || it.startsWith("https://") },
+        )
+    }
+
+    private fun choices(element: JsonElement?): List<Choice> = (element as? JsonArray)?.mapNotNull { option ->
+        when (option) {
+            is JsonObject -> {
+                val value = option.str("value") ?: ""
+                Choice(option.str("label") ?: option.str("name") ?: value, value)
+            }
+            is JsonPrimitive -> option.contentOrNull?.let { Choice(it, it) }
+            else -> null
+        }
+    }.orEmpty()
+
+    private fun collection(obj: JsonObject): CollectionInfo = CollectionInfo(
+        path = obj.str("path").orEmpty(),
+        fields = strings(obj["fields"])?.map { it.lowercase() } ?: listOf("title"),
+        entries = obj.arr("options")?.mapNotNull { (it as? JsonObject)?.let(::entry) }.orEmpty(),
+        sorts = choices(obj["sorts"]),
+        reverse = obj.bool("reverse") == true,
+        menus = obj.arr("menus")?.mapNotNull { menu ->
+            val m = menu as? JsonObject ?: return@mapNotNull null
+            val key = m.str("key") ?: return@mapNotNull null
+            Menu(key, m.str("name") ?: key, choices(m["options"]))
+        }.orEmpty(),
+        live = obj.bool("live") == true,
+        total = obj.int("total") ?: 0,
+    )
+    // KMK <--
 
     /** [tab]: shown as a button at the top of Browse ("tab": true), not only in the filter sheet */
     data class Catalog(val id: String, val name: String, val tab: Boolean = false)
@@ -77,6 +186,7 @@ internal object JsFilters {
             "tristate", "tri-state", "tri_state" -> Type.TriState
             "sort" -> Type.Sort
             "group" -> Type.Group
+            "collection" -> Type.Collection // KMK (r107)
             // KMK: a list with no options (or an unknown type with none, like "number") crashed the Filter
             // panel; it's a text box instead
             else -> if (options.isEmpty()) Type.Text else Type.Select
@@ -112,6 +222,8 @@ internal object JsFilters {
             } else {
                 emptyList()
             },
+            collection = if (type == Type.Collection) collection(obj) else null,
+            role = obj.str("role").orEmpty(),
         )
     }
 

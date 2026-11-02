@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.ui.sourcelab.newsource
 import androidx.compose.runtime.Immutable
 import eu.kanade.tachiyomi.jssource.arr
 import eu.kanade.tachiyomi.jssource.bool
+import eu.kanade.tachiyomi.jssource.int
 import eu.kanade.tachiyomi.jssource.jsJson
 import eu.kanade.tachiyomi.jssource.lab.Detector
 import eu.kanade.tachiyomi.jssource.obj
@@ -62,13 +63,71 @@ import kotlin.random.Random
  * sub-menu and "Read all N". A filter whose name (or address parameter) another filter already has is not added
  * silently: [PendingFilter] asks Replace "<name>" / Keep both (the owner's two "Sort" filters). The pane scrolls a
  * card into view when it appears or starts working ([BuilderExtras.scrollTarget]).
+ *
+ * r107 (generic-list v10, mock CScan): a directory card is **scanned** ([BuilderListReader.scan]): its entries' parts
+ * (number, name, videos, views, likes, picture; a Follow button is shown as never kept) with ticks, a preview row, the
+ * site's sort options and menus; then **Live, as you scroll** (the source reads its pages with getDirectory; default
+ * for more than 300 entries or 10 pages) or **Read pages now** (a page range and pause, with progress and Stop). The
+ * filter is `type: "collection"` ([CollectionSpec]): the owner's r106 Series directory was saved as a Sort (its
+ * "views" read like sort words) and his Makers as "FC FC2 33,977 videos + Follow Following"; restored filters with
+ * such labels are cleaned ([BuilderExtrasLogic.repairLabels]). The built-in List row is gone (Browse's tabs pick the
+ * list).
  */
 
 @Immutable
 internal data class ExtrasTab(val name: String, val path: String)
 
 @Immutable
-internal data class ExtrasOption(val label: String, val value: String)
+internal data class ExtrasOption(
+    val label: String,
+    val value: String,
+    // r107: a collection entry's parts as the site shows them ("" = none): its place, counts (unit words dropped) and
+    // picture address
+    val number: String = "",
+    val videos: String = "",
+    val views: String = "",
+    val likes: String = "",
+    val picture: String = "",
+)
+
+/** r107: one of a directory page's own menus (Height, Cup, Age): sent as [key]=value when the app's drop-down reads it */
+@Immutable
+internal data class CollectionMenu(val key: String, val name: String, val options: List<ExtrasOption>)
+
+/**
+ * r107: what a collection filter (`type: "collection"`, generic-list v10) carries besides its entries: the parts the
+ * owner kept ([fields], "title" always), the site's [sorts] and [menus], [live] (the source reads the directory page by
+ * page with getDirectory), the entry count the site shows ([total], 0 = unknown), and how to read the directory: page 1
+ * ([first]) and page N ([page] with `{page}`, "" = one page only) relative to the site, its [pages], the entries'
+ * selector ([item]), the link inside one ([link]) and each part's selector ([parts]); the sort goes as [sortParam]=value,
+ * ascending as [orderParam]=[ascValue] when the site offers it ([reverse])
+ */
+@Immutable
+internal data class CollectionSpec(
+    val fields: List<String>,
+    val sorts: List<ExtrasOption> = emptyList(),
+    val reverse: Boolean = false,
+    val menus: List<CollectionMenu> = emptyList(),
+    val live: Boolean = false,
+    val total: Int = 0,
+    val first: String = "",
+    val page: String = "",
+    val pages: Int = 1,
+    val item: String = "",
+    val link: String = "",
+    val parts: List<BuilderListReader.DirPart> = emptyList(),
+    val sortParam: String = "",
+    val orderParam: String = "",
+    val ascValue: String = "",
+    val descValue: String = "",
+)
+
+/**
+ * r107: the owner's choices on a scanned directory card: the parts kept, live or read now, and the page range to read
+ * (1-based, inclusive)
+ */
+@Immutable
+internal data class DirChoice(val fields: Set<String>, val live: Boolean, val from: Int, val to: Int)
 
 @Immutable
 internal data class ExtrasFilter(
@@ -111,6 +170,8 @@ internal data class ExtrasFilter(
     val seenOn: String = "",
     /** r105 fix: [role] was set by the owner on the card: making the filter again keeps it */
     val roleSet: Boolean = false,
+    /** r107: a directory's collection (type "collection"), null = none */
+    val collection: CollectionSpec? = null,
 )
 
 /**
@@ -173,6 +234,8 @@ internal data class MenuGroup(
     val probe: DirProbe? = null,
     /** r106: "Read all pages" on this card, running or done */
     val read: GroupRead? = null,
+    /** r107: the owner's ticks, mode and page range on a scanned directory card (null = the defaults) */
+    val choice: DirChoice? = null,
 ) {
     /** Every entry is a button / text without a link: "Learn addresses" can find where each goes */
     val noLinks: Boolean get() = items.isNotEmpty() && items.none { !it.href.isNullOrBlank() }
@@ -203,6 +266,8 @@ internal data class DirProbe(
     val pages: Int = 1,
     val hasNext: Boolean = false,
     val note: String = "",
+    /** r107: the directory read part by part (the scan card), null = not scanned */
+    val scan: BuilderListReader.DirScan? = null,
 )
 
 /** r106: "Read all pages" of a card: running, the page being read, the names so far, the page limit, why it ended */
@@ -213,6 +278,11 @@ internal data class GroupRead(
     val entries: Int,
     val maxPages: Int,
     val reason: String? = null,
+    /** r107: the first page of the range read ([page] counts from it: page 1 of [maxPages] is this page) */
+    val first: Int = 1,
+    /** r107: when the next page is read (epoch ms, 0 = reading now), and the time a page has taken on average */
+    val waitUntil: Long = 0L,
+    val pageMs: Long = 0L,
 )
 
 /**
@@ -598,7 +668,8 @@ internal object BuilderExtrasLogic {
      */
     fun cleanLabel(text: String): String {
         val line = text.lines().map { it.trim() }.firstOrNull { it.isNotEmpty() }.orEmpty().replace(SPACES, " ")
-        val cleaned = line.replace(COUNT_WORDS, "").replace(COUNT_SUFFIX, "").replace(COUNT_GROUPED, "").trim()
+        // r107: a Follow button's words and "N videos · M views" go too (a whole card read as one link's text)
+        val cleaned = BuilderListReader.entryLabel(line).replace(COUNT_WORDS, "").replace(COUNT_SUFFIX, "").replace(COUNT_GROUPED, "").trim()
         return cleaned.ifEmpty { line.trim() }
     }
 
@@ -1128,6 +1199,264 @@ internal object BuilderExtrasLogic {
         return labelLike * 2 >= real.size || (f.askParam && f.param.isBlank())
     }
 
+    // ---------- r107: collections (a scanned directory as a "collection" filter, generic-list v10) ----------
+
+    /** r107: the parts of an entry in the order the card and the template list them */
+    val COLLECTION_FIELDS = listOf("number", "title", "videos", "views", "likes", "picture")
+
+    // No braces in these patterns (ICU). KMK (r107) fix: creator / artist too, the same words as the app's drop-down
+    private val PEOPLE = Regex(
+        """actress|actor|model|performer|cast|idol|star|people|person|creator|artist""",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /** r107: a directory of people (its name or address): its pictures are faces, kept by default */
+    fun peopleLike(vararg words: String?): Boolean = words.any { !it.isNullOrBlank() && PEOPLE.containsMatchIn(it) }
+
+    /** r107: more entries or pages than this and the card picks "Live, as you scroll" first */
+    const val LIVE_ENTRIES = 300
+    const val LIVE_PAGES = 10
+
+    /**
+     * r107: a scanned card's defaults: number, name, videos and views ticked (people: every part, the picture too); Live
+     * for big directories when page N has an address (else Read pages now); pages 1–[READ_PAGES]
+     */
+    fun defaultChoice(name: String?, scan: BuilderListReader.DirScan): DirChoice {
+        val people = peopleLike(name, scan.url)
+        val found = scan.parts.map { it.kind }.filter { it in COLLECTION_FIELDS }
+        val fields = found.filter { people || it in setOf("number", "title", "videos", "views") }.toSet() + "title"
+        val big = scan.total > LIVE_ENTRIES || scan.pages > LIVE_PAGES
+        val canLive = scan.pageTemplate != null || scan.pages <= 1
+        return DirChoice(fields = fields, live = big && canLive, from = 1, to = scan.pages.coerceIn(1, READ_PAGES))
+    }
+
+    /** r107: "about 1.5 min" for reading [pages] pages with a pause of [lowMs]–[highMs] between them */
+    fun readEstimate(pages: Int, lowMs: Long, highMs: Long): String {
+        val n = pages.coerceAtLeast(1)
+        val ms = (n - 1) * (lowMs + highMs) / 2 + n * PAGE_FETCH_MS
+        return durationText(ms)
+    }
+
+    /** r107: a time left as "about 55 s" / "about 1.5 min" / "about 12 min" */
+    fun durationText(ms: Long): String {
+        val s = (ms / 1000L).coerceAtLeast(1L)
+        return when {
+            s < 60 -> "about $s s"
+            s < 600 -> "about ${(s / 6L) / 10f} min".replace(".0 min", " min")
+            else -> "about ${s / 60L} min"
+        }
+    }
+
+    /** r107: what one page takes besides the pause (the request and reading it), for the estimates */
+    const val PAGE_FETCH_MS = 600L
+
+    /** r107: "25,786" */
+    fun thousands(n: Int): String = String.format(java.util.Locale.US, "%,d", n)
+
+    /**
+     * r107: the collection filter of a scanned directory: the entries' address form comes from their links (r101's
+     * [deriveGroup]: the part that differs is `{value}`), each entry's value read from its link the way the template's
+     * getDirectory reads it ([BuilderListReader.valueOfHref]), only the parts in [choice] kept, the scan's selectors,
+     * sorts and menus in [CollectionSpec]. Null filter (with a note) when the links don't share one address form
+     */
+    fun collectionFilter(
+        name: String?,
+        group: String,
+        scan: BuilderListReader.DirScan,
+        entries: List<BuilderListReader.DirEntry>,
+        choice: DirChoice,
+        site: String,
+        rule: PageRule?,
+    ): GroupDerived {
+        val heading = name?.takeIf { it.isNotBlank() } ?: nameFromUrl(scan.url)
+        val derived = deriveGroup(
+            entries = entries.map { GroupEntry(it.label, it.href, null) },
+            tappedText = "",
+            tappedHref = null,
+            pageUrl = scan.url,
+            rule = rule,
+            heading = heading,
+            maxOptions = MAX_SUGGESTIONS,
+        )
+        val made = derived.filter ?: return derived
+        val path = when {
+            made.mode == "path" -> made.path
+            "{value}" in made.linkPath -> made.linkPath
+            else -> return derived.copy(filter = null, note = (derived.note + " The entries' addresses don't share one form: no collection was made.").trim())
+        }
+        val keep = COLLECTION_FIELDS.filter { it == "title" || (it in choice.fields && scan.part(it) != null) }
+        val options = entries.mapNotNull { e ->
+            val value = BuilderListReader.valueOfHref(path, e.href)
+            if (value.isEmpty()) {
+                null
+            } else {
+                ExtrasOption(
+                    label = e.label,
+                    value = value,
+                    number = if ("number" in keep) e.number else "",
+                    videos = if ("videos" in keep) e.videos else "",
+                    views = if ("views" in keep) e.views else "",
+                    likes = if ("likes" in keep) e.likes else "",
+                    picture = if ("picture" in keep) e.picture else "",
+                )
+            }
+        }.distinctBy { it.value }.take(MAX_SUGGESTIONS)
+        if (options.isEmpty()) {
+            return derived.copy(filter = null, note = "None of the entries' links fits $path: no collection was made.")
+        }
+        val keyBase = made.key.takeIf { it.isNotEmpty() && it != "sort" && it != "list" }
+            ?: nameFromUrl(scan.url)?.lowercase()?.replace(' ', '_')
+            ?: "collection"
+        val live = choice.live && (scan.pageTemplate != null || scan.pages <= 1)
+        val spec = CollectionSpec(
+            fields = keep,
+            sorts = scan.sorts,
+            reverse = scan.orderParam.isNotEmpty(),
+            menus = scan.menus,
+            live = live,
+            total = scan.total,
+            first = relative(scan.url, site),
+            page = scan.pageTemplate?.let { relative(it, site) }.orEmpty(),
+            pages = scan.pages,
+            item = scan.item,
+            link = scan.link,
+            parts = scan.parts.filter { it.kind != "follow" },
+            sortParam = scan.sortParam,
+            orderParam = scan.orderParam,
+            ascValue = scan.ascValue,
+            descValue = scan.descValue,
+        )
+        val filter = ExtrasFilter(
+            key = keyBase,
+            name = heading ?: prettyName(keyBase),
+            type = "collection",
+            options = options,
+            mode = "path",
+            param = "",
+            path = path,
+            role = "page",
+            group = group,
+            seenOn = made.seenOn,
+            collection = spec,
+        )
+        val how = if (spec.live) "live (page 1 kept, the rest read as Browse scrolls)" else "${options.size} entries kept"
+        return derived.copy(
+            filter = filter,
+            note = "Made the collection \"${filter.name}\": picks open $path; $how; parts: ${keep.joinToString(", ")}" +
+                (if (spec.sorts.isNotEmpty()) "; ${spec.sorts.size} sort options" else "") +
+                (if (spec.live && spec.menus.isNotEmpty()) "; menus ${spec.menus.joinToString(", ") { it.name }}" else "") + ".",
+            used = options.size,
+            how = "collection $path",
+        )
+    }
+
+    // No braces in these patterns (ICU). KMK (r107) fix: up to 4 digits (a list's places 1000–1800)
+    private val PLACE_PREFIX = Regex("""^(\d\d?\d?\d?)\s+(?=\S)""")
+
+    /**
+     * KMK (r107) fix: the names carry a place number to strip: most of them count up one by one ("01 …", "02 …" …
+     * "1800 …"), or nearly all start with one. A list whose names merely start with a number keeps them
+     */
+    private fun placeNumbered(labels: List<String>): Boolean {
+        if (labels.size < 2) return false
+        val nums = labels.map { PLACE_PREFIX.find(it)?.groupValues?.get(1)?.toIntOrNull() }
+        val up = (1 until nums.size).count { i -> nums[i] != null && nums[i - 1] != null && nums[i] == nums[i - 1]!! + 1 }
+        if (up * 5 >= (labels.size - 1) * 4) return true
+        return nums.count { it != null } * 5 >= labels.size * 4
+    }
+
+    /**
+     * r107: a directory filter saved before r107 with whole cards as names (the owner's Makers "FC FC2 33,977 videos +
+     * Follow Following", Series "01 Acrobatic Sex! 4,476 videos · 6.2M views + Follow Following" saved as a Sort):
+     * the names cleaned (counts, Follow, a place number before every name, a logo's letters), a Sort made a text box
+     * with suggestions. Null = nothing to repair
+     */
+    fun repairLabels(f: ExtrasFilter): ExtrasFilter? {
+        if (f.mode != "path" || f.collection != null || f.type !in setOf("sort", "select", "autocomplete")) return null
+        val real = f.options.filter { it.value.isNotEmpty() }
+        if (real.size < 5) return null
+        var labels = real.map { BuilderListReader.entryLabel(it.label) }
+        val changed = real.indices.count { labels[it] != real[it].label }
+        if (changed * 2 < real.size) return null
+        if (placeNumbered(labels)) labels = labels.map { it.replace(PLACE_PREFIX, "") }
+        labels = labels.map { BuilderListReader.dropInitials(it) }
+        val cleaned = real.mapIndexed { i, o -> o.copy(label = labels[i].ifEmpty { o.label }) }
+        val type = if (f.type == "sort") "autocomplete" else f.type
+        val all = if (type == "select") withAny(cleaned) else cleaned
+        return f.copy(type = type, options = all, optionsText = formatOptions(all))
+    }
+
+    /** r107: a collection's entries edited as text keep the parts of the entries whose value stayed */
+    fun keepParts(old: List<ExtrasOption>, edited: List<ExtrasOption>): List<ExtrasOption> {
+        val byValue = old.associateBy { it.value }
+        return edited.map { e ->
+            val o = byValue[e.value] ?: return@map e
+            e.copy(number = o.number, videos = o.videos, views = o.views, likes = o.likes, picture = o.picture)
+        }
+    }
+
+    /** r107: a collection filter as generic-list v10's FILTERS entry (the contract the app's Browse sheet reads) */
+    private fun collectionJson(f: ExtrasFilter, c: CollectionSpec, key: String): JsonObject {
+        val keep = COLLECTION_FIELDS.filter { it == "title" || it in c.fields }
+        fun option(o: ExtrasOption): JsonObject {
+            val m = LinkedHashMap<String, JsonElement>()
+            m["label"] = JsonPrimitive(o.label)
+            m["value"] = JsonPrimitive(o.value)
+            if ("number" in keep && o.number.isNotEmpty()) m["number"] = JsonPrimitive(o.number)
+            if ("videos" in keep && o.videos.isNotEmpty()) m["videos"] = JsonPrimitive(o.videos)
+            if ("views" in keep && o.views.isNotEmpty()) m["views"] = JsonPrimitive(o.views)
+            if ("likes" in keep && o.likes.isNotEmpty()) m["likes"] = JsonPrimitive(o.likes)
+            if ("picture" in keep && o.picture.isNotEmpty()) m["picture"] = JsonPrimitive(o.picture)
+            return JsonObject(m)
+        }
+        fun plain(o: ExtrasOption) = JsonObject(mapOf("label" to JsonPrimitive(o.label), "value" to JsonPrimitive(o.value)))
+        val parts = LinkedHashMap<String, JsonElement>()
+        c.parts.filter { it.kind in COLLECTION_FIELDS }.forEach { p ->
+            val m = LinkedHashMap<String, JsonElement>()
+            m["sel"] = JsonPrimitive(p.selector)
+            if (p.attr.isNotEmpty()) m["attr"] = JsonPrimitive(p.attr)
+            if (p.own) m["own"] = JsonPrimitive(true)
+            if (p.bare) m["bare"] = JsonPrimitive(true)
+            parts[p.kind] = JsonObject(m)
+        }
+        val directory = LinkedHashMap<String, JsonElement>()
+        directory["first"] = JsonPrimitive(c.first)
+        directory["page"] = JsonPrimitive(c.page)
+        directory["pages"] = JsonPrimitive(c.pages)
+        directory["item"] = JsonPrimitive(c.item)
+        directory["link"] = JsonPrimitive(c.link)
+        directory["parts"] = JsonObject(parts)
+        directory["sortParam"] = JsonPrimitive(c.sortParam)
+        if (c.orderParam.isNotEmpty()) {
+            directory["orderParam"] = JsonPrimitive(c.orderParam)
+            directory["ascValue"] = JsonPrimitive(c.ascValue)
+            directory["descValue"] = JsonPrimitive(c.descValue)
+        }
+        val map = LinkedHashMap<String, JsonElement>()
+        map["key"] = JsonPrimitive(key)
+        map["name"] = JsonPrimitive(f.name.trim().ifEmpty { prettyName(key) })
+        map["type"] = JsonPrimitive("collection")
+        map["mode"] = JsonPrimitive("path")
+        map["path"] = JsonPrimitive(f.path.trim())
+        map["role"] = JsonPrimitive("page")
+        f.group.trim().takeIf { it.isNotEmpty() }?.let { map["group"] = JsonPrimitive(it) }
+        map["fields"] = JsonArray(keep.map { JsonPrimitive(it) })
+        map["options"] = JsonArray(f.options.filter { it.value.isNotEmpty() }.map(::option))
+        map["sorts"] = JsonArray(c.sorts.filter { it.value.isNotEmpty() }.map(::plain))
+        map["reverse"] = JsonPrimitive(c.reverse && c.orderParam.isNotEmpty())
+        // KMK (r107) fix: the site's menus only narrow a live list (stored entries can't be narrowed by them): kept in the
+        // spec (Live can be turned on again in the editor), written only when live
+        map["menus"] = JsonArray(
+            (if (c.live && c.item.isNotEmpty()) c.menus else emptyList()).map { m ->
+                JsonObject(mapOf("key" to JsonPrimitive(m.key), "name" to JsonPrimitive(m.name), "options" to JsonArray(m.options.map(::plain))))
+            },
+        )
+        map["live"] = JsonPrimitive(c.live && c.item.isNotEmpty())
+        map["total"] = JsonPrimitive(c.total)
+        map["directory"] = JsonObject(directory)
+        return JsonObject(map)
+    }
+
     /** r106: a list read in full is a text box with suggestions when it is longer than a dropdown reads well */
     fun formFor(entries: Int): String = if (entries > 60) "autocomplete" else "select"
 
@@ -1171,6 +1500,13 @@ internal object BuilderExtrasLogic {
                 f.copy(type = type, options = options, optionsText = formatOptions(options))
             }
             "autocomplete" -> {
+                val options = f.options.filter { it.value.isNotEmpty() }
+                f.copy(type = type, options = options, optionsText = formatOptions(options))
+            }
+            // r107: back to its collection (only a scanned directory's filter has one)
+            "collection" -> if (f.collection == null) {
+                f
+            } else {
                 val options = f.options.filter { it.value.isNotEmpty() }
                 f.copy(type = type, options = options, optionsText = formatOptions(options))
             }
@@ -1428,6 +1764,9 @@ internal object BuilderExtrasLogic {
                 if (mode == "path" && "{value}" !in path) return@mapNotNull null
                 val key = uniqueKey(f.key.trim().ifEmpty { param.ifEmpty { "filter" } }, keys)
                 keys += key
+                // r107 (generic-list v10): a directory's collection, with its parts, sorts, menus and how to read it
+                val c = f.collection
+                if (f.type == "collection" && c != null && mode == "path") return@mapNotNull collectionJson(f, c, key)
                 // r104 fix: the app's Dropdown / Sort always sends an option (the first when nothing was picked): a
                 // filter that opens its own page gets an empty "Any" first, so it opens that page only when picked.
                 // r105 fix: a parameter's Dropdown / Sort gets its empty option first too ("Site default" when it has
@@ -1442,8 +1781,9 @@ internal object BuilderExtrasLogic {
                     "checkbox" -> "checkbox"
                     "select" -> if (options.isEmpty()) "text" else "select"
                     "sort" -> if (options.isEmpty()) "text" else "sort"
-                    // r103: a text box with suggestions (generic-list v6 maps the typed labels to values)
-                    "autocomplete" -> "autocomplete"
+                    // r103: a text box with suggestions (generic-list v6 maps the typed labels to values); r107: a collection
+                    // without its directory (not scanned) is one too
+                    "autocomplete", "collection" -> "autocomplete"
                     else -> "text"
                 }
                 val map = LinkedHashMap<String, JsonElement>()
@@ -2208,7 +2548,10 @@ internal class BuilderExtrasModel {
     @Volatile
     private var readJob: Job? = null
 
-    /** r106: the directory cards of a new menu pick read their first page (one after another): names and pages */
+    /**
+     * r106: the directory cards of a new menu pick read their first page (one after another): names and pages. r107: the
+     * first page is scanned part by part ([BuilderListReader.scan]): the card shows its parts, sorts and menus
+     */
     private fun probeCards(cards: List<MenuGroup>) {
         val todo = cards.filter { it.href != null && (it.kind == "directory" || it.items.isEmpty()) }
         if (todo.isEmpty()) return
@@ -2217,8 +2560,8 @@ internal class BuilderExtrasModel {
             for (g in todo) {
                 val url = g.href ?: continue
                 val probe = try {
-                    val p = BuilderListReader.probe(url)
-                    DirProbe("done", p.entries, p.pages, p.hasNext, p.note)
+                    val scan = BuilderListReader.scan(url)
+                    DirProbe("done", scan.entries.size, scan.pages, scan.hasNext, scan.note, scan = scan)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Throwable) {
@@ -2264,7 +2607,8 @@ internal class BuilderExtrasModel {
                     // run goes on to the next
                     val card = mutable.value.menuGroups.firstOrNull { it.id == k.id } ?: continue
                     if (!card.made.isNullOrEmpty() || readStops[k.id] == true) continue
-                    readOne(card, maxPages)
+                    // r107: a scanned directory is made with the choices on its card (Live ones at once)
+                    if (card.probe?.scan?.ok == true) collectOne(card, maxPages) else readOne(card, maxPages)
                 }
             } finally {
                 if (readAllParent == parentId) readAllParent = null
@@ -2312,6 +2656,131 @@ internal class BuilderExtrasModel {
         // r106 fix: a card closed ("Not this") while it was read makes nothing
         if (mutable.value.menuGroups.none { it.id == g.id }) return
         onListRead(url, result, BuilderExtrasLogic.formFor(result.items.size), g.name.ifBlank { null }, menuId = g.id)
+    }
+
+    // ---------- r107: a scanned directory made into a collection ----------
+
+    /** r107: the ticks, mode and page range on a scanned directory card */
+    fun setDirChoice(id: Int, choice: DirChoice) = mutable.update { s ->
+        s.copy(menuGroups = s.menuGroups.map { if (it.id == id) it.copy(choice = choice) else it })
+    }
+
+    /**
+     * r107: the scanned card's "Make filter": Live keeps page 1's entries and lets the source read the rest as Browse
+     * scrolls; Read pages now reads the page range first (pause, progress, Stop). Not scanned: the r106 read
+     */
+    fun makeCollection(id: Int) {
+        val g = mutable.value.menuGroups.firstOrNull { it.id == id } ?: return
+        if (g.href == null) return
+        if (readJob?.isActive == true) {
+            // KMK (r107) fix: a Live collection reads nothing now: made while another card reads; else say why not
+            val scan = g.probe?.scan?.takeIf { it.ok }
+            val choice = scan?.let { g.choice ?: BuilderExtrasLogic.defaultChoice(g.name, it) }
+            if (scan != null && choice != null && choice.live && (scan.pageTemplate != null || scan.pages <= 1)) {
+                scope.launch { finishCollection(g, scan, scan.entries, choice, 1, "live") }
+            } else {
+                mutable.update {
+                    it.copy(message = "Another directory is being read: make \"${g.name.ifBlank { "this one" }}\" when it ends (or stop it)")
+                }
+            }
+            return
+        }
+        readStops.remove(id)
+        g.parent?.let { readStops.remove(it) }
+        readJob = scope.launch { collectOne(g, BuilderExtrasLogic.READ_PAGES) }
+    }
+
+    private suspend fun collectOne(g: MenuGroup, maxPages: Int) {
+        val scan = g.probe?.scan?.takeIf { it.ok }
+        if (scan == null) {
+            readOne(g, maxPages)
+            return
+        }
+        val choice = g.choice ?: BuilderExtrasLogic.defaultChoice(g.name, scan)
+        val canLive = scan.pageTemplate != null || scan.pages <= 1
+        if (choice.live && canLive) {
+            finishCollection(g, scan, scan.entries, choice, 1, "live")
+            return
+        }
+        val (low, high) = readPause()
+        val from = if (scan.pageTemplate == null) 1 else choice.from.coerceIn(1, scan.pages.coerceAtLeast(1))
+        val to = choice.to.coerceIn(from, maxOf(from, scan.pages))
+        val count = to - from + 1
+        fun show(r: GroupRead) = mutable.update { s -> s.copy(menuGroups = s.menuGroups.map { if (it.id == g.id) it.copy(read = r) else it }) }
+        show(GroupRead(running = true, page = 1, entries = 0, maxPages = count, first = from))
+        requestScroll("menu:${g.parent ?: g.id}", reveal = false)
+        val started = System.currentTimeMillis()
+        val result = try {
+            BuilderListReader.readDirectory(
+                scan = scan,
+                from = from,
+                to = to,
+                pauseMinMs = low,
+                pauseMaxMs = high,
+                onProgress = { done, entries, pauseMs ->
+                    val now = System.currentTimeMillis()
+                    show(
+                        GroupRead(
+                            running = true,
+                            page = (done + 1).coerceAtMost(count),
+                            entries = entries,
+                            maxPages = count,
+                            first = from,
+                            waitUntil = if (pauseMs > 0) now + pauseMs else 0L,
+                            pageMs = if (done > 0) (now - started + pauseMs) / done else 0L,
+                        ),
+                    )
+                },
+                shouldStop = { readStops[g.id] == true || (g.parent != null && g.parent == readAllParent && readStops[g.parent] == true) },
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            AppLog.add('W', "lab", "extras read directory ${g.name}: ${e.message ?: e.javaClass.simpleName}")
+            show(GroupRead(running = false, page = 0, entries = 0, maxPages = count, reason = "couldn't be read (${e.message ?: "an error"})", first = from))
+            return
+        }
+        show(GroupRead(running = false, page = result.pages, entries = result.entries.size, maxPages = count, reason = result.reason, first = from))
+        if (result.entries.isEmpty()) return
+        // a card closed ("Not this") while it was read makes nothing
+        if (mutable.value.menuGroups.none { it.id == g.id }) return
+        finishCollection(g, scan, result.entries, choice.copy(live = false), result.pages, result.reason)
+    }
+
+    /** r107: the collection filter of [entries] (in the card's parent group), asked Replace / Keep both like any card's */
+    private fun finishCollection(
+        g: MenuGroup,
+        scan: BuilderListReader.DirScan,
+        entries: List<BuilderListReader.DirEntry>,
+        choice: DirChoice,
+        pages: Int,
+        how: String,
+    ) {
+        val url = g.href ?: scan.url
+        val group = menuGroupOf(url).ifEmpty { g.headingPath.dropLast(1).lastOrNull()?.let(BuilderExtrasLogic::cleanHeading).orEmpty() }
+        val derived = BuilderExtrasLogic.collectionFilter(
+            name = g.name.ifBlank { null },
+            group = group,
+            scan = scan,
+            entries = entries,
+            choice = choice,
+            site = siteFor(scan.url),
+            rule = mutable.value.pageRule,
+        )
+        val made = derived.filter
+        AppLog.add(
+            'I',
+            "lab",
+            "extras collection \"${g.name}\" from $url: ${made?.options?.size ?: 0} entries ($how, $pages page${if (pages == 1) "" else "s"}), " +
+                "parts ${made?.collection?.fields?.joinToString(",") ?: "-"}, live ${made?.collection?.live ?: false}" +
+                (if (group.isNotEmpty()) ", group $group" else ""),
+        )
+        val added = applyDerived(derived.copy(listUrl = null), "the directory \"${g.name}\"", menuId = g.id)
+        if (made == null) {
+            mutable.update { st -> st.copy(menuGroups = st.menuGroups.map { if (it.id == g.id) it.copy(made = "") else it }) }
+            return
+        }
+        afterMade(added, g.id, "")
     }
 
     fun dismissMenuGroup(id: Int) {
@@ -2893,9 +3362,8 @@ internal class BuilderExtrasModel {
                                 "name" to JsonPrimitive(f.name),
                                 "type" to JsonPrimitive(f.type),
                                 "optionsText" to JsonPrimitive(f.optionsText),
-                                "options" to JsonArray(
-                                    f.options.map { JsonObject(mapOf("label" to JsonPrimitive(it.label), "value" to JsonPrimitive(it.value))) },
-                                ),
+                                // r107: a collection entry's parts too
+                                "options" to JsonArray(f.options.map { optionJson(it) }),
                                 "onValue" to JsonPrimitive(f.onValue),
                                 "mode" to JsonPrimitive(f.mode),
                                 "param" to JsonPrimitive(f.param),
@@ -2908,6 +3376,7 @@ internal class BuilderExtrasModel {
                                 "onSearch" to JsonPrimitive(f.onSearch),
                                 "seenOn" to JsonPrimitive(f.seenOn),
                                 "roleSet" to JsonPrimitive(f.roleSet),
+                                "collection" to (f.collection?.let { collectionJson(it) } ?: JsonNull),
                             ),
                         )
                     },
@@ -2933,6 +3402,107 @@ internal class BuilderExtrasModel {
         )
     }
 
+    /** r107: an option as saved with the builder: label, value and a collection entry's parts when it has them */
+    private fun optionJson(o: ExtrasOption): JsonObject {
+        val m = LinkedHashMap<String, JsonElement>()
+        m["label"] = JsonPrimitive(o.label)
+        m["value"] = JsonPrimitive(o.value)
+        if (o.number.isNotEmpty()) m["number"] = JsonPrimitive(o.number)
+        if (o.videos.isNotEmpty()) m["videos"] = JsonPrimitive(o.videos)
+        if (o.views.isNotEmpty()) m["views"] = JsonPrimitive(o.views)
+        if (o.likes.isNotEmpty()) m["likes"] = JsonPrimitive(o.likes)
+        if (o.picture.isNotEmpty()) m["picture"] = JsonPrimitive(o.picture)
+        return JsonObject(m)
+    }
+
+    private fun optionOf(op: JsonObject): ExtrasOption = ExtrasOption(
+        label = op.str("label").orEmpty(),
+        value = op.str("value").orEmpty(),
+        number = op.str("number").orEmpty(),
+        videos = op.str("videos").orEmpty(),
+        views = op.str("views").orEmpty(),
+        likes = op.str("likes").orEmpty(),
+        picture = op.str("picture").orEmpty(),
+    )
+
+    /** r107: a collection's spec as saved with the builder ([collectionOf] reads it back) */
+    private fun collectionJson(c: CollectionSpec): JsonObject {
+        fun plain(o: ExtrasOption) = JsonObject(mapOf("label" to JsonPrimitive(o.label), "value" to JsonPrimitive(o.value)))
+        return JsonObject(
+            mapOf(
+                "fields" to JsonArray(c.fields.map { JsonPrimitive(it) }),
+                "sorts" to JsonArray(c.sorts.map(::plain)),
+                "reverse" to JsonPrimitive(c.reverse),
+                "menus" to JsonArray(
+                    c.menus.map { m ->
+                        JsonObject(mapOf("key" to JsonPrimitive(m.key), "name" to JsonPrimitive(m.name), "options" to JsonArray(m.options.map(::plain))))
+                    },
+                ),
+                "live" to JsonPrimitive(c.live),
+                "total" to JsonPrimitive(c.total),
+                "first" to JsonPrimitive(c.first),
+                "page" to JsonPrimitive(c.page),
+                "pages" to JsonPrimitive(c.pages),
+                "item" to JsonPrimitive(c.item),
+                "link" to JsonPrimitive(c.link),
+                "parts" to JsonArray(
+                    c.parts.map { p ->
+                        JsonObject(
+                            mapOf(
+                                "kind" to JsonPrimitive(p.kind),
+                                "selector" to JsonPrimitive(p.selector),
+                                "example" to JsonPrimitive(p.example),
+                                "attr" to JsonPrimitive(p.attr),
+                                "own" to JsonPrimitive(p.own),
+                                "bare" to JsonPrimitive(p.bare),
+                            ),
+                        )
+                    },
+                ),
+                "sortParam" to JsonPrimitive(c.sortParam),
+                "orderParam" to JsonPrimitive(c.orderParam),
+                "ascValue" to JsonPrimitive(c.ascValue),
+                "descValue" to JsonPrimitive(c.descValue),
+            ),
+        )
+    }
+
+    private fun collectionOf(o: JsonObject?): CollectionSpec? {
+        if (o == null) return null
+        fun plains(a: JsonArray?) = a?.mapNotNull { e -> (e as? JsonObject)?.let { ExtrasOption(it.str("label").orEmpty(), it.str("value").orEmpty()) } }.orEmpty()
+        return CollectionSpec(
+            fields = o.arr("fields")?.mapNotNull { (it as? JsonPrimitive)?.content }?.ifEmpty { null } ?: listOf("title"),
+            sorts = plains(o.arr("sorts")),
+            reverse = o.bool("reverse") == true,
+            menus = o.arr("menus")?.mapNotNull { e ->
+                val m = e as? JsonObject ?: return@mapNotNull null
+                CollectionMenu(m.str("key").orEmpty(), m.str("name").orEmpty(), plains(m.arr("options")))
+            }.orEmpty().filter { it.key.isNotEmpty() },
+            live = o.bool("live") == true,
+            total = o.int("total") ?: 0,
+            first = o.str("first").orEmpty(),
+            page = o.str("page").orEmpty(),
+            pages = o.int("pages") ?: 1,
+            item = o.str("item").orEmpty(),
+            link = o.str("link").orEmpty(),
+            parts = o.arr("parts")?.mapNotNull { e ->
+                val p = e as? JsonObject ?: return@mapNotNull null
+                BuilderListReader.DirPart(
+                    kind = p.str("kind").orEmpty(),
+                    selector = p.str("selector").orEmpty(),
+                    example = p.str("example").orEmpty(),
+                    attr = p.str("attr").orEmpty(),
+                    own = p.bool("own") == true,
+                    bare = p.bool("bare") == true,
+                )
+            }.orEmpty().filter { it.kind.isNotEmpty() },
+            sortParam = o.str("sortParam").orEmpty(),
+            orderParam = o.str("orderParam").orEmpty(),
+            ascValue = o.str("ascValue").orEmpty(),
+            descValue = o.str("descValue").orEmpty(),
+        )
+    }
+
     /** r102: puts back what [snapshot] saved (missing parts keep their defaults); the fields re-read their text */
     fun restore(json: JsonElement) {
         val o = json as? JsonObject
@@ -2946,10 +3516,7 @@ internal class BuilderExtrasModel {
         }.orEmpty()
         val filters = o.arr("filters")?.mapNotNull { e ->
             val f = e as? JsonObject ?: return@mapNotNull null
-            val options = f.arr("options")?.mapNotNull { oe ->
-                val op = oe as? JsonObject ?: return@mapNotNull null
-                ExtrasOption(op.str("label").orEmpty(), op.str("value").orEmpty())
-            }.orEmpty()
+            val options = f.arr("options")?.mapNotNull { oe -> (oe as? JsonObject)?.let { optionOf(it) } }.orEmpty()
             val key = f.str("key").orEmpty()
             val mode = f.str("mode") ?: "param"
             val askParam = f.bool("askParam") == true
@@ -2977,8 +3544,14 @@ internal class BuilderExtrasModel {
                 onSearch = f.bool("onSearch") == true,
                 seenOn = f.str("seenOn").orEmpty(),
                 roleSet = f.bool("roleSet") == true,
+                collection = collectionOf(f.obj("collection")),
             )
-        }.orEmpty()
+        }.orEmpty().map { f ->
+            // r107: a directory saved before r107 with whole cards as names (or as a Sort) comes back cleaned
+            BuilderExtrasLogic.repairLabels(f)?.also { r ->
+                AppLog.add('I', "lab", "extras filter \"${f.name}\": names cleaned (${f.options.firstOrNull { it.value.isNotEmpty() }?.label?.take(60)} → ${r.options.firstOrNull { it.value.isNotEmpty() }?.label}), ${f.type} → ${r.type}")
+            } ?: f
+        }
         val custom = o.arr("custom")?.mapNotNull { e ->
             val c = e as? JsonObject ?: return@mapNotNull null
             val text = c.str("optionsText").orEmpty()
@@ -3143,7 +3716,25 @@ internal class BuilderExtrasModel {
     }
 
     fun setFilterOptionsText(index: Int, text: String) =
-        updateFilter(index) { it.copy(optionsText = text, options = BuilderExtrasLogic.parseOptions(text)) }
+        updateFilter(index) {
+            // r107: a collection's entries keep their parts (by value)
+            val parsed = BuilderExtrasLogic.parseOptions(text)
+            it.copy(optionsText = text, options = if (it.collection != null) BuilderExtrasLogic.keepParts(it.options, parsed) else parsed)
+        }
+
+    /** r107: a collection's "Live, as you scroll" in the filter editor (only when its directory has page addresses) */
+    fun setCollectionLive(index: Int, on: Boolean) = updateFilter(index) { f ->
+        val c = f.collection ?: return@updateFilter f
+        f.copy(collection = c.copy(live = on && c.item.isNotEmpty() && (c.page.isNotEmpty() || c.pages <= 1)))
+    }
+
+    /** r107: a part kept or not in a collection's drop-down (the name always is) */
+    fun setCollectionField(index: Int, field: String, on: Boolean) = updateFilter(index) { f ->
+        val c = f.collection ?: return@updateFilter f
+        if (field == "title") return@updateFilter f
+        val fields = BuilderExtrasLogic.COLLECTION_FIELDS.filter { it == "title" || (if (it == field) on else it in c.fields) }
+        f.copy(collection = c.copy(fields = fields))
+    }
 
     fun setFilterOnValue(index: Int, value: String) = updateFilter(index) { it.copy(onValue = value) }
 

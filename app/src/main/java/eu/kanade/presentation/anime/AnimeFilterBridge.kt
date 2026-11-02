@@ -2,6 +2,8 @@ package eu.kanade.presentation.anime
 
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
+import eu.kanade.tachiyomi.jssource.JsDirectory
+import eu.kanade.tachiyomi.jssource.JsFilters
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 
@@ -31,6 +33,16 @@ private class MirrorSelect(val src: AnimeFilter.Select<*>) :
 }
 
 private class MirrorText(val src: AnimeFilter.Text) : Filter.Text(src.name, src.state), Mirror {
+    override fun writeBack() {
+        src.state = state
+    }
+}
+
+// KMK (r107): a JS source's collection drop-down: the picked value goes back, the drop-down's state is shared
+private class MirrorCollection(val src: AnimeFilter.Text, override val directory: JsDirectory) :
+    Filter.Text(src.name, src.state),
+    Mirror,
+    JsDirectory.Holder {
     override fun writeBack() {
         src.state = state
     }
@@ -79,19 +91,36 @@ private class MirrorGroup(val src: AnimeFilter.Group<*>, children: List<Filter<*
     }
 }
 
+// KMK (r107): a JS source's "group" is a section of the sheet (its own card), like a manga source's
+private class MirrorSection(val src: AnimeFilter.Group<*>, children: List<Filter<*>>) :
+    Filter.Group<Filter<*>>(src.name, children),
+    Mirror,
+    JsFilters.SectionGroup {
+    override fun writeBack() {
+        state.forEach { (it as? Mirror)?.writeBack() }
+    }
+}
+
 private fun AnimeFilter<*>.toMirror(): Filter<*>? = when (this) {
     is AnimeFilter.Header -> MirrorHeader(name)
     is AnimeFilter.Separator -> MirrorSeparator(name)
     is AnimeFilter.Select<*> -> MirrorSelect(this)
-    is AnimeFilter.Text -> MirrorText(this)
+    is AnimeFilter.Text -> {
+        val holder = this as? JsDirectory.Holder
+        if (holder != null) MirrorCollection(this, holder.directory) else MirrorText(this)
+    }
     is AnimeFilter.CheckBox -> MirrorCheckBox(this)
     is AnimeFilter.TriState -> MirrorTriState(this)
     is AnimeFilter.Sort -> MirrorSort(this)
     is AnimeFilter.AutoComplete -> MirrorAutoComplete(this)
-    is AnimeFilter.Group<*> -> MirrorGroup(
-        this,
-        state.mapNotNull { (it as? AnimeFilter<*>)?.toMirror() },
-    )
+    is AnimeFilter.Group<*> -> if (this is JsFilters.SectionGroup) {
+        MirrorSection(this, state.mapNotNull { (it as? AnimeFilter<*>)?.toMirror() })
+    } else {
+        MirrorGroup(
+            this,
+            state.mapNotNull { (it as? AnimeFilter<*>)?.toMirror() },
+        )
+    }
 }
 
 /** A manga-style copy of these filters for the filter sheet */

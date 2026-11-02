@@ -59,16 +59,22 @@ class JsAnimeSource(
         anime: SAnime,
         pushResults: suspend (relatedAnime: Pair<String, List<SAnime>>, completed: Boolean) -> Unit,
     ) {
-        runCatching { relatedGroups(anime) }
-            .onSuccess { groups ->
-                groups.filter { it.second.isNotEmpty() }.forEach { pushResults(it, false) }
-            }
-            .onFailure { e -> logcat(LogPriority.ERROR, e) { "${info.name}: getRelated failed" } }
+        // KMK (r107): a cancellation (the screen was left) is let through, not logged as a failure (it was caught
+        // here and logged as "getRelated failed" with no message); a real failure is logged with its message
+        val groups = try {
+            relatedGroups(anime)
+        } catch (e: Throwable) {
+            if (JsRelatedCalls.isCancellation(e)) throw e
+            logcat(LogPriority.ERROR, e) { "${info.name}: getRelated failed: ${e.message ?: e.javaClass.simpleName}" }
+            return
+        }
+        groups.filter { it.second.isNotEmpty() }.forEach { pushResults(it, false) }
     }
 
     private suspend fun relatedGroups(anime: SAnime): List<Pair<String, List<SAnime>>> {
         if (!info.hasRelated) return emptyList()
-        val result = runtime().call("getRelated", anime.url)
+        // KMK (r107): one call per title shared by the title page and the Suggestions screen (see JsRelatedCalls)
+        val result = JsRelatedCalls.get("${info.key}|${anime.url}") { runtime().call("getRelated", anime.url) }
         fun entries(element: JsonElement): List<SAnime> {
             val list = JsMapping.list(element)
             webUrls.remember(list)
@@ -197,7 +203,8 @@ class JsAnimeSource(
      * on Popular or a tab stays on that list unless List is changed. Other sources get their values unchanged
      */
     private fun withBrowsing(values: Map<String, JsonElement>, filters: Iterable<*>): Map<String, JsonElement> {
-        if (JsFilters.flat(groups).none { it.key == "__list" }) return values
+        // KMK (r107): v10 has no "List" filter any more, so its filters' roles say it is such a source
+        if (!JsFilters.readsFrom(groups)) return values
         val from = filters.filterIsInstance<TabHolder>().firstOrNull()?.id?.let { "tab:$it" } ?: browsing ?: return values
         return values + ("__from" to JsonPrimitive(from))
     }
@@ -242,6 +249,7 @@ class JsAnimeSource(
             is TriFilter -> filter.state != filter.group.defaultState
             is SortFilter -> filter.state != filter.start
             is GroupFilter -> touched(filter.state)
+            is CollectionFilter -> filter.state.isNotEmpty() // KMK (r107)
             else -> false
         }
     }
@@ -262,7 +270,9 @@ class JsAnimeSource(
             filters += AnimeFilter.Header("A catalog is listed when the search is empty")
             filters += AnimeFilter.Separator()
         }
-        groups.forEach { filters += filterOf(it) }
+        // KMK (r107): the built-in "List" filter is gone from the sheet (the tabs pick the list; __from still says
+        // which). A blank header (not shown) keeps its place: saved searches restore filters by position
+        groups.forEach { filters.add(if (it.key == JsFilters.BUILT_IN_LIST) AnimeFilter.Header("") else filterOf(it)) }
         return AnimeFilterList(filters)
     }
 
@@ -276,6 +286,7 @@ class JsAnimeSource(
         JsFilters.Type.TriState -> TriFilter(group)
         JsFilters.Type.Sort -> SortFilter(group)
         JsFilters.Type.Group -> GroupFilter(group, group.children.map { filterOf(it) })
+        JsFilters.Type.Collection -> CollectionFilter(directoryOf(group)) // KMK (r107)
         JsFilters.Type.AutoComplete -> TagFilter(
             group,
             manager.tags.suggestions(info.key, group.tagLists, group.options.map { it.label }),
@@ -303,6 +314,8 @@ class JsAnimeSource(
                 }
                 // what a group holds goes out under each one's own key
                 is GroupFilter -> putAll(filterValues(filter.state))
+                // KMK (r107): the picked entry's value, like a page autocomplete's ("" = none picked)
+                is CollectionFilter -> put(filter.directory.key, JsonPrimitive(filter.state))
                 else -> Unit
             }
         }
@@ -345,8 +358,31 @@ class JsAnimeSource(
         val start = AnimeFilter.Sort.Selection(group.startIndex, group.defaultAscending)
     }
 
+    // KMK (r107): a "group" from getFilters is a section of the sheet (its own card)
     private class GroupFilter(val group: JsFilters.Group, children: List<AnimeFilter<*>>) :
-        AnimeFilter.Group<AnimeFilter<*>>(group.name, children)
+        AnimeFilter.Group<AnimeFilter<*>>(group.name, children),
+        JsFilters.SectionGroup
+
+    /**
+     * KMK (r107): a collection drop-down. Its state is the picked entry's value ("" = any), a text filter's so saved
+     * searches and copies of the filters keep it; the drop-down's own state is the source's shared [JsDirectory]
+     */
+    private class CollectionFilter(override val directory: JsDirectory) :
+        AnimeFilter.Text(directory.name, ""),
+        JsDirectory.Holder
+
+    /** KMK (r107): one directory per collection filter, shared by every copy of this source's filters */
+    private val directories = java.util.concurrent.ConcurrentHashMap<String, JsDirectory>()
+
+    private fun directoryOf(group: JsFilters.Group): JsDirectory = directories.getOrPut(group.key) {
+        JsDirectory(
+            group = group,
+            sourceKey = info.key,
+            imageHeaders = headers.names().associateWith { headers[it].orEmpty() },
+        ) { page, sort, ascending, menus ->
+            runtime().call("getDirectory", group.key, page, sort, ascending, menus)
+        }
+    }
 
     private class TagFilter(val group: JsFilters.Group, suggestions: List<String>) :
         AnimeFilter.AutoComplete(

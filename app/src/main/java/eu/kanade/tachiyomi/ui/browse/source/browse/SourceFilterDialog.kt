@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -14,21 +15,37 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Save
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import eu.kanade.presentation.browse.components.CollectionFilterField
+import eu.kanade.presentation.browse.components.FilledFilterField
+import eu.kanade.presentation.browse.components.FilterCard
+import eu.kanade.presentation.browse.components.FilterCardPadding
+import eu.kanade.presentation.browse.components.FilterPills
+import eu.kanade.presentation.browse.components.FilterSelectField
+import eu.kanade.presentation.browse.components.FilterSortMenu
+import eu.kanade.presentation.browse.components.fitsPills
+import eu.kanade.presentation.browse.components.sortArrow
 import eu.kanade.presentation.components.AdaptiveSheet
+import eu.kanade.tachiyomi.jssource.JsDirectory
+import eu.kanade.tachiyomi.jssource.JsFilters
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import kotlinx.collections.immutable.ImmutableList
@@ -41,11 +58,8 @@ import tachiyomi.presentation.core.components.CheckboxItem
 import tachiyomi.presentation.core.components.CollapsibleBox
 import tachiyomi.presentation.core.components.HeadingItem
 import tachiyomi.presentation.core.components.Scroller.STICKY_HEADER_KEY_PREFIX
-import tachiyomi.presentation.core.components.SelectItem
-import tachiyomi.presentation.core.components.SortItem
 import tachiyomi.presentation.core.components.TextItem
 import tachiyomi.presentation.core.components.TriStateItem
-import tachiyomi.presentation.core.components.material.Button
 import tachiyomi.presentation.core.i18n.stringResource
 
 @Composable
@@ -92,6 +106,11 @@ fun SourceFilterDialog(
 /**
  * KMK: The filter sheet's contents, also shown in the Browse screen's Filter panel. A source without filters
  * shows a line saying so, and keeps Save so the list can still be saved for Feed.
+ *
+ * KMK (r107): restyled after the "CSheet" mockup: a "Filters" header with Clear and Apply on top; the filters in
+ * rounded cards (the ungrouped ones under "Options", each section group under its own name); drop-downs and sorts as
+ * filled boxes (two to a row when there's room), a select with a few short options as pills, and a JS source's
+ * collections as drop-downs with their own sort button ([CollectionFilterField]).
  */
 @Composable
 fun SourceFilterContent(
@@ -110,34 +129,49 @@ fun SourceFilterContent(
     openMangaDexRandom: (() -> Unit)?,
     openMangaDexFollows: (() -> Unit)?,
     // KMK -->
-    /** Something is selected: Clear shows like a selected tab */
+    /** Something is selected: Clear shows in the accent colour */
     clearHighlighted: Boolean = false,
     // KMK <--
 ) {
     val updateFilters = { onUpdate(filters) }
+    // KMK (r107): the cards, in the order their first filter comes
+    val sections = sectionsOf(filters)
 
     run {
         LazyColumn {
             stickyHeader(
                 key = "$STICKY_HEADER_KEY_PREFIX-title",
             ) {
-                // KMK: Clear, Save and Filter look like the tabs at the top of Browse (same height and corners).
-                // Clear is blue like a selected tab while something is selected
+                // KMK (r107): "Filters", then Clear (text), Save (when allowed) and Apply (filled)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(MaterialTheme.colorScheme.background)
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                        .padding(start = 16.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    FilterChip(
-                        selected = clearHighlighted,
-                        onClick = onReset,
-                        label = { Text(stringResource(KMR.strings.action_clear_filters)) },
+                    Text(
+                        text = "Filters",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.weight(1f),
                     )
-
-                    Spacer(modifier = Modifier.weight(1f))
+                    TextButton(
+                        onClick = {
+                            // KMK (r107) fix: Clear also resets each collection's sort, direction and menus
+                            resetDirectories(filters)
+                            onReset()
+                        },
+                    ) {
+                        Text(
+                            text = stringResource(KMR.strings.action_clear_filters),
+                            color = if (clearHighlighted) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    }
 
                     // KMK -->
                     if (shouldShowSavingButton) {
@@ -145,8 +179,8 @@ fun SourceFilterContent(
                         // SY -->
                         Surface(
                             onClick = onSave,
-                            modifier = Modifier.size(32.dp),
-                            shape = FilterChipDefaults.shape,
+                            modifier = Modifier.size(36.dp),
+                            shape = RoundedCornerShape(18.dp),
                             color = Color.Transparent,
                             contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
@@ -166,14 +200,12 @@ fun SourceFilterContent(
                             onFilter()
                             onDismissRequest()
                         },
-                        modifier = Modifier.height(32.dp),
-                        shape = FilterChipDefaults.shape,
-                        contentPadding = PaddingValues(horizontal = 16.dp),
+                        shape = RoundedCornerShape(20.dp),
+                        contentPadding = PaddingValues(horizontal = 22.dp, vertical = 8.dp),
                     ) {
-                        Text(stringResource(MR.strings.action_filter))
+                        Text(stringResource(MR.strings.action_apply))
                     }
                 }
-                HorizontalDivider()
             }
 
             if (openMangaDexRandom != null && openMangaDexFollows != null) {
@@ -196,11 +228,14 @@ fun SourceFilterContent(
                 )
             }
 
-            items(filters) {
-                FilterItem(it, updateFilters /* SY --> */, startExpanded /* SY <-- */)
+            // KMK (r107): one card per section
+            items(sections) { section ->
+                FilterSection(section, updateFilters, startExpanded)
             }
+            item { Spacer(modifier = Modifier.height(16.dp)) }
             // KMK -->
-            if (filters.isEmpty()) {
+            // (r107: also when only hidden holders are left)
+            if (sections.isEmpty()) {
                 item {
                     Text(
                         text = stringResource(KMR.strings.browse_no_filters),
@@ -215,8 +250,177 @@ fun SourceFilterContent(
     }
 }
 
+// KMK (r107) -->
+/** A card of the sheet: its title and the filters in it */
+private class FilterSectionData(val title: String, val filters: List<Filter<*>>)
+
+/**
+ * The sheet's cards: a section group (a JS source's "group", or any group holding more than check boxes) is a card
+ * under its own name; every other filter goes in the "Options" card, placed where the first of them comes. The blank
+ * header (a JS source's hidden tab holder) is left out
+ */
+private fun sectionsOf(filters: FilterList): List<FilterSectionData> {
+    val out = mutableListOf<FilterSectionData?>()
+    val options = mutableListOf<Filter<*>>()
+    var optionsAt = -1
+    filters.forEach { filter ->
+        if (filter is Filter.Header && filter.name.isBlank()) return@forEach
+        if (filter is Filter.Group<*> && isSection(filter)) {
+            val children = filter.state.filterIsInstance<Filter<*>>()
+            if (children.isNotEmpty()) out.add(FilterSectionData(filter.name, children))
+            return@forEach
+        }
+        if (optionsAt < 0) {
+            optionsAt = out.size
+            out.add(null)
+        }
+        options.add(filter)
+    }
+    return out.mapNotNull { it ?: FilterSectionData("Options", options) }
+}
+
+private fun isSection(group: Filter.Group<*>): Boolean =
+    group is JsFilters.SectionGroup ||
+        group.state.any { it is Filter<*> && it !is Filter.CheckBox && it !is Filter.TriState }
+
+/** A filter shown as a filled box (it can share a row with another) */
+private fun isField(filter: Filter<*>): Boolean = when (filter) {
+    is Filter.Select<*> -> !fitsPills(filter.values.map { it.toString() })
+    is Filter.Sort -> true
+    else -> false
+}
+
+/** The filters of a card in rows: two boxes side by side when [pair], else one filter per row */
+private fun rowsOf(filters: List<Filter<*>>, pair: Boolean): List<List<Filter<*>>> {
+    val rows = mutableListOf<List<Filter<*>>>()
+    var i = 0
+    while (i < filters.size) {
+        val filter = filters[i]
+        val next = filters.getOrNull(i + 1)
+        if (pair && isField(filter) && next != null && isField(next)) {
+            rows.add(listOf(filter, next))
+            i += 2
+        } else {
+            rows.add(listOf(filter))
+            i++
+        }
+    }
+    return rows
+}
+
+@Composable
+private fun FilterSection(section: FilterSectionData, onUpdate: () -> Unit, startExpanded: Boolean) {
+    FilterCard(
+        title = section.title,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+    ) {
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val pair = maxWidth >= 320.dp
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                rowsOf(section.filters, pair).forEach { row ->
+                    val first = row[0]
+                    val second = row.getOrNull(1)
+                    if (second != null) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = FilterCardPadding),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            FieldFilter(first, onUpdate, Modifier.weight(1f))
+                            FieldFilter(second, onUpdate, Modifier.weight(1f))
+                        }
+                    } else {
+                        FilterItem(first, onUpdate, startExpanded)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** A select or sort as a filled box */
+@Composable
+private fun FieldFilter(filter: Filter<*>, onUpdate: () -> Unit, modifier: Modifier) {
+    when (filter) {
+        is Filter.Select<*> -> FilterSelectField(
+            label = filter.name,
+            options = filter.values.map { it.toString() },
+            selectedIndex = filter.state,
+            onSelect = {
+                filter.state = it
+                onUpdate()
+            },
+            modifier = modifier,
+        )
+        is Filter.Sort -> SortFilterField(filter, onUpdate, modifier)
+        else -> Unit
+    }
+}
+
+/**
+ * A sort filter as a filled box showing the picked option with its arrow; its menu has the arrow on the left of the
+ * picked option. Tapping another option picks it, tapping the picked one flips it (as the sort rows did)
+ */
+@Composable
+private fun SortFilterField(filter: Filter.Sort, onUpdate: () -> Unit, modifier: Modifier) {
+    var open by remember { mutableStateOf(false) }
+    val selection = filter.state
+    Box(modifier = modifier) {
+        FilledFilterField(
+            label = filter.name,
+            value = selection?.let { filter.values.getOrNull(it.index) } ?: "Any",
+            open = open,
+            set = selection != null && selection.index > 0,
+            dimValue = selection == null,
+            leading = selection?.let { sortArrow(it.ascending) },
+            onClick = { open = true },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        FilterSortMenu(
+            expanded = open,
+            onDismiss = { open = false },
+            options = filter.values.toList(),
+            selectedIndex = selection?.index ?: -1,
+            ascending = selection?.ascending ?: false,
+            onPick = { index ->
+                val current = filter.state
+                val ascending = if (current != null && index == current.index) {
+                    !current.ascending
+                } else {
+                    current?.ascending ?: true
+                }
+                filter.state = Filter.Sort.Selection(index = index, ascending = ascending)
+                open = false
+                onUpdate()
+            },
+        )
+    }
+}
+// KMK <--
+
+/** KMK (r107) fix: each JS collection's sort, direction and menus back to the site's / stored order (Clear) */
+private fun resetDirectories(filters: List<Filter<*>>) {
+    filters.forEach { f ->
+        (f as? JsDirectory.Holder)?.directory?.resetOrder()
+        if (f is Filter.Group<*>) resetDirectories(f.state.filterIsInstance<Filter<*>>())
+    }
+}
+
 @Composable
 private fun FilterItem(filter: Filter<*>, onUpdate: () -> Unit/* SY --> */, startExpanded: Boolean /* SY <-- */) {
+    // KMK (r107): a JS source's collection (a text filter holding the picked entry's value)
+    val collection = filter as? JsDirectory.Holder
+    if (collection != null && filter is Filter.Text) {
+        CollectionFilterField(
+            directory = collection.directory,
+            value = filter.state,
+            onPick = {
+                filter.state = it
+                onUpdate()
+            },
+            modifier = Modifier.padding(horizontal = FilterCardPadding),
+        )
+        return
+    }
     when (filter) {
         // SY -->
         is Filter.AutoComplete -> {
@@ -269,45 +473,26 @@ private fun FilterItem(filter: Filter<*>, onUpdate: () -> Unit/* SY --> */, star
             }
         }
         is Filter.Select<*> -> {
-            SelectItem(
-                label = filter.name,
-                options = filter.values,
-                selectedIndex = filter.state,
-            ) {
-                filter.state = it
-                onUpdate()
+            // KMK (r107): a few short options as pills, else a filled drop-down box
+            val options = filter.values.map { it.toString() }
+            if (fitsPills(options)) {
+                FilterPills(
+                    label = filter.name,
+                    options = options,
+                    selectedIndex = filter.state,
+                    onSelect = {
+                        filter.state = it
+                        onUpdate()
+                    },
+                    modifier = Modifier.padding(horizontal = FilterCardPadding),
+                )
+            } else {
+                FieldFilter(filter, onUpdate, Modifier.fillMaxWidth().padding(horizontal = FilterCardPadding))
             }
         }
         is Filter.Sort -> {
-            CollapsibleBox(
-                heading = filter.name,
-                // SY -->
-                startExpanded = startExpanded,
-                // SY <--
-            ) {
-                Column {
-                    filter.values.mapIndexed { index, item ->
-                        val sortAscending = filter.state?.ascending
-                            ?.takeIf { index == filter.state?.index }
-                        SortItem(
-                            label = item,
-                            sortDescending = if (sortAscending != null) !sortAscending else null,
-                            onClick = {
-                                val ascending = if (index == filter.state?.index) {
-                                    !filter.state!!.ascending
-                                } else {
-                                    filter.state?.ascending ?: true
-                                }
-                                filter.state = Filter.Sort.Selection(
-                                    index = index,
-                                    ascending = ascending,
-                                )
-                                onUpdate()
-                            },
-                        )
-                    }
-                }
-            }
+            // KMK (r107): a filled box with the sort menu (it was a collapsible list of sort rows)
+            SortFilterField(filter, onUpdate, Modifier.fillMaxWidth().padding(horizontal = FilterCardPadding))
         }
         is Filter.Group<*> -> {
             CollapsibleBox(

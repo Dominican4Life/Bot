@@ -71,6 +71,7 @@ import eu.kanade.presentation.browse.components.BrowsePreviewInfoHeader
 import eu.kanade.presentation.browse.components.BrowseSourceToolbar
 import eu.kanade.presentation.browse.components.BrowseTabChip
 import eu.kanade.presentation.browse.components.BulkFavoriteDialogs
+import eu.kanade.presentation.browse.components.CatalogTabIcons
 import eu.kanade.presentation.browse.components.PreviewPanelButtons
 import eu.kanade.presentation.browse.components.RemoveMangaDialog
 import eu.kanade.presentation.browse.components.SavedSearchCreateDialog
@@ -421,7 +422,8 @@ data class BrowseSourceScreen(
                                     BrowseTabChip(
                                         selected = !panelOpen && selectedCatalog == catalog.id,
                                         label = catalog.name,
-                                        icon = null,
+                                        // KMK (r107): an icon chip like Popular / Latest (the name shows when selected)
+                                        icon = CatalogTabIcons.of(catalog.name),
                                         onClick = {
                                             if (!panelOpen && selectedCatalog == catalog.id) {
                                                 screenModel.reloadListing()

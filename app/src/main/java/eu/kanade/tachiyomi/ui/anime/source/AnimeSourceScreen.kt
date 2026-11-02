@@ -76,6 +76,7 @@ import eu.kanade.presentation.anime.writeBackToAnime
 import eu.kanade.presentation.browse.components.BrowseOverlayPanel
 import eu.kanade.presentation.browse.components.BrowseSourceToolbar
 import eu.kanade.presentation.browse.components.BrowseTabChip
+import eu.kanade.presentation.browse.components.CatalogTabIcons
 import eu.kanade.presentation.browse.components.InLibraryBadge
 import eu.kanade.presentation.browse.components.PreviewPanelButtons
 import eu.kanade.presentation.browse.components.SavedSearchCreateDialog
@@ -672,7 +673,8 @@ private fun ListingChips(
                 BrowseTabChip(
                     selected = !panelOpen && shownTab == "catalog:${catalog.id}",
                     label = catalog.name,
-                    icon = null,
+                    // KMK (r107): an icon chip like Popular / Latest (the name shows when selected)
+                    icon = CatalogTabIcons.of(catalog.name),
                     onClick = tab("catalog:${catalog.id}") { onCatalog(catalog.id) },
                 )
             }

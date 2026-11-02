@@ -148,6 +148,14 @@
         "helpers"
       ],
       "note": "Suggestions: a section the site loads later can be read with the browser (the title page in the hidden browser, waiting for its cards); a section's “Load more” can be pressed up to 3 times (the next pages from the address one press asks for, else pressed in the hidden browser). Each section is its own named row on the title screen, for anime and manga."
+    },
+    "10": {
+      "parts": [
+        "search",
+        "extras",
+        "helpers"
+      ],
+      "note": "Collections: a directory (genres, makers, people, series…) is a collection filter whose entries keep their parts apart (number, name, videos, views, likes, picture; never a Follow button), with the site's own sort options and menus; a live collection is read page by page as Browse scrolls (getDirectory). The built-in “List” filter stays in getFilters (the app hides it; the Browse tabs pick the list). Suggestions: a section that fails no longer fails the others, each section's outcome is logged, and the hidden browser gets 35 s at most for all sections."
     }
   }
 }
