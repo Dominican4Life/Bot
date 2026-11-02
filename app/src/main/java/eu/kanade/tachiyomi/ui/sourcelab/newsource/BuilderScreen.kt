@@ -438,6 +438,7 @@ internal class BuilderScreen(
             BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(padding)) {
                 val wideBar = maxWidth >= 1000.dp
                 val narrow = maxWidth < 600.dp
+                val undoInMenu = maxWidth < 400.dp
                 val panelWidth = if (maxWidth >= 1100.dp) 460.dp else 400.dp
                 Column(modifier = Modifier.fillMaxSize()) {
                     TopBar(
@@ -445,7 +446,7 @@ internal class BuilderScreen(
                         model = model,
                         wide = wideBar,
                         phone = !tablet,
-                        undoInMenu = maxWidth < 400.dp,
+                        undoInMenu = undoInMenu,
                         pickedText = pickedText,
                         saveLabel = when {
                             state.editKey == null -> if (narrow) "Write" else "Write the source"
