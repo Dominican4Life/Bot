@@ -797,6 +797,32 @@ Commits 25c9bb16 + 57c03f37 (CI fix: `maxWidth` read inside a `Column` lambda of
 
 - **What must not change**: nested layout lambdas inside `BoxWithConstraints` must not read `maxWidth`/`maxHeight` implicitly (CI error); a pending Replace question is cleared only by its answer; the baseline is never trimmed.
 
+## Changes in r107 (2 November 2026)
+
+Commit e466a555 (CI green first time). Owner-approved mockups (Browse canvas: CScan, CSheet, CSort, CActress, CMakers, BLog). Writers T (template + builder), B (Browse/filters/suggestions), M (log, autofill, Test Run), then compile review, behaviour test, one fix pass (17 items).
+
+### Collections (template generic-list v10 ↔ app)
+- **Filter type `collection`**: `{ key, name, type:"collection", mode:"path", path, role:"page", group, fields, options:[{label,value,number?,videos?,views?,likes?,picture?}], sorts:[{label,value}], reverse, menus, live, total, directory }`. Counts are stored without unit words; the app adds "videos / views / ♥". `directory` (page address with `{page}`, item/part selectors, sort/order params) is only read by the template.
+- **`getDirectory(key, page, sort, ascending, menus)`** → `{ items, hasNext }` for live collections; `ascending` is sent only when `reverse` is true. The app (`JsDirectory.kt`) never flips a live list the site can't reverse (arrow stays ↓); stored lists sort locally by the option's meaning (videos/views/likes/name) and only those sorts are offered; menus only for live lists.
+- **search()**: a collection value is sent as is (a live pick beyond page 1 isn't in `options`; no slug). Older `autocomplete`/`select`/`sort` collections still work.
+- **Builder scan** (`BuilderListReader.scan`): parts read separately (place number only when cards count up, name element's own text, videos/views/likes without units, picture, Follow shown "never kept"), site sorts and menus, page count (numbered links + Last link), total ("Page 1 of N" ignored). Live (default > 300 entries or > 10 pages) or Read pages now (page range, pause range, estimate, Stop). Series is no longer saved as a Sort; `repairLabels` cleans old saved labels on restore (place numbers up to 4 digits when counting up; logo initials: first word of 1–3 chars that the rest starts with).
+- **What must not change**: the template keeps sending the built-in `__list` first; the app replaces it with a hidden blank header at the same position (saved searches and feeds restore filters by position).
+
+### Browse
+- `SourceFilterDialog.kt` (shared by manga + anime, APK sources too): header Filters / Clear / Save / Apply; filters in cards ("Options" + one card per section group); filled field boxes; ≤ 5 short options as pills; sort menu with the arrow on the left (`FilterSheetParts.kt`). Clear also resets each collection's sort, direction and menus (`JsDirectory.resetOrder`).
+- Collections (`CollectionFilterField.kt`): drop-down with number left and counts right, square sort button (`Icons.AutoMirrored.Outlined.Sort`) with an anchored menu without title, face grid (4 columns, Faces/List remembered) for people directories, paging as you scroll.
+- Catalog tabs are icon chips like Popular/Latest (`CatalogTabIcons.kt`).
+
+### Suggestions (getRelated)
+- Root cause of "getRelated failed" with no message: the Suggestions screen's call waited behind the title page's 20–50 s browser read (one runtime lock per source) and was cancelled; `runCatching` logged the cancellation. Also `JsRender.evalRaw` had no timeout, so a stuck hidden page could hold the lock forever.
+- Fix: `JsRelatedCalls.kt` runs one getRelated per title in a background scope that both screens await (5 min cache, empty results not cached, running calls never evicted, 120 s limit); cancellations rethrown; failures logged with their message; WebView evaluations time out after 10 s. Template: title page read inside a try, 35 s browser budget (Load more presses fitted first), per-section console lines (`Suggestions <name> failed after N ms: …`, which Test Run parses).
+
+### Other
+- Live log window (`FloatingLog.kt`): wraps and reflows; ↵ wrap toggle (off = sideways scroll, width only grows); time/level above the message under 520 dp; A−/A+ (8–18 sp); prefs `float_wrap`, `float_text_sp`.
+- Autofill crash (TransactionTooLargeException, 528 KB): the code editor field has `clearAndSetSemantics { contentDescription = "Code" }` so its text never goes to autofill. App-wide autofill stays on (tracker login uses it). TalkBack reads the editor only as "Code".
+- Test Run: Suggestions step (Amber, never Red, on failure); Filters step tries collections and calls `getDirectory` page 1 for live ones.
+- Left open: hard-coded English strings in the new sheet parts; genre labels with plain trailing counts ("Tiktok 11") aren't cleaned.
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
