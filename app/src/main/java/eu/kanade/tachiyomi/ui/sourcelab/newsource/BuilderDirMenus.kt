@@ -145,7 +145,7 @@ internal object BuilderDirMenus {
             val opener = clickable(el) ?: continue
             if (opener in openers || opener.parents().any { it in openers }) continue
             if (out.any { it.label.equals(label, ignoreCase = true) }) continue
-            openers += opener
+            openers.add(opener)
             val items = itemsOf(doc, opener, pageUrl, current, cards)
             val sort = SORT_LABEL.matches(label) ||
                 (items.size >= 2 && items.count { SORT_TEXT.containsMatchIn(it.text) } * 5 >= items.size * 3)
