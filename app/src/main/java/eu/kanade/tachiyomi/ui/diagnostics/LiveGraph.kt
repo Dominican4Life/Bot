@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
@@ -62,22 +63,20 @@ internal fun LiveGraph(
     val latest by rememberUpdatedState(window)
     val tapHandler by rememberUpdatedState(onTap)
 
-    // One float from 0 → 1 between ticks; the draw translates by (1 - fraction) * stepPx. Fine windows only: the
-    // coarse rings step by 10 s or more, where a scroll would be a crawl.
-    var fraction by remember { mutableFloatStateOf(1f) }
+    // KMK (r111): smooth motion. Up to r110 a new window restarted a 0 → 1 slide that started a frame late and stopped
+    // dead when the next tick was late (a pause, then a jump), only fine windows slid at all, and the scale's top
+    // snapped to its new value each tick so the whole shape jumped up or down. Now one frame loop moves [motion]:
+    // each new window adds the steps it advanced to the pending shift (what's left of the last slide is carried over,
+    // so early or late ticks never jump), the shift drains at one step per stepMs, and the shown top of the scale
+    // eases towards the window's top. The loop stops when both have settled, so an idle graph costs no frames.
+    val motion = remember { GraphMotion() }
     LaunchedEffect(window) {
-        if (!window.window.isFine || window.stepMs <= 0L || cache.window == null) {
-            fraction = 1f
-            return@LaunchedEffect
-        }
-        val start = withFrameNanos { it }
-        val durationNs = window.stepMs * 1_000_000L
-        fraction = 0f
-        while (true) {
+        motion.arrive(window)
+        var last = withFrameNanos { it }
+        while (!motion.settled()) {
             val now = withFrameNanos { it }
-            val f = ((now - start).toFloat() / durationNs).coerceIn(0f, 1f)
-            fraction = f
-            if (f >= 1f) break
+            motion.advance((now - last) / 1_000_000f)
+            last = now
         }
     }
 
@@ -135,7 +134,10 @@ internal fun LiveGraph(
         val plotH = size.height - gutterBottom - markerRow
         val plotTop = markerRow
         cache.ensure(window, plotW, plotH)
-        val shift = if (fraction < 1f) (1f - fraction) * cache.stepPx else 0f
+        // KMK (r111): the pending shift in steps → pixels; the paths were built at the window's own top and are
+        // stretched to the shown (easing) top around the plot's bottom
+        val shift = motion.shiftSteps * cache.stepPx
+        val stretch = if (motion.shownTop > 0f && cache.builtTop > 0f) cache.builtTop / motion.shownTop else 1f
 
         // Grid: 4 horizontal, 5 vertical lines
         val grid = Color(0x22FFFFFF)
@@ -151,13 +153,15 @@ internal fun LiveGraph(
         clipRect(left = 0f, top = plotTop, right = plotW, bottom = plotTop + plotH) {
             translate(left = shift, top = plotTop) {
                 val series = window.series
-                for (i in series.indices) {
-                    val color = DiagColors.fixed(series[i].color)
-                    drawPath(cache.paths[i], color, alpha = 0.55f)
-                    drawPath(cache.lines[i], color, style = cache.lineStroke)
-                }
-                if (window.overlay != null) {
-                    drawPath(cache.overlay, DiagColors.fixed(window.overlay.color), style = stroke)
+                scale(scaleX = 1f, scaleY = stretch, pivot = Offset(0f, plotH)) {
+                    for (i in series.indices) {
+                        val color = DiagColors.fixed(series[i].color)
+                        drawPath(cache.paths[i], color, alpha = 0.55f)
+                        drawPath(cache.lines[i], color, style = cache.lineStroke)
+                    }
+                    if (window.overlay != null) {
+                        drawPath(cache.overlay, DiagColors.fixed(window.overlay.color), style = stroke)
+                    }
                 }
                 // Dotted marker lines
                 for (i in 0 until cache.markerCount) {
@@ -255,6 +259,10 @@ private class GraphCache {
         private set
     var stepPx = 0f
         private set
+
+    /** KMK (r111): the top of the scale the paths were built at (the draw stretches them to the shown top) */
+    var builtTop = 1f
+        private set
     val paths = ArrayList<Path>()
     val lines = ArrayList<Path>()
     val overlay = Path()
@@ -267,6 +275,10 @@ private class GraphCache {
         private set
     private var lower = FloatArray(0)
     private var upper = FloatArray(0)
+
+    // KMK (r111): y positions and their tangents for the curves (reused, grown when a window is longer)
+    private var ys = FloatArray(0)
+    private var tangents = FloatArray(0)
 
     fun ensure(win: SampleWindow, width: Float, height: Float) {
         if (win === window && abs(width - w) < 0.5f && abs(height - h) < 0.5f) return
@@ -281,15 +293,22 @@ private class GraphCache {
         points = n
         stepPx = if (n > 1) w / (n - 1) else w
         val top = win.topOfScale.takeIf { it > 0f } ?: 1f
+        builtTop = top
         if (lower.size < n) {
             lower = FloatArray(n)
             upper = FloatArray(n)
+            ys = FloatArray(n)
+            tangents = FloatArray(n)
         }
         lower.fill(0f, 0, n)
         while (paths.size < win.series.size) {
             paths.add(Path())
             lines.add(Path())
         }
+        // KMK (r111): each band's edges are smooth curves through the samples (monotone, so a curve never dips
+        // below 0 or rises above its neighbours), and they reach two steps past the left edge so the slide in from
+        // the right never shows an empty strip on the left
+        val lead = 2f * stepPx
         for (s in win.series.indices) {
             val values = win.series[s].values
             val area = paths[s]
@@ -302,15 +321,20 @@ private class GraphCache {
                 upper[i] = lower[i] + (if (v.isNaN()) 0f else v)
             }
             // Top edge left → right
-            area.moveTo(0f, yOf(upper[0], top))
-            line.moveTo(0f, yOf(upper[0], top))
-            for (i in 1 until n) {
-                val x = i * stepPx
-                area.lineTo(x, yOf(upper[i], top))
-                line.lineTo(x, yOf(upper[i], top))
-            }
+            for (i in 0 until n) ys[i] = yOf(upper[i], top)
+            slopes(n)
+            area.moveTo(-lead, ys[0])
+            area.lineTo(0f, ys[0])
+            line.moveTo(-lead, ys[0])
+            line.lineTo(0f, ys[0])
+            curveRight(area, n)
+            curveRight(line, n)
             // Bottom edge right → left along the band below
-            for (i in n - 1 downTo 0) area.lineTo(i * stepPx, yOf(lower[i], top))
+            for (i in 0 until n) ys[i] = yOf(lower[i], top)
+            slopes(n)
+            area.lineTo((n - 1) * stepPx, ys[n - 1])
+            curveLeft(area, n)
+            area.lineTo(-lead, ys[0])
             area.close()
             val swap = lower
             lower = upper
@@ -319,20 +343,18 @@ private class GraphCache {
         overlay.rewind()
         val ov = win.overlay
         if (ov != null && n > 0) {
-            var started = false
-            for (i in 0 until n) {
-                val v = ov.values.getOrElse(i) { Float.NaN }
-                if (v.isNaN()) {
-                    started = false
-                    continue
-                }
-                val x = i * stepPx
-                if (!started) {
-                    overlay.moveTo(x, yOf(v, top))
-                    started = true
-                } else {
-                    overlay.lineTo(x, yOf(v, top))
-                }
+            // Each run of samples without a gap is its own curve
+            var i = 0
+            while (i < n) {
+                while (i < n && ov.values.getOrElse(i) { Float.NaN }.isNaN()) i++
+                if (i >= n) break
+                val from = i
+                while (i < n && !ov.values.getOrElse(i) { Float.NaN }.isNaN()) i++
+                val count = i - from
+                for (k in 0 until count) ys[k] = yOf(ov.values[from + k], top)
+                slopes(count)
+                overlay.moveTo(from * stepPx, ys[0])
+                for (k in 1 until count) segment(overlay, (from + k - 1) * stepPx, k - 1, k)
             }
         }
         // Markers inside the window → x positions
@@ -351,5 +373,123 @@ private class GraphCache {
         markerCount = count
     }
 
-    private fun yOf(value: Float, top: Float): Float = h - (value / top).coerceIn(0f, 1f) * h
+    // KMK (r111): not capped at the top any more: the draw stretches the paths to the shown top, which eases towards
+    // a new top, and the plot's clip cuts what's above it meanwhile
+    private fun yOf(value: Float, top: Float): Float = h - (value / top).coerceAtLeast(0f) * h
+
+    /**
+     * KMK (r111): monotone cubic tangents (Fritsch–Carlson) of ys[0 until n], in pixels of y per step: a peak or a
+     * flat part gets a flat tangent, so the curve never overshoots its samples
+     */
+    private fun slopes(n: Int) {
+        if (n < 2) {
+            if (n == 1) tangents[0] = 0f
+            return
+        }
+        for (i in 0 until n) {
+            val before = if (i > 0) ys[i] - ys[i - 1] else ys[1] - ys[0]
+            val after = if (i < n - 1) ys[i + 1] - ys[i] else ys[n - 1] - ys[n - 2]
+            tangents[i] = if (before * after <= 0f) 0f else (before + after) / 2f
+        }
+        for (i in 0 until n - 1) {
+            val d = ys[i + 1] - ys[i]
+            if (d == 0f) {
+                tangents[i] = 0f
+                tangents[i + 1] = 0f
+                continue
+            }
+            val a = tangents[i] / d
+            val b = tangents[i + 1] / d
+            val sum = a * a + b * b
+            if (sum > 9f) {
+                val t = 3f / kotlin.math.sqrt(sum)
+                tangents[i] = t * a * d
+                tangents[i + 1] = t * b * d
+            }
+        }
+    }
+
+    /** One Hermite segment from sample [a] (at x0) to sample [b] (one step right), as a cubic Bézier */
+    private fun segment(path: Path, x0: Float, a: Int, b: Int) {
+        val third = stepPx / 3f
+        path.cubicTo(
+            x0 + third, ys[a] + tangents[a] / 3f,
+            x0 + 2f * third, ys[b] - tangents[b] / 3f,
+            x0 + stepPx, ys[b],
+        )
+    }
+
+    /** The curve through ys[1 until n] from the path's current point at sample 0 */
+    private fun curveRight(path: Path, n: Int) {
+        for (i in 1 until n) segment(path, (i - 1) * stepPx, i - 1, i)
+    }
+
+    /** The curve back through ys from sample n-1 to sample 0 (the band's lower edge, right → left) */
+    private fun curveLeft(path: Path, n: Int) {
+        val third = stepPx / 3f
+        for (i in n - 1 downTo 1) {
+            val x1 = i * stepPx
+            path.cubicTo(
+                x1 - third, ys[i] - tangents[i] / 3f,
+                x1 - 2f * third, ys[i - 1] + tangents[i - 1] / 3f,
+                x1 - stepPx, ys[i - 1],
+            )
+        }
+    }
+}
+
+/**
+ * KMK (r111): the graph's motion between windows. [shiftSteps]: how many steps the paths are still drawn to the
+ * right of their place (it drains at one step per stepMs); [shownTop]: the top of the scale as drawn, easing towards
+ * the window's. Read in the draw only, so a frame redraws the Canvas without recomposing.
+ */
+private class GraphMotion {
+    var shiftSteps by mutableFloatStateOf(0f)
+        private set
+    var shownTop by mutableFloatStateOf(0f)
+        private set
+    private var targetTop = 0f
+    private var stepMs = 1_000f
+    private var lastStart = Long.MIN_VALUE
+    private var lastKey: Any? = null
+
+    fun arrive(win: SampleWindow) {
+        val top = win.topOfScale.takeIf { it > 0f } ?: 1f
+        targetTop = top
+        val key = win.resource to win.window
+        if (key != lastKey || shownTop <= 0f || win.stepMs <= 0L) {
+            // Another graph (or the first one): no slide, no easing
+            lastKey = key
+            shownTop = top
+            shiftSteps = 0f
+            lastStart = win.startMs
+            stepMs = win.stepMs.coerceAtLeast(1L).toFloat()
+            return
+        }
+        stepMs = win.stepMs.toFloat()
+        val advanced = ((win.startMs - lastStart).toFloat() / stepMs).coerceAtLeast(0f)
+        lastStart = win.startMs
+        // What's left of the last slide is kept; a long gap (the page was away) doesn't slide at all
+        shiftSteps = if (advanced > 3f) 0f else (shiftSteps + advanced).coerceAtMost(2f)
+    }
+
+    fun advance(dtMs: Float) {
+        if (shiftSteps > 0f) {
+            // Drains a little faster when more than a step is pending, so it catches up instead of lagging
+            val speed = if (shiftSteps > 1f) 1.5f else 1f
+            shiftSteps = (shiftSteps - speed * dtMs / stepMs).coerceAtLeast(0f)
+        }
+        if (shownTop != targetTop) {
+            val k = 1f - kotlin.math.exp(-dtMs / TOP_EASE_MS)
+            val next = shownTop + (targetTop - shownTop) * k
+            shownTop = if (abs(next - targetTop) <= targetTop * 0.002f) targetTop else next
+        }
+    }
+
+    fun settled(): Boolean = shiftSteps <= 0f && shownTop == targetTop
+
+    private companion object {
+        /** How fast the shown top follows a new top (about 3 × this to settle) */
+        const val TOP_EASE_MS = 180f
+    }
 }
