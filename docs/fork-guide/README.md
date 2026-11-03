@@ -831,6 +831,31 @@ Commit after e466a555 (CI green). Fixes from the owner's r107 video.
 - **Directory page count** (`BuilderListReader.highestPage`): numbered and Last/» links count only when their path (without its page part, `listPathOf`) is the scanned directory's. r107's Last-link rule took a site-wide "»" link, so every directory got the main list's 2,257 pages.
 - **host.render** (`JsRender`): the hidden WebView is laid out 1080 × 2340 (it was 0 × 0, so lazy "load when scrolled into view" sections never loaded), and while `waitFor` isn't found after load the probe scrolls a screen at a time (back to the top at the end). Applies to every source without a template update.
 
+## Changes in r109 (2 November 2026)
+
+Two commits (the first failed CI: `openers += opener` on a `MutableSet<Element>` resolved to `plus(Iterable)` because a Jsoup `Element` is `Iterable<Element>` — use `.add()` on sets of Elements). Writers B1 (builder + template v11), B2 (Browse + suggestions), B3 (WebView), a converter investigation, then compile review, behaviour test, fix pass.
+
+### Source Lab
+- Home row ⋮: Open in Browse, WebView, Delete (confirm; `JsSourceManager.delete`). Open in Browse here and in Test Run switches a source that's off on and waits (≤ 3 s) until the source manager has it (it showed "Source not installed: <id>").
+
+### Builder + template v11
+- `BuilderDirMenus.kt`: custom "Label: value" drop-downs on directory pages (Sort / Height / Cup / Age) and their lists; link entries give codes, button entries are learned by pressing ("Learn the menus", learn.js); fallbacks "Pick the site's Sort menu" / "Pick another menu". A learned menu's default (the entry that left the address unchanged, or the site-marked one only when the page's address has no value for the parameter) is named after the site's default and comes first with value "" — no "Site default"; `siteDefault` saved; older filters get a hint to learn again.
+- Pictures: lazy attributes, `<picture><source>`, background-image / data-bg, noscript; loose attributes (data-image, data-img, data-thumb, data-echo…) only when the value looks like a picture; `data-url` never. "Tap the picture on the page" (re-sent after the picker is re-injected). Template: `pictureIn` / `fallbackPicture` (skips badges/avatars except in directory entries), `sameCoverAgain` tries fallbacks before blanking.
+- Reading progress comes to the panel's top once (`PanelScroll` / `LocalPanelScroll` in BuilderChrome: only the panel's own ScrollState scrolls).
+- Stored collections always save `directory` + menus so `getDirectory` serves them with a sort / menu.
+
+### Browse
+- `JsDirectory`: only an option with value "" (or no pick) is the site default; a sort is local only when the entries carry that count; other sorts and any menu read the site live; sources without getDirectory (`hasDirectory = { runtime().has("getDirectory") }`) hide site-only options; the arrow resets when the list can't flip.
+
+### Suggestions
+- Title screen: one "Suggestions" row, groups named /related/i first, each title once (AnimeScreen / AnimeRelatedScreen `arrange`, MangaScreenModel). The opened screen shows each group as its own section, related first.
+
+### WebView
+- `WebViewPageScripts.HOVER_MENUS` after each load: first tap on an item with a hidden sub-menu opens it (hover events + forced styles) and blocks "#" navigation; second tap follows a real link; tap elsewhere closes. ⋮ "Phone layout" per host (`webview_phone_layout_hosts` string set): viewport forced to width=480.
+
+### Record & convert
+- `RecordedConverter.mapHtmlList`: each item's link is taken from the part of the page holding most items' links (not the first link on the page), every card level is tried, field picks accept 9 in 10. TODO parts list what was found; the code header has a "Recording, step by step" block; the issue report adds `recording.txt` (no cookie values). The "requests started on other threads" note was a coincidence, not the cause.
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
