@@ -856,6 +856,19 @@ Two commits (the first failed CI: `openers += opener` on a `MutableSet<Element>`
 ### Record & convert
 - `RecordedConverter.mapHtmlList`: each item's link is taken from the part of the page holding most items' links (not the first link on the page), every card level is tried, field picks accept 9 in 10. TODO parts list what was found; the code header has a "Recording, step by step" block; the issue report adds `recording.txt` (no cookie values). The "requests started on other threads" note was a coincidence, not the cause.
 
+## Changes in r110 (2 November 2026)
+
+- **Learn the menus** (`BuilderDirMenus.codesOf/codeFor/siteFilled`, `BuilderExtras.runDirLearn/pressOnce`, learn.js v3): parameters are compared by value (missing = empty), so a site that writes every parameter after a press (`?page=1&q=&height=…&sort=count`) no longer makes `q` or `sort` the menu's parameter. A parameter with one value across all of a menu's entries is site-filled and can't be the menu's; candidates rank by distinct values first. Rows show only the chosen parameter. Empty-result entries are kept ("nothing found · kept"), a failed entry never stops a menu, the page returns to the plain address before and after each menu, Stop never saves a partial menu, `banner(null)` cancels a pending press. UI per mockup CLearn (progress box, per-menu rows, learned codes, page banner + orange outlines).
+- **Menus belong to their directory**: a filter picked/learned on a directory page goes to that collection's sort / menus; `dropDirectoryMenus(filters, menuLabels)` removes top-level copies by parameter or by the scan's menu labels (after learning and on restore). `withDirMenu` never stores a menu under the sort's parameter.
+- **Browse drop-down** (`CollectionFilterField`, mockup CInside): no square sort button; a chip inside the closed box shows the sort (+ ↑/↓, + "· N" menus set); the open panel sits inside the sheet with search, sort chip and one chip per site menu (options inline), Reset, Faces/List. `FilterFieldBox/FilledFilterField` gained `shape` and `trailing`.
+- **Source Lab rail**: `RailDest` = Sources, New, Rules, Templates; New (`LabNewSourcePane`, model owned by the Lab screen, tag bumped on every adopt) and Rules (`RulesContent`) show next to the rail with no back arrow; pushed `RulesScreen(ruleId)` (Lint/Explain) and `NewSourceScreen(kindHint)` still work.
+- **Record & convert**: `UrlFix` matches page links to returned addresses the extension changed the same way (drop query/fragment/slash, add a fixed ending like `?s=…`) and writes the change into the code; a step's 20 s limit extends to 60 s while one of its own requests is still on its way (`awaitExtended`); videos TODO says what was requested.
+- **Home health**: Failing needs ≥ 3 errors after the latest test run (`SourceHealthFile.recentErrors`, last 10 times); a Failing row shows the error reason. Template generic-list v12: `partEl` logs a failing part once (no silent catch).
+
+## Changes in r111 (2 November 2026)
+
+- **Smooth live graphs** (`LiveGraph.kt`): band edges and the overlay are monotone cubic curves (Fritsch–Carlson tangents, so no overshoot below 0); bands extend two steps past the left edge. `GraphMotion` replaces the per-window 0 → 1 slide: each window adds the steps it advanced to a pending shift (leftover carried, capped at 2, reset after a gap > 3 steps or another resource/window), the shift drains at one step per `stepMs` (1.5× when behind), and the shown top of the scale eases to the window's (180 ms time constant); paths are built at the window's top and stretched in the draw (`scale` around the plot bottom), and `yOf` no longer caps at the top (the clip does). The frame loop stops when settled. Still no per-frame allocation.
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
