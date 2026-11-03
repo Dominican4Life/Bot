@@ -958,3 +958,71 @@ internal fun BuilderStepIndicator(
         }
     }
 }
+
+/**
+ * KMK (r112, mock BEasy): one missing pick of the panel's "What's left" card: what is missing ("Video: tap the player
+ * on a title"), whether it is optional, and its jump ("Title page") that switches the step / tab and arms the label
+ */
+internal class BuilderLeftItem(val text: String, val optional: Boolean, val jump: String, val onJump: () -> Unit)
+
+/**
+ * KMK (r112, mock BEasy): "What's left" at the bottom of the panel: the picks still missing across the steps (each with
+ * its jump), the ones done folded into one line ("✓ List page, episodes, tags done"); replaces reading "6 of 8 picked"
+ */
+@Composable
+internal fun BuilderWhatsLeft(items: List<BuilderLeftItem>, done: String?, modifier: Modifier = Modifier) {
+    val ok = builderOkColor()
+    val warn = builderWarnColor()
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+            Text("What's left", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            if (items.isEmpty()) {
+                BuilderMuted("Nothing: every pick is there. Save when you're ready.")
+            }
+            items.forEach { item ->
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    LeftDot(if (item.optional) "·" else "!", if (item.optional) MaterialTheme.colorScheme.onSurfaceVariant else warn)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        item.text,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (item.optional) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = item.onJump) { Text("${item.jump} ›", maxLines = 1) }
+                }
+            }
+            if (!done.isNullOrBlank()) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                    LeftDot("✓", ok)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "$done done",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** KMK (r112): the mockup's round mark (✓ / ! / ·) */
+@Composable
+private fun LeftDot(mark: String, tint: Color) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier.size(20.dp).clip(CircleShape).background(tint.copy(alpha = 0.18f)),
+    ) {
+        Text(mark, color = tint, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+    }
+}

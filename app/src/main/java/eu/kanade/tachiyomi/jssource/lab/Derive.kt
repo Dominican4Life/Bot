@@ -417,6 +417,17 @@ internal object Derive {
                     "Tags show as “Cast: Reina Ohara”, so the app groups them",
             )
             put("tagsSelector", "", "the tags come from the groups above")
+            // KMK (r112): the details block they sit in: generic-list v13 also reads its rows no group lists (a "Genres"
+            // row the sample title didn't have)
+            val block = TagBlock.json(groups.map { it.selector })
+            if (block.isNotEmpty()) {
+                put(
+                    "tagBlock",
+                    block,
+                    "the details block the Tags rows sit in: on other titles its rows no group lists (Genres, Series…) " +
+                        "come too, links / chips as “Genres: Solowork” tags, a short plain row as a line under the description",
+                )
+            }
         } else if (tags != null) {
             val one = tags.pick.tag == "a" || tags.pick.count >= 2
             val sel = if (one) tags.likeSelector else "${pageSelector(tags)} a"

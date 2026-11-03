@@ -439,6 +439,91 @@ internal class BuilderScreen(
         val onBack: () -> Unit = {
             if (model.state.value.step != BuilderScreenModel.Step.ListPage) model.previousStep() else navigator.pop()
         }
+        // KMK (r112, mock BEasy): "What's left" jumps: the panel's tab; for a label, back to its step's page when that
+        // step came earlier, and the label armed when its page is the one shown (a later step's page isn't open yet)
+        val jumpTo: (Int, String?) -> Unit = { toTab, label ->
+            var armed = false
+            if (label != null) {
+                val want = when (label) {
+                    in BuilderScreenModel.Step.ListPage.labels -> BuilderScreenModel.Step.ListPage
+                    in BuilderScreenModel.Step.TitlePage.labels -> BuilderScreenModel.Step.TitlePage
+                    else -> BuilderScreenModel.Step.ChapterPage
+                }
+                if (want.number < model.state.value.step.number) onStep(want.number)
+                // the tab asked for wins over the tab that follows a step change
+                tabStep = model.state.value.step.name
+                if (model.state.value.step == want) {
+                    model.arm(label)
+                    armed = true
+                }
+            }
+            tab = toTab
+            if (toTab == TAB_TITLE && label != "tags" && label != "suggestions") titleSub = null
+            // (an armed label drops the phone's sheet to its peek by itself)
+            if (!armed) sheetOpenTick++
+        }
+        val media = if (state.anime) "video" else "image"
+        val listMissing = BuilderScreenModel.Step.ListPage.labels.filter { !state.done(it) }
+        val episodeMissing = listOf("chapter", "date", "number").filter { !state.done(it) && !(it == "chapter" && state.singleEpisode) }
+        val titleFields = BuilderScreenModel.optionalLabels.toList()
+        val titleMissing = titleFields.filter { !state.done(it) }
+        val unmade = extrasState.menuGroups.filter { g ->
+            g.made.isNullOrEmpty() && g.kind != "heading" && extrasState.menuGroups.none { it.parent == g.id }
+        }
+        val leftItems = buildList {
+            if (listMissing.isNotEmpty()) {
+                add(
+                    BuilderLeftItem("List page: " + listMissing.joinToString(", ") { labelName(it) }, false, "Labels") {
+                        jumpTo(TAB_LABELS, listMissing.first())
+                    },
+                )
+            }
+            if (episodeMissing.isNotEmpty()) {
+                add(
+                    BuilderLeftItem("Episodes: " + episodeMissing.joinToString(", ") { labelName(it) }, false, "Labels") {
+                        jumpTo(TAB_LABELS, episodeMissing.first())
+                    },
+                )
+            }
+            if (!state.done(media)) {
+                val text = when {
+                    !state.anime -> "Page image: tap a page picture on a chapter"
+                    state.singleEpisode -> "Video: tap the player on the title page"
+                    else -> "Video: tap the player on an episode"
+                }
+                add(BuilderLeftItem(text, false, "Title page") { jumpTo(TAB_TITLE, media) })
+            }
+            if (titleMissing.isNotEmpty()) {
+                add(
+                    BuilderLeftItem("Title page (optional): " + titleMissing.joinToString(", ") { labelName(it) }, true, "Title page") {
+                        jumpTo(TAB_TITLE, null)
+                    },
+                )
+            }
+            // KMK (r112) fix: menu cards not made yet are named (with or without filters made)
+            if (unmade.isEmpty() && extrasState.filters.isEmpty()) {
+                add(BuilderLeftItem("Filters (optional): pick a menu on the site", true, "Lists & filters") { jumpTo(TAB_LISTS, null) })
+            } else if (unmade.isNotEmpty()) {
+                add(
+                    BuilderLeftItem(
+                        "Filters (optional): " + unmade.take(4).joinToString(", ") { it.name.ifBlank { "a menu" } } +
+                            (if (unmade.size > 4) " and ${unmade.size - 4} more" else "") + " not made yet",
+                        true,
+                        "Lists & filters",
+                    ) {
+                        jumpTo(TAB_LISTS, null)
+                        model.extras.requestScroll("menu:${unmade.first().id}", reveal = false)
+                    },
+                )
+            }
+        }
+        val leftDone = buildList {
+            if (listMissing.isEmpty()) add("list page")
+            if (episodeMissing.isEmpty()) add(if (state.singleEpisode) "episode" else "episodes")
+            if (state.done(media)) add(if (state.anime) "video" else "page image")
+            titleFields.filter { state.done(it) }.forEach { add(labelName(it).lowercase()) }
+            if (extrasState.filters.isNotEmpty()) add("${extrasState.filters.size} filter" + if (extrasState.filters.size == 1) "" else "s")
+        }.joinToString(", ").replaceFirstChar { it.uppercase() }.ifEmpty { null }
 
         Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { padding ->
             BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(padding)) {
@@ -540,7 +625,7 @@ internal class BuilderScreen(
                                         .padding(horizontal = 16.dp, vertical = 14.dp),
                                 ) {
                                     CompositionLocalProvider(LocalPanelScroll provides panelScrollRef) {
-                                        PanelBody(state, model, tab, titleSub, { titleSub = it }, askOptions)
+                                        PanelBody(state, model, tab, titleSub, { titleSub = it }, askOptions, leftItems, leftDone)
                                     }
                                 }
                                 PanelFooter(state, model, tab, copyAll, saveMain)
@@ -586,7 +671,7 @@ internal class BuilderScreen(
                             body = {
                                 // On a phone the helper's verdict sits at the top of the sheet (the page is small)
                                 if (showHelper) HelperCard(state, model, wide = false, modifier = Modifier.fillMaxWidth())
-                                PanelBody(state, model, tab, titleSub, { titleSub = it }, askOptions)
+                                PanelBody(state, model, tab, titleSub, { titleSub = it }, askOptions, leftItems, leftDone)
                             },
                             footer = { PanelFooter(state, model, tab, copyAll, saveMain) },
                         )
@@ -855,6 +940,9 @@ internal class BuilderScreen(
         titleSub: String?,
         onTitleSub: (String?) -> Unit,
         askOptions: (String) -> Unit,
+        /** KMK (r112): the "What's left" card's items and its done line (not on the Code tab) */
+        leftItems: List<BuilderLeftItem>,
+        leftDone: String?,
     ) {
         // r106 fix: each tab keeps its saved state (open sections, fields) while another tab is shown
         val tabStates = rememberSaveableStateHolder()
@@ -876,6 +964,8 @@ internal class BuilderScreen(
                 else -> CodeTab(state)
             }
         }
+        // KMK (r112, mock BEasy): at the bottom of the panel, whatever the tab (the Code tab shows code only)
+        if (tab != TAB_CODE) BuilderWhatsLeft(leftItems, leftDone)
     }
 
     /** r106: the panel's footer: the step's next action (Code tab: Open in the code editor · Copy all) */
@@ -1596,6 +1686,7 @@ internal class BuilderScreen(
         "detailsCoverAttr" -> "Title cover from"
         "descriptionSelector" -> "Description"
         "tagsSelector", "tagGroups" -> "Tags"
+        "tagBlock" -> "Tags block" // KMK (r112): Writer C's details block (Derive)
         "suggestionGroups" -> "Suggestions"
         "authorSelector" -> "Author"
         "statusSelector" -> "Status"

@@ -30,6 +30,7 @@
     "authorSelector": "",
     "statusSelector": "",
     "tagGroups": "",
+    "tagBlock": "",
     "suggestionGroups": "[]"
   },
   "parts": {
@@ -60,7 +61,7 @@
     },
     "getDetails": {
       "title": "Title page",
-      "text": "The Cover, Description, Tags, Author and Status tapped on the title page first. Rows tapped as Tags groups (Cast, Maker, Genres…) give tags \"Group: value\" that the app shows grouped (the other tags are then \"Tags: value\"), and rows set to Description a \"Group: a, b\" line under the description. Else og:image, a video poster or the player's poster as cover, and no cover at all when the page has none, so the list's cover stays; og:description unless it is the site's own slogan (the home page's description, read once); genre / tag links outside the site's menus (nav, header, footer, aside, menus), without words like \"Genres\" or \"Tags\". Author and status only when tapped. A field whose selector fails is logged (Logs) and read as empty, so the others still come.",
+      "text": "The Cover, Description, Tags, Author and Status tapped on the title page first. Rows tapped as Tags groups (Cast, Maker, Genres…) give tags \"Group: value\" that the app shows grouped (the other tags are then \"Tags: value\"), and rows set to Description a \"Group: a, b\" line under the description. The other rows of the same details block (a \"Genres\" row the title you tapped didn't have) come too: links / chips as \"Genres: Solowork\" tags, a short plain row as a line under the description (each new row is logged once). Else og:image, a video poster or the player's poster as cover, and no cover at all when the page has none, so the list's cover stays; og:description unless it is the site's own slogan (the home page's description, read once); genre / tag links outside the site's menus (nav, header, footer, aside, menus), without words like \"Genres\" or \"Tags\". Author and status only when tapped. A field whose selector fails is logged (Logs) and read as empty, so the others still come.",
       "optional": true,
       "ruleIds": []
     },
@@ -169,6 +170,12 @@
         "helpers"
       ],
       "note": "A collection entry's part that can't be read (its selector fails) is now logged once in the console instead of being skipped silently, so Lint no longer flags “a catch that swallows the error” in sources made from this template."
+    },
+    "13": {
+      "parts": [
+        "getDetails"
+      ],
+      "note": "Title page: the details block's rows that no Tags group lists (a “Genres” row the title you built from didn't have) are read too: links / chips as “Genres: Solowork” tags, a short plain row as a line under the description. Works from the groups you already have, no re-tapping."
     }
   }
 }

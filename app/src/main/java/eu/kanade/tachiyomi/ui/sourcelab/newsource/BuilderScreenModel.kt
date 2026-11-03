@@ -2051,6 +2051,8 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
             "FILTERS" to "filtersList",
             "SETTINGS" to "settingsList",
             "TAG_GROUPS" to "tagGroups",
+            // KMK (r112) fix: a hand-edited details block is read back too (generic-list v13)
+            "TAG_BLOCK" to "tagBlock",
             "SUGGESTION_GROUPS" to "suggestionGroups",
         )
 

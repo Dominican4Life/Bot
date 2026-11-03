@@ -80,6 +80,10 @@ import kotlin.random.Random
  * default (first, value ""), never "Site default" ([ExtrasFilter.siteDefault]). Cards without pictures offer "Tap the
  * picture on the page" ([BuilderExtrasModel.pickDirPicture], picker.js `pictureMode`). A read's progress box comes to
  * the top of the panel once when it starts ("read:<id>").
+ *
+ * KMK (r112, mock BEasy): "Do all N" on a heading card ([BuilderExtrasModel.doAllUnder]): its directories scanned, learned
+ * and made one after another with one progress box and Stop; parts changed on a made card are re-applied
+ * ([BuilderExtrasModel.setDirChoice]); learned rows say "24+ (page 1)" when the page had a next page ([DirLearnRow.more]).
  */
 
 @Immutable
@@ -278,7 +282,14 @@ internal data class DirLearnMenu(
  * entry wasn't found)|pressing, and the cards its page showed (-1 = not counted)
  */
 @Immutable
-internal data class DirLearnRow(val text: String, val code: String, val status: String, val cards: Int = -1)
+internal data class DirLearnRow(
+    val text: String,
+    val code: String,
+    val status: String,
+    val cards: Int = -1,
+    /** KMK (r112): the page it opened has a next page too: [cards] is page 1's count ("24+ (page 1)") */
+    val more: Boolean = false,
+)
 
 /**
  * r103: a menu group of the site as its card shows it: [name] (the heading, cleaned: "Year: All ▾" → "Year"; "" when
@@ -311,6 +322,8 @@ internal data class MenuGroup(
     val current: String = "",
     /** KMK (r109): a scanned directory's "Learn the menus" running or done, null = not started */
     val dirLearn: DirLearn? = null,
+    /** KMK (r112): a heading card's "Do all N" running or done, null = not started */
+    val doAll: DoAllRun? = null,
 ) {
     /** Every entry is a button / text without a link: "Learn addresses" can find where each goes */
     val noLinks: Boolean get() = items.isNotEmpty() && items.none { !it.href.isNullOrBlank() }
@@ -329,6 +342,31 @@ internal data class MenuGroup(
             else -> "heading"
         }
 }
+
+/**
+ * KMK (r112, mock BEasy): "Do all N" on a heading card whose sub-menus are directories (Collections ▸ Genres, Actresses,
+ * Makers, Series): each one in turn is scanned (its first page), its parts ticked by the usual defaults, its sort and
+ * menus learned on the page ([BuilderExtrasModel.runDirLearn]) and its collection made (live by the usual rule). [kids]
+ * in run order, the one being done ([current]) and what it is doing ([phase]: scanning|learning|reading|making), one
+ * row per directory ([rows]), when it started and why it ended ([note])
+ */
+@Immutable
+internal data class DoAllRun(
+    val running: Boolean,
+    val kids: List<Int>,
+    val current: Int? = null,
+    val phase: String = "",
+    val rows: Map<Int, DoAllRow> = emptyMap(),
+    val started: Long = 0L,
+    val note: String = "",
+)
+
+/**
+ * KMK (r112): one directory's row of "Do all N": [state] waiting|running|ready|needs (the owner has to step in: [note]
+ * says why)|stopped (Stop came first: nothing made for it)
+ */
+@Immutable
+internal data class DoAllRow(val state: String, val note: String = "")
 
 /**
  * r106: a directory card's first page (BuilderListReader.probe): [state] reading|done|failed, how many names it
@@ -2911,18 +2949,259 @@ internal class BuilderExtrasModel {
     fun stopRead(id: Int) {
         readStops[id] = true
         val all = readAllParent
-        if (all != null && (all == id || mutable.value.menuGroups.firstOrNull { it.id == id }?.parent == all)) readStops[all] = true
+        // KMK (r112) fix: inside "Do all N" a directory's own Stop ends that directory only (the group's Stop ends the run)
+        val kidOfDoAll = all != null && all == doAllParent && all != id
+        if (all != null && !kidOfDoAll && (all == id || mutable.value.menuGroups.firstOrNull { it.id == id }?.parent == all)) readStops[all] = true
         AppLog.add('D', "lab", "extras read: stop asked on card $id")
     }
 
-    private suspend fun readOne(g: MenuGroup, maxPages: Int) {
+    // ---------- KMK (r112): "Do all N" on a heading card (mock BEasy) ----------
+
+    /** KMK (r112): the group Stop of the running "Do all N" (checked between steps; Stop of its learning / read too) */
+    @Volatile
+    private var doAllStop = false
+
+    /** KMK (r112) fix: the heading card whose "Do all N" is running, null = none ([stopRead] leaves its flag alone) */
+    @Volatile
+    private var doAllParent: Int? = null
+
+    private fun showDoAll(parentId: Int, change: (DoAllRun?) -> DoAllRun?) = mutable.update { s ->
+        s.copy(menuGroups = s.menuGroups.map { if (it.id == parentId) it.copy(doAll = change(it.doAll)) else it })
+    }
+
+    private fun doAllRow(parentId: Int, kid: Int, row: DoAllRow) = showDoAll(parentId) { it?.copy(rows = it.rows + (kid to row)) }
+
+    /** KMK (r112): the sub-menus "Do all N" takes on: with their own link, not made yet, not asking Replace / Keep both */
+    fun doAllKids(s: BuilderExtras, parentId: Int): List<MenuGroup> =
+        s.menuGroups.filter { it.parent == parentId && it.href != null && it.made.isNullOrEmpty() && !s.pendings.containsKey(it.id) }
+
+    /**
+     * KMK (r112, mock BEasy): a heading card's "Do all N": its directories one after another, each scanned (its first
+     * page, read when the card appeared), its parts ticked by the usual defaults (or as the owner set them on its card),
+     * its sort and menus learned on the page (the r110 [runDirLearn]) and its collection made (live by the usual rule,
+     * else its pages read with the pause set). One progress box and Stop on the group's card; a row per directory. Stop
+     * keeps what finished; a menu cut short is never saved (r110 rule); the directory being done when Stop came is not made
+     */
+    fun doAllUnder(parentId: Int) {
+        if (readJob?.isActive == true || learnJob?.isActive == true) {
+            mutable.update { it.copy(message = "Something is being read or learned: wait for it to end (or stop it), then Do all again") }
+            return
+        }
+        val st = mutable.value
+        val parent = st.menuGroups.firstOrNull { it.id == parentId } ?: return
+        val kids = doAllKids(st, parentId)
+        if (kids.isEmpty()) return
+        // KMK (r112) fix: a menu pick, picture tap or "Pick a list" waiting is cancelled before the run moves the page
+        if (st.dirPick != null) cancelDirPick()
+        if (st.picturePick != null) cancelPicturePick()
+        if (mutable.value.groupMode) setGroupMode(false)
+        doAllStop = false
+        stopLearning = false
+        kids.forEach { readStops.remove(it.id) }
+        readStops.remove(parentId)
+        readAllParent = parentId
+        doAllParent = parentId
+        // rows of directories done in an earlier run stay as they were. KMK (r112) fix: an earlier "stopped" row is
+        // dropped (made by hand since: "ready"), so the progress can reach the end
+        val earlier = parent.doAll?.rows.orEmpty().filterKeys { k -> kids.none { it.id == k } }.mapNotNull { (k, r) ->
+            when {
+                r.state != "stopped" -> k to r
+                st.menuGroups.any { it.id == k && !it.made.isNullOrEmpty() } -> k to DoAllRow("ready")
+                else -> null
+            }
+        }.toMap()
+        val order = (parent.doAll?.kids.orEmpty().filter { k -> kids.none { it.id == k } && earlier.containsKey(k) } + kids.map { it.id })
+        showDoAll(parentId) {
+            DoAllRun(
+                running = true,
+                kids = order,
+                rows = earlier + kids.associate { it.id to DoAllRow("waiting") },
+                started = System.currentTimeMillis(),
+            )
+        }
+        AppLog.add('I', "lab", "extras do all ${kids.size} under \"${parent.name}\": ${kids.joinToString(", ") { it.name }}")
+        val job = scope.launch {
+            try {
+                runDoAll(parentId, kids.map { it.id })
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLog.add('E', "lab", "extras do all failed: ${e.message ?: e.javaClass.simpleName}")
+                showDoAll(parentId) { it?.copy(running = false, current = null, phase = "", note = "Stopped: ${e.message ?: "an error"}") }
+            } finally {
+                if (readAllParent == parentId) readAllParent = null
+                if (doAllParent == parentId) doAllParent = null
+                readStops.remove(parentId)
+            }
+        }
+        // one job: nothing else reads or learns on the page meanwhile; leaving the builder cancels it (dispose)
+        readJob = job
+        learnJob = job
+        requestScroll("menu:$parentId", reveal = false)
+    }
+
+    /** KMK (r112): the group card's Stop: the current step ends (a learning press, a page read), what finished stays */
+    fun stopDoAll(parentId: Int) {
+        doAllStop = true
+        readStops[parentId] = true
+        stopLearning = true
+        AppLog.add('D', "lab", "extras do all: stop asked on card $parentId")
+        scope.launch { runCatching { inPage("window.__labLearn&&window.__labLearn.banner&&window.__labLearn.banner(null);") } }
+    }
+
+    private suspend fun runDoAll(parentId: Int, kidIds: List<Int>) {
+        val (low, high) = readPause()
+        var stopped = false
+        var made = 0
+        var needs = 0
+        fun current(kid: Int?, phase: String) = showDoAll(parentId) { it?.copy(current = kid, phase = phase) }
+        try {
+            for (kid in kidIds) {
+                if (doAllStop) {
+                    stopped = true
+                    break
+                }
+                // the group's card closed: nothing more; a directory's card closed meanwhile is skipped
+                if (mutable.value.menuGroups.none { it.id == parentId }) return
+                var card = mutable.value.menuGroups.firstOrNull { it.id == kid } ?: continue
+                if (!card.made.isNullOrEmpty()) {
+                    doAllRow(parentId, kid, DoAllRow("ready"))
+                    continue
+                }
+                doAllRow(parentId, kid, DoAllRow("running"))
+                // 1. its first page, scanned when its card appeared (wait while that read is still going)
+                current(kid, "scanning")
+                var waited = 0L
+                while (card.probe?.state == "reading" && !doAllStop && waited < PROBE_WAIT_MS) {
+                    delay(WAIT_STEP_MS)
+                    waited += WAIT_STEP_MS
+                    card = mutable.value.menuGroups.firstOrNull { it.id == kid } ?: break
+                }
+                if (doAllStop) {
+                    stopped = true
+                    break
+                }
+                card = mutable.value.menuGroups.firstOrNull { it.id == kid } ?: continue
+                val probe = card.probe
+                val scan = probe?.scan?.takeIf { it.ok }
+                if (scan == null) {
+                    when {
+                        probe?.state == "reading" -> {
+                            doAllRow(parentId, kid, DoAllRow("needs", "its first page is still being read"))
+                            needs++
+                        }
+                        probe == null || probe.state == "done" && probe.entries > 0 -> {
+                            // r106: a list of names that couldn't be scanned part by part: its pages are read as before
+                            current(kid, "reading")
+                            readOne(card, BuilderExtrasLogic.READ_PAGES, scroll = false, inDoAll = true)
+                            if (doAllStop && mutable.value.menuGroups.firstOrNull { it.id == kid }?.made.isNullOrEmpty()) {
+                                stopped = true
+                                break
+                            }
+                            val row = rowAfterMake(kid, emptyList())
+                            if (row.state == "ready") made++ else needs++
+                            doAllRow(parentId, kid, row)
+                        }
+                        else -> {
+                            val why = if (probe?.state == "failed") "its first page couldn't be read (${probe?.note.orEmpty()})" else "no list of names found on it"
+                            doAllRow(parentId, kid, DoAllRow("needs", why))
+                            needs++
+                        }
+                    }
+                    continue
+                }
+                // 2. its sort and menus learned on the page (codes kept with this directory only)
+                val notes = ArrayList<String>()
+                if (scan.custom.isNotEmpty()) {
+                    if (runInPage == null) {
+                        notes += "menus not learned: the page isn't ready"
+                    } else {
+                        current(kid, "learning")
+                        stopLearning = false
+                        try {
+                            runDirLearn(kid, scan.url, scan.custom, low, high)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            AppLog.add('E', "lab", "learn menus failed: ${e.message ?: e.javaClass.simpleName}")
+                            showDirLearn(kid) { it?.copy(running = false, note = "Learning stopped: ${e.message ?: "an error"}") }
+                        }
+                        if (doAllStop) {
+                            stopped = true
+                            break
+                        }
+                        val learned = mutable.value.menuGroups.firstOrNull { it.id == kid }?.dirLearn
+                        // its own Stop (on the directory's card) ends its learning only: the run goes on
+                        if (stopLearning) notes += "menus not learned (stopped)"
+                        learned?.menus.orEmpty().filter { it.state == "failed" }.forEach { m -> notes += "${m.label} can't be learned · pick it on the page" }
+                        if (!stopLearning) learned?.menus.orEmpty().filter { it.state == "stopped" }.forEach { m -> notes += "${m.label} ${m.note}" }
+                        stopLearning = false
+                    }
+                }
+                // 3. its collection, with the parts ticked now (the owner may have changed them on its card meanwhile)
+                if (doAllStop) {
+                    stopped = true
+                    break
+                }
+                card = mutable.value.menuGroups.firstOrNull { it.id == kid } ?: continue
+                val now = card.probe?.scan?.takeIf { it.ok } ?: scan
+                val choice = card.choice ?: BuilderExtrasLogic.defaultChoice(card.name, now)
+                current(kid, if (choice.live && (now.pageTemplate != null || now.pages <= 1)) "making" else "reading")
+                collectOne(card, BuilderExtrasLogic.READ_PAGES, scroll = false, inDoAll = true)
+                if (doAllStop && mutable.value.menuGroups.firstOrNull { it.id == kid }?.made.isNullOrEmpty()) {
+                    stopped = true
+                    break
+                }
+                val row = rowAfterMake(kid, notes)
+                if (row.state == "ready") made++ else needs++
+                doAllRow(parentId, kid, row)
+            }
+        } finally {
+            val byYou = stopped || doAllStop
+            showDoAll(parentId) { d ->
+                d?.copy(
+                    running = false,
+                    current = null,
+                    phase = "",
+                    rows = d.rows.mapValues { (_, r) ->
+                        when {
+                            r.state == "running" -> DoAllRow("stopped", "stopped · not made")
+                            byYou && r.state == "waiting" -> DoAllRow("stopped", "not reached (stopped)")
+                            else -> r
+                        }
+                    },
+                    note = (if (byYou) "Stopped by you: what finished is kept. " else "Done: ") +
+                        "$made made" + if (needs > 0) ", $needs need you" else "",
+                )
+            }
+            AppLog.add('I', "lab", "extras do all under card $parentId: $made made, $needs need you" + if (byYou) " (stopped)" else "")
+            doAllStop = false
+            stopLearning = false
+        }
+    }
+
+    /** KMK (r112): a directory's row once "Do all N" made (or tried to make) its collection, with the [notes] gathered */
+    private fun rowAfterMake(kid: Int, notes: List<String>): DoAllRow {
+        val s = mutable.value
+        val card = s.menuGroups.firstOrNull { it.id == kid } ?: return DoAllRow("needs", "its card was closed")
+        return when {
+            s.pendings.containsKey(kid) -> DoAllRow("needs", "a filter with its name is there: Replace or Keep both on its card")
+            card.made == "" -> DoAllRow("needs", "no filter could be made: its links don't share one address")
+            card.made.isNullOrEmpty() -> DoAllRow("needs", card.read?.reason?.let { "nothing made ($it)" } ?: "nothing made")
+            notes.isNotEmpty() -> DoAllRow("needs", notes.joinToString(" · "))
+            else -> DoAllRow("ready")
+        }
+    }
+
+    private suspend fun readOne(g: MenuGroup, maxPages: Int, scroll: Boolean = true, inDoAll: Boolean = false) {
         val url = g.href ?: return
         val (low, high) = readPause()
         fun show(r: GroupRead) = mutable.update { s -> s.copy(menuGroups = s.menuGroups.map { if (it.id == g.id) it.copy(read = r) else it }) }
         show(GroupRead(running = true, page = 1, entries = 0, maxPages = maxPages))
         // r106 fix: scrolled to, but the panel doesn't switch tabs for every sub-menu read
         // KMK (r109): the card's progress box comes to the top of the panel once, when the read starts
-        requestScroll("read:${g.id}", reveal = false)
+        // KMK (r112): not inside "Do all N" (its one progress box is on the group's card)
+        if (scroll) requestScroll("read:${g.id}", reveal = false)
         val result = try {
             BuilderListReader.read(
                 url = url,
@@ -2943,14 +3222,75 @@ internal class BuilderExtrasModel {
         if (result.items.isEmpty()) return
         // r106 fix: a card closed ("Not this") while it was read makes nothing
         if (mutable.value.menuGroups.none { it.id == g.id }) return
+        // KMK (r112) fix: the directory being read when the group's Stop came is not made
+        if (inDoAll && doAllStop) return
         onListRead(url, result, BuilderExtrasLogic.formFor(result.items.size), g.name.ifBlank { null }, menuId = g.id)
     }
 
     // ---------- r107: a scanned directory made into a collection ----------
 
-    /** r107: the ticks, mode and page range on a scanned directory card */
-    fun setDirChoice(id: Int, choice: DirChoice) = mutable.update { s ->
-        s.copy(menuGroups = s.menuGroups.map { if (it.id == id) it.copy(choice = choice) else it })
+    /**
+     * r107: the ticks, mode and page range on a scanned directory card. KMK (r112): a part ticked or unticked on a card
+     * whose collection is already made (by "Do all N" or by hand) is re-applied to that collection ([reapplyParts])
+     */
+    fun setDirChoice(id: Int, choice: DirChoice) {
+        val before = mutable.value.menuGroups.firstOrNull { it.id == id }
+        mutable.update { s ->
+            s.copy(menuGroups = s.menuGroups.map { if (it.id == id) it.copy(choice = choice) else it })
+        }
+        val g = before ?: return
+        val scan = g.probe?.scan?.takeIf { it.ok } ?: return
+        val old = g.choice ?: BuilderExtrasLogic.defaultChoice(g.name, scan)
+        if (old.fields == choice.fields) return
+        val key = g.made?.takeIf { it.isNotEmpty() && it != "tabs" && it != "?" } ?: return
+        reapplyParts(g.copy(choice = choice), scan, key, choice)
+    }
+
+    /**
+     * KMK (r112): the parts kept changed on a card whose collection [key] is made: a live collection is made again from
+     * page 1 (it replaces itself in place: the same list); a stored one drops the unticked parts from its entries at
+     * once, and a newly ticked part needs its pages read again ("Make it again" says so)
+     */
+    private fun reapplyParts(g: MenuGroup, scan: BuilderListReader.DirScan, key: String, choice: DirChoice) {
+        val made = mutable.value.filters.firstOrNull { it.key == key && it.type == "collection" } ?: return
+        val c = made.collection ?: return
+        if (c.live) {
+            AppLog.add('I', "lab", "extras collection \"${made.name}\": parts changed on its card (${choice.fields.joinToString(",")}), made again")
+            // made again in place: the filter it replaces is never asked Replace / Keep both about
+            finishCollection(g, scan, scan.entries, choice.copy(live = true), 1, "live", replaces = { it.key == key && it.type == "collection" })
+            return
+        }
+        val keep = BuilderExtrasLogic.COLLECTION_FIELDS.filter { it == "title" || (it in choice.fields && scan.part(it) != null) }
+        val added = keep.filter { it !in c.fields }
+        mutable.update { s ->
+            s.copy(
+                filters = s.filters.map { f ->
+                    if (f.key != key || f.type != "collection") {
+                        f
+                    } else {
+                        f.copy(
+                            options = f.options.map { o ->
+                                o.copy(
+                                    number = if ("number" in keep) o.number else "",
+                                    videos = if ("videos" in keep) o.videos else "",
+                                    views = if ("views" in keep) o.views else "",
+                                    likes = if ("likes" in keep) o.likes else "",
+                                    picture = if ("picture" in keep) o.picture else "",
+                                )
+                            },
+                            collection = c.copy(fields = keep.filter { it == "title" || it in c.fields }),
+                        )
+                    }
+                },
+                message = if (added.isEmpty()) {
+                    s.message
+                } else {
+                    "\"${made.name}\" keeps its read pages: tap Make it again on its card to read them with ${added.joinToString(", ")}."
+                },
+                rev = s.rev + 1,
+            )
+        }
+        AppLog.add('I', "lab", "extras collection \"${made.name}\": parts now ${keep.joinToString(",")}" + if (added.isEmpty()) "" else " (${added.joinToString(",")} need the pages read again)")
     }
 
     /**
@@ -2978,15 +3318,16 @@ internal class BuilderExtrasModel {
         readJob = scope.launch { collectOne(g, BuilderExtrasLogic.READ_PAGES) }
     }
 
-    private suspend fun collectOne(g: MenuGroup, maxPages: Int) {
+    private suspend fun collectOne(g: MenuGroup, maxPages: Int, scroll: Boolean = true, inDoAll: Boolean = false) {
         val scan = g.probe?.scan?.takeIf { it.ok }
         if (scan == null) {
-            readOne(g, maxPages)
+            readOne(g, maxPages, scroll, inDoAll)
             return
         }
         val choice = g.choice ?: BuilderExtrasLogic.defaultChoice(g.name, scan)
         val canLive = scan.pageTemplate != null || scan.pages <= 1
         if (choice.live && canLive) {
+            if (inDoAll && doAllStop) return
             finishCollection(g, scan, scan.entries, choice, 1, "live")
             return
         }
@@ -2997,7 +3338,8 @@ internal class BuilderExtrasModel {
         fun show(r: GroupRead) = mutable.update { s -> s.copy(menuGroups = s.menuGroups.map { if (it.id == g.id) it.copy(read = r) else it }) }
         show(GroupRead(running = true, page = 1, entries = 0, maxPages = count, first = from))
         // KMK (r109): the card's progress box comes to the top of the panel once, when the read starts
-        requestScroll("read:${g.id}", reveal = false)
+        // KMK (r112): not inside "Do all N"
+        if (scroll) requestScroll("read:${g.id}", reveal = false)
         val started = System.currentTimeMillis()
         val result = try {
             BuilderListReader.readDirectory(
@@ -3033,6 +3375,8 @@ internal class BuilderExtrasModel {
         if (result.entries.isEmpty()) return
         // a card closed ("Not this") while it was read makes nothing
         if (mutable.value.menuGroups.none { it.id == g.id }) return
+        // KMK (r112) fix: the directory being read when the group's Stop came is not made
+        if (inDoAll && doAllStop) return
         finishCollection(g, scan, result.entries, choice.copy(live = false), result.pages, result.reason)
     }
 
@@ -3044,7 +3388,10 @@ internal class BuilderExtrasModel {
         choice: DirChoice,
         pages: Int,
         how: String,
+        replaces: (ExtrasFilter) -> Boolean = { false },
     ) {
+        // KMK (r112) fix: parts ticked / unticked on the card while its pages were read count (the card's current ticks)
+        val ticks = mutable.value.menuGroups.firstOrNull { it.id == g.id }?.choice?.let { choice.copy(fields = it.fields) } ?: choice
         val url = g.href ?: scan.url
         val group = menuGroupOf(url).ifEmpty { g.headingPath.dropLast(1).lastOrNull()?.let(BuilderExtrasLogic::cleanHeading).orEmpty() }
         val derived = BuilderExtrasLogic.collectionFilter(
@@ -3052,7 +3399,7 @@ internal class BuilderExtrasModel {
             group = group,
             scan = scan,
             entries = entries,
-            choice = choice,
+            choice = ticks,
             site = siteFor(scan.url),
             rule = mutable.value.pageRule,
         )
@@ -3064,7 +3411,7 @@ internal class BuilderExtrasModel {
                 "parts ${made?.collection?.fields?.joinToString(",") ?: "-"}, live ${made?.collection?.live ?: false}" +
                 (if (group.isNotEmpty()) ", group $group" else ""),
         )
-        val added = applyDerived(derived.copy(listUrl = null), "the directory \"${g.name}\"", menuId = g.id)
+        val added = applyDerived(derived.copy(listUrl = null), "the directory \"${g.name}\"", replaces = replaces, menuId = g.id)
         if (made == null) {
             mutable.update { st -> st.copy(menuGroups = st.menuGroups.map { if (it.id == g.id) it.copy(made = "") else it }) }
             return
@@ -3079,6 +3426,8 @@ internal class BuilderExtrasModel {
         if (mutable.value.menuGroups.firstOrNull { it.id == id }?.dirLearn?.running == true) stopLearn()
         if (mutable.value.dirPick == id) cancelDirPick()
         if (mutable.value.picturePick == id) cancelPicturePick()
+        // KMK (r112): a group's card closed while its "Do all N" runs: the run stops (what finished stays)
+        if (mutable.value.menuGroups.firstOrNull { it.id == id }?.doAll?.running == true) stopDoAll(id)
         // r106 fix: only this card's read (and its sub-menus') stops: never its parent's, so the siblings stay readable
         val gone = mutable.value.menuGroups.filter { it.id == id || it.parent == id }.map { it.id }.toSet() + id
         gone.forEach { readStops[it] = true }
@@ -3534,13 +3883,13 @@ internal class BuilderExtrasModel {
                                     r.cards == 0 -> "empty"
                                     else -> "learned"
                                 }
-                                shownRows += DirLearnRow(item.text, code, status, r.cards)
+                                shownRows += DirLearnRow(item.text, code, status, r.cards, r.more)
                                 shownUrls.add(r.url)
                             }
                             "nochange" -> {
                                 loadFails = 0
                                 rows += BuilderDirMenus.Row(item.text, null, item.current)
-                                shownRows += DirLearnRow(item.text, "", "default", r.cards)
+                                shownRows += DirLearnRow(item.text, "", "default", r.cards, r.more)
                                 shownUrls.add(null)
                             }
                             else -> {
@@ -3620,10 +3969,13 @@ internal class BuilderExtrasModel {
             // menus never reached stay "waiting"; the one cut short says so. KMK (r110) fix: after Stop they are
             // "not learned (stopped)" (with "Learn again"), never "can't be learned"
             val byYou = stopLearning || found.any { it.endsWith(": stopped, not saved") }
+            val reason = stopReason
             val ended = states.map {
                 when {
                     byYou && it.state == "running" -> it.copy(state = "stopped", note = "stopped")
                     byYou && it.state == "waiting" -> it.copy(state = "stopped", note = "not learned (stopped)")
+                    // KMK (r112) fix: the run ended early (the page didn't load, the most presses): not reached, said so
+                    reason != null && it.state == "waiting" -> it.copy(state = "stopped", note = "not reached (${reason.removeSuffix(".")})")
                     it.state == "running" -> it.copy(state = "failed", note = stopReason ?: "stopped")
                     else -> it
                 }
@@ -3648,7 +4000,7 @@ internal class BuilderExtrasModel {
     }
 
     /** KMK (r110): one press's outcome: learned|nochange|missing|stopped|failed, the address it opened, cards shown */
-    private data class PressResult(val status: String, val url: String?, val cards: Int = -1)
+    private data class PressResult(val status: String, val url: String?, val cards: Int = -1, val more: Boolean = false) // KMK (r112): more
 
     /**
      * r109: one press of [entry] on the directory page (loaded again from [base] when the page left it): "learned" with
@@ -3687,7 +4039,9 @@ internal class BuilderExtrasModel {
                 pause(SETTLE_MS)
                 // the address may still move a little (the site settling): the latest one on the same page
                 val url = seen.value.url.takeIf { BuilderDirMenus.samePage(it, changed.url) } ?: changed.url
-                PressResult("learned", url.substringBefore('#'), countCards(itemSelector))
+                // KMK (r112): with whether that page has a next page ("24+ (page 1)")
+                val (cards, more) = countCards(itemSelector)
+                PressResult("learned", url.substringBefore('#'), cards, more)
             }
             stopLearning -> PressResult("stopped", null)
             answer == null || answer.state != "pressed" -> PressResult("missing", null)
@@ -3700,29 +4054,32 @@ internal class BuilderExtrasModel {
         }
     }
 
-    /** KMK (r110): learn.js `count`'s answer ("learn: count #<id> <n>") */
-    private val countAnswer = MutableStateFlow(0L to -1)
+    /** KMK (r110): learn.js `count`'s answer ("learn: count #<id> <n>"); KMK (r112): + " next" = the page has a next page */
+    private val countAnswer = MutableStateFlow(Triple(0L, -1, false))
 
     /**
      * KMK (r110): how many cards ([itemSelector]) the page shows now; looked at again after 1.5 s when none (a list
-     * still loading). -1 = not known (no selector, no answer)
+     * still loading). -1 = not known (no selector, no answer). KMK (r112): and whether the page has a next page
      */
-    private suspend fun countCards(itemSelector: String): Int {
-        if (itemSelector.isBlank()) return -1
+    private suspend fun countCards(itemSelector: String): Pair<Int, Boolean> {
+        if (itemSelector.isBlank()) return -1 to false
         var n = -1
+        var more = false
         for (attempt in 0 until 2) {
             if (attempt > 0) pause(COUNT_AGAIN_MS)
-            if (stopLearning) return n
+            if (stopLearning) return n to more
             val id = ++pressId
             val request = JsonObject(mapOf("id" to JsonPrimitive(id), "selector" to JsonPrimitive(itemSelector)))
             inPage(
                 "(function(){var r=$request;function go(k){if(window.__labLearn&&window.__labLearn.count){window.__labLearn.count(r);}" +
                     "else if(k<30){setTimeout(function(){go(k+1);},100);}}go(0);})();",
             )
-            n = waitFor(COUNT_MS) { countAnswer.value.takeIf { it.first == id } }?.second ?: -1
-            if (n != 0) return n
+            val answer = waitFor(COUNT_MS) { countAnswer.value.takeIf { it.first == id } }
+            n = answer?.second ?: -1
+            more = answer?.third == true
+            if (n != 0) return n to more
         }
-        return n
+        return n to more
     }
 
     /** r109: learn.js `items`'s answer ("learn: items #<id> <json>"), by the request's id */
@@ -3940,7 +4297,7 @@ internal class BuilderExtrasModel {
         LEARN_COUNT.find(line)?.let { cm ->
             val cid = cm.groupValues[1].toLongOrNull()
             val n = cm.groupValues[2].toIntOrNull()
-            if (cid != null && n != null) countAnswer.value = cid to n
+            if (cid != null && n != null) countAnswer.value = Triple(cid, n, cm.groupValues[3].isNotEmpty())
             return
         }
         val m = LEARN_OUTCOME.find(line) ?: return
@@ -3950,7 +4307,8 @@ internal class BuilderExtrasModel {
 
     /** r102: the card's "Not now": forget the picked list (a run in progress is stopped) */
     fun dismissLearn() {
-        stopLearning = true
+        // KMK (r112) fix: during "Do all N" stopLearning belongs to the run's directory: left alone
+        if (doAllParent == null) stopLearning = true
         mutable.update { it.copy(learnGroup = null, learn = null, pendings = it.pendings.filterValues { p -> p.kind != "learned" }) }
     }
 
@@ -4225,7 +4583,8 @@ internal class BuilderExtrasModel {
         val s = mutable.value
         val group = s.learnGroup ?: return
         val run = s.learn ?: return
-        stopLearning = true
+        // KMK (r112) fix: during "Do all N" stopLearning belongs to the run's directory: left alone
+        if (doAllParent == null) stopLearning = true
         val derivedFilter = learnedPreview()
         val made = derivedFilter?.let { f ->
             var out = f
@@ -4919,11 +5278,14 @@ internal class BuilderExtrasModel {
         const val ITEMS_MS = 12_000L
 
         /** KMK (r110): learn.js `count`'s answer ("learn: count #12 38"), how long to wait, the second look's pause */
-        val LEARN_COUNT = Regex("^learn: count #([0-9]+) (-?[0-9]+)")
+        val LEARN_COUNT = Regex("^learn: count #([0-9]+) (-?[0-9]+)( next)?") // KMK (r112): " next"
         const val COUNT_MS = 4_000L
         const val COUNT_AGAIN_MS = 1_500L
 
         /** KMK (r110): "Learn the menus" stops only when the directory page failed to load this many times in a row */
         const val LOAD_FAILS = 3
+
+        /** KMK (r112): how long "Do all N" waits for a directory's first page still being read */
+        const val PROBE_WAIT_MS = 60_000L
     }
 }

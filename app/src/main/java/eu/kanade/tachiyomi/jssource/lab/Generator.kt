@@ -109,6 +109,8 @@ internal object Generator {
         "statusSelector" to "",
         // r102 (v5 grouped tags): JSON text list of the title page's Tags groups; "" = none (the template reads "[]")
         "tagGroups" to "",
+        // KMK (r112) (v13): JSON text of the details block the Tags groups sit in; "" = none (the template reads null)
+        "tagBlock" to "",
         // r104 (v7 Suggestions): JSON text list of the title page's sections tapped as Suggestions
         "suggestionGroups" to "[]",
     )

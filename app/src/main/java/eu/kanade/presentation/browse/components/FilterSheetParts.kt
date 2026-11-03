@@ -359,7 +359,8 @@ fun sortArrow(ascending: Boolean): ImageVector =
 
 /**
  * The sort menu (mockup "CSort"): no title, opened right under its anchor. The picked option has its arrow on the
- * left; tapping another option picks it, tapping the picked one flips its direction ([onPick] decides)
+ * left; tapping another option picks it, tapping the picked one flips its direction ([onPick] decides); either
+ * closes the menu (KMK r112)
  */
 @Composable
 fun FilterSortMenu(
@@ -382,7 +383,10 @@ fun FilterSortMenu(
                 label = option,
                 selected = index == selectedIndex,
                 icon = if (index == selectedIndex) sortArrow(ascending) else null,
-                onClick = { onPick(index) },
+                onClick = {
+                    onPick(index)
+                    onDismiss() // KMK (r112): a pick or a flip closes the menu
+                },
             )
         }
     }

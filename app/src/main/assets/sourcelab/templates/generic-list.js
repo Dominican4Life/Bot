@@ -1,4 +1,4 @@
-// @version 12
+// @version 13
 // Generic list template of the Source Lab, written for {{name}} ({{baseUrl}}) from what was tapped in Build by
 // tapping (or filled by hand). Lists are pages of ITEM cards, chapters / episodes are the links of CHAPTER on a
 // title page, pages are the IMAGE pictures of a chapter page, videos the VIDEO_FRAME of an episode page.
@@ -34,6 +34,10 @@
 // picture is also found when its img has none or a placeholder: a <picture>'s <source>, a background-image or data-bg…
 // on the card or inside it, an img inside <noscript> (suggestions, list covers and collection pictures).
 // r110 (v12): a collection entry's part that can't be read is logged once in the console instead of skipped silently.
+// r112 (v13): the title page also reads the details block's rows that no Tags group lists (a "Genres" row the sample
+// title didn't have): TAG_BLOCK (the block, its row shape and value items), else derived from the TAG_GROUPS' label-
+// anchored selectors (`dt:matches(…) + dd a.chip` → the dl holding that dt), so older sources get them after "Update
+// template". Link / chip rows give "Label: value" tags, a short plain row a "Label: value" description line.
 
 /*@part id="headers"*/
 // Headers and constants: the site as Referer on every picture; the selectors the builder derived (each with
@@ -66,6 +70,11 @@ var STATUS = "{{statusSelector}}";
 // r102: the title page's rows tapped as Tags groups: [{ name, selector, target }], target "tags" (genres "name: value"),
 // "description" (a "name: value, value" line under the description) or "both"; "[]" when none were tapped
 var TAG_GROUPS = JSON.parse("{{tagGroups}}" || "[]");
+// r112: the details block the Tags groups were tapped in: { block, label, anchor, value, item, items, target } (block =
+// the block's selector; label = its rows' labels inside it; anchor:matches(label) + value = a row's value element; items
+// = the value items after the anchor (`+ dd a.chip`); target for the rows no group lists). "null" = none (derived from
+// TAG_GROUPS then)
+var TAG_BLOCK = JSON.parse("{{tagBlock}}" || "null");
 // r104: the title page's sections tapped as Suggestions: [{ name, item, link, title, cover, coverAttr, late, read, wait,
 // more }] ("[]" = none); getRelated (part "extras") lists each section's cards under its name (r105: "late" = the
 // address a section the site's script fills in comes from; r106: read "browser" = the hidden browser shows the page
@@ -261,6 +270,8 @@ var extension = {
   // value becomes the genre "Group: value" (the app groups them like E-Hentai's) and / or a "Group: a, b" line under
   // the description; the other genres are then "Tags: value". (Every r101 / r102 constant is checked, so this part
   // also runs in older sources.)
+  // r112 (v13): then the details block's rows no group lists (TAG_BLOCK, else derived from TAG_GROUPS' selectors):
+  // links / chips → "Label: value" genres, one short plain value → a "Label: value" line under the description.
   getDetails: async function (url) {
     var doc = await host.parse(await get(url));
     var pickedCover = typeof DETAILS_COVER !== "undefined" ? DETAILS_COVER : "";
@@ -296,6 +307,132 @@ var extension = {
         console.log("Title page: " + name + " of " + css + " wasn't read: " + (e && e.message));
         return "";
       }
+    }
+    // KMK (r112) v13: the rows of the details block (TAG_BLOCK; else derived from the TAG_GROUPS' label-anchored
+    // selectors) that no group lists, as { label, values, line }: links / chips → "Label: value" genres (the block's
+    // target), one short plain value → a "Label: value" description line. Each new row is logged once.
+    function labelRe(label) {
+      var body = String(label).replace(/[\\^$*+?()\[\]{}|"',;]/g, ".").replace(/\s+/g, "\\s+");
+      return "^\\s*" + body + "\\s*[\uff1a:]?\\s*$";
+    }
+    function blockFromGroups(groups) {
+      // dl: `dt:matches(R) + dd[ item]`; table: `th:matches(R) ~ td[ item]`; label / value box: `L:matches(R) ~ item,
+      // L:matches(R) ~ * item` or `L:matches(R) + V` (the shapes the builder's Tags tap writes)
+      var found = null;
+      var shapes = [];
+      var items = {};
+      groups.forEach(function (g) {
+        var sel = String(g.selector || "").trim();
+        var m = /^(dt|th|td):matches\(([^()]*)\)\s*([+~])\s*(dd|td)(?:\s+([^,]+))?$/.exec(sel);
+        var shape = null;
+        if (m) {
+          shape = m[1] === "dt" ? { kind: "dl", anchor: "dt", re: m[2], value: m[3] + " " + m[4] } : { kind: "table", anchor: m[1], re: m[2], value: "~ td" };
+          if (m[5]) items[m[5].trim()] = (items[m[5].trim()] || 0) + 1;
+        } else {
+          var r = /^([a-z][\w.-]*):matches\(([^()]*)\)\s*~\s*([^,]+?)\s*,\s*\1:matches\(\2\)\s*~\s*\*\s+\3$/i.exec(sel);
+          var p = r ? null : /^([a-z][\w.-]*):matches\(([^()]*)\)\s*\+\s*([^,\s]+)$/i.exec(sel);
+          if (r) { shape = { kind: "row", anchor: r[1], re: r[2], value: "+ *" }; items[r[3]] = (items[r[3]] || 0) + 1; }
+          else if (p) shape = { kind: "row", anchor: p[1], re: p[2], value: "+ " + p[3] };
+        }
+        if (shape) shapes.push(shape);
+        if (shape && (!found || (found.kind !== "dl" && shape.kind === "dl"))) found = shape;
+      });
+      if (!found) return null;
+      var item = Object.keys(items).sort(function (a, b) { return items[b] - items[a]; })[0] || "";
+      // KMK (r112) fix: the block is found by any group's label of the same row shape (TagBlock.kt does the same)
+      var res = [];
+      shapes.forEach(function (sh) {
+        if (sh.kind === found.kind && sh.anchor === found.anchor && res.indexOf(sh.re) < 0) res.push(sh.re);
+      });
+      var anchored = res.map(function (re) { return found.anchor + ":matches(" + re + ")"; });
+      function block(f) { return anchored.map(f).join(", "); }
+      if (found.kind === "dl") {
+        return { block: block(function (a) { return "dl:has(> " + a + "), dl:has(> div > " + a + ")"; }), label: "dt", anchor: "dt", value: found.value, item: item,
+          items: item ? [found.value + " " + item] : [], target: "tags", from: "groups" };
+      }
+      if (found.kind === "table") {
+        return { block: block(function (a) { return "table:has(" + a + ")"; }), label: "tr > :first-child", anchor: found.anchor, value: "~ td", item: item,
+          items: item ? ["~ td " + item] : [], target: "tags", from: "groups" };
+      }
+      return { block: block(function (a) { return ":has(> * > " + a + ")"; }), label: "> * > " + found.anchor + ":first-child", anchor: found.anchor, value: found.value,
+        item: item, items: item ? ["~ " + item, "~ * " + item] : [], target: "tags", from: "groups" };
+    }
+    async function blockExtras(groups) {
+      var spec = typeof TAG_BLOCK !== "undefined" && TAG_BLOCK && typeof TAG_BLOCK === "object" && TAG_BLOCK.block ? TAG_BLOCK : null;
+      if (!spec && groups.length) spec = blockFromGroups(groups);
+      if (!spec || !spec.block || !spec.anchor) return [];
+      var known = groups.map(function (g) {
+        var m = /:matches\(([^()]*)\)/.exec(String(g.selector || ""));
+        var re = null;
+        try { re = m ? new RegExp(m[1], "i") : null; } catch (e) { re = null; }
+        return { name: clean(g.name).replace(/\s*[:：]$/, "").toLowerCase(), re: re };
+      });
+      var out = [];
+      var box;
+      try { box = await doc.selectOne(spec.block); } catch (e) {
+        console.log("Title page: the details block " + spec.block + " wasn't read: " + (e && e.message));
+        return out;
+      }
+      if (!box) return out;
+      var labels = [];
+      try { labels = await box.select(spec.label || spec.anchor, { html: false }); } catch (e) {
+        console.log("Title page: the details block's rows weren't read: " + (e && e.message));
+        return out;
+      }
+      var g = typeof globalThis !== "undefined" ? globalThis : {};
+      g.__labBlockRows = g.__labBlockRows || {};
+      g.__labBlockLong = g.__labBlockLong || {};
+      var seenLabel = {};
+      for (var li = 0; li < labels.length; li++) {
+        var label = clean(labels[li].text).replace(/\s*[:：]$/, "");
+        var key = label.toLowerCase();
+        if (!label || label.length > 40 || seenLabel[key]) continue;
+        seenLabel[key] = true;
+        if (known.some(function (k) { return k.name === key || (k.re && k.re.test(label)); })) continue;
+        var anchored = spec.anchor + ":matches(" + labelRe(label) + ")";
+        var name = noComma(label);
+        var values = [];
+        var seenValue = {};
+        var add = function (t) {
+          t = clean(t);
+          if (!t || seenValue[t.toLowerCase()]) return;
+          seenValue[t.toLowerCase()] = true;
+          values.push(t);
+        };
+        var line = false;
+        try {
+          var itemSels = (spec.items && spec.items.length ? spec.items : spec.item ? [spec.value + " " + spec.item] : [])
+            .map(function (s) { return anchored + " " + s; });
+          if (itemSels.length) (await box.select(itemSels.join(", "), { html: false })).forEach(function (el) { add(el.text); });
+          if (!values.length && spec.value && spec.value !== "+ *") {
+            (await box.select(anchored + " " + spec.value + " a", { html: false })).forEach(function (el) { add(el.text); });
+          }
+          if (!values.length && spec.value) {
+            var plain = await box.selectOne(anchored + " " + spec.value);
+            var text = plain ? clean(plain.text) : "";
+            if (text && text.length <= 120) { add(text); line = true; }
+            else if (text && !g.__labBlockLong[key]) {
+              g.__labBlockLong[key] = true;
+              console.log("Title page: row " + label + " of the details block is long text: left out");
+            }
+          }
+        } catch (e) {
+          console.log("Title page: row " + label + " of the details block wasn't read: " + (e && e.message));
+          continue;
+        }
+        if (!values.length) continue;
+        if (!g.__labBlockRows[key]) {
+          g.__labBlockRows[key] = true;
+          console.log("Title page: row " + label + " read from the details block");
+        }
+        var target = spec.target === "description" ? "description" : spec.target === "both" ? "both" : "tags";
+        if (line || target === "description") out.push({ label: name, values: values, line: true });
+        else {
+          out.push({ label: name, values: values, line: false });
+          if (target === "both") out.push({ label: name, values: values, line: true });
+        }
+      }
+      return out;
     }
     var out = { url: url, webUrl: url };
     out.title = (await doc.text("h1") || await doc.attr("meta[property='og:title']", "content") || "").trim();
@@ -380,6 +517,12 @@ var extension = {
       if (target !== "description") values.forEach(function (t) { var v = noComma(plainTag(t)); if (v) pushTag(groupName + ": " + v); });
       if (target !== "tags") lines.push(groupName + ": " + values.join(", "));
     }
+    // KMK (r112) v13: the details block's other rows (a "Genres" row the sample title didn't have)
+    var blockRows = await blockExtras(tagGroups);
+    blockRows.forEach(function (r) {
+      if (r.line) lines.push(r.label + ": " + r.values.join(", "));
+      else r.values.forEach(function (t) { var v = noComma(plainTag(t)); if (v) pushTag(r.label + ": " + v); });
+    });
     if (lines.length) description = description ? description + "\n\n" + lines.join("\n") : lines.join("\n");
     if (description) out.description = description;
     var fromGroups = genres.length;

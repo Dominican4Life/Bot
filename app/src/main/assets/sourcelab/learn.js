@@ -21,6 +21,9 @@
 // at the page's top (it never takes taps), and the pressed entry and the menu's button get an orange outline;
 // banner(null) takes both away. count({ id, selector }) answers "learn: count #<id> <n>": how many of the directory's
 // cards the page shows (0 = "Nothing found").
+//
+// KMK (r112): count's answer ends with " next" when the page also has a next page (rel=next, a Next / › / » link, or
+// a link to this page's number + 1 on the same host): the builder shows "24+ (page 1)" instead of "24 actresses".
 (function () {
   if (window.__labLearn) return;
 
@@ -458,8 +461,42 @@
     return "opening";
   }
 
+  // KMK (r112): the page after a press has more pages (the same tests as the app's BuilderListReader.nextPage)
+  var NEXT_TEXT = /^(?:next(?:\s+page)?|next\s*[›»>→]+|[›»>→])$/i;
+  function pageOf(href) {
+    var m = /[?&](?:page|p|pg)=(\d+)/i.exec(href) || /\/page\/(\d+)/i.exec(href);
+    return m ? parseInt(m[1], 10) : 0;
+  }
+  function hasNextPage() {
+    var here = String(location.href).split("#")[0];
+    function usable(href) {
+      try {
+        var u = new URL(href, location.href);
+        if (u.host !== location.host) return false;
+        return u.href.split("#")[0] !== here;
+      } catch (e) { return false; }
+    }
+    var rel = document.querySelectorAll('a[rel~="next"][href], link[rel~="next"][href]');
+    for (var i = 0; i < rel.length; i++) if (usable(rel[i].getAttribute("href"))) return true;
+    var as = document.querySelectorAll("a[href]");
+    for (var j = 0; j < as.length; j++) {
+      var a = as[j];
+      if (!own(a)) continue;
+      var label = norm(a.textContent) || norm(a.getAttribute("aria-label")) || norm(a.getAttribute("title"));
+      if (NEXT_TEXT.test(label) && usable(a.getAttribute("href"))) return true;
+    }
+    var want = (pageOf(here) || 1) + 1;
+    for (var k = 0; k < as.length; k++) {
+      var h = as[k].getAttribute("href");
+      var abs = "";
+      try { abs = new URL(h, location.href).href; } catch (e2) { continue; }
+      if (pageOf(abs) === want && usable(h)) return true;
+    }
+    return false;
+  }
+
   window.__labLearn = {
-    version: 3, // r110: banner, count
+    version: 4, // r110: banner, count; r112: count says " next"
     // r109: a custom drop-down's entries, opened on the page
     items: function (req) {
       try {
@@ -491,7 +528,9 @@
         // a selector the page can't read is "not known", never "nothing found"
         if (req.selector) n = Array.prototype.slice.call(document.querySelectorAll(String(req.selector))).filter(own).length;
       } catch (e) { n = -1; }
-      log("count #" + id + " " + n);
+      var more = false;
+      try { more = n > 0 && hasNextPage(); } catch (e3) { more = false; }
+      log("count #" + id + " " + n + (more ? " next" : ""));
       return n;
     },
     // For checks: what press() would use, without pressing

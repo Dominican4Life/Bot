@@ -5,6 +5,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.FlowRow
@@ -686,11 +687,56 @@ private fun entriesText(scan: BuilderListReader.DirScan): String = when {
  * sub-menus are rows inside it (each its own small card) with "Read all N"
  */
 @Composable
-private fun MenuCard(group: MenuGroup, s: BuilderExtras, extras: BuilderExtrasModel, nested: Boolean) {
+private fun MenuCard(group: MenuGroup, s: BuilderExtras, extras: BuilderExtrasModel, nested: Boolean, openAtFirst: Boolean = false) {
     val kids = s.menuGroups.filter { it.parent == group.id }
     val learning = s.learnGroup?.takeIf { it.menuId == group.id }
     val pending = s.pendings[group.id]
-    val reading = group.read?.running == true || kids.any { it.read?.running == true }
+    val run = group.doAll
+    val reading = group.read?.running == true || kids.any { it.read?.running == true } || run?.running == true
+    // KMK (r112): a finished card folds to one line (tap it to open); remembered before any branch
+    var unfolded by rememberSaveable(group.id) { mutableStateOf(false) }
+    // KMK (r112): the directory row of "Do all N" opened under its row (to untick parts), null = none
+    var openKid by rememberSaveable(group.id) { mutableStateOf<Int?>(null) }
+    val fold = foldLine(group, s, kids)
+    val folded = fold != null && !unfolded && !openAtFirst && learning == null && pending == null && !reading
+    if (folded && fold != null) {
+        CardBox(
+            active = false,
+            target = "menu:${group.id}",
+            scrollTarget = s.scrollTarget,
+            scrollTick = s.scrollTick,
+            nested = nested,
+            scrollDoneTick = s.scrollDone,
+            onScrolled = extras::scrollDone,
+        ) {
+            // KMK (r112, mock BEasy): "✓ Sort · 9 codes · default "Recently added" ▸"
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { unfolded = true },
+            ) {
+                Text("✓", color = OkGreen, fontWeight = FontWeight.Bold, modifier = Modifier.width(20.dp))
+                Text(
+                    group.name.ifBlank { "Menu" },
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                )
+                Text(
+                    " · $fold",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Text("▸", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 6.dp))
+            }
+        }
+        return
+    }
     CardBox(
         active = learning != null || pending != null || reading,
         target = "menu:${group.id}",
@@ -728,6 +774,12 @@ private fun MenuCard(group: MenuGroup, s: BuilderExtras, extras: BuilderExtrasMo
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+            // KMK (r112): a finished card opened from its one line folds again
+            if (fold != null && unfolded && !openAtFirst) {
+                IconButton(onClick = { unfolded = false }, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Outlined.ExpandLess, contentDescription = "Fold", modifier = Modifier.size(16.dp))
+                }
+            }
             IconButton(onClick = { extras.dismissMenuGroup(group.id) }, modifier = Modifier.size(32.dp)) {
                 Icon(Icons.Outlined.Close, contentDescription = "Not this", modifier = Modifier.size(16.dp))
             }
@@ -741,22 +793,274 @@ private fun MenuCard(group: MenuGroup, s: BuilderExtras, extras: BuilderExtrasMo
             else -> MenuActions(group, extras)
         }
         if (kids.isNotEmpty()) {
-            if (group.kind == "heading") {
-                Hint(
-                    "A heading with ${kids.size} sub-menus. Each one becomes a filter inside “${group.name.ifBlank { "this group" }}” in Browse.",
-                )
+            if (run != null) {
+                // KMK (r112, mock BEasy): one progress box and a row per directory; a row opens its card under it
+                DoAllBox(group, run, kids, s, extras, openKid) { id -> openKid = if (openKid == id) null else id }
+            } else {
+                if (group.kind == "heading") {
+                    Hint(
+                        "A heading with ${kids.size} sub-menus. Each one becomes a filter inside “${group.name.ifBlank { "this group" }}” in Browse.",
+                    )
+                }
+                kids.forEach { kid -> key(kid.id) { MenuCard(kid, s, extras, nested = true) } }
             }
-            kids.forEach { kid -> key(kid.id) { MenuCard(kid, s, extras, nested = true) } }
-            val readable = kids.filter { it.href != null && it.made.isNullOrEmpty() && it.read?.running != true }
-            if (readable.size >= 2) {
+            val todo = extras.doAllKids(s, group.id)
+            if (todo.isNotEmpty() && run?.running != true) {
+                // KMK (r112): "Do all N" (r106's "Make all N"): scans, learns and makes each directory in a row
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedButton(onClick = { extras.readAllUnder(group.id) }, enabled = !reading) { Text("Make all ${readable.size}") }
+                    Button(onClick = { extras.doAllUnder(group.id) }, enabled = !reading) {
+                        Text(if (todo.size == 1) "Do the last one" else "Do all ${todo.size}")
+                    }
                     Spacer(Modifier.width(8.dp))
-                    // r107: each with the choices on its card (Live ones at once, the others read one after another)
-                    Hint("each as its card says: Live ones at once, the others read one after another")
+                    Hint("scans each directory, learns its sort and menus, makes its filter, one after another")
                 }
             }
         }
+    }
+}
+
+/**
+ * KMK (r112, mock BEasy): what a finished card folds to ("9 codes · default "Recently added"", "505 · 6 sorts · live",
+ * "picks the list", "Genres · Makers · made"); null = not finished (it stays open)
+ */
+private fun foldLine(g: MenuGroup, s: BuilderExtras, kids: List<MenuGroup>): String? {
+    if (g.dirLearn?.running == true || g.read?.running == true || g.doAll?.running == true) return null
+    if (s.dirPick == g.id || s.picturePick == g.id || s.pendings.containsKey(g.id)) return null
+    // a "needs you" row of Do all, or a menu that couldn't be learned / was cut short, keeps the card open
+    if (g.doAll?.rows.orEmpty().values.any { it.state == "needs" }) return null
+    if (g.dirLearn?.menus.orEmpty().any { it.state == "failed" || it.state == "stopped" }) return null
+    if (kids.isNotEmpty()) {
+        if (g.kind != "heading" || kids.any { it.made.isNullOrEmpty() }) return null
+        return kids.joinToString(" · ") { it.name.ifBlank { "menu" } } + " · made"
+    }
+    val made = g.made?.takeIf { it.isNotEmpty() } ?: return null
+    if (made == "tabs") return "added as tabs"
+    val f = s.filters.firstOrNull { it.key == made }
+    val c = f?.collection
+    return when {
+        f == null -> "made"
+        c != null -> listOfNotNull(
+            BuilderExtrasLogic.thousands(if (c.total > 0) c.total else f.options.size),
+            c.sorts.size.takeIf { it > 0 }?.let { "$it sorts" },
+            c.menus.size.takeIf { it > 0 }?.let { "$it menus" },
+            if (c.live) "live" else "kept",
+        ).joinToString(" · ")
+        f.role == "page" -> "picks the list"
+        else -> {
+            val codes = f.options.count { it.value.isNotEmpty() }
+            val default = f.siteDefault.ifEmpty { f.options.firstOrNull { it.value.isEmpty() }?.label.orEmpty() }
+            "$codes codes" + if (default.isNotEmpty()) " · default \"$default\"" else ""
+        }
+    }
+}
+
+/**
+ * KMK (r112, mock BEasy): "Do all N" on the group's card: "<directory> · learning Cup (8 of 19)", time left, one bar and
+ * Stop for the whole group; then a row per directory (✓ ready with its counts and sorts · … what it is doing · waiting
+ * · ! needs you and why) with its part chips; a tap opens that directory's card under its row (untick a part there: the
+ * run uses it when it gets there, or makes the filter again when it was made)
+ */
+@Composable
+private fun DoAllBox(
+    group: MenuGroup,
+    run: DoAllRun,
+    kids: List<MenuGroup>,
+    s: BuilderExtras,
+    extras: BuilderExtrasModel,
+    openKid: Int?,
+    onRow: (Int) -> Unit,
+) {
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(run.running) {
+        while (run.running) {
+            now = System.currentTimeMillis()
+            delay(1_000)
+        }
+    }
+    val order = run.kids.mapNotNull { id -> kids.firstOrNull { it.id == id } } + kids.filter { k -> k.id !in run.kids }
+    val cur = order.firstOrNull { it.id == run.current }
+    val total = run.kids.size.coerceAtLeast(1)
+    val finished = run.rows.count { (_, r) -> r.state == "ready" || r.state == "needs" }
+    val part = if (cur == null) 0f else doAllPart(cur, run.phase)
+    val fraction = ((finished + part) / total).coerceIn(0f, 1f)
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLowest,
+        border = if (run.running) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        if (run.running) {
+                            (cur?.name?.ifBlank { null } ?: "Directory") + " · " + doAllPhaseText(cur, run.phase)
+                        } else {
+                            run.note.ifEmpty { "Done" }
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (run.running) {
+                        val elapsed = (now - run.started).coerceAtLeast(0L)
+                        val left = if (fraction > 0.03f) (elapsed * (1f - fraction) / fraction).toLong() else -1L
+                        Text(
+                            "${finished + if (cur != null) 1 else 0} of ${run.kids.size}" +
+                                if (left >= 0L) " · ${BuilderExtrasLogic.durationText(left)} left" else "",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                if (run.running) OutlinedButton(onClick = { extras.stopDoAll(group.id) }) { Text("Stop") }
+            }
+            if (run.running) {
+                LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth())
+            }
+            order.forEachIndexed { i, kid ->
+                key(kid.id) {
+                    DoAllRowLine(i + 1, kid, run.rows[kid.id], s, open = openKid == kid.id) { onRow(kid.id) }
+                    if (openKid == kid.id) MenuCard(kid, s, extras, nested = true, openAtFirst = true)
+                }
+            }
+            Hint(
+                "Each directory is scanned, its parts ticked by the usual defaults (tap a row to change them), its sort and " +
+                    "menus learned, and its filter made, one after another. Live as you scroll unless you choose otherwise.",
+            )
+        }
+    }
+}
+
+/** KMK (r112): how far the directory being done is (0–1) by what it is doing, for the group's one bar */
+private fun doAllPart(kid: MenuGroup, phase: String): Float = when (phase) {
+    "scanning" -> 0.05f
+    "learning" -> {
+        val l = kid.dirLearn
+        0.1f + 0.7f * if (l == null || l.total <= 0) 0f else (l.done.toFloat() / l.total).coerceIn(0f, 1f)
+    }
+    "reading" -> {
+        val r = kid.read
+        0.8f + 0.2f * if (r == null || r.maxPages <= 0) 0f else ((r.page - 1).toFloat() / r.maxPages).coerceIn(0f, 1f)
+    }
+    "making" -> 0.9f
+    else -> 0f
+}
+
+/** KMK (r112): "learning Cup (8 of 19)", "reading page 3 of 10", "reading its first page", "making its filter" */
+private fun doAllPhaseText(kid: MenuGroup?, phase: String): String = when (phase) {
+    "scanning" -> "reading its first page"
+    "learning" -> {
+        val l = kid?.dirLearn
+        if (l == null || !l.running || l.label.isEmpty()) "learning its menus" else "learning ${l.label} (${l.done} of ${l.total})"
+    }
+    "reading" -> kid?.read?.takeIf { it.running }?.let { "reading page ${it.page} of ${it.maxPages}" } ?: "reading its pages"
+    "making" -> "making its filter"
+    else -> "starting"
+}
+
+/** KMK (r112): one directory's row of "Do all N" (mock BEasy) */
+@Composable
+private fun DoAllRowLine(n: Int, kid: MenuGroup, row: DoAllRow?, s: BuilderExtras, open: Boolean, onClick: () -> Unit) {
+    val made = !kid.made.isNullOrEmpty()
+    val state = when {
+        s.pendings.containsKey(kid.id) -> "needs"
+        // made by hand after the run stopped or asked: ready, unless a menu still can't be learned
+        row != null && row.state != "ready" && row.state != "running" && made && " learn" !in row.note -> "ready"
+        row != null -> row.state
+        made -> "ready"
+        else -> "waiting"
+    }
+    val (mark, tint) = when (state) {
+        "ready" -> "✓" to OkGreen
+        "running" -> "…" to MaterialTheme.colorScheme.primary
+        "needs" -> "!" to WarnAmber
+        "stopped" -> "■" to WarnAmber
+        else -> "$n" to MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val scan = kid.probe?.scan?.takeIf { it.ok }
+    val people = BuilderExtrasLogic.peopleLike(kid.name, scan?.url)
+    val chips = if (scan == null) {
+        emptyList()
+    } else {
+        val choice = kid.choice ?: BuilderExtrasLogic.defaultChoice(kid.name, scan)
+        BuilderExtrasLogic.COLLECTION_FIELDS.filter { (it == "title" || it in choice.fields) && scan.part(it) != null }
+            .map { if (it == "picture" && people) "Faces" else partName(it, people) }
+    }
+    val right = when (state) {
+        "ready" -> readyText(kid, s)
+        "running" -> runningText(kid)
+        "needs" -> row?.note?.ifEmpty { null } ?: "a filter with its name is there: Replace or Keep both on its card"
+        "stopped" -> row?.note?.ifEmpty { null } ?: "stopped"
+        else -> "waiting"
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 4.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Surface(shape = CircleShape, color = tint.copy(alpha = 0.18f), modifier = Modifier.size(20.dp)) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(mark, color = tint, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+            Spacer(Modifier.width(8.dp))
+            Text(kid.name.ifBlank { "Directory" }, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            Spacer(Modifier.width(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.weight(1f)) {
+                chips.take(3).forEach { RoleChip(it) }
+            }
+            Icon(
+                if (open) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                contentDescription = if (open) "Close its card" else "Open its card",
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Text(
+            right,
+            style = MaterialTheme.typography.bodySmall,
+            color = if (state == "needs") WarnAmber else MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(start = 28.dp),
+        )
+    }
+}
+
+/** KMK (r112): a made directory's row: "505 · 6 sorts · 3 menus · ready" */
+private fun readyText(kid: MenuGroup, s: BuilderExtras): String {
+    val f = s.filters.firstOrNull { it.key == kid.made && it.type == "collection" }
+    val c = f?.collection ?: return "ready"
+    return listOfNotNull(
+        BuilderExtrasLogic.thousands(if (c.total > 0) c.total else f.options.size),
+        c.sorts.size.takeIf { it > 0 }?.let { "$it sorts" },
+        c.menus.size.takeIf { it > 0 }?.let { "$it menus" },
+        if (c.live) "live · ready" else "ready",
+    ).joinToString(" · ")
+}
+
+/** KMK (r112): the directory being done: "Sort ✓ Height ✓ Cup … Age" while learning, else its read */
+private fun runningText(kid: MenuGroup): String {
+    val l = kid.dirLearn
+    val r = kid.read
+    return when {
+        l != null && l.running && l.menus.isNotEmpty() -> l.menus.joinToString(" ") { m ->
+            m.label + when (m.state) {
+                "done" -> " ✓"
+                "running" -> " …"
+                "failed" -> " !"
+                "stopped" -> " ■"
+                else -> ""
+            }
+        }
+        r != null && r.running -> "reading page ${r.page} of ${r.maxPages} · ${BuilderExtrasLogic.thousands(r.entries)} so far"
+        kid.probe?.state == "reading" -> "reading its first page"
+        else -> "working"
     }
 }
 
@@ -1317,9 +1621,11 @@ private fun leftText(ms: Long): String = when {
  */
 @Composable
 private fun DirLearnMenuRow(m: DirLearnMenu, collection: String, running: Boolean, onPick: () -> Unit, onLearnAgain: () -> Unit) {
-    // KMK (r110) fix: a finished menu's codes show open at first (tap the row to fold them)
+    // KMK (r110) fix: a finished menu's codes show open at first (tap the row to fold them). KMK (r112): only while the
+    // other menus are still being learned; once the whole set is done each menu is one line ("✓ Height · 14 options ·
+    // default …"), its codes open on tap
     val isDone = m.state == "done"
-    var open by remember(m.label, isDone) { mutableStateOf(isDone) }
+    var open by remember(m.label, isDone, running) { mutableStateOf(isDone && running) }
     // KMK (r110) fix: "12 actresses" on the codes' rows when the collection's name is known, else "12 found"
     val noun = collection.trim().lowercase().ifEmpty { "found" }
     val (mark, tint) = when (m.state) {
@@ -1416,6 +1722,8 @@ private fun DirLearnMenuRow(m: DirLearnMenu, collection: String, running: Boolea
                         Text(
                             when {
                                 r.status == "empty" -> "nothing found · kept"
+                                // KMK (r112): page 1's count when the page has more pages ("24+ (page 1)")
+                                r.cards > 0 && r.more -> "${r.cards}+ (page 1)"
                                 r.cards > 0 -> "${r.cards} $noun"
                                 else -> ""
                             },

@@ -515,7 +515,8 @@ private fun CollectionPanel(
                 }
             }
         }
-        // KMK (r110): the open chip's options, inside the panel (they stay open: the list below changes as you pick)
+        // KMK (r110): the open chip's options, inside the panel
+        // KMK (r112): picking an option (or flipping the sort in use) closes the options; the panel stays open
         when {
             expanded == SORT_CHIP && sortOptions.isNotEmpty() -> OptionsBox(optionsMaxHeight, optionsScroll) {
                 sortOptions.forEachIndexed { index, option ->
@@ -523,7 +524,10 @@ private fun CollectionPanel(
                         label = option.label,
                         selected = index == inUse,
                         icon = if (index == inUse) sortArrow(ascending) else null,
-                        onClick = { onSort(index) },
+                        onClick = {
+                            onSort(index)
+                            expanded = null // KMK (r112)
+                        },
                     )
                 }
             }
@@ -535,14 +539,20 @@ private fun CollectionPanel(
                         ?: "Any",
                     selected = menuValue.isEmpty(),
                     icon = if (menuValue.isEmpty()) Icons.Filled.Check else null,
-                    onClick = { onMenu(expandedMenu.key, "") },
+                    onClick = {
+                        onMenu(expandedMenu.key, "")
+                        expanded = null // KMK (r112)
+                    },
                 )
                 expandedMenu.options.filter { it.value.isNotEmpty() }.forEach { option ->
                     PanelOptionRow(
                         label = option.label,
                         selected = option.value == menuValue,
                         icon = if (option.value == menuValue) Icons.Filled.Check else null,
-                        onClick = { onMenu(expandedMenu.key, option.value) },
+                        onClick = {
+                            onMenu(expandedMenu.key, option.value)
+                            expanded = null // KMK (r112)
+                        },
                     )
                 }
             }
