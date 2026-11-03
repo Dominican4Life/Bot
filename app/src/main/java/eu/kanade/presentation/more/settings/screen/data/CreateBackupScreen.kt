@@ -6,11 +6,19 @@ import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
@@ -28,10 +36,9 @@ import kotlinx.collections.immutable.ImmutableList
 import kotlinx.coroutines.flow.update
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.i18n.MR
-import tachiyomi.presentation.core.components.LabeledCheckbox
 import tachiyomi.presentation.core.components.LazyColumnWithAction
-import tachiyomi.presentation.core.components.SectionCard
 import tachiyomi.presentation.core.components.material.Scaffold
+import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
 
 class CreateBackupScreen : Screen() {
@@ -42,6 +49,10 @@ class CreateBackupScreen : Screen() {
         val navigator = LocalNavigator.currentOrThrow
         val model = rememberScreenModel { CreateBackupScreenModel() }
         val state by model.state.collectAsState()
+        val cardModifier = Modifier.padding(
+            horizontal = MaterialTheme.padding.medium,
+            vertical = MaterialTheme.padding.small,
+        )
 
         val chooseBackupDir = rememberLauncherForActivityResult(
             contract = ActivityResultContracts.CreateDocument("application/*"),
@@ -88,9 +99,22 @@ class CreateBackupScreen : Screen() {
                     }
                 }
 
+                // KMK (r114): the options as two chip groups (titles, then settings); same options, same enabled
+                // rules (BackupOptions.Entry.enabled), same category choice
                 item {
-                    SectionCard(MR.strings.label_library) {
+                    BackupCard(modifier = cardModifier) {
+                        BackupMuted("What goes in · titles")
                         Options(BackupOptions.libraryOptions, state, model)
+                    }
+                }
+
+                item {
+                    BackupCard(modifier = cardModifier) {
+                        BackupMuted("What goes in · settings")
+                        Options(BackupOptions.settingsOptions, state, model)
+                        BackupMuted(
+                            "Logins & tokens are tracker logins and other private settings; keep that file safe.",
+                        )
                     }
                 }
 
@@ -106,12 +130,6 @@ class CreateBackupScreen : Screen() {
                     }
                 }
                 // KMK <--
-
-                item {
-                    SectionCard(MR.strings.label_settings) {
-                        Options(BackupOptions.settingsOptions, state, model)
-                    }
-                }
             }
         }
     }
@@ -122,15 +140,20 @@ class CreateBackupScreen : Screen() {
         state: CreateBackupScreenModel.State,
         model: CreateBackupScreenModel,
     ) {
-        options.forEach { option ->
-            LabeledCheckbox(
-                label = stringResource(option.label),
-                checked = option.getter(state.options),
-                onCheckedChange = {
-                    model.toggle(option.setter, it)
-                },
-                enabled = option.enabled(state.options),
-            )
+        // KMK (r114): FilterChips instead of checkboxes
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            options.forEach { option ->
+                val checked = option.getter(state.options)
+                FilterChip(
+                    selected = checked,
+                    onClick = { model.toggle(option.setter, !checked) },
+                    label = { Text(option.chip ?: stringResource(option.label)) },
+                    enabled = option.enabled(state.options),
+                )
+            }
         }
     }
 }

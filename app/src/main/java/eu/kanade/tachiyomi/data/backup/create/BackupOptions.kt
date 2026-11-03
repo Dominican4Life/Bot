@@ -58,34 +58,40 @@ data class BackupOptions(
             Entry(
                 label = MR.strings.manga,
                 getter = BackupOptions::libraryEntries,
+                chip = "Library",
                 setter = { options, enabled -> options.copy(libraryEntries = enabled) },
             ),
             Entry(
                 label = MR.strings.chapters,
                 getter = BackupOptions::chapters,
+                chip = "Chapters & episodes",
                 setter = { options, enabled -> options.copy(chapters = enabled) },
                 enabled = { it.libraryEntries },
             ),
             Entry(
                 label = MR.strings.track,
                 getter = BackupOptions::tracking,
+                chip = "Tracking",
                 setter = { options, enabled -> options.copy(tracking = enabled) },
                 enabled = { it.libraryEntries },
             ),
             Entry(
                 label = MR.strings.history,
                 getter = BackupOptions::history,
+                chip = "History",
                 setter = { options, enabled -> options.copy(history = enabled) },
                 enabled = { it.libraryEntries },
             ),
             Entry(
                 label = MR.strings.categories,
                 getter = BackupOptions::categories,
+                chip = "Categories",
                 setter = { options, enabled -> options.copy(categories = enabled) },
             ),
             Entry(
                 label = MR.strings.non_library_settings,
                 getter = BackupOptions::readEntries,
+                chip = "All read entries",
                 setter = { options, enabled -> options.copy(readEntries = enabled) },
                 enabled = { it.libraryEntries },
             ),
@@ -93,6 +99,7 @@ data class BackupOptions(
             Entry(
                 label = SYMR.strings.custom_entry_info,
                 getter = BackupOptions::customInfo,
+                chip = "Custom entry info",
                 setter = { options, enabled -> options.copy(customInfo = enabled) },
                 enabled = { it.libraryEntries },
             ),
@@ -101,6 +108,7 @@ data class BackupOptions(
                 label = KMR.strings.saved_searches_feeds,
                 // KMK <--
                 getter = BackupOptions::savedSearchesFeeds,
+                chip = "Saved searches & feeds",
                 setter = { options, enabled -> options.copy(savedSearchesFeeds = enabled) },
             ),
             // SY <--
@@ -110,31 +118,37 @@ data class BackupOptions(
             Entry(
                 label = MR.strings.app_settings,
                 getter = BackupOptions::appSettings,
+                chip = "App settings",
                 setter = { options, enabled -> options.copy(appSettings = enabled) },
             ),
             Entry(
                 label = MR.strings.extensionStores,
                 getter = BackupOptions::extensionStores,
+                chip = "Extension repos",
                 setter = { options, enabled -> options.copy(extensionStores = enabled) },
             ),
             Entry(
                 label = MR.strings.source_settings,
                 getter = BackupOptions::sourceSettings,
+                chip = "Source settings",
                 setter = { options, enabled -> options.copy(sourceSettings = enabled) },
-            ),
-            Entry(
-                label = MR.strings.private_settings,
-                getter = BackupOptions::privateSettings,
-                setter = { options, enabled -> options.copy(privateSettings = enabled) },
-                enabled = { it.appSettings || it.sourceSettings },
             ),
             // KMK -->
             Entry(
                 label = KMR.strings.backup_js_sources,
                 getter = BackupOptions::jsSources,
+                chip = "JS sources",
                 setter = { options, enabled -> options.copy(jsSources = enabled) },
             ),
             // KMK <--
+            // KMK (r114): "Logins & tokens" listed last (the chip groups show it after JS sources); off by default
+            Entry(
+                label = MR.strings.private_settings,
+                getter = BackupOptions::privateSettings,
+                chip = "Logins & tokens",
+                setter = { options, enabled -> options.copy(privateSettings = enabled) },
+                enabled = { it.appSettings || it.sourceSettings },
+            ),
         )
 
         fun fromBooleanArray(array: BooleanArray) = BackupOptions(
@@ -162,5 +176,7 @@ data class BackupOptions(
         val getter: (BackupOptions) -> Boolean,
         val setter: (BackupOptions, Boolean) -> BackupOptions,
         val enabled: (BackupOptions) -> Boolean = { true },
+        // KMK (r114): the short name on the backup screen's chips; null shows [label]
+        val chip: String? = null,
     )
 }

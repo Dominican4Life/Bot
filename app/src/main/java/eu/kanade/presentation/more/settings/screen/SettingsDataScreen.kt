@@ -7,12 +7,8 @@ import androidx.activity.compose.ManagedActivityResultLauncher
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
@@ -21,9 +17,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MultiChoiceSegmentedButtonRow
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -40,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
@@ -50,8 +44,10 @@ import com.journeyapps.barcodescanner.ScanOptions
 import eu.kanade.domain.sync.SyncPreferences
 import eu.kanade.presentation.more.settings.Preference
 import eu.kanade.presentation.more.settings.screen.SettingsSecurityScreen.PasswordDialog
+import eu.kanade.presentation.more.settings.screen.data.BackupNowAndAutoCards
 import eu.kanade.presentation.more.settings.screen.data.CreateBackupScreen
 import eu.kanade.presentation.more.settings.screen.data.RestoreBackupScreen
+import eu.kanade.presentation.more.settings.screen.data.RestoreCard
 import eu.kanade.presentation.more.settings.screen.data.StorageInfo
 import eu.kanade.presentation.more.settings.screen.data.SyncSettingsSelector
 import eu.kanade.presentation.more.settings.screen.data.SyncTriggerOptionsScreen
@@ -257,76 +253,65 @@ object SettingsDataScreen : SearchableSettings {
             navigator.push(RestoreBackupScreen(it.toString()))
         }
 
+        // KMK (r114): the group is three cards now ("Back up now" + "Automatic backups" side by side on wide screens,
+        // then "Restore" with the newest automatic backups). Same actions as before: Create backup opens
+        // CreateBackupScreen, "Choose a file…" the same picker, each Restore opens RestoreBackupScreen for that file.
+        val interval by backupPreferences.backupInterval().collectAsState()
+        val intervalEntries = persistentMapOf(
+            0 to stringResource(MR.strings.off),
+            1 to stringResource(MR.strings.update_1hour),
+            3 to stringResource(MR.strings.update_3hour),
+            6 to stringResource(MR.strings.update_6hour),
+            12 to stringResource(MR.strings.update_12hour),
+            24 to stringResource(MR.strings.update_24hour),
+            48 to stringResource(MR.strings.update_48hour),
+            168 to stringResource(MR.strings.update_weekly),
+        )
+        val autoInfo = stringResource(MR.strings.backup_info) + "\n\n" +
+            stringResource(MR.strings.last_auto_backup_info, relativeTimeSpanString(lastAutoBackup))
+
+        val startRestore: (() -> Unit) -> Unit = { go ->
+            if (!BackupRestoreJob.isRunning(context)) {
+                if (DeviceUtil.isMiui && DeviceUtil.isMiuiOptimizationDisabled()) {
+                    context.toast(MR.strings.restore_miui_warning)
+                }
+                go()
+            } else {
+                context.toast(MR.strings.restore_in_progress)
+            }
+        }
+
         return Preference.PreferenceGroup(
             title = stringResource(MR.strings.label_backup),
             preferenceItems = persistentListOf(
-                // Manual actions
+                Preference.PreferenceItem.CustomPreference(
+                    title = stringResource(MR.strings.pref_create_backup),
+                ) {
+                    BackupNowAndAutoCards(
+                        interval = interval,
+                        intervalEntries = intervalEntries,
+                        lastAutoBackup = lastAutoBackup,
+                        autoInfo = autoInfo,
+                        onCreate = { navigator.push(CreateBackupScreen()) },
+                        onIntervalChange = {
+                            backupPreferences.backupInterval().set(it)
+                            BackupCreateJob.setupTask(context, it)
+                        },
+                        modifier = Modifier.padding(horizontal = PrefsHorizontalPadding, vertical = 6.dp),
+                    )
+                },
+                // Kept on restorePreferenceKeyString: onboarding's "Restore backup" highlights this item
                 Preference.PreferenceItem.CustomPreference(
                     title = stringResource(restorePreferenceKeyString),
                 ) {
-                    BasePreferenceWidget(
-                        subcomponent = {
-                            MultiChoiceSegmentedButtonRow(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(intrinsicSize = IntrinsicSize.Min)
-                                    .padding(horizontal = PrefsHorizontalPadding),
-                            ) {
-                                SegmentedButton(
-                                    modifier = Modifier.fillMaxHeight(),
-                                    checked = false,
-                                    onCheckedChange = { navigator.push(CreateBackupScreen()) },
-                                    shape = SegmentedButtonDefaults.itemShape(0, 2),
-                                ) {
-                                    Text(stringResource(MR.strings.pref_create_backup))
-                                }
-                                SegmentedButton(
-                                    modifier = Modifier.fillMaxHeight(),
-                                    checked = false,
-                                    onCheckedChange = {
-                                        if (!BackupRestoreJob.isRunning(context)) {
-                                            if (DeviceUtil.isMiui && DeviceUtil.isMiuiOptimizationDisabled()) {
-                                                context.toast(MR.strings.restore_miui_warning)
-                                            }
-
-                                            // no need to catch because it's wrapped with a chooser
-                                            chooseBackup.launch("*/*")
-                                        } else {
-                                            context.toast(MR.strings.restore_in_progress)
-                                        }
-                                    },
-                                    shape = SegmentedButtonDefaults.itemShape(1, 2),
-                                ) {
-                                    Text(stringResource(MR.strings.pref_restore_backup))
-                                }
-                            }
-                        },
+                    RestoreCard(
+                        refreshKey = lastAutoBackup,
+                        // no need to catch because it's wrapped with a chooser
+                        onChooseFile = { startRestore { chooseBackup.launch("*/*") } },
+                        onRestoreFile = { uri -> startRestore { navigator.push(RestoreBackupScreen(uri.toString())) } },
+                        modifier = Modifier.padding(horizontal = PrefsHorizontalPadding, vertical = 6.dp),
                     )
                 },
-
-                // Automatic backups
-                Preference.PreferenceItem.ListPreference(
-                    preference = backupPreferences.backupInterval(),
-                    entries = persistentMapOf(
-                        0 to stringResource(MR.strings.off),
-                        1 to stringResource(MR.strings.update_1hour),
-                        3 to stringResource(MR.strings.update_3hour),
-                        6 to stringResource(MR.strings.update_6hour),
-                        12 to stringResource(MR.strings.update_12hour),
-                        24 to stringResource(MR.strings.update_24hour),
-                        48 to stringResource(MR.strings.update_48hour),
-                        168 to stringResource(MR.strings.update_weekly),
-                    ),
-                    title = stringResource(MR.strings.pref_backup_interval),
-                    onValueChanged = {
-                        BackupCreateJob.setupTask(context, it)
-                        true
-                    },
-                ),
-                Preference.PreferenceItem.InfoPreference(
-                    stringResource(MR.strings.backup_info) + "\n\n" +
-                        stringResource(MR.strings.last_auto_backup_info, relativeTimeSpanString(lastAutoBackup)),
-                ),
                 // KMK: "Show restoring progress banner" hidden: the restore top bar was removed on purpose in r33
                 // (it redrew the whole app for every title restored); progress is in the notification. The key
                 // (backupPreferences.showRestoringProgressBanner()) is kept.

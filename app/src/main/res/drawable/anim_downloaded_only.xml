@@ -1,0 +1,40 @@
+<!-- KMK (r114): More › Downloaded only. Off = a cloud; on = the same cloud with a slash drawn across it. -->
+<animated-vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt">
+    <aapt:attr name="android:drawable">
+        <vector
+            android:width="24dp"
+            android:height="24dp"
+            android:viewportWidth="24"
+            android:viewportHeight="24">
+            <group android:name="cloud">
+                <path
+                    android:pathData="M7,18A4.5,4.5 0,0 1,6.4 9A6,6 0,0 1,17.9 10.4A3.8,3.8 0,0 1,17.5 18Z"
+                    android:strokeWidth="1.8"
+                    android:strokeColor="#000"
+                    android:strokeLineCap="round"
+                    android:strokeLineJoin="round" />
+            </group>
+            <path
+                android:name="slash"
+                android:pathData="M3.5,3.5L20.5,20.5"
+                android:strokeWidth="1.8"
+                android:strokeColor="#000"
+                android:strokeLineCap="round"
+                android:strokeLineJoin="round"
+                android:trimPathEnd="0" />
+        </vector>
+    </aapt:attr>
+
+    <target android:name="slash">
+        <aapt:attr name="android:animation">
+            <objectAnimator
+                android:duration="300"
+                android:interpolator="@android:interpolator/fast_out_slow_in"
+                android:propertyName="trimPathEnd"
+                android:valueFrom="0"
+                android:valueTo="1"
+                android:valueType="floatType" />
+        </aapt:attr>
+    </target>
+</animated-vector>

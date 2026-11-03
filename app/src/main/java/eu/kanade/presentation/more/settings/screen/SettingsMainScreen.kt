@@ -8,18 +8,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ChromeReaderMode
-import androidx.compose.material.icons.outlined.Code
-import androidx.compose.material.icons.outlined.CollectionsBookmark
-import androidx.compose.material.icons.outlined.Explore
-import androidx.compose.material.icons.outlined.GetApp
-import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material.icons.outlined.Lightbulb
-import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.Security
-import androidx.compose.material.icons.outlined.Storage
-import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.TopAppBarDefaults
@@ -27,6 +16,7 @@ import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -41,6 +31,8 @@ import cafe.adriel.voyager.navigator.currentOrThrow
 import dev.icerock.moko.resources.StringResource
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarActions
+import eu.kanade.presentation.components.LiveIconKind
+import eu.kanade.presentation.components.rememberLiveIconPainter
 import eu.kanade.presentation.more.settings.screen.about.AboutScreen
 import eu.kanade.presentation.more.settings.widget.TextPreferenceWidget
 import eu.kanade.presentation.util.LocalBackPress
@@ -127,6 +119,14 @@ object SettingsMainScreen : Screen() {
                 } else {
                     null
                 }
+                // KMK (r114): each row's live icon plays its move once when its counter goes up. Phone: on tap
+                // (navigation isn't delayed). Tablet: when a row becomes the selected one, or is tapped again.
+                val plays = remember { mutableStateMapOf<Int, Int>() }
+                LaunchedEffect(indexSelected) {
+                    if (twoPane && indexSelected != null && indexSelected >= 0) {
+                        plays[indexSelected] = (plays[indexSelected] ?: 0) + 1
+                    }
+                }
 
                 LazyColumn(
                     state = state,
@@ -154,13 +154,22 @@ object SettingsMainScreen : Screen() {
                                 contentColor = MaterialTheme.colorScheme.onSurfaceVariant
                             }
                         }
+                        // KMK (r114): live icon (no remember inside a condition: the painter is always made)
+                        val livePainter = rememberLiveIconPainter(
+                            kind = item.live ?: LiveIconKind.Settings,
+                            play = plays[index] ?: 0,
+                        )
                         CompositionLocalProvider(LocalContentColor provides contentColor) {
                             TextPreferenceWidget(
                                 modifier = modifier,
                                 title = stringResource(item.titleRes),
                                 subtitle = item.formatSubtitle(),
-                                icon = item.icon,
-                                onPreferenceClick = { navigator.navigate(item.screen, twoPane) },
+                                icon = if (item.live != null) livePainter else item.icon,
+                                onPreferenceClick = {
+                                    // Tablet: a newly selected row plays from the LaunchedEffect above
+                                    if (!twoPane || selected) plays[index] = (plays[index] ?: 0) + 1
+                                    navigator.navigate(item.screen, twoPane)
+                                },
                             )
                         }
                     }
@@ -177,7 +186,9 @@ object SettingsMainScreen : Screen() {
         val titleRes: StringResource,
         val subtitleRes: StringResource,
         val formatSubtitle: @Composable () -> String = { stringResource(subtitleRes) },
-        val icon: ImageVector,
+        // KMK (r114): a live icon; [icon] only for the rows that keep a logo (E-Hentai, MangaDex)
+        val live: LiveIconKind? = null,
+        val icon: ImageVector? = null,
         val screen: VoyagerScreen,
     )
 
@@ -185,51 +196,51 @@ object SettingsMainScreen : Screen() {
         Item(
             titleRes = MR.strings.pref_category_appearance,
             subtitleRes = MR.strings.pref_appearance_summary,
-            icon = Icons.Outlined.Palette,
+            live = LiveIconKind.Appearance,
             screen = SettingsAppearanceScreen,
         ),
         Item(
             titleRes = MR.strings.pref_category_library,
             subtitleRes = MR.strings.pref_library_summary,
-            icon = Icons.Outlined.CollectionsBookmark,
+            live = LiveIconKind.Library,
             screen = SettingsLibraryScreen,
         ),
         Item(
             titleRes = MR.strings.pref_category_reader,
             subtitleRes = MR.strings.pref_reader_summary,
-            icon = Icons.AutoMirrored.Outlined.ChromeReaderMode,
+            live = LiveIconKind.Reader,
             screen = SettingsReaderScreen,
         ),
         // KMK: Player settings moved to the More screen (Aniyomi's)
         Item(
             titleRes = MR.strings.pref_category_downloads,
             subtitleRes = MR.strings.pref_downloads_summary,
-            icon = Icons.Outlined.GetApp,
+            live = LiveIconKind.Downloads,
             screen = SettingsDownloadScreen,
         ),
         Item(
             titleRes = MR.strings.pref_category_tracking,
             subtitleRes = MR.strings.pref_tracking_summary,
-            icon = Icons.Outlined.Sync,
+            live = LiveIconKind.Tracking,
             screen = SettingsTrackingScreen,
         ),
         // KMK: Connections (Discord) section removed
         Item(
             titleRes = MR.strings.browse,
             subtitleRes = MR.strings.pref_browse_summary,
-            icon = Icons.Outlined.Explore,
+            live = LiveIconKind.Browse,
             screen = SettingsBrowseScreen,
         ),
         Item(
             titleRes = MR.strings.label_data_storage,
             subtitleRes = MR.strings.pref_backup_summary,
-            icon = Icons.Outlined.Storage,
+            live = LiveIconKind.DataStorage,
             screen = SettingsDataScreen,
         ),
         Item(
             titleRes = MR.strings.pref_category_security,
             subtitleRes = MR.strings.pref_security_summary,
-            icon = Icons.Outlined.Security,
+            live = LiveIconKind.Security,
             screen = SettingsSecurityScreen,
         ),
         // SY -->
@@ -249,7 +260,7 @@ object SettingsMainScreen : Screen() {
         Item(
             titleRes = MR.strings.pref_category_advanced,
             subtitleRes = MR.strings.pref_advanced_summary,
-            icon = Icons.Outlined.Code,
+            live = LiveIconKind.Advanced,
             screen = SettingsAdvancedScreen,
         ),
         Item(
@@ -258,7 +269,7 @@ object SettingsMainScreen : Screen() {
             formatSubtitle = {
                 "${stringResource(MR.strings.app_name)} ${AboutScreen.getVersionName(withBuildDate = false)}"
             },
-            icon = Icons.Outlined.Info,
+            live = LiveIconKind.About,
             screen = AboutScreen(),
         ),
     )

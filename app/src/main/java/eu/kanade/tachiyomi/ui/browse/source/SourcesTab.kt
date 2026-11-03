@@ -1,7 +1,6 @@
 package eu.kanade.tachiyomi.ui.browse.source
 
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.TravelExplore
 import androidx.compose.material.icons.outlined._18UpRating
 import androidx.compose.material3.LocalContentColor
@@ -79,20 +78,8 @@ fun Screen.sourcesTab(
                 onClick = { screenModel.toggleNsfwOnly() },
             ),
             // KMK <--
-        ).let { base ->
-            // KMK: the Source Lab (r96; the Code editor before), for JS / JSON sources
-            if (smartSearchConfig != null) {
-                base
-            } else {
-                base.add(
-                    AppBar.Action(
-                        title = "Source Lab",
-                        icon = Icons.Outlined.Code,
-                        onClick = { navigator.push(eu.kanade.tachiyomi.ui.sourcelab.SourceLabScreen()) },
-                    ),
-                )
-            }
-        },
+            // KMK (r114): the Source Lab `</>` button left this toolbar; Source Lab is in More and on each JS source
+        ),
         // KMK: the sources filter button now sits next to the search bar
         // SY <--
         content = { contentPadding, snackbarHostState ->

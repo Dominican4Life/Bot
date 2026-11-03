@@ -24,6 +24,7 @@ import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.presentation.more.MoreScreen
 import eu.kanade.presentation.util.Tab
 import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.data.anime.AnimeRepository
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.ui.category.CategoryScreen
 import eu.kanade.tachiyomi.ui.diagnostics.DiagnosticsScreen
@@ -34,15 +35,23 @@ import eu.kanade.tachiyomi.ui.pairsync.PairSyncDialog
 import eu.kanade.tachiyomi.ui.pairsync.PairSyncPopup
 import eu.kanade.tachiyomi.ui.setting.PlayerSettingsScreen
 import eu.kanade.tachiyomi.ui.setting.SettingsScreen
+import eu.kanade.tachiyomi.ui.sourcelab.SourceLabScreen
 import eu.kanade.tachiyomi.ui.stats.StatsScreen
 import eu.kanade.tachiyomi.ui.updates.UpdatesTab
 import exh.ui.batchadd.BatchAddScreen
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.flow.stateIn
 import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.domain.category.interactor.GetCategories
+import tachiyomi.domain.libraryUpdateError.interactor.GetLibraryUpdateErrorWithRelations
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
 import uy.kohesive.injekt.Injekt
@@ -72,6 +81,9 @@ data object MoreTab : Tab {
         val navigator = LocalNavigator.currentOrThrow
         val screenModel = rememberScreenModel { MoreScreenModel() }
         val downloadQueueState by screenModel.downloadQueueState.collectAsState()
+        // KMK (r114): live counts for the More rows
+        val categoryCount by screenModel.categoryCount.collectAsState()
+        val updateErrorCount by screenModel.updateErrorCount.collectAsState()
         // KMK (r89): the Sync devices pop-up, for phones (the tablet rail has a Sync button too); KMK (r90): kept
         // open across rotation
         var showPairSync by rememberSaveable { mutableStateOf(false) }
@@ -112,6 +124,10 @@ data object MoreTab : Tab {
             // KMK (r97): the row keeps its "Logs" title and opens Diagnostics (last tab, or Log on a new problem)
             onClickLogs = { navigator.push(DiagnosticsScreen()) },
             onClickPairSync = { showPairSync = true },
+            // KMK (r114): Source Lab moved here from the Browse › Sources toolbar
+            onClickSourceLab = { navigator.push(SourceLabScreen()) },
+            categoryCount = categoryCount,
+            updateErrorCount = updateErrorCount,
             // KMK <--
         )
     }
@@ -123,6 +139,11 @@ private class MoreScreenModel(
     // SY -->
     uiPreferences: UiPreferences = Injekt.get(),
     // SY <--
+    // KMK (r114) -->
+    getCategories: GetCategories = Injekt.get(),
+    animeRepository: AnimeRepository = Injekt.get(),
+    getLibraryUpdateErrors: GetLibraryUpdateErrorWithRelations = Injekt.get(),
+    // KMK <--
 ) : ScreenModel {
 
     var downloadedOnly by preferences.downloadedOnly().asState(screenModelScope)
@@ -132,6 +153,20 @@ private class MoreScreenModel(
     val showNavUpdates by uiPreferences.showNavUpdates().asState(screenModelScope)
     val showNavHistory by uiPreferences.showNavHistory().asState(screenModelScope)
     // SY <--
+
+    // KMK (r114): More › Categories count (manga categories without the default one, plus anime categories, as the
+    // Categories screen lists them) and More › Update errors count (what the Update errors screen lists)
+    val categoryCount: StateFlow<Int> = combine(
+        getCategories.subscribe().map { list -> list.count { !it.isSystemCategory } },
+        animeRepository.subscribeCategories().map { it.size }.onStart { emit(0) }.catch { emit(0) },
+    ) { manga, anime -> manga + anime }
+        .catch { emit(0) }
+        .stateIn(screenModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
+    val updateErrorCount: StateFlow<Int> = getLibraryUpdateErrors.subscribeAll()
+        .map { it.size }
+        .catch { emit(0) }
+        .stateIn(screenModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
     private var _downloadQueueState: MutableStateFlow<DownloadQueueState> = MutableStateFlow(DownloadQueueState.Stopped)
     val downloadQueueState: StateFlow<DownloadQueueState> = _downloadQueueState.asStateFlow()

@@ -5,11 +5,11 @@ import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -487,19 +487,15 @@ private fun CollectionPanel(
             placeholder = "Search ${NumberFormat.getIntegerInstance().format(total)} ${directory.name.lowercase()}",
         )
         // KMK (r110): the sort chip and one chip per site menu; each opens its options right under the chips
-        // KMK (r113): "N menus set", Reset and Faces / List sit at the right end of the same line (no row of their own)
+        // KMK (r114): line 1 = the sort chip, then "N menus set", Reset and Faces / List at its right end; line 2 = the
+        // site's menus (Height, Cup, Age…) side by side in one row that scrolls sideways when they don't fit
         val canReset = sorted || menusSet > 0
-        val hasChips = sortOptions.isNotEmpty() || menus.isNotEmpty()
         val hasTools = canReset || directory.people || menusSet > 0
-        if (hasChips || hasTools) Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            FlowRow(
-                modifier = Modifier.weight(1f),
+        if (sortOptions.isNotEmpty() || hasTools) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 if (sortOptions.isNotEmpty()) {
                     PanelChip(
@@ -510,6 +506,36 @@ private fun CollectionPanel(
                         onClick = { expanded = if (expanded == SORT_CHIP) null else SORT_CHIP },
                     )
                 }
+                Spacer(Modifier.weight(1f))
+                if (menusSet > 0) {
+                    Text(
+                        text = if (menusSet == 1) "1 set" else "$menusSet set",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (canReset) {
+                    PanelChip(label = "Reset", selected = false, leading = null, caret = null, small = true, onClick = {
+                        expanded = null
+                        onReset()
+                    })
+                }
+                if (directory.people) {
+                    PanelChip(label = "Faces", selected = faces, leading = null, caret = null, small = true, onClick = {
+                        onFaces(true)
+                    })
+                    PanelChip(label = "List", selected = !faces, leading = null, caret = null, small = true, onClick = {
+                        onFaces(false)
+                    })
+                }
+            }
+        }
+        if (menus.isNotEmpty()) {
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
                 menus.forEach { menu ->
                     val menuValue = menuValues[menu.key].orEmpty()
                     val current = menu.options.firstOrNull { it.value == menuValue && menuValue.isNotEmpty() }?.label
@@ -521,27 +547,6 @@ private fun CollectionPanel(
                         onClick = { expanded = if (expanded == menu.key) null else menu.key },
                     )
                 }
-            }
-            if (menusSet > 0) {
-                Text(
-                    text = if (menusSet == 1) "1 menu set" else "$menusSet menus set",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            if (canReset) {
-                PanelChip(label = "Reset", selected = false, leading = null, caret = null, small = true, onClick = {
-                    expanded = null
-                    onReset()
-                })
-            }
-            if (directory.people) {
-                PanelChip(label = "Faces", selected = faces, leading = null, caret = null, small = true, onClick = {
-                    onFaces(true)
-                })
-                PanelChip(label = "List", selected = !faces, leading = null, caret = null, small = true, onClick = {
-                    onFaces(false)
-                })
             }
         }
         // KMK (r110): the open chip's options, inside the panel
