@@ -379,6 +379,8 @@ class JsAnimeSource(
             group = group,
             sourceKey = info.key,
             imageHeaders = headers.names().associateWith { headers[it].orEmpty() },
+            // KMK (r109): stored lists offer site-only sorts / menus only when the source can read the site live
+            hasDirectory = { runtime().has("getDirectory") },
         ) { page, sort, ascending, menus ->
             runtime().call("getDirectory", group.key, page, sort, ascending, menus)
         }

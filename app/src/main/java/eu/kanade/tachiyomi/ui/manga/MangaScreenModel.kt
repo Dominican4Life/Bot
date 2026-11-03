@@ -2225,7 +2225,10 @@ sealed interface RelatedManga {
             val title = manga.title.lowercase()
             val ogTitle = manga.ogTitle.lowercase()
             // A source's own named groups first, in the order it gave them
+            // KMK (r109): those whose name says "related" before the others (the title row and the full screen)
+            val related = Regex("related", RegexOption.IGNORE_CASE)
             val named = success.filter { it.label != null }
+                .sortedBy { if (related.containsMatchIn(it.label.orEmpty())) 0 else 1 }
             return named +
                 success.filter { it.label == null && it.keyword.isEmpty() } +
                 success.filter { it.keyword.lowercase() == title } +

@@ -578,6 +578,13 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
             onScanMore(o)
             return
         }
+        // KMK (r109): picker.js `pictureMode`'s answer (a scanned directory card's "Tap the picture on the page")
+        if (raw.via == "picture") {
+            AppLog.add('D', "lab", "picker picture tap (${json.length} chars)")
+            runCatching { extras.onPicturePicked(json) }
+                .onFailure { AppLog.add('W', "lab", "extras: picture tap not read: ${it.message}") }
+            return
+        }
         // r104: picker.js `rowsFor`'s answer ("Split into rows")
         if (raw.via == "split") {
             onSplit(o.str("split").orEmpty(), raw.rows)
@@ -623,6 +630,8 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
         val s = state.value
         val next = label?.takeIf { it in s.allLabels }
         if (next != null && runCatching { extras.state.value.groupMode }.getOrDefault(false)) extras.setGroupMode(false)
+        // KMK (r109): arming a label ends a directory card's waiting "Tap the picture on the page"
+        if (next != null && runCatching { extras.state.value.picturePick != null }.getOrDefault(false)) extras.cancelPicturePick()
         mutableState.update { it.copy(armed = next, pending = if (next != null) null else it.pending) }
         if (s.armed != next) AppLog.add('D', "lab", "Builder: tapping for ${next ?: "nothing (the page works as a browser)"}")
     }

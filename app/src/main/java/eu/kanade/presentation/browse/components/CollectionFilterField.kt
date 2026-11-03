@@ -81,6 +81,10 @@ import java.text.NumberFormat
  * a filled field that opens the directory as a drop-down (list rows with the number, a small picture and the counts
  * right-aligned, or a 4-column face grid for people with pictures), a search box, the site's extra menus as chips, and
  * a square sort button whose menu opens under it. A live directory is read page by page as the list is scrolled.
+ *
+ * KMK (r109): a stored collection offers all the site's sorts and menus too: a sort the app can't apply to the stored
+ * entries, or a menu value, reads the site page by page like a live one ([JsDirectory.readsLive]); the site's default
+ * sort with no menu shows the stored entries again.
  */
 
 /** The loaded pages of a live directory (getDirectory), kept while the sheet is shown */
@@ -92,6 +96,10 @@ internal class LiveDirectoryState(private val directory: JsDirectory) {
     var loading by mutableStateOf(false)
         private set
     var error by mutableStateOf<String?>(null)
+        private set
+
+    /** KMK (r109): a stored list's live read found the site can't be read ([JsDirectory.siteReadable] went off) */
+    var unreadable by mutableStateOf(false)
         private set
 
     /** KMK (r107) fix: counts [reset]s, a key of the effect that loads page 1 (a reset during its load starts it again) */
@@ -132,7 +140,11 @@ internal class LiveDirectoryState(private val directory: JsDirectory) {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                if (gen == generation) error = e.message?.takeIf { it.isNotBlank() } ?: e.javaClass.simpleName
+                if (gen == generation) {
+                    error = e.message?.takeIf { it.isNotBlank() } ?: e.javaClass.simpleName
+                    // KMK (r109): the drop-down then goes back to the stored list with the local sorts only
+                    if (!directory.siteReadable) unreadable = true
+                }
             } finally {
                 if (gen == generation) loading = false
             }
@@ -191,8 +203,24 @@ internal fun CollectionFilterField(
     val menuValues = remember(directory, resets) { mutableStateMapOf<String, String>().apply { putAll(directory.menuValues) } }
     var faces by remember(directory) { mutableStateOf(directory.people && directory.faces) }
     val live = remember(directory, resets) { LiveDirectoryState(directory) }
-    val sortValue = directory.sortOptions.getOrNull(sortIndex)?.value
-    val sorted = sortIndex >= 0 && (sortValue?.isNotEmpty() == true || ascending)
+    // KMK (r109): the site's default isn't a sort (a stored list shows its own order then)
+    val sorted = sortIndex >= 0 && directory.sortOptions.getOrNull(sortIndex) != null &&
+        (!directory.isDefaultSort(sortIndex) || ascending)
+    // KMK (r109): asks once whether the source has getDirectory (a stored list hides the site-only options if not)
+    var siteReadable by remember(directory, resets) { mutableStateOf(directory.siteReadable) }
+    LaunchedEffect(directory) {
+        directory.checkSite()
+        siteReadable = directory.siteReadable
+    }
+    // KMK (r109): a live read of a stored list found the site can't be read: back to the stored list, local sorts only
+    LaunchedEffect(live, live.unreadable) {
+        if (live.unreadable) {
+            sortIndex = -1
+            ascending = false
+            menuValues.clear()
+            siteReadable = false
+        }
+    }
 
     Row(
         modifier = modifier
@@ -238,7 +266,13 @@ internal fun CollectionFilterField(
                         onMenu = { key, picked ->
                             menuValues[key] = picked
                             directory.menuValues[key] = picked
-                            if (directory.live) live.reset()
+                            // KMK (r109) fix: read live now and the site can't reverse: the order goes back down
+                            if (ascending && !directory.canFlip(sortIndex, menuValues)) {
+                                ascending = false
+                                directory.ascending = false
+                            }
+                            // KMK (r109): a stored list reads the site live while a menu value is picked
+                            live.reset()
                         },
                         onPick = { picked ->
                             open = false
@@ -248,7 +282,9 @@ internal fun CollectionFilterField(
                 }
             }
         }
-        if (directory.sortOptions.isNotEmpty()) {
+        // KMK (r109): read here so the button and menu change when the site turns out not to be readable
+        val sortOptions = remember(directory, resets, siteReadable) { directory.sortOptions }
+        if (sortOptions.isNotEmpty()) {
             Box {
                 val ring = if (sortOpen) {
                     Modifier.border(2.dp, MaterialTheme.colorScheme.primary, FilterFieldShape)
@@ -281,23 +317,24 @@ internal fun CollectionFilterField(
                 FilterSortMenu(
                     expanded = sortOpen,
                     onDismiss = { sortOpen = false },
-                    options = directory.sortOptions.map { it.label },
+                    options = sortOptions.map { it.label },
                     selectedIndex = sortIndex,
                     ascending = ascending,
                     onPick = { index ->
                         if (index == sortIndex) {
                             // the same option again flips it, when the list can be reversed
-                            if (directory.canFlip()) {
+                            if (directory.canFlip(index, menuValues)) {
                                 ascending = !ascending
                                 directory.ascending = ascending
-                                if (directory.live && directory.info.reverse) live.reset()
+                                if (directory.readsLive(index, menuValues) && directory.info.reverse) live.reset()
                             }
                         } else {
+                            // KMK (r109): a stored list may switch between its own entries and a live read here
                             sortIndex = index
-                            ascending = directory.startsAscending(index)
+                            ascending = directory.startsAscending(index, menuValues)
                             directory.sortIndex = sortIndex
                             directory.ascending = ascending
-                            if (directory.live) live.reset()
+                            live.reset()
                         }
                         sortOpen = false
                     },
@@ -324,16 +361,20 @@ private fun CollectionPanel(
     var query by remember { mutableStateOf("") }
     val chipsScroll = rememberScrollState()
     val loadedCount = live.items.size
+    // KMK (r109): a stored list reads the site live while a site-only sort or a menu value is picked
+    val liveNow = directory.readsLive(sortIndex, menuValues)
     // Sorting / filtering a 36,000-entry list again only when something it depends on changes
-    val shown = remember(directory, sortIndex, ascending, query, loadedCount, live) {
-        val base = if (directory.live) live.items.toList() else directory.info.entries
-        val ordered = directory.ordered(base)
+    val shown = remember(directory, sortIndex, ascending, query, loadedCount, live, liveNow) {
+        val base = if (liveNow) live.items.toList() else directory.info.entries
+        val ordered = directory.ordered(base, sortIndex, ascending, menuValues)
         val q = query.trim()
         if (q.isEmpty()) ordered else ordered.filter { it.label.contains(q, ignoreCase = true) }
     }
     val total = when {
+        // KMK (r109): a narrowed live read of a stored list counts what it loaded
+        liveNow && !directory.live && menuValues.values.any { it.isNotEmpty() } -> loadedCount
         directory.info.total > 0 -> directory.info.total
-        directory.live -> loadedCount
+        liveNow -> loadedCount
         else -> directory.info.entries.size
     }
     val searching = query.isNotBlank()
@@ -349,7 +390,7 @@ private fun CollectionPanel(
             onQuery = { query = it },
             placeholder = "Search ${NumberFormat.getIntegerInstance().format(total)} ${directory.name.lowercase()}",
         )
-        // KMK (r107) fix: the site's menus only for a live list
+        // KMK (r107) fix: the site's menus only for a live list. KMK (r109): also a stored one the site can read live
         if (directory.menus.isNotEmpty() || directory.people) {
             Row(
                 modifier = Modifier
@@ -386,7 +427,7 @@ private fun CollectionPanel(
                         )
                     }
                     item(span = { GridItemSpan(maxLineSpan) }) {
-                        PanelFooter(directory, live, scope, searching, shown.isEmpty())
+                        PanelFooter(liveNow, live, scope, searching, shown.isEmpty())
                     }
                 }
             } else {
@@ -411,7 +452,7 @@ private fun CollectionPanel(
                         )
                     }
                     item {
-                        PanelFooter(directory, live, scope, searching, shown.isEmpty())
+                        PanelFooter(liveNow, live, scope, searching, shown.isEmpty())
                     }
                 }
             }
@@ -422,7 +463,8 @@ private fun CollectionPanel(
 /** The end of the list: loads the next live page when it comes into view, or says why there's nothing more */
 @Composable
 private fun PanelFooter(
-    directory: JsDirectory,
+    // KMK (r109): whether the list is read live now (a live directory, or a stored one with a site-only sort / menu)
+    liveNow: Boolean,
     live: LiveDirectoryState,
     scope: CoroutineScope,
     searching: Boolean,
@@ -430,8 +472,8 @@ private fun PanelFooter(
 ) {
     // Shown means scrolled to the end: the next page (not while searching the loaded ones: the box filters those)
     // KMK (r107) fix: + the resets: a menu / sort changed while page 1 loaded (nothing else changed) loads it again
-    LaunchedEffect(live.items.size, live.hasNext, live.error, searching, live.resets) {
-        if (directory.live && !searching && live.hasNext && live.error == null) live.loadMore(scope)
+    LaunchedEffect(live.items.size, live.hasNext, live.error, searching, live.resets, liveNow) {
+        if (liveNow && !searching && live.hasNext && live.error == null) live.loadMore(scope)
     }
     val error = live.error
     Column(
@@ -442,7 +484,7 @@ private fun PanelFooter(
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         when {
-            directory.live && error != null -> {
+            liveNow && error != null -> {
                 Text(
                     text = error,
                     style = MaterialTheme.typography.bodySmall,
@@ -451,14 +493,14 @@ private fun PanelFooter(
                 )
                 TextButton(onClick = { live.retry(scope) }) { Text("Try again") }
             }
-            directory.live && live.loading -> CircularProgressIndicator(
+            liveNow && live.loading -> CircularProgressIndicator(
                 modifier = Modifier.size(22.dp),
                 strokeWidth = 2.dp,
             )
-            directory.live && live.hasNext && searching -> TextButton(onClick = { live.loadMore(scope) }) {
+            liveNow && live.hasNext && searching -> TextButton(onClick = { live.loadMore(scope) }) {
                 Text("Searching the ${live.items.size} loaded · load more")
             }
-            directory.live && live.hasNext -> FooterNote("More load as you scroll")
+            liveNow && live.hasNext -> FooterNote("More load as you scroll")
             empty -> FooterNote(if (searching) "Nothing matches" else "Nothing here")
             else -> Unit
         }
@@ -573,7 +615,8 @@ private fun MenuChip(menu: JsFilters.Menu, value: String, onPick: (String) -> Un
             containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
         ) {
             FilterMenuRow(
-                label = "Any",
+                // KMK (r109): the site's own default option (value "", e.g. "Any height") names this row
+                label = menu.options.firstOrNull { it.value.isEmpty() }?.label?.takeIf { it.isNotBlank() } ?: "Any",
                 selected = value.isEmpty(),
                 icon = if (value.isEmpty()) Icons.Filled.Check else null,
                 onClick = {

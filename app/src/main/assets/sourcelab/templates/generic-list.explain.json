@@ -156,6 +156,13 @@
         "helpers"
       ],
       "note": "Collections: a directory (genres, makers, people, series…) is a collection filter whose entries keep their parts apart (number, name, videos, views, likes, picture; never a Follow button), with the site's own sort options and menus; a live collection is read page by page as Browse scrolls (getDirectory). The built-in “List” filter stays in getFilters (the app hides it; the Browse tabs pick the list). Suggestions: a section that fails no longer fails the others, each section's outcome is logged, and the hidden browser gets 35 s at most for all sections."
+    },
+    "11": {
+      "parts": [
+        "extras",
+        "helpers"
+      ],
+      "note": "Collections: getDirectory also serves collections kept in the source (Browse reads the site's pages when its own sort or a menu such as Height, Cup or Age is picked); a sort's first option can be the site's default under its own name (“Most videos”), never “Site default”. Pictures: when a card's img has no address or a placeholder, its lazy-load attributes, a <picture>'s <source>, a background-image or data-bg, or an img inside <noscript> are read (suggestions, list covers, collection faces)."
     }
   }
 }

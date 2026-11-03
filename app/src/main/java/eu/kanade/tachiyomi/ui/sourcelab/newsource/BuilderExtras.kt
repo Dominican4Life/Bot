@@ -72,6 +72,14 @@ import kotlin.random.Random
  * "views" read like sort words) and his Makers as "FC FC2 33,977 videos + Follow Following"; restored filters with
  * such labels are cleaned ([BuilderExtrasLogic.repairLabels]). The built-in List row is gone (Browse's tabs pick the
  * list).
+ *
+ * KMK (r109): a directory's custom drop-downs ("Sort: Most videos", "Height: Any height"; [BuilderDirMenus]) become the
+ * collection's sorts and menus: link entries at once, button entries (or lists added only when they open) by "Learn the
+ * menus" on the card ([BuilderExtrasModel.learnDirMenus], pressed on the page like r102's learning), or by "Pick the
+ * site's Sort menu" / "Pick another menu" ([BuilderExtrasModel.pickDirMenu]). The site's current choice names the
+ * default (first, value ""), never "Site default" ([ExtrasFilter.siteDefault]). Cards without pictures offer "Tap the
+ * picture on the page" ([BuilderExtrasModel.pickDirPicture], picker.js `pictureMode`). A read's progress box comes to
+ * the top of the panel once when it starts ("read:<id>").
  */
 
 @Immutable
@@ -172,6 +180,11 @@ internal data class ExtrasFilter(
     val roleSet: Boolean = false,
     /** r107: a directory's collection (type "collection"), null = none */
     val collection: CollectionSpec? = null,
+    /**
+     * KMK (r109): the label of the site's own default option (the learned entry that left the address as it was, or the
+     * one the menu's button showed): the empty first option is named after it, never "Site default". "" = not known
+     */
+    val siteDefault: String = "",
 )
 
 /**
@@ -207,7 +220,28 @@ internal data class FilterOffer(val param: String, val seen: List<String>, val p
 
 /** r103: one entry of a menu group (picker.js `menuPick`): its text, link, value and exact css path */
 @Immutable
-internal data class MenuItem(val text: String, val href: String?, val value: String?, val path: String?)
+internal data class MenuItem(
+    val text: String,
+    val href: String?,
+    val value: String?,
+    val path: String?,
+    /** KMK (r109): marked as the site's current choice (active / selected / aria-current), from picker.js */
+    val current: Boolean = false,
+)
+
+/**
+ * KMK (r109): "Learn the menus" on a scanned directory card: the custom drop-down being pressed ([label]), presses done
+ * of [total], what was learned so far ([found]: "Sort: 7 codes") and why it ended ([note])
+ */
+@Immutable
+internal data class DirLearn(
+    val running: Boolean,
+    val label: String,
+    val done: Int,
+    val total: Int,
+    val found: List<String> = emptyList(),
+    val note: String = "",
+)
 
 /**
  * r103: a menu group of the site as its card shows it: [name] (the heading, cleaned: "Year: All ▾" → "Year"; "" when
@@ -236,6 +270,10 @@ internal data class MenuGroup(
     val read: GroupRead? = null,
     /** r107: the owner's ticks, mode and page range on a scanned directory card (null = the defaults) */
     val choice: DirChoice? = null,
+    /** KMK (r109): the value its button shows ("Sort: Most videos" → "Most videos"): the site's default, "" = none */
+    val current: String = "",
+    /** KMK (r109): a scanned directory's "Learn the menus" running or done, null = not started */
+    val dirLearn: DirLearn? = null,
 ) {
     /** Every entry is a button / text without a link: "Learn addresses" can find where each goes */
     val noLinks: Boolean get() = items.isNotEmpty() && items.none { !it.href.isNullOrBlank() }
@@ -323,6 +361,10 @@ internal data class LearnGroup(
     val hasLinks: Boolean,
     /** r106: the menu card this list was picked on (its learning shows inside that card), null = a group pick */
     val menuId: Int? = null,
+    /** KMK (r109): the value the menu's button shows ("Most videos"): names the default when no press left the address */
+    val current: String = "",
+    /** KMK (r109): the menu button's label ("Sort"): learn.js finds the button by "Sort:" when [opener] finds nothing */
+    val openerLabel: String = "",
 )
 
 /**
@@ -410,6 +452,14 @@ internal data class BuilderExtras(
     val scrollDone: Int = 0,
     /** r106 fix: the pane's open section, kept here so a tab switch doesn't lose it */
     val openSection: String = "",
+    /**
+     * KMK (r109): "Pick the site's Sort menu" / "Pick another menu" of a scanned directory card: that card's id (the
+     * next menu pick attaches its codes to the card's collection) and whether it is the sort; null = none waiting
+     */
+    val dirPick: Int? = null,
+    val dirPickSort: Boolean = false,
+    /** KMK (r109): "Tap the picture on the page" waiting on that card's id, null = none */
+    val picturePick: Int? = null,
 ) {
     /** The filter waiting without a card, else the first waiting one (r106 single-slot readers) */
     val pending: PendingFilter? get() = pendings[BuilderExtrasLogic.NO_CARD] ?: pendings.values.firstOrNull()
@@ -1344,7 +1394,7 @@ internal object BuilderExtrasLogic {
             filter = filter,
             note = "Made the collection \"${filter.name}\": picks open $path; $how; parts: ${keep.joinToString(", ")}" +
                 (if (spec.sorts.isNotEmpty()) "; ${spec.sorts.size} sort options" else "") +
-                (if (spec.live && spec.menus.isNotEmpty()) "; menus ${spec.menus.joinToString(", ") { it.name }}" else "") + ".",
+                (if (spec.menus.isNotEmpty()) "; menus ${spec.menus.joinToString(", ") { it.name }}" else "") + ".",
             used = options.size,
             how = "collection $path",
         )
@@ -1384,6 +1434,23 @@ internal object BuilderExtrasLogic {
         val type = if (f.type == "sort") "autocomplete" else f.type
         val all = if (type == "select") withAny(cleaned) else cleaned
         return f.copy(type = type, options = all, optionsText = formatOptions(all))
+    }
+
+    /**
+     * KMK (r109): a scanned directory with a custom drop-down's learned codes: a sort becomes its sort options (the
+     * default first, value "") and parameter ("" = each option is an address of its own); another menu is added (or
+     * replaces the one on the same parameter). The drop-down is no longer waiting to be pressed
+     */
+    fun withDirMenu(scan: BuilderListReader.DirScan, m: BuilderDirMenus.Menu, coded: BuilderDirMenus.Coded): BuilderListReader.DirScan {
+        val rest = scan.custom.filterNot { it.label.equals(m.label, ignoreCase = true) }
+        return when {
+            m.sort -> scan.copy(sorts = coded.options, sortParam = coded.param, custom = rest)
+            coded.param.isEmpty() -> scan.copy(custom = rest)
+            else -> scan.copy(
+                menus = (scan.menus.filter { it.key != coded.param } + CollectionMenu(coded.param, m.label, coded.options)).take(8),
+                custom = rest,
+            )
+        }
     }
 
     /** r107: a collection's entries edited as text keep the parts of the entries whose value stayed */
@@ -1442,12 +1509,14 @@ internal object BuilderExtrasLogic {
         f.group.trim().takeIf { it.isNotEmpty() }?.let { map["group"] = JsonPrimitive(it) }
         map["fields"] = JsonArray(keep.map { JsonPrimitive(it) })
         map["options"] = JsonArray(f.options.filter { it.value.isNotEmpty() }.map(::option))
-        map["sorts"] = JsonArray(c.sorts.filter { it.value.isNotEmpty() }.map(::plain))
+        // KMK (r109): the site's default sort may come first with value "" under its own name ("Most videos"): picking it
+        // asks getDirectory for the site's own order; other empty values are left out
+        map["sorts"] = JsonArray(c.sorts.filterIndexed { i, o -> o.label.isNotBlank() && (o.value.isNotEmpty() || i == 0) }.map(::plain))
         map["reverse"] = JsonPrimitive(c.reverse && c.orderParam.isNotEmpty())
-        // KMK (r107) fix: the site's menus only narrow a live list (stored entries can't be narrowed by them): kept in the
-        // spec (Live can be turned on again in the editor), written only when live
+        // KMK (r109): the menus are written for stored collections too: Browse switches a stored list to live paging
+        // (getDirectory) when one of them is picked (r107 wrote them only when live)
         map["menus"] = JsonArray(
-            (if (c.live && c.item.isNotEmpty()) c.menus else emptyList()).map { m ->
+            (if (c.item.isNotEmpty()) c.menus else emptyList()).map { m ->
                 JsonObject(mapOf("key" to JsonPrimitive(m.key), "name" to JsonPrimitive(m.name), "options" to JsonArray(m.options.map(::plain))))
             },
         )
@@ -1533,7 +1602,14 @@ internal object BuilderExtrasLogic {
                 ?: (parents + rawHeading).filter { it.isNotBlank() }
             val items = g.arr("items")?.mapNotNull { e ->
                 val o = e as? JsonObject ?: return@mapNotNull null
-                MenuItem(o.str("text").orEmpty(), o.str("href")?.takeIf { it.isNotBlank() }, o.str("value"), o.str("path")?.takeIf { it.isNotBlank() })
+                MenuItem(
+                    o.str("text").orEmpty(),
+                    o.str("href")?.takeIf { it.isNotBlank() },
+                    o.str("value"),
+                    o.str("path")?.takeIf { it.isNotBlank() },
+                    // KMK (r109): picker.js marks the site's current entry
+                    current = o.bool("current") == true,
+                )
             }.orEmpty().filter { it.text.isNotBlank() || !it.href.isNullOrBlank() || it.value != null }
             val href = g.str("href")?.trim()?.takeIf { it.startsWith("http") }
             val name = cleanHeading(rawHeading)
@@ -1557,6 +1633,9 @@ internal object BuilderExtrasLogic {
                     pageUrl = pageUrl,
                     param = g.str("param")?.trim()?.takeIf { it.isNotEmpty() },
                     parent = parentId,
+                    // KMK (r109): "Sort: Most videos" (its heading or its button) → the site's default "Most videos"
+                    current = BuilderDirMenus.currentOf(rawHeading).ifEmpty { BuilderDirMenus.currentOf(g.str("openerText")) }
+                        .ifEmpty { items.firstOrNull { it.current }?.text.orEmpty() },
                 )
             }
             subs.forEach { walk(it, path, mine ?: parentId) }
@@ -1630,6 +1709,48 @@ internal object BuilderExtrasLogic {
 
     /** r105 fix: the label of the empty option a parameter's Dropdown / Sort gets when it has none */
     const val SITE_DEFAULT = "Site default"
+
+    /**
+     * KMK (r109): a filter whose empty first option is "Site default" (or "Any") while its learned default is known
+     * ([ExtrasFilter.siteDefault]): that option is named after the default and the default's own coded entry goes
+     * (picking it sends nothing, the site's own order). Null = nothing to repair. Filters saved before r109 have no
+     * [ExtrasFilter.siteDefault]: learning the menu again names their default
+     */
+    fun repairSiteDefault(f: ExtrasFilter): ExtrasFilter? {
+        val name = f.siteDefault.trim()
+        if (name.isEmpty() || f.type == "collection") return null
+        val first = f.options.firstOrNull() ?: return null
+        if (first.value.isNotEmpty() || first.label.equals(name, ignoreCase = true)) return null
+        if (first.label != SITE_DEFAULT && first.label != "Any") return null
+        val rest = f.options.drop(1).filterNot { it.value.isNotEmpty() && it.label.equals(name, ignoreCase = true) }
+        val all = listOf(first.copy(label = name)) + rest
+        return f.copy(options = all, optionsText = formatOptions(all))
+    }
+
+    /**
+     * KMK (r109) fix: a parameter's Dropdown / Sort made from a link menu (or saved before r109) whose default isn't
+     * named yet: [current] (the value the menu's button / heading showed, "Sort: Most videos" → "Most videos") names its
+     * empty first option and that entry's own code goes. Null = unchanged (not known, a path filter, already named,
+     * an empty option of its own like "All", or [current] isn't one of its entries)
+     */
+    fun nameDefault(f: ExtrasFilter, current: String): ExtrasFilter? {
+        val name = current.trim()
+        if (name.isEmpty() || f.siteDefault.isNotBlank() || f.mode == "path") return null
+        if ((f.type != "sort" && f.type != "select") || f.options.isEmpty()) return null
+        if (f.options.none { it.value.isNotEmpty() && it.label.trim().equals(name, ignoreCase = true) }) return null
+        val opts = withSiteDefault(f.options)
+        return repairSiteDefault(f.copy(options = opts, optionsText = formatOptions(opts), siteDefault = name))
+    }
+
+    /**
+     * KMK (r109) fix: the filter's empty first option will be "Site default" (its default isn't known): its card says
+     * "Learn this menu again to name its default" (the caller leaves out one that opens its links' page: "Any" first)
+     */
+    fun unnamedDefault(f: ExtrasFilter): Boolean {
+        if (f.siteDefault.isNotBlank() || f.mode == "path" || (f.type != "sort" && f.type != "select") || f.options.isEmpty()) return false
+        val first = withSiteDefault(f.options).first()
+        return first.value.isEmpty() && first.label == SITE_DEFAULT
+    }
 
     /**
      * r105 fix: [options] with an empty option first (moved there, or "Site default" added): the app sends the first
@@ -2194,7 +2315,8 @@ internal class BuilderExtrasModel {
 
     /** "Pick a list on the site" (on) and its Cancel (off); BuilderScreenModel passes it to the page */
     fun setGroupMode(on: Boolean) {
-        mutable.update { it.copy(groupMode = on) }
+        // KMK (r109): turned off (Cancel, a step change, a label armed) ends a card's "Pick the site's Sort menu" too
+        mutable.update { it.copy(groupMode = on, dirPick = if (on) it.dirPick else null) }
         AppLog.add('D', "lab", "extras group mode ${if (on) "on" else "off"}")
     }
 
@@ -2354,12 +2476,19 @@ internal class BuilderExtrasModel {
      */
     fun onMenuPicked(json: String) {
         val obj = runCatching { jsJson.parseToJsonElement(json) as? JsonObject }.getOrNull()
-        mutable.update { it.copy(groupMode = false) }
+        // KMK (r109): a scanned directory card asked for this pick ("Pick the site's Sort menu"): it learns it for itself
+        val dirTarget = mutable.value.dirPick
+        val dirSort = mutable.value.dirPickSort
+        mutable.update { it.copy(groupMode = false, dirPick = null) }
         if (obj == null) {
             AppLog.add('W', "lab", "extras menu: unreadable answer from the page (${json.take(120)})")
             return
         }
         val pageUrl = obj.str("pageUrl")?.trim().orEmpty().ifEmpty { mutable.value.lastUrl.orEmpty() }.substringBefore('#')
+        if (dirTarget != null) {
+            onDirMenuPicked(dirTarget, dirSort, obj, pageUrl)
+            return
+        }
         val raw = obj.arr("groups")?.mapNotNull { it as? JsonObject }.orEmpty()
         val cards = BuilderExtrasLogic.menuGroupsOf(raw, pageUrl, nextMenuId)
         nextMenuId += cards.size + 1
@@ -2374,6 +2503,12 @@ internal class BuilderExtrasModel {
         mutable.update { s ->
             s.copy(
                 menuGroups = cards,
+                // KMK (r109) fix: a filter saved before r109 (its default "Site default") named after its menu's shown value
+                filters = s.filters.map { f ->
+                    cards.firstNotNullOfOrNull { g ->
+                        if (g.name.isNotBlank() && g.name.equals(f.name.trim(), ignoreCase = true)) BuilderExtrasLogic.nameDefault(f, g.current) else null
+                    }?.also { r -> AppLog.add('I', "lab", "extras filter \"${f.name}\": its default named \"${r.siteDefault}\" from the menu") } ?: f
+                },
                 menuHint = false,
                 menuHintText = null,
                 message = if (cards.isEmpty()) {
@@ -2415,6 +2550,8 @@ internal class BuilderExtrasModel {
         // r105: a sub-menu's filter sits in its parent menu's group (Collections ▸ Genres)
         val parent = g.headingPath.dropLast(1).lastOrNull()?.let(BuilderExtrasLogic::cleanHeading).orEmpty()
         val grouped = derived.filter?.let { if (parent.isNotEmpty()) it.copy(group = parent) else it }
+            // KMK (r109) fix: a link menu's default is named after the value its button showed
+            ?.let { f -> BuilderExtrasLogic.nameDefault(f, g.current.ifEmpty { g.items.firstOrNull { it.current }?.text.orEmpty() }) ?: f }
         val made = applyDerived(
             derived.copy(filter = grouped, listUrl = null),
             "the menu group \"${g.headingPath.joinToString(" › ")}\"",
@@ -2481,6 +2618,9 @@ internal class BuilderExtrasModel {
             entries = entries,
             hasLinks = entries.any { e -> e.href?.let { !it.startsWith("javascript:", ignoreCase = true) } == true },
             menuId = id,
+            // KMK (r109): the site's current entry names the default when every press changes the address
+            current = g.current,
+            openerLabel = g.name,
         )
         mutable.update {
             it.copy(learnGroup = group, learn = null, rev = it.rev + 1, scrollTarget = "menu:$id", scrollTick = it.scrollTick + 1, scrollReveal = true)
@@ -2634,7 +2774,8 @@ internal class BuilderExtrasModel {
         fun show(r: GroupRead) = mutable.update { s -> s.copy(menuGroups = s.menuGroups.map { if (it.id == g.id) it.copy(read = r) else it }) }
         show(GroupRead(running = true, page = 1, entries = 0, maxPages = maxPages))
         // r106 fix: scrolled to, but the panel doesn't switch tabs for every sub-menu read
-        requestScroll("menu:${g.parent ?: g.id}", reveal = false)
+        // KMK (r109): the card's progress box comes to the top of the panel once, when the read starts
+        requestScroll("read:${g.id}", reveal = false)
         val result = try {
             BuilderListReader.read(
                 url = url,
@@ -2708,7 +2849,8 @@ internal class BuilderExtrasModel {
         val count = to - from + 1
         fun show(r: GroupRead) = mutable.update { s -> s.copy(menuGroups = s.menuGroups.map { if (it.id == g.id) it.copy(read = r) else it }) }
         show(GroupRead(running = true, page = 1, entries = 0, maxPages = count, first = from))
-        requestScroll("menu:${g.parent ?: g.id}", reveal = false)
+        // KMK (r109): the card's progress box comes to the top of the panel once, when the read starts
+        requestScroll("read:${g.id}", reveal = false)
         val started = System.currentTimeMillis()
         val result = try {
             BuilderListReader.readDirectory(
@@ -2786,6 +2928,10 @@ internal class BuilderExtrasModel {
     fun dismissMenuGroup(id: Int) {
         // r106: its learning or reading stops with it; a filter it was asking about is dropped
         if (mutable.value.learnGroup?.menuId == id) dismissLearn()
+        // KMK (r109): its "Learn the menus" stops; a menu pick / picture tap it waits for is cancelled
+        if (mutable.value.menuGroups.firstOrNull { it.id == id }?.dirLearn?.running == true) stopLearn()
+        if (mutable.value.dirPick == id) cancelDirPick()
+        if (mutable.value.picturePick == id) cancelPicturePick()
         // r106 fix: only this card's read (and its sub-menus') stops: never its parent's, so the siblings stay readable
         val gone = mutable.value.menuGroups.filter { it.id == id || it.parent == id }.map { it.id }.toSet() + id
         gone.forEach { readStops[it] = true }
@@ -2942,6 +3088,379 @@ internal class BuilderExtrasModel {
      */
     private fun sameFilter(a: ExtrasFilter, b: ExtrasFilter): Boolean = BuilderExtrasLogic.sameFilter(a, b)
 
+    // ---------- KMK (r109): a scanned directory's custom drop-downs and pictures ----------
+
+    /** r109: changes the scan of card [id]; its collection, when already made, takes the new sorts and menus too */
+    private fun updateScan(id: Int, change: (BuilderListReader.DirScan) -> BuilderListReader.DirScan) {
+        mutable.update { s ->
+            val g = s.menuGroups.firstOrNull { it.id == id } ?: return@update s
+            val scan = g.probe?.scan ?: return@update s
+            val next = change(scan)
+            val made = g.made?.takeIf { it.isNotEmpty() && it != "tabs" && it != "?" }
+            val filters = if (made == null) {
+                s.filters
+            } else {
+                s.filters.map { f ->
+                    val c = f.collection
+                    if (f.key == made && f.type == "collection" && c != null) {
+                        f.copy(collection = c.copy(sorts = next.sorts, sortParam = next.sortParam, menus = next.menus))
+                    } else {
+                        f
+                    }
+                }
+            }
+            s.copy(
+                menuGroups = s.menuGroups.map { if (it.id == id) it.copy(probe = it.probe?.copy(scan = next)) else it },
+                filters = filters,
+                rev = s.rev + 1,
+            )
+        }
+    }
+
+    private fun showDirLearn(id: Int, change: (DirLearn?) -> DirLearn?) = mutable.update { s ->
+        s.copy(menuGroups = s.menuGroups.map { if (it.id == id) it.copy(dirLearn = change(it.dirLearn)) else it })
+    }
+
+    /**
+     * r109: the scanned card's "Learn the menus": its custom drop-downs that aren't codes yet (Sort, Height, Cup, Age
+     * whose entries are buttons, or lists the site adds only when they open) are pressed on the directory page in the
+     * builder's page, one entry at a time with the pause set for reading, and the address each press makes is read
+     * (the r102 learning); the codes go to this card's collection (its sort options and menus)
+     */
+    fun learnDirMenus(id: Int) {
+        val g = mutable.value.menuGroups.firstOrNull { it.id == id } ?: return
+        val scan = g.probe?.scan ?: return
+        if (scan.custom.isEmpty()) return
+        startDirLearn(id, scan.url, scan.custom)
+    }
+
+    private fun startDirLearn(id: Int, base: String, menus: List<BuilderDirMenus.Menu>) {
+        if (learnJob?.isActive == true) {
+            mutable.update { it.copy(message = "Something is being learned on the page: wait for it to end (or stop it)") }
+            return
+        }
+        if (runInPage == null) {
+            mutable.update { it.copy(message = "The page isn't ready: open the directory page in the builder first") }
+            return
+        }
+        val (low, high) = readPause()
+        stopLearning = false
+        learnJob = scope.launch {
+            try {
+                runDirLearn(id, base, menus, low, high)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLog.add('E', "lab", "learn menus failed: ${e.message ?: e.javaClass.simpleName}")
+                showDirLearn(id) { it?.copy(running = false, note = "Learning stopped: ${e.message ?: "an error"}") }
+            }
+        }
+        requestScroll("menu:$id", reveal = false)
+    }
+
+    private suspend fun runDirLearn(id: Int, base: String, menus: List<BuilderDirMenus.Menu>, low: Long, high: Long) {
+        val found = ArrayList<String>()
+        var done = 0
+        var total = menus.sumOf { it.items.size.coerceAtLeast(1) }
+        var stopReason: String? = null
+        showDirLearn(id) { DirLearn(running = true, label = menus.first().label, done = 0, total = total) }
+        AppLog.add('I', "lab", "learn menus on $base: ${menus.joinToString(", ") { "${it.label} (${it.items.size})" }}, pause $low–$high ms")
+        try {
+            for (m in menus) {
+                if (stopLearning) {
+                    stopReason = "Stopped by you."
+                    break
+                }
+                showDirLearn(id) { it?.copy(label = m.label, done = done, total = total, found = found.toList()) }
+                if (!onPage(base) && !loadPage(base)) {
+                    stopReason = "The directory page didn't load ($base)."
+                    break
+                }
+                pause(SETTLE_MS)
+                var items = m.items
+                if (items.isEmpty()) {
+                    // its list isn't in the page until it opens: learn.js opens it and reads the entries
+                    items = readMenuItems(m)
+                    total += (items.size - 1).coerceAtLeast(0)
+                    AppLog.add('D', "lab", "learn menus: ${m.label} opened: ${items.size} entries")
+                }
+                if (items.size < 2) {
+                    found += "${m.label}: its entries didn't show when it was pressed"
+                    continue
+                }
+                val rows = ArrayList<BuilderDirMenus.Row>()
+                if (items.count { it.href != null } * 2 >= items.size) {
+                    // links: where each goes is in the page, nothing to press
+                    items.filter { it.href != null || it.current }.forEach { rows += BuilderDirMenus.Row(it.text, it.href ?: base, it.current) }
+                    done += items.size
+                } else {
+                    val group = LearnGroup(
+                        pageUrl = base,
+                        opener = m.opener.ifEmpty { null },
+                        likeSelector = "",
+                        name = m.label,
+                        entries = items.map { LearnEntry(it.text, null, null) },
+                        hasLinks = false,
+                        current = m.current,
+                        openerLabel = m.label,
+                    )
+                    for ((k, item) in items.withIndex()) {
+                        if (stopLearning) {
+                            stopReason = "Stopped by you."
+                            break
+                        }
+                        if (done >= MAX_PRESSES * 2) {
+                            stopReason = "Pressed ${MAX_PRESSES * 2} entries, the most one run presses."
+                            break
+                        }
+                        if (k > 0 && high > 0) pause(Random.nextLong(low, high + 1))
+                        showDirLearn(id) { it?.copy(label = m.label, done = done, total = total, found = found.toList()) }
+                        val (status, url) = pressOnce(group, LearnEntry(item.text, null, null), base)
+                        done++
+                        AppLog.add('D', "lab", "learn menus: ${m.label} › ${item.text} → ${url ?: status}")
+                        if (status == "stopped") {
+                            stopReason = "Stopped by you."
+                            break
+                        }
+                        if (status == "failed") {
+                            stopReason = "The directory page didn't load again ($base)."
+                            break
+                        }
+                        if (status == "learned") rows += BuilderDirMenus.Row(item.text, url, item.current)
+                        if (status == "nochange") rows += BuilderDirMenus.Row(item.text, null, item.current)
+                    }
+                }
+                val coded = BuilderDirMenus.codesOf(base, rows, m.current, m.sort)
+                if (coded.ok && (m.sort || coded.param.isNotEmpty())) {
+                    updateScan(id) { sc -> BuilderExtrasLogic.withDirMenu(sc, m, coded) }
+                    found += "${m.label}: ${coded.options.size} options" +
+                        (if (coded.defaultLabel.isNotEmpty()) " (default ${coded.defaultLabel})" else "") +
+                        (if (coded.pathMode) ", each its own address" else ", ${coded.param}=…")
+                } else {
+                    found += "${m.label}: " + coded.note.ifEmpty { "no entry changed the address" }
+                }
+                AppLog.add('I', "lab", "learn menus: ${found.last()}")
+                if (stopReason != null) break
+            }
+        } finally {
+            val note = stopReason ?: "Done: the codes are kept with this directory."
+            showDirLearn(id) { DirLearn(running = false, label = "", done = done, total = total, found = found.toList(), note = note) }
+            AppLog.add('I', "lab", "learn menus on $base: ${found.joinToString(" · ")} ($note)")
+        }
+        // Back to the directory page, so the page shows what was learned from
+        if (!onPage(base)) runCatching { loadPage(base) }
+    }
+
+    /**
+     * r109: one press of [entry] on [base] (loaded again when the page left it), as runLearn presses: "learned" with the
+     * address it opened, "nochange", "missing" (learn.js didn't find it), "stopped" or "failed" (the page didn't load)
+     */
+    private suspend fun pressOnce(group: LearnGroup, entry: LearnEntry, base: String): Pair<String, String?> {
+        if (!onPage(base) && !loadPage(base)) return (if (stopLearning) "stopped" else "failed") to null
+        pause(SETTLE_MS)
+        if (stopLearning) return "stopped" to null
+        val from = clean(currentUrl())
+        val before = seen.value.tick
+        val id = press(group, entry)
+        val answer = waitFor(ANSWER_MS) { outcome.value.takeIf { it.id == id } }
+        val gone = waitFor(0L) { seen.value.takeIf { it.tick > before && clean(it.url) != from } }
+        val changed = when {
+            gone != null -> gone
+            answer == null || answer.state != "pressed" -> null
+            else -> waitFor(CHANGE_MS) { seen.value.takeIf { it.tick > before && clean(it.url) != from } }
+        }
+        return when {
+            changed != null -> "learned" to changed.url.substringBefore('#')
+            stopLearning -> "stopped" to null
+            answer == null || answer.state != "pressed" -> "missing" to null
+            else -> "nochange" to null
+        }
+    }
+
+    /** r109: learn.js `items`'s answer ("learn: items #<id> <json>"), by the request's id */
+    private data class ItemsAnswer(val id: Long, val json: String)
+
+    private val itemsAnswer = MutableStateFlow(ItemsAnswer(0L, ""))
+
+    /** r109: opens [m] on the page (learn.js `items`: its button pressed, the entries that show read) */
+    private suspend fun readMenuItems(m: BuilderDirMenus.Menu): List<BuilderDirMenus.Item> {
+        val id = ++pressId
+        val request = JsonObject(
+            mapOf(
+                "id" to JsonPrimitive(id),
+                "opener" to (m.opener.ifEmpty { null }?.let { JsonPrimitive(it) } ?: JsonNull),
+                "label" to JsonPrimitive(m.label),
+                "current" to JsonPrimitive(m.current),
+            ),
+        )
+        inPage(
+            "(function(){var r=$request;function go(k){if(window.__labLearn&&window.__labLearn.items){window.__labLearn.items(r);}" +
+                "else if(k<50){setTimeout(function(){go(k+1);},100);}}go(0);})();",
+        )
+        val got = waitFor(ITEMS_MS) { itemsAnswer.value.takeIf { it.id == id } } ?: return emptyList()
+        val o = runCatching { jsJson.parseToJsonElement(got.json) as? JsonObject }.getOrNull() ?: return emptyList()
+        if (o.bool("ok") != true) {
+            AppLog.add('D', "lab", "learn menus: ${m.label} didn't open: ${o.str("reason").orEmpty()}")
+            return emptyList()
+        }
+        return o.arr("items")?.mapNotNull { e ->
+            val one = e as? JsonObject ?: return@mapNotNull null
+            val text = one.str("text")?.trim().orEmpty()
+            if (text.isEmpty()) {
+                null
+            } else {
+                BuilderDirMenus.Item(text, one.str("href")?.takeIf { h -> h.startsWith("http") }, one.str("value"), one.bool("current") == true)
+            }
+        }.orEmpty().distinctBy { it.text.lowercase() }
+    }
+
+    /**
+     * r109: the card's "Pick the site's Sort menu" ([sort]) / "Pick another menu": the directory page opens in the
+     * builder's page and the next menu pick is this card's (its entries' codes are learned and kept with it)
+     */
+    fun pickDirMenu(id: Int, sort: Boolean) {
+        val g = mutable.value.menuGroups.firstOrNull { it.id == id } ?: return
+        val scan = g.probe?.scan ?: return
+        if (learnJob?.isActive == true) {
+            mutable.update { it.copy(message = "Something is being learned on the page: wait for it to end (or stop it)") }
+            return
+        }
+        mutable.update { it.copy(dirPick = id, dirPickSort = sort, picturePick = null, message = null) }
+        AppLog.add('I', "lab", "extras directory \"${g.name}\": pick the site's ${if (sort) "sort menu" else "menu"} on ${scan.url}")
+        scope.launch {
+            stopLearning = false
+            if (!onPage(scan.url)) loadPage(scan.url)
+            if (mutable.value.dirPick == id) setGroupMode(true)
+        }
+    }
+
+    /** r109: the waiting "Pick the site's … menu" is cancelled */
+    fun cancelDirPick() {
+        mutable.update { it.copy(dirPick = null) }
+        if (mutable.value.groupMode) setGroupMode(false)
+    }
+
+    /** r109: the menu pick a card asked for: a menu of its entries (or, not in the page yet, opened by its label) */
+    private fun onDirMenuPicked(id: Int, sort: Boolean, obj: JsonObject, pageUrl: String) {
+        val scan = mutable.value.menuGroups.firstOrNull { it.id == id }?.probe?.scan ?: return
+        val raw = obj.arr("groups")?.mapNotNull { it as? JsonObject }.orEmpty()
+        val picked = BuilderExtrasLogic.menuGroupsOf(raw, pageUrl, 0).firstOrNull { it.items.size >= 2 }
+        val tapped = obj.obj("tapped")?.str("text").orEmpty()
+        val menu = if (picked != null) {
+            val named = picked.name.takeIf { it.isNotBlank() && it.length <= 24 }
+            BuilderDirMenus.Menu(
+                label = named ?: BuilderDirMenus.labelValue(tapped)?.first ?: if (sort) "Sort" else "Menu",
+                current = picked.current.ifEmpty { BuilderDirMenus.currentOf(tapped) },
+                opener = picked.opener.orEmpty(),
+                items = picked.items.map { BuilderDirMenus.Item(it.text, it.href, it.value, it.current) },
+                sort = sort,
+            )
+        } else {
+            val lv = BuilderDirMenus.labelValue(tapped)
+            if (lv == null) {
+                mutable.update {
+                    it.copy(message = "No menu found where you tapped: tap the menu's button (\"Sort: …\") or one of its entries.")
+                }
+                AppLog.add('I', "lab", "extras directory menu pick at \"${tapped.take(40)}\": no menu")
+                return
+            }
+            // its list is added only when it opens: learn.js opens it by its label
+            BuilderDirMenus.Menu(lv.first, lv.second, "", emptyList(), sort)
+        }
+        AppLog.add('I', "lab", "extras directory menu picked: ${menu.label} (${menu.items.size} entries, current \"${menu.current}\")")
+        startDirLearn(id, scan.url, listOf(menu))
+    }
+
+    /**
+     * r109: the card's "Tap the picture on the page": the directory page opens in the builder's page and the next tap
+     * (picker.js `pictureMode`, with the cards' selector) names one card's picture
+     */
+    fun pickDirPicture(id: Int) {
+        val g = mutable.value.menuGroups.firstOrNull { it.id == id } ?: return
+        val scan = g.probe?.scan ?: return
+        if (learnJob?.isActive == true) {
+            mutable.update { it.copy(message = "Something is being learned on the page: wait for it to end (or stop it)") }
+            return
+        }
+        if (mutable.value.groupMode) setGroupMode(false)
+        mutable.update { it.copy(picturePick = id, dirPick = null, message = null) }
+        AppLog.add('I', "lab", "extras directory \"${g.name}\": tap one card's picture on ${scan.url}")
+        scope.launch {
+            stopLearning = false
+            if (!onPage(scan.url)) loadPage(scan.url)
+            if (mutable.value.picturePick != id) return@launch
+            picturePickScript()?.let { inPage(it) }
+        }
+    }
+
+    /**
+     * KMK (r109) fix: the script that arms picker.js `pictureMode` for the waiting picture tap (null when none waits);
+     * also sent after every injection (BuilderScreen), so a page reload doesn't drop the tap
+     */
+    fun picturePickScript(): String? {
+        val id = mutable.value.picturePick ?: return null
+        val scan = mutable.value.menuGroups.firstOrNull { it.id == id }?.probe?.scan ?: return null
+        val request = JsonObject(mapOf("item" to JsonPrimitive(scan.item)))
+        return "(function(){var r=$request;function go(k){if(window.__labPicker&&window.__labPicker.pictureMode){window.__labPicker.pictureMode(r);}" +
+            "else if(k<50){setTimeout(function(){go(k+1);},100);}}go(0);})();"
+    }
+
+    /** r109: the waiting picture tap is cancelled */
+    fun cancelPicturePick() {
+        mutable.update { it.copy(picturePick = null) }
+        runCatching { runInPage?.invoke("window.__labPicker && window.__labPicker.pictureMode && window.__labPicker.pictureMode(null);") }
+    }
+
+    /**
+     * r109: picker.js `pictureMode`'s answer (a pick with via "picture"): `{ ok, selectors: [...], attrs: [...], url,
+     * reason }`. The directory's first page is read again with it ([BuilderListReader.withPicture]); the card's picture
+     * part is ticked
+     */
+    fun onPicturePicked(json: String) {
+        val id = mutable.value.picturePick ?: return
+        mutable.update { it.copy(picturePick = null) }
+        val o = runCatching { jsJson.parseToJsonElement(json) as? JsonObject }.getOrNull()
+        if (o == null || o.bool("ok") != true) {
+            val why = o?.str("reason").orEmpty().ifEmpty { "the tap wasn't on a card's picture" }
+            mutable.update { it.copy(message = "No picture found there: $why. Try again on another card's picture.") }
+            AppLog.add('I', "lab", "extras directory picture tap: $why")
+            return
+        }
+        val scan = mutable.value.menuGroups.firstOrNull { it.id == id }?.probe?.scan ?: return
+        val selectors = o.arr("selectors")?.mapNotNull { (it as? JsonPrimitive)?.content }.orEmpty()
+        val attrs = o.arr("attrs")?.mapNotNull { (it as? JsonPrimitive)?.content?.trim()?.takeIf { a -> a.isNotEmpty() } }.orEmpty()
+        AppLog.add('D', "lab", "extras directory picture tap: ${selectors.joinToString(" | ")} attrs ${attrs.joinToString(",")} (${o.str("url").orEmpty().take(120)})")
+        scope.launch {
+            val (next, why) = try {
+                BuilderListReader.withPicture(scan, selectors, attrs)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null to (e.message ?: e.javaClass.simpleName)
+            }
+            if (next == null) {
+                mutable.update { it.copy(message = "The picture you tapped can't be read for every card: $why.") }
+                AppLog.add('I', "lab", "extras directory picture: $why")
+                return@launch
+            }
+            val made = mutable.value.menuGroups.firstOrNull { it.id == id }?.made?.isNotEmpty() == true
+            mutable.update { s ->
+                s.copy(
+                    menuGroups = s.menuGroups.map { g ->
+                        if (g.id != id) {
+                            g
+                        } else {
+                            val c = g.choice ?: BuilderExtrasLogic.defaultChoice(g.name, next)
+                            g.copy(probe = g.probe?.copy(scan = next), choice = c.copy(fields = c.fields + "picture"))
+                        }
+                    },
+                    message = "Pictures found on the cards" + if (made) ": make the filter again to keep them." else ".",
+                    rev = s.rev + 1,
+                )
+            }
+        }
+    }
+
     // ---------- Learn this list (r102) ----------
 
     /** r102: the WebView loaded an address or its history changed (BuilderScreenModel calls it every time) */
@@ -2964,6 +3483,11 @@ internal class BuilderExtrasModel {
      * "learn: missing #<id> …" or "learn: error #<id> …" says what became of press <id>.
      */
     fun onLearnLog(line: String) {
+        // KMK (r109): learn.js `items`'s answer (a menu opened on the page and its entries read)
+        LEARN_ITEMS.find(line)?.let { im ->
+            im.groupValues[1].toLongOrNull()?.let { itemsAnswer.value = ItemsAnswer(it, im.groupValues[2]) }
+            return
+        }
         val m = LEARN_OUTCOME.find(line) ?: return
         val id = m.groupValues[2].toLongOrNull() ?: return
         outcome.value = PressOutcome(id, m.groupValues[1])
@@ -3195,13 +3719,27 @@ internal class BuilderExtrasModel {
         // A "no change" entry ("All") names the empty option. r105 fix: a Sort's too ("Release date" when the list page
         // already shows that order): picking it sends nothing, the site's own order
         val anyLabel = run.rows.firstOrNull { it.status == "nochange" }?.text
+        // KMK (r109): every press changed the address: the entry the menu's button shows ("Sort: Recently added") is the
+        // site's default: it becomes the empty first option under its own name (its code dropped), never "Site default"
+        // KMK (r109) fix: only while the learning page's address has no value for the learned parameter (on
+        // ?sort=views the active entry is that pick, not the site's default)
+        val learnedParam = derived.filter?.takeIf { it.mode != "path" }?.param?.trim().orEmpty()
+        val pageHasValue = learnedParam.isNotEmpty() &&
+            group.pageUrl.trim().toHttpUrlOrNull()?.queryParameter(learnedParam).isNullOrEmpty().not()
+        val currentRow = if (anyLabel == null && group.current.isNotBlank() && !pageHasValue) {
+            run.rows.firstOrNull { it.text.equals(group.current, ignoreCase = true) && (it.status == "learned" || it.status == "filled") }?.text
+        } else {
+            null
+        }
+        val defaultLabel = anyLabel ?: currentRow
         return derived.filter?.let { f ->
-            if (anyLabel == null) {
+            if (defaultLabel == null) {
                 f
             } else {
-                val withEmpty = if (f.type == "sort") BuilderExtrasLogic.withSiteDefault(f.options) else BuilderExtrasLogic.withAny(f.options)
-                val options = withEmpty.map { if (it.value.isEmpty()) it.copy(label = anyLabel) else it }
-                f.copy(options = options, optionsText = BuilderExtrasLogic.formatOptions(options))
+                val base = if (currentRow == null) f.options else f.options.filterNot { it.value.isNotEmpty() && it.label.equals(currentRow, ignoreCase = true) }
+                val withEmpty = if (f.type == "sort") BuilderExtrasLogic.withSiteDefault(base) else BuilderExtrasLogic.withAny(base)
+                val options = withEmpty.map { if (it.value.isEmpty()) it.copy(label = defaultLabel) else it }
+                f.copy(options = options, optionsText = BuilderExtrasLogic.formatOptions(options), siteDefault = defaultLabel)
             }
         }?.let { f ->
             // r106: a sub-menu learned on its card sits in its parent menu's group
@@ -3307,6 +3845,8 @@ internal class BuilderExtrasModel {
             mapOf(
                 "id" to JsonPrimitive(id),
                 "opener" to (group.opener?.let { JsonPrimitive(it) } ?: JsonNull),
+                // KMK (r109): the menu's button found by its label ("Sort:") when [opener] finds nothing
+                "label" to JsonPrimitive(group.openerLabel),
                 "entry" to JsonObject(
                     mapOf(
                         "path" to JsonPrimitive(entry.path ?: group.likeSelector),
@@ -3377,6 +3917,8 @@ internal class BuilderExtrasModel {
                                 "seenOn" to JsonPrimitive(f.seenOn),
                                 "roleSet" to JsonPrimitive(f.roleSet),
                                 "collection" to (f.collection?.let { collectionJson(it) } ?: JsonNull),
+                                // KMK (r109): the site's own default option's name
+                                "siteDefault" to JsonPrimitive(f.siteDefault),
                             ),
                         )
                     },
@@ -3545,11 +4087,17 @@ internal class BuilderExtrasModel {
                 seenOn = f.str("seenOn").orEmpty(),
                 roleSet = f.bool("roleSet") == true,
                 collection = collectionOf(f.obj("collection")),
+                siteDefault = f.str("siteDefault").orEmpty(),
             )
         }.orEmpty().map { f ->
             // r107: a directory saved before r107 with whole cards as names (or as a Sort) comes back cleaned
             BuilderExtrasLogic.repairLabels(f)?.also { r ->
                 AppLog.add('I', "lab", "extras filter \"${f.name}\": names cleaned (${f.options.firstOrNull { it.value.isNotEmpty() }?.label?.take(60)} → ${r.options.firstOrNull { it.value.isNotEmpty() }?.label}), ${f.type} → ${r.type}")
+            } ?: f
+        }.map { f ->
+            // KMK (r109): a "Site default" first option whose learned default is known is named after it
+            BuilderExtrasLogic.repairSiteDefault(f)?.also { r ->
+                AppLog.add('I', "lab", "extras filter \"${f.name}\": \"${BuilderExtrasLogic.SITE_DEFAULT}\" → \"${r.options.firstOrNull()?.label}\"")
             } ?: f
         }
         val custom = o.arr("custom")?.mapNotNull { e ->
@@ -3898,5 +4446,9 @@ internal class BuilderExtrasModel {
 
         /** r102 fix: learn.js's outcome lines ("learn: pressed #12 …") */
         val LEARN_OUTCOME = Regex("^learn: (pressed|missing|error) #([0-9]+)")
+
+        /** KMK (r109): learn.js `items`'s answer ("learn: items #12 <json>") and how long it may take (3 ways to open) */
+        val LEARN_ITEMS = Regex("^learn: items #([0-9]+) (.*)$")
+        const val ITEMS_MS = 12_000L
     }
 }

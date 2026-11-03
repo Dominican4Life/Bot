@@ -58,6 +58,8 @@ import uy.kohesive.injekt.api.get
  * KMK: Full list of related anime, opened from the "Related titles" header on the anime page.
  * r105: a source's named groups ("Related videos", "You may like") are sections with a heading each, in the source's
  * order; [focusGroup] (the row whose arrow was tapped) is scrolled to once.
+ * KMK (r109): sections whose name says "related" come first, then the others in the source's order
+ * ([AnimeSuggestions.arrange]); the anime page shows them all in one Suggestions row that opens this screen at the top.
  */
 class AnimeRelatedScreen(
     private val animeId: Long,
@@ -164,7 +166,9 @@ class AnimeRelatedScreenModel(
             // without asking the site again. The plain list is capped on the anime page, so it is fetched in full.
             val cached = AnimeSuggestions.cached(source.id, animeId)
             if (cached != null && AnimeSuggestions.hasNamed(cached)) {
-                mutableState.update { it.copy(groups = cached, loading = false) }
+                // KMK (r109): related sections first
+                val arranged = AnimeSuggestions.arrange(cached, plainCap = null)
+                mutableState.update { it.copy(groups = arranged, loading = false) }
                 return@launchIO
             }
             try {
@@ -241,9 +245,10 @@ internal object AnimeSuggestions {
     fun hasNamed(groups: List<AnimeSuggestionGroup>): Boolean = groups.any { it.name != null }
 
     /**
-     * [groups] with [found] added: to the section of the same name (a new one at the end otherwise), leaving out
-     * titles an earlier section already shows. Named sections keep the order they came in; the plain list is last
-     * and capped at [plainCap] when given.
+     * [groups] with [found] added: to the section of the same name (a new one otherwise), then [arrange]d. The plain
+     * list is last and capped at [plainCap] when given.
+     * KMK (r109): a title is left out of a section only when a section shown before it has it (related sections come
+     * first, so a title in both "You may like" and "Related videos" stays under Related videos)
      */
     fun add(
         groups: List<AnimeSuggestionGroup>,
@@ -251,21 +256,46 @@ internal object AnimeSuggestions {
         found: List<Anime>,
         plainCap: Int?,
     ): List<AnimeSuggestionGroup> {
-        val shown = HashSet<Long>()
-        groups.forEach { group -> group.items.forEach { shown.add(it.id) } }
-        val fresh = found.distinctBy { it.id }.filter { it.id !in shown }
-        if (fresh.isEmpty()) return groups
         val index = groups.indexOfFirst { it.name == name }
         val updated = if (index >= 0) {
+            val have = groups[index].items.mapTo(HashSet<Long>()) { it.id }
+            val fresh = found.distinctBy { it.id }.filter { it.id !in have }
+            if (fresh.isEmpty()) return groups
             groups.mapIndexed { i, group -> if (i == index) group.copy(items = group.items + fresh) else group }
         } else {
+            val fresh = found.distinctBy { it.id }
+            if (fresh.isEmpty()) return groups
             groups + AnimeSuggestionGroup(name, fresh)
         }
-        val named = updated.filter { it.name != null }
-        val plain = updated.filter { it.name == null }
-            .map { group -> if (plainCap != null) group.copy(items = group.items.take(plainCap)) else group }
-        return named + plain
+        return arrange(updated, plainCap)
     }
+
+    /** KMK (r109): a source's section about related titles ("Related videos"): shown first */
+    fun isRelated(name: String?): Boolean = name != null && RELATED.containsMatchIn(name)
+
+    private val RELATED = Regex("related", RegexOption.IGNORE_CASE)
+
+    /**
+     * KMK (r109): the sections in the order they are shown: named ones whose name says "related" first, then the other
+     * named ones (each in the source's order), then the plain list (capped at [plainCap] when given); a title shows
+     * only in the first section that has it (same id = same address in this source), and empty sections are dropped
+     */
+    fun arrange(groups: List<AnimeSuggestionGroup>, plainCap: Int?): List<AnimeSuggestionGroup> {
+        val named = groups.filter { it.name != null }
+        val plain = groups.filter { it.name == null }
+            .map { group -> if (plainCap != null) group.copy(items = group.items.take(plainCap)) else group }
+        val ordered = named.filter { isRelated(it.name) } + named.filterNot { isRelated(it.name) } + plain
+        val seen = HashSet<Long>()
+        return ordered
+            .map { group -> group.copy(items = group.items.filter { seen.add(it.id) }) }
+            .filter { it.items.isNotEmpty() }
+    }
+
+    /**
+     * KMK (r109): every suggestion for the anime page's one Suggestions row: the sections in [arrange]'s order (related
+     * ones first), each title once
+     */
+    fun row(groups: List<AnimeSuggestionGroup>): List<Anime> = groups.flatMap { it.items }.distinctBy { it.id }
 
     /** Index of [name]'s heading in the full screen's grid (headings are shown when any group is named) */
     fun headerIndex(groups: List<AnimeSuggestionGroup>, name: String): Int? {

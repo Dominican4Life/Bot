@@ -11,6 +11,11 @@
 // hovering, then by a pointer press, 300 ms (+400 ms) apart, until the entry shows; then the entry is clicked.
 // Idempotent: a second injection on the same window keeps the first. Logs go through LabPicker.log when the bridge
 // is there ("learn: …"), else console.info.
+//
+// KMK (r109, a directory's custom drop-downs "Sort: Most videos", "Height: Any height"): press() takes `label` too: the
+// menu's button is the element reading "<label>: …" when `opener` finds nothing (and its own text is never the entry).
+// items({ id, label, opener, current }) opens such a menu (the same 3 ways) and reads the entries that showed (text,
+// href, value, current), then closes it; it answers "learn: items #<id> <json>" ({ ok, items, reason }).
 (function () {
   if (window.__labLearn) return;
 
@@ -99,11 +104,37 @@
     return list[0];
   }
 
+  // r109: the menu's button by its label: the innermost element reading "<label>: …", lifted to the control around it
+  // (a button, a link, [role=button], [aria-haspopup] / [aria-expanded], or one with a click handler's class); visible
+  // ones first
+  function openerByLabel(label) {
+    var want = norm(label).toLowerCase();
+    if (!want) return null;
+    var found = queryAll("button, a, summary, label, span, div, p, strong, [role=button], [aria-haspopup], [aria-expanded]").filter(function (el) {
+      if (!own(el)) return false;
+      var t = norm(el.textContent).replace(/[\s▾▴▼▲⌄⌃∨∧˅˄›»⏷⏶▸▹►▶]+$/, "").toLowerCase();
+      return t.length <= 64 && t.indexOf(want + ":") === 0;
+    });
+    found = found.filter(function (el) {
+      for (var k = 0; k < found.length; k++) if (found[k] !== el && el.contains(found[k])) return false;
+      return true;
+    }).map(function (el) {
+      var c = el.closest("button, a, summary, [role=button], [role=combobox], [aria-haspopup], [aria-expanded]");
+      if (c) return c;
+      for (var n = el, up = 0; n && up < 3; n = n.parentElement, up++) if (toggleLike(n, null)) return n;
+      // a text that isn't a control (a heading reading "Name: …") is no menu's button
+      return /^(button|summary|label)$/i.test(el.tagName) ? el : null;
+    }).filter(function (el) { return !!el; });
+    found.sort(function (a, b) { return (visible(b) ? 1 : 0) - (visible(a) ? 1 : 0); });
+    return found[0] || null;
+  }
+
   // By its path first; else by its text anywhere, leaving out the text of a menu's own button ("Year: <span>All")
-  function findEntry(entry, opener) {
+  function findEntry(entry, opener, label) {
     var hit = pick(queryAll(entry.path), entry.text);
     if (hit) return hit;
-    var buttons = queryAll(opener).concat(queryAll("[aria-haspopup], [aria-expanded]"));
+    var byLabel = label ? openerByLabel(label) : null;
+    var buttons = queryAll(opener).concat(queryAll("[aria-haspopup], [aria-expanded]")).concat(byLabel ? [byLabel] : []);
     var pool = queryAll(CANDIDATES).filter(function (el) {
       for (var i = 0; i < buttons.length; i++) if (buttons[i] !== el && buttons[i].contains(el)) return false;
       return buttons.indexOf(el) < 0 || !el.hasAttribute("aria-expanded");
@@ -136,8 +167,18 @@
     return 0;
   }
 
-  function findOpener(opener, entryEl) {
+  function readsLabel(el, label) {
+    return norm(el.textContent).toLowerCase().indexOf(norm(label).toLowerCase() + ":") === 0;
+  }
+
+  function findOpener(opener, entryEl, label) {
     var els = queryAll(opener).filter(own);
+    // r109: a recorded path that finds nothing, or an element not reading "<label>: …" (the page changed since it was
+    // read), loses to the button reading the label
+    var labelled = label ? openerByLabel(label) : null;
+    if (labelled && !els.some(function (e) { return e === labelled || e.contains(labelled) || labelled.contains(e) || readsLabel(e, label); })) {
+      return labelled;
+    }
     if (els.length === 1) return els[0];
     if (els.length > 1) {
       if (entryEl) els.sort(function (a, b) { return shared(b, entryEl) - shared(a, entryEl); });
@@ -237,13 +278,14 @@
     current = typeof req.id === "number" || typeof req.id === "string" ? String(req.id) : null;
     var name = "\"" + norm(entry.text).slice(0, 40) + "\"";
     disarm();
-    var el = findEntry(entry, req.opener);
+    var label = req.label ? String(req.label) : "";
+    var el = findEntry(entry, req.opener, label);
     if (el && visible(el)) {
       finish("pressed", name);
       press(el);
       return "pressed";
     }
-    var op = findOpener(req.opener, el);
+    var op = findOpener(req.opener, el, label);
     if (!op) {
       if (el) {
         finish("pressed", name + " (hidden, no menu button found)");
@@ -260,7 +302,7 @@
       OPENERS[k](op);
       function check(second) {
         current = mine;
-        var e2 = findEntry(entry, req.opener);
+        var e2 = findEntry(entry, req.opener, label);
         if (e2 && visible(e2)) {
           finish("pressed", name + " (menu opened, way " + (k + 1) + ")");
           press(e2);
@@ -285,8 +327,83 @@
     return "opening";
   }
 
+  // r109: the entries shown on screen now (innermost controls / list items), never inside [op]
+  var ITEM_SEL = "a[href], button, li, [role=option], [role=menuitem], [role=menuitemradio], [role=radio], [data-value], label";
+  function shownEntries(op) {
+    var all = queryAll(ITEM_SEL).filter(function (el) { return own(el) && (!op || (!op.contains(el) && !el.contains(op))) && visible(el); });
+    return all.filter(function (el) {
+      for (var k = 0; k < all.length; k++) if (all[k] !== el && el.contains(all[k])) return false;
+      return true;
+    });
+  }
+  var ITEM_CURRENT = /(^|\s)(is-|o-)?(active|selected|current|checked|chosen)(\s|$)/i;
+  function entryInfo(el, current) {
+    var t = textOf(el);
+    var out = { text: t.slice(0, 80) };
+    if (el.tagName.toLowerCase() === "a") {
+      var raw = el.getAttribute("href") || "";
+      if (raw && !/^(javascript:|#)/i.test(raw)) { try { out.href = new URL(raw, location.href).href; } catch (e) { /* nothing */ } }
+    }
+    var v = el.getAttribute("data-value");
+    if (v === null) v = el.getAttribute("value");
+    if (v !== null) out.value = String(v);
+    var li = el.parentElement && el.parentElement.tagName.toLowerCase() === "li" ? el.parentElement : null;
+    var boxes = li ? [el, li] : [el];
+    for (var i = 0; i < boxes.length; i++) {
+      var b = boxes[i];
+      var cur = b.getAttribute("aria-current");
+      if (ITEM_CURRENT.test(String(b.getAttribute("class") || "")) || b.getAttribute("aria-selected") === "true" ||
+        b.getAttribute("aria-checked") === "true" || (cur !== null && cur !== "false")) out.current = true;
+    }
+    if (current && t.toLowerCase() === norm(current).toLowerCase()) out.current = true;
+    return out;
+  }
+
+  // r109: opens the menu of [req.label] / [req.opener], reads the entries that showed, closes it
+  function items(req) {
+    req = req || {};
+    var id = String(req.id === undefined ? "" : req.id);
+    function answer(o) { log("items #" + id + " " + JSON.stringify(o)); }
+    disarm();
+    var op = findOpener(req.opener, null, req.label ? String(req.label) : "");
+    if (!op) { answer({ ok: false, items: [], reason: "the menu's button (" + (req.label || req.opener || "?") + ") is not on " + location.href }); return "missing"; }
+    var before = shownEntries(op);
+    function fresh() { return shownEntries(op).filter(function (el) { return before.indexOf(el) < 0; }); }
+    function close() {
+      try { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); } catch (e) { /* nothing */ }
+      setTimeout(function () { if (fresh().length >= 2) { try { op.click(); } catch (e2) { /* nothing */ } } }, 150);
+    }
+    function attempt(k) {
+      OPENERS[k](op);
+      function check(second) {
+        var now = fresh();
+        if (now.length >= 2) {
+          var list = now.slice(0, 80).map(function (el) { return entryInfo(el, req.current); }).filter(function (x) { return !!x.text; });
+          answer({ ok: true, items: list.slice(0, 60), way: k + 1 });
+          close();
+          return;
+        }
+        if (!second) { setTimeout(function () { check(true); }, 400); return; }
+        if (k + 1 < OPENERS.length) attempt(k + 1);
+        else answer({ ok: false, items: [], reason: "no entries showed after pressing " + textOf(op).slice(0, 40) });
+      }
+      setTimeout(function () { check(false); }, 300);
+    }
+    attempt(0);
+    return "opening";
+  }
+
   window.__labLearn = {
-    version: 1,
+    version: 2,
+    // r109: a custom drop-down's entries, opened on the page
+    items: function (req) {
+      try {
+        return items(req);
+      } catch (e) {
+        log("items #" + String((req && req.id) || "") + " " + JSON.stringify({ ok: false, items: [], reason: e && e.message ? e.message : String(e) }));
+        return "error";
+      }
+    },
     press: function (req) {
       try {
         return run(req);
@@ -298,8 +415,8 @@
     // For checks: what press() would use, without pressing
     find: function (req) {
       req = req || {};
-      var el = findEntry(req.entry || {}, req.opener);
-      var op = el && visible(el) ? null : findOpener(req.opener, el);
+      var el = findEntry(req.entry || {}, req.opener, req.label);
+      var op = el && visible(el) ? null : findOpener(req.opener, el, req.label);
       return { found: !!el, visible: !!el && visible(el), text: el ? textOf(el) : "", opener: op ? textOf(op) : "" };
     },
     last: function () { return last; },

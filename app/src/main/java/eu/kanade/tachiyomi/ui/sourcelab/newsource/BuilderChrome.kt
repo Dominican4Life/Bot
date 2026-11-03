@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.ui.sourcelab.newsource
 
 import androidx.compose.animation.core.animate
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -8,9 +9,9 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
@@ -19,19 +20,19 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.ArrowForward
@@ -57,7 +58,10 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -72,6 +76,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -753,6 +759,7 @@ internal fun BuilderPhoneSheet(
     // [peek, half, full] in px, written while laying out (read by the drag callbacks; not state)
     val stops = remember { FloatArray(3) }
     val scroll = rememberScrollState()
+    val panelScroll = remember(scroll) { PanelScroll(scroll) } // KMK (r109) fix
     val density = LocalDensity.current
     val drag = rememberDraggableState { delta ->
         if (stops[2] > 0f) {
@@ -861,16 +868,32 @@ internal fun BuilderPhoneSheet(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
+                        // KMK (r109) fix: the viewport's top, for a card brought to the panel's top
+                        .onGloballyPositioned { panelScroll.viewportTop = it.positionInRoot().y }
                         .verticalScroll(scroll)
                         .padding(horizontal = 12.dp, vertical = 12.dp),
-                    content = body,
-                )
+                ) {
+                    val column = this
+                    CompositionLocalProvider(LocalPanelScroll provides panelScroll) { column.body() }
+                }
                 // The step's action stays at the sheet's bottom (not at the peek: only the tabs show there)
                 if (level != SHEET_PEEK) footer()
             }
         }
     }
 }
+
+/**
+ * KMK (r109) fix: the builder panel's own scroll ([state]) and its viewport's top in the root ([viewportTop], px): a card
+ * that comes to the panel's top scrolls this one only (never the screen or the page around it)
+ */
+@Stable
+internal class PanelScroll(val state: ScrollState) {
+    var viewportTop by mutableFloatStateOf(0f)
+}
+
+/** KMK (r109) fix: the panel a pane sits in (null = not in one) */
+internal val LocalPanelScroll = compositionLocalOf<PanelScroll?> { null }
 
 /**
  * r106 (phone): the top bar's step indicator: the title, "2/3 · Title page ▾" and the picked count under it; a tap

@@ -218,6 +218,9 @@ internal object IssueReport {
         now?.let { out.add(Triple("testrun-now.json", prettyJson.encodeToString(TestRun.serializer(), it), "${it.passed} of ${it.counted} passed")) }
         previous?.let { out.add(Triple("testrun-previous.json", prettyJson.encodeToString(TestRun.serializer(), it), null)) }
         out.add(Triple("requests.txt", requests(red ?: now?.steps?.lastOrNull()), red?.let { "the ${it.name.lowercase()} step" } ?: "the last step"))
+        // r109: a source made by Record and convert: the recording's step-by-step summary from the code's header
+        // (requests, what the extension returned, why a part is a TODO), redacted like the other text entries
+        recordingOf(code)?.let { out.add(Triple("recording.txt", it, "Record and convert, step by step")) }
         out.add(Triple("console.txt", now?.console.orEmpty().joinToString("\n"), "${now?.console?.size ?: 0} lines"))
         out.add(Triple("fingerprint.json", info.lab?.let { prettyJson.encodeToString(JsonElement.serializer(), it) } ?: "{}", if (info.lab == null) "hand-written or imported" else null))
         out.add(Triple("device.txt", device(), null))
@@ -273,6 +276,38 @@ internal object IssueReport {
             }
         }
     }
+
+    /**
+     * r109: the "Recording, step by step" block RecordedConverter writes into the header of a converted source, without
+     * the comment marks; plus each part's "What the converter found" lines; null when the code has none
+     */
+    private fun recordingOf(code: String): String? {
+        val lines = code.lines()
+        val start = lines.indexOfFirst { RECORDING_MARK in it }
+        if (start < 0) return null
+        val out = ArrayList<String>()
+        out.add(lines[start].trim().removePrefix("//").trim())
+        for (line in lines.drop(start + 1)) {
+            val t = line.trim()
+            if (!t.startsWith("// - ") && !t.startsWith("//     ")) break
+            out.add(t.removePrefix("//").removePrefix(" "))
+        }
+        // Each TODO part's reason and findings, after the summary
+        lines.forEachIndexed { i, line ->
+            val t = line.trim()
+            if (!t.startsWith("// TODO (not converted):")) return@forEachIndexed
+            out.add("")
+            out.add(t.removePrefix("//").trim())
+            for (next in lines.drop(i + 1)) {
+                val n = next.trim()
+                if (n != "// What the converter found:" && !n.startsWith("//   - ")) break
+                out.add(n.removePrefix("//").trimEnd())
+            }
+        }
+        return out.joinToString("\n")
+    }
+
+    private const val RECORDING_MARK = "Recording, step by step"
 
     private fun device(): String = buildString {
         appendLine("manufacturer: ${Build.MANUFACTURER}")

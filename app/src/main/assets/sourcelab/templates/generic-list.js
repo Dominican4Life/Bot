@@ -1,4 +1,4 @@
-// @version 10
+// @version 11
 // Generic list template of the Source Lab, written for {{name}} ({{baseUrl}}) from what was tapped in Build by
 // tapping (or filled by hand). Lists are pages of ITEM cards, chapters / episodes are the links of CHAPTER on a
 // title page, pages are the IMAGE pictures of a chapter page, videos the VIDEO_FRAME of an episode page.
@@ -29,6 +29,10 @@
 // and getDirectory reads its pages one at a time as Browse scrolls ("live"); the built-in "List" stays in getFilters
 // (the app hides it; the list browsed still comes as "__from"); Suggestions read each section on its own (one that fails
 // never fails the others), log each section's outcome, and give the hidden browser 35 s at most in all.
+// r109 (v11): getDirectory serves stored collections too (the app asks it when the site's own sort or a menu is picked
+// on a list it keeps); a sort's first option may be the site's default (value "": the directory's own order). A card's
+// picture is also found when its img has none or a placeholder: a <picture>'s <source>, a background-image or data-bg…
+// on the card or inside it, an img inside <noscript> (suggestions, list covers and collection pictures).
 
 /*@part id="headers"*/
 // Headers and constants: the site as Referer on every picture; the selectors the builder derived (each with
@@ -574,7 +578,8 @@ if (SETTINGS.length) {
 if (FILTERS.some(function (f) { return f && f.type === "collection" && f.directory && f.directory.item; })) {
   // r107 (v10): one page of a collection's directory: { items: [{ label, value, number?, videos?, views?, likes?,
   // picture? }], hasNext }. [sort] = one of its "sorts" values ("" = the site's own order), [ascending] is sent only
-  // when the site offers it ("reverse"), [menus] = { menuKey: value } (empty values left out)
+  // when the site offers it ("reverse"), [menus] = { menuKey: value } (empty values left out). r109 (v11): for a
+  // stored ("live": false) collection too: its "directory" is kept, so the app pages it live when a sort or menu is set
   extension.getDirectory = async function (key, page, sort, ascending, menus) {
     var f = FILTERS.filter(function (x) { return x && x.key === key && x.type === "collection"; })[0];
     if (!f || !f.directory || !f.directory.item) throw new Error("The filter " + key + " has no directory to read");
@@ -635,13 +640,16 @@ if (typeof SUGGESTION_GROUPS !== "undefined" && Array.isArray(SUGGESTION_GROUPS)
           if (!href || seen[href] || href === url) continue;
           var nameEl = g.title ? await card.selectOne(g.title) : null;
           var img = g.cover ? await card.selectOne(g.cover) : await card.selectOne("img");
+          var coverEl = g.cover ? img : null; // KMK (r109) fix: the cover element itself, for the fallback picture
           if (img && img.tag !== "img") img = (await img.selectOne("img")) || img;
           var title = (nameEl ? nameEl.text : "") || a.attr("title") || a.text || (img ? img.attr("alt") : "") || "";
           title = String(title).replace(/\s+/g, " ").trim();
           if (!title) continue;
           seen[href] = true;
-          list.push({ url: href, title: title, coverUrl: coverOf(img, g.coverAttr) });
-          pics.push({ img: img, attr: g.coverAttr });
+          // r109 (v11): no cover selector, or it finds a placeholder: the card's lazy / background / <source> picture
+          // KMK (r109) fix: inside the cover element / link first, badges and avatars left out
+          list.push({ url: href, title: title, coverUrl: coverOf(img, g.coverAttr) || (await fallbackPicture(card, coverEl, a, null)) });
+          pics.push({ img: img, attr: g.coverAttr, card: card, cover: coverEl, link: a });
           added++;
         }
         return added;
@@ -688,7 +696,7 @@ if (typeof SUGGESTION_GROUPS !== "undefined" && Array.isArray(SUGGESTION_GROUPS)
             if (!got) break;
           }
         }
-        sameCoverAgain(list, pics, "Suggestions " + name);
+        await sameCoverAgain(list, pics, "Suggestions " + name);
         console.log("Suggestions " + name + ": " + (list.length - before) + " cards from " + where + " in " + (Date.now() - t0) + " ms");
       } catch (e) {
         console.log("Suggestions " + name + " failed after " + (Date.now() - t0) + " ms: " + ((e && e.message) || String(e)));
@@ -894,14 +902,74 @@ function coverOf(img, attr, skip) {
   var names = [attr, "data-src", "data-lazy-src", "data-original", "data-srcset", "srcset", "src"];
   for (var i = 0; i < names.length; i++) {
     if (!names[i] || names.indexOf(names[i]) < i) continue;
-    var v = firstPicture(img.attr(names[i]), /srcset/i.test(names[i]));
+    // r109 (v11): "style" = a background-image's url(), "noscript" = the img inside it; quotes of a script binding go
+    var raw = names[i] === "style" ? backgroundOf(img.attr("style")) : names[i] === "noscript" ? noscriptPicture(img) :
+      String(img.attr(names[i]) || "").trim().replace(/^'(.*)'$/, "$1");
+    var v = firstPicture(raw, /srcset/i.test(names[i]));
     if (!v || /^(data|about|javascript):/i.test(v)) continue;
     if (/\.svg(\?|#|$)|favicon|\/logo[^\/]*$/i.test(v) || placeholderPicture(v)) continue;
     var full = abs(v);
     if (!full || (skip && full === skip)) continue;
+    // KMK (r109) fix: a loose attribute (data-image, data-thumb… or a picked one not known for pictures) only with a
+    // picture's address: a card's data-url / data-img holding its link isn't its picture
+    if (PLAIN_PICTURE_ATTRS.indexOf(names[i]) < 0 && !looksPicture(full)) continue;
     return full;
   }
   return null;
+}
+// r109 (v11): the picture of [el] when coverOf finds none in it: its own lazy-load / background attributes, a
+// background-image style, a noscript's img, then an img, a <picture>'s <source>, a noscript or a background inside it
+// KMK (r109) fix: no data-url (a card's link); data-echo / data-image / data-img / data-thumb only with a picture's address
+var MORE_PICTURE_ATTRS = ["data-lazy", "data-original-src", "data-hi-res-src", "lazy-src", "data-echo", "data-image",
+  "data-img", "data-bg", "data-background", "data-background-image", "data-bg-src", "data-thumb", "poster", "style", "noscript"];
+// KMK (r109) fix: the attributes known to hold a picture; any other gives one only when its address looks like a picture
+var PLAIN_PICTURE_ATTRS = ["data-src", "data-lazy-src", "data-original", "data-srcset", "srcset", "src", "style", "noscript",
+  "data-lazy", "data-original-src", "data-hi-res-src", "lazy-src", "data-bg", "data-background", "data-background-image",
+  "data-bg-src", "poster"];
+// A picture's address: a picture file's extension, or a picture folder in its path (/img, /thumbs, /covers, /avatar…)
+function looksPicture(u) {
+  var path = String(u || "").replace(/^[a-z]+:\/\/[^\/]+/i, "").split(/[?#]/)[0];
+  return /\.(jpe?g|png|webp|gif|avif|bmp)$/i.test(path) || /\/(img|image|thumb|cover|poster|avatar|photo|pic)/i.test(path);
+}
+// KMK (r109) fix: a badge, an icon or a small avatar in a card (not its cover): 39px or less by its width/height
+// attributes, or its class / alt naming one
+function badgePicture(x) {
+  if (!x || !x.attr) return false;
+  var w = parseInt(x.attr("width"), 10), h = parseInt(x.attr("height"), 10);
+  if ((w > 0 && w < 40) || (h > 0 && h < 40)) return true;
+  return /avatar|badge|icon|logo|flag/i.test(String(x.attr("class") || "") + " " + String(x.attr("alt") || ""));
+}
+// [opts]: skip = an address left out (the placeholder every card has), noBadges = badges / avatars inside left out
+async function pictureIn(el, attr, opts) {
+  if (!el) return null;
+  var skip = opts && opts.skip;
+  var own = function (x, first) {
+    var got = coverOf(x, first, skip);
+    for (var k = 0; !got && k < MORE_PICTURE_ATTRS.length; k++) got = coverOf(x, MORE_PICTURE_ATTRS[k], skip);
+    return got;
+  };
+  try {
+    var got = own(el, attr);
+    if (got) return got;
+    var inner = await el.select("img, picture source, [style*=background], [data-bg], [data-background], [data-background-image], [data-bg-src], noscript");
+    for (var i = 0; i < inner.length && i < 12; i++) {
+      if (opts && opts.noBadges && badgePicture(inner[i])) continue;
+      got = own(inner[i], attr);
+      if (got) return got;
+    }
+  } catch (e) {
+    console.log("Picture: not read inside " + (el.tag || "a card") + ": " + ((e && e.message) || e));
+  }
+  return null;
+}
+function backgroundOf(style) {
+  var m = /background(?:-image)?\s*:[^;]*url\(\s*['"]?([^'")]+)['"]?\s*\)/i.exec(String(style || ""));
+  return m ? m[1] : "";
+}
+function noscriptPicture(el) {
+  if (!el || el.tag !== "noscript") return "";
+  var m = /<img[^>]+?(?:data-src|src)\s*=\s*["']([^"']+)["']/i.exec(String(el.html || ""));
+  return m ? m[1].replace(/&amp;/g, "&") : "";
 }
 // The first address of an attribute: a srcset-style list ("a.jpg 320w, b.jpg 640w") gives its first entry; a comma
 // inside an address (Cloudinary's w_200,h_300) stays
@@ -918,12 +986,31 @@ function placeholderPicture(v) {
   return /^(placeholder|blank|spacer|transparent|pixel|1x1|empty|lazy|lazyload|loading|loader|grey|gray|no[-_]?(image|img|cover|thumb|poster))([-_.](min|small|\d+x\d+))?\.(gif|png|jpe?g|webp|svg)$/.test(file);
 }
 // r105 fix: one picture on every card (3 or more) is the site's placeholder: each card's next attribute is read
-function sameCoverAgain(list, pics, what) {
+// KMK (r109) fix: then the card's fallback picture (cover / link element first, badges left out) before none
+async function sameCoverAgain(list, pics, what) {
   if (list.length < 3 || pics.length !== list.length) return;
   var c = list[0].coverUrl;
   if (!c || !list.every(function (x) { return x.coverUrl === c; })) return;
   console.log(what + ": every card has the picture " + c + ": a placeholder, left out");
-  list.forEach(function (x, k) { x.coverUrl = pics[k] ? coverOf(pics[k].img, pics[k].attr, c) : null; });
+  for (var k = 0; k < list.length; k++) {
+    var p = pics[k];
+    list[k].coverUrl = p ? (coverOf(p.img, p.attr, c) || (await fallbackPicture(p.card, p.cover, p.link, c))) : null;
+  }
+}
+// KMK (r109) fix: a card's picture when its cover img gives none: inside the cover element, then the link, then the
+// whole card; badges, icons and small avatars left out; [skip] = the placeholder every card has
+async function fallbackPicture(card, cover, link, skip) {
+  var opts = { skip: skip || null, noBadges: true };
+  var tried = [];
+  var holders = [cover, link, card];
+  for (var i = 0; i < holders.length; i++) {
+    var h = holders[i];
+    if (!h || tried.indexOf(h) >= 0) continue;
+    tried.push(h);
+    var got = await pictureIn(h, "", opts);
+    if (got) return got;
+  }
+  return null;
 }
 // r105 (v8): a late section's address: {seg1}… = the title address's path parts (1 = the first), {path}, {url}
 // (encoded) and {attr:name} (that attribute of the title page's first element having it; r105 fix:
@@ -1045,6 +1132,7 @@ async function cards(html) {
     var a = t && t.tag === "a" ? t : (await items[i].selectOne("a[href]")) || (items[i].tag === "a" ? items[i] : null);
     if (!a || !a.attr("href")) continue;
     var img = COVER ? await items[i].selectOne(COVER) : await items[i].selectOne("img");
+    var coverEl = COVER ? img : null; // KMK (r109) fix: the cover element itself, for the fallback picture
     if (img && img.tag !== "img") img = (await img.selectOne("img")) || img;
     var name = (t ? (t.text || t.attr("title")) : "") || a.attr("title") || a.text || (img ? img.attr("alt") : "");
     var lower = String(name || "").toLowerCase();
@@ -1052,11 +1140,13 @@ async function cards(html) {
     out.push({
       url: abs(a.attr("href")),
       title: name,
-      coverUrl: coverOf(img, COVER_ATTR),
+      // r109 (v11): only when the img gives nothing (cheap otherwise): the card's background / <source> picture
+      // KMK (r109) fix: inside the cover element / link first, badges and avatars left out
+      coverUrl: coverOf(img, COVER_ATTR) || (await fallbackPicture(items[i], coverEl, a, null)),
     });
-    pics.push({ img: img, attr: COVER_ATTR });
+    pics.push({ img: img, attr: COVER_ATTR, card: items[i], cover: coverEl, link: a });
   }
-  sameCoverAgain(out, pics, "List covers");
+  await sameCoverAgain(out, pics, "List covers");
   return out;
 }
 // r107 (v10): a collection's entries on one page of its directory: each card ("item"), its link (the entry's value is
@@ -1095,9 +1185,9 @@ async function directoryItems(f, doc) {
       if (v) item[kinds[k]] = v;
     }
     if (fields.indexOf("picture") >= 0 && parts.picture) {
-      var img = await partEl(card, parts.picture);
-      if (img && img.tag !== "img") img = (await img.selectOne("img")) || img;
-      var pic = coverOf(img, parts.picture.attr);
+      // r109 (v11): the part may be a background, a <source> or a wrapper: pictureIn looks at it, then inside it
+      var holder = await partEl(card, parts.picture);
+      var pic = holder ? await pictureIn(holder, parts.picture.attr) : null;
       if (pic) item.picture = pic;
     }
     out.push(item);

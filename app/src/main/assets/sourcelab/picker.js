@@ -96,6 +96,13 @@
 // text }) presses the button once (the picker lets that click through), waits until the section's cards stop growing
 // (10 s at most) and answers as a pick { via: "more", id, ok, before, after, requests (the page's fetch / XHR addresses
 // since the press), samples (titles of the new cards), reason }.
+//
+// KMK (r109, a directory's custom drop-downs and pictures): a menu pick's items carry `current: true` for the entry the
+// site marks as chosen (active / selected / aria-selected / aria-current / a selected option): it names the menu's
+// default. .pictureMode({ item } | null): the next tap names one card's picture (the cards are [item]'s elements): an
+// img, or an element with a background picture, at or around the tap; answered as a pick { via: "picture", ok,
+// selectors (its own tag and classes, then the steps down from the card: "> a > div.avatar > img"), attrs (the
+// attributes that hold its address), url, reason }. Never navigates.
 (function () {
   var TOKEN = "";
   try {
@@ -1294,6 +1301,11 @@
       note = "everything here was skipped; using " + found.fallback;
       send("log", "tap: " + note);
     }
+    // r109: "Tap the picture on the page": this tap names one card's picture
+    if (pictureOn) {
+      try { picturePick(el); } catch (ePic) { send("log", "picture pick failed: " + ePic.message); }
+      return;
+    }
     // r103: "Pick a menu on the site": this tap picks a menu group (a heading and its list)
     if (menuOn) {
       menuOn = false;
@@ -1350,7 +1362,7 @@
       window.__labPicker.mode = mode;
       window.__labPicker.armed = armed;
     }
-    applyModeClass(groupOn || menuOn ? "pick" : mode);
+    applyModeClass(groupOn || menuOn || pictureOn ? "pick" : mode);
     cancelHold();
   }
 
@@ -1833,7 +1845,28 @@
     if (value === null && (tag === "option" || tag === "button" || tag === "input" || tag === "li")) value = el.getAttribute("value");
     if (value === null && tag === "option") value = el.value;
     if (value !== null && value !== undefined) out.value = String(value);
+    // r109: the site's current choice (it names the menu's default)
+    try { if (isCurrentEntry(el)) out.current = true; } catch (eCur) { /* nothing */ }
     return out;
+  }
+
+  // r109: an entry the site marks as chosen: an active / selected / current class (on it or its li), aria-selected,
+  // aria-checked, aria-current, a selected option
+  var CURRENT_CLASS = /(^|\s)(is-|o-)?(active|selected|current|checked|chosen)(\s|$)/i;
+  function isCurrentEntry(el) {
+    var tag = el.tagName.toLowerCase();
+    if (tag === "option") return !!el.selected;
+    var boxes = [el];
+    var li = el.parentElement && el.parentElement.tagName.toLowerCase() === "li" ? el.parentElement : null;
+    if (li) boxes.push(li);
+    for (var i = 0; i < boxes.length; i++) {
+      var b = boxes[i];
+      if (CURRENT_CLASS.test(String(b.getAttribute("class") || "").replace(/__lab-\S+/g, ""))) return true;
+      if (b.getAttribute("aria-selected") === "true" || b.getAttribute("aria-checked") === "true") return true;
+      var cur = b.getAttribute("aria-current");
+      if (cur !== null && cur !== "false") return true;
+    }
+    return false;
   }
 
   // The list's name: an aria-label on the list, a heading before it, or the label of the submenu toggle above it
@@ -2229,6 +2262,81 @@
       group.subgroups.length + " subgroups, " + countGroups(group) + " groups");
   }
 
+  // ---------- r109: "Tap the picture on the page" (a scanned directory card) ----------
+
+  var pictureOn = null; // { item }: the next tap names a card's picture
+  var PIC_STATE = /^(active|selected|current|first|last|odd|even|hover|show|open|loaded|lazyloaded|lazyload|lazy|loading|fade|in|is-.+|js-.+)$/i;
+  function picSegment(el) {
+    var classes = String(el.getAttribute("class") || "").split(/\s+/).filter(function (c) {
+      return /^[A-Za-z_][\w-]*$/.test(c) && !PIC_STATE.test(c) && c.indexOf("__lab") !== 0 && !GENERATED.test(c);
+    });
+    return el.tagName.toLowerCase() + classes.sort().map(function (c) { return "." + c; }).join("");
+  }
+  function bgUrl(el) {
+    try {
+      var m = /url\(\s*["']?([^"')]+)["']?\s*\)/i.exec(String(window.getComputedStyle(el).backgroundImage || ""));
+      return m && !/^data:/i.test(m[1]) ? m[1] : "";
+    } catch (e) { return ""; }
+  }
+  // The picture at the tap: an img (itself or inside the tapped box), else an element with a background picture,
+  // looking up to 4 boxes around the tap
+  function pictureAt(el) {
+    for (var n = el, up = 0; n && n.nodeType === 1 && up < 4 && !/^(body|html)$/i.test(n.tagName); n = n.parentElement, up++) {
+      if (n.tagName.toLowerCase() === "img") return n;
+      if (bgUrl(n)) return n;
+      var img = n.querySelector ? n.querySelector("img") : null;
+      if (img) return img;
+      var bgs = n.querySelectorAll ? n.querySelectorAll("[style*=background], [data-bg], [data-background], [class*=avatar], [class*=thumb]") : [];
+      for (var i = 0; i < bgs.length; i++) if (bgUrl(bgs[i])) return bgs[i];
+    }
+    return null;
+  }
+  function picturePick(el) {
+    var req = pictureOn || {};
+    pictureOn = null;
+    applyModeClass(mode);
+    var answer = { via: "picture", pageUrl: location.href, ok: false, selectors: [], attrs: [], url: "", reason: "" };
+    var item = String(req.item || "");
+    var card = null;
+    try { card = item && el.closest ? el.closest(item) : null; } catch (eC) { card = null; }
+    var pic = pictureAt(el);
+    if (pic && card && !card.contains(pic)) pic = null;
+    if (!pic && card) pic = card.querySelector("img") || pictureAt(card);
+    if (pic && !card) { try { card = item ? pic.closest(item) : null; } catch (eC2) { card = null; } }
+    if (!pic) {
+      answer.reason = "there's no picture where you tapped";
+    } else if (!card) {
+      answer.reason = "the tap isn't on one of the list's cards (" + item + ")";
+    } else {
+      var url = pic.tagName.toLowerCase() === "img" ? String(pic.currentSrc || pic.src || "") : bgUrl(pic);
+      var file = url.split(/[?#]/)[0].split("/").pop();
+      for (var i = 0; i < pic.attributes.length; i++) {
+        var a = pic.attributes[i];
+        var v = String(a.value || "");
+        if (!v) continue;
+        var holds = a.name === "style" ? /url\(/i.test(v) : (!!file && v.indexOf(file) >= 0) || /\.(jpe?g|png|webp|gif|avif)(\?|#|\s|$)/i.test(v);
+        if (holds && answer.attrs.indexOf(a.name) < 0) answer.attrs.push(a.name);
+      }
+      var steps = [];
+      var tags = [];
+      for (var n = pic; n && n !== card; n = n.parentElement) {
+        steps.unshift(picSegment(n));
+        tags.unshift(n.tagName.toLowerCase());
+      }
+      // KMK (r109) fix: also the tags-only path and the bare tag (classes that differ from card to card); the app keeps
+      // whichever finds a picture on the most cards
+      answer.selectors = pic === card ? [""] : [picSegment(pic), "> " + steps.join(" > "), "> " + tags.join(" > "), tags[tags.length - 1]]
+        .filter(function (x, k, all) { return all.indexOf(x) === k; });
+      answer.url = url;
+      answer.ok = true;
+      clearMarks();
+      paint(pic, "3px solid #4caf6a", "-3px", null);
+    }
+    showBadge(answer.ok ? "Picture picked \u2014 see the app" : "No card's picture here \u2014 see the app");
+    send("pick", JSON.stringify(answer));
+    send("log", "picture pick: " + (answer.ok ? answer.selectors.join(" | ") + " · " + answer.attrs.join(",") : answer.reason));
+  }
+
   // ---------- pick mode: the site never sees the tap ----------
 
   var INTERACTIVE = "button, select, option, textarea, input, label, summary, [role=button], [role=option], [role=menuitem], [aria-haspopup]";
@@ -2242,7 +2350,7 @@
   // r101: taps are the picker's in Pick mode, and in Browse mode too while a group pick waits for its tap
   // r106: true while scanMore presses a Load more button: that click goes to the site, not to the picker
   var bypass = false;
-  function taking() { return !bypass && (mode === "pick" || groupOn || menuOn); }
+  function taking() { return !bypass && (mode === "pick" || groupOn || menuOn || !!pictureOn); }
 
   // touchstart on an interactive target is prevented (no focus, no menu, no click), so it is picked on touchend
   var touch = null;            // { x, y, target, interactive, moved }
@@ -2524,6 +2632,25 @@
       }
       send("log", "group mode " + (groupOn ? "on" : "off"));
       return groupOn;
+    },
+    // r109: { item } = the next tap names one card's picture (see picturePick) and never navigates; null = off
+    pictureMode: function (req) {
+      if (!req) {
+        var was = !!pictureOn;
+        pictureOn = null;
+        applyModeClass(groupOn || menuOn ? "pick" : mode);
+        if (was) showBadge(null);
+        send("log", "picture mode off");
+        return false;
+      }
+      pictureOn = { item: String(req.item || "") };
+      groupOn = false;
+      menuOn = false;
+      applyModeClass("pick");
+      clearMarks();
+      showBadge("Tap one card's picture (a face, a logo)");
+      send("log", "picture mode on (" + pictureOn.item + ")");
+      return true;
     },
     // r103: on = the next tap picks a menu group (see menuPick) and never navigates
     menuMode: function (on) {

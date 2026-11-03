@@ -59,8 +59,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -135,7 +139,10 @@ internal fun BuilderExtrasPane(
         val now = extras.state.value
         val target = now.scrollTarget
         if (now.scrollTick > now.scrollOpened) {
-            if (target != null && (target.startsWith("menu:") || target == "pending")) extras.setOpenSection("filters")
+            // KMK (r109) fix: a read's progress box ("read:<id>") is in Filters too
+            if (target != null && (target.startsWith("menu:") || target.startsWith("read:") || target == "pending")) {
+                extras.setOpenSection("filters")
+            }
             extras.scrollOpened(now.scrollTick)
         }
     }
@@ -837,8 +844,34 @@ private fun MenuActions(group: MenuGroup, extras: BuilderExtrasModel) {
  * r106: "Read all pages" running on a card: page k of the limit, names so far, Stop. r107 (mock BRead's progress card):
  * "<name> · reading page 14 of 40", the names so far, the countdown to the next page and the time left
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ReadSection(group: MenuGroup, read: GroupRead, extras: BuilderExtrasModel) {
+    // KMK (r109): when the read starts (the model's "read:<id>" request), this progress box comes to the top of the
+    // panel once; later progress updates and other cards never move the panel
+    val st by extras.state.collectAsState()
+    val requester = remember { BringIntoViewRequester() }
+    // KMK (r109) fix: the panel's own scroll and this box's top in the root (px, not state: read when scrolling)
+    val panel = LocalPanelScroll.current
+    val boxTop = remember { FloatArray(1) }
+    val gap = with(LocalDensity.current) { 8.dp.toPx() }
+    val target = "read:${group.id}"
+    val wanted = st.scrollTarget == target
+    LaunchedEffect(st.scrollTick, wanted) {
+        val tick = st.scrollTick
+        if (wanted && tick > 0 && tick > st.scrollDone) {
+            delay(150)
+            if (panel != null) {
+                // only the panel scrolls: its top to this box's top
+                val shift = boxTop[0] - panel.viewportTop - gap
+                val to = (panel.state.value + shift).toInt().coerceIn(0, panel.state.maxValue)
+                runCatching { panel.state.animateScrollTo(to) }
+            } else {
+                runCatching { requester.bringIntoView(Rect(0f, 0f, 1f, 1f)) }
+            }
+            extras.scrollDone(tick)
+        }
+    }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -854,7 +887,10 @@ private fun ReadSection(group: MenuGroup, read: GroupRead, extras: BuilderExtras
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surfaceContainerLowest,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .onGloballyPositioned { boxTop[0] = it.positionInRoot().y }
+            .bringIntoViewRequester(requester),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -910,6 +946,8 @@ private fun countsLine(e: BuilderListReader.DirEntry, fields: Collection<String>
  */
 @Composable
 private fun CollectionSection(group: MenuGroup, scan: BuilderListReader.DirScan, read: GroupRead?, extras: BuilderExtrasModel) {
+    // KMK (r109): the menu pick / picture tap waiting for this card
+    val st by extras.state.collectAsState()
     var pause by remember { mutableStateOf(extras.pauseSeconds().let { (a, b) -> a.coerceIn(0f, 10f)..b.coerceIn(0f, 10f) }) }
     val choice = group.choice ?: BuilderExtrasLogic.defaultChoice(group.name, scan)
     val people = BuilderExtrasLogic.peopleLike(group.name, scan.url)
@@ -1018,14 +1056,22 @@ private fun CollectionSection(group: MenuGroup, scan: BuilderListReader.DirScan,
     if (scan.sorts.isNotEmpty()) {
         Hint("Sort found on the page (goes behind the ⇅ button):")
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            scan.sorts.forEach { o -> RoleChip(o.label) }
+            // KMK (r109): the site's default (value "") comes first and says so
+            scan.sorts.forEachIndexed { i, o -> RoleChip(if (i == 0 && o.value.isEmpty()) "${o.label} · default" else o.label) }
         }
     }
     if (scan.menus.isNotEmpty()) {
         Hint("The site's own menus found (the drop-down offers them too):")
-        Text(scan.menus.joinToString(" · ") { it.name }, style = MaterialTheme.typography.bodyMedium)
+        Text(
+            scan.menus.joinToString(" · ") { m -> m.name + (m.options.firstOrNull { it.value.isEmpty() }?.let { " (${it.label})" } ?: "") },
+            style = MaterialTheme.typography.bodyMedium,
+        )
     }
-    if (scan.sorts.isEmpty() && scan.menus.isEmpty()) Hint("No sort or menu found on this page: the drop-down keeps the site's order.")
+    // KMK (r109): the site's custom drop-downs still to learn on the page, picking a menu by hand, tapping a picture
+    DirMenusBox(group, scan, st, extras)
+    if (scan.sorts.isEmpty() && scan.menus.isEmpty() && scan.custom.isEmpty() && group.dirLearn == null) {
+        Hint("No sort or menu found on this page: the drop-down keeps the site's order unless you pick the site's menu.")
+    }
 
     // How Browse gets the names (mock BRead)
     Text("How should Browse get the names?", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
@@ -1126,6 +1172,106 @@ private fun CollectionSection(group: MenuGroup, scan: BuilderListReader.DirScan,
                     else -> "Read and make filter"
                 },
             )
+        }
+    }
+}
+
+/**
+ * KMK (r109): on a scanned directory card: the site's custom drop-downs found but not learned yet ("Sort: Most videos",
+ * "Height: Any height"…) with "Learn the menus" (pressed on the page, progress and Stop), what was learned; "Pick the
+ * site's Sort menu" / "Pick another menu" (the next menu pick is this card's); "Tap the picture on the page" when the
+ * cards' pictures weren't found
+ */
+@Composable
+private fun DirMenusBox(group: MenuGroup, scan: BuilderListReader.DirScan, st: BuilderExtras, extras: BuilderExtrasModel) {
+    val learning = group.dirLearn
+    if (scan.custom.isNotEmpty() || learning != null) {
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLowest,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                if (learning != null && learning.running) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "Learning ${learning.label} · ${learning.done} of ${learning.total} pressed",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f),
+                        )
+                        OutlinedButton(onClick = extras::stopLearn) { Text("Stop") }
+                    }
+                    LinearProgressIndicator(
+                        progress = { (learning.done.toFloat() / learning.total.coerceAtLeast(1)).coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                } else if (scan.custom.isNotEmpty()) {
+                    Text(
+                        "The site's own menus: " + scan.custom.joinToString(" · ") { m -> if (m.current.isNotEmpty()) "${m.label}: ${m.current}" else m.label },
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Hint(
+                        "Their entries are buttons, or show only when the menu opens: the Lab presses each one on this page " +
+                            "and writes down the address it opens (the pause set for reading pages is used).",
+                    )
+                    val entries = scan.custom.sumOf { it.items.size }
+                    Button(onClick = { extras.learnDirMenus(group.id) }) {
+                        Icon(Icons.Outlined.TouchApp, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (entries > 0) "Learn the menus ($entries entries)" else "Learn the menus")
+                    }
+                }
+                learning?.found?.forEach { line ->
+                    Text(line, style = MaterialTheme.typography.bodySmall, color = if (line.contains(" options")) OkGreen else WarnAmber)
+                }
+                if (learning != null && !learning.running && learning.note.isNotEmpty()) Hint(learning.note)
+            }
+        }
+    }
+    if (st.dirPick == group.id) {
+        Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.tertiaryContainer, modifier = Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 12.dp)) {
+                Text(
+                    if (st.dirPickSort) {
+                        "On the page: tap the site's sort button (\"Sort: …\") or one of its entries"
+                    } else {
+                        "On the page: tap the menu's button (\"Height: …\") or one of its entries"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    modifier = Modifier.weight(1f).padding(vertical = 8.dp),
+                )
+                TextButton(onClick = extras::cancelDirPick) { Text("Cancel") }
+            }
+        }
+    } else if (learning?.running != true) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (scan.sorts.isEmpty() && scan.custom.none { it.sort }) {
+                OutlinedButton(onClick = { extras.pickDirMenu(group.id, sort = true) }) { Text("Pick the site's Sort menu") }
+            }
+            TextButton(onClick = { extras.pickDirMenu(group.id, sort = false) }) { Text("Pick another menu") }
+        }
+    }
+    if (scan.part("picture") == null) {
+        if (st.picturePick == group.id) {
+            Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.tertiaryContainer, modifier = Modifier.fillMaxWidth()) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 12.dp)) {
+                    Text(
+                        "On the page: tap one card's picture (a face, a logo)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                        modifier = Modifier.weight(1f).padding(vertical = 8.dp),
+                    )
+                    TextButton(onClick = extras::cancelPicturePick) { Text("Cancel") }
+                }
+            }
+        } else {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Hint("No pictures found on the cards.")
+                TextButton(onClick = { extras.pickDirPicture(group.id) }) { Text("Tap the picture on the page") }
+            }
         }
     }
 }
@@ -1279,7 +1425,11 @@ private fun LearnSection(group: LearnGroup, run: LearnRun?, extras: BuilderExtra
         }
         return
     }
-    Hint("“Site default” is added on top by itself, so picking nothing sends nothing. Entries whose address didn't change stay grey and are left out.")
+    // KMK (r109): the site's own default is named after its entry, never "Site default"
+    Hint(
+        "The entry whose press left the address as it was (else the one the menu's button shows) comes first and sends " +
+            "nothing: the site's own default. Entries whose address didn't change stay grey.",
+    )
     // Works on: Any list (an extra) / This page only (picks the list: this page with the code) / Search too
     val canPage = preview.mode == "path" || "{value}" in preview.linkPath
     if (preview.mode != "path") {
@@ -1455,6 +1605,10 @@ private fun FilterRow(
     val problem = BuilderExtrasLogic.filterProblem(filter)
     val labels = problem == null && BuilderExtrasLogic.sendsLabels(filter)
     val role = BuilderExtrasLogic.roleOf(filter, searchPath)
+    // KMK (r109) fix: its empty first option will be "Site default" (a parameter filter, not one opening its links' page)
+    val linkPage = filter.mode != "path" && "{value}" in filter.linkPath &&
+        if (filter.role.isEmpty()) BuilderExtrasLogic.usesLinkPage(filter, searchPath) else role == "page"
+    val unnamed = problem == null && !linkPage && BuilderExtrasLogic.unnamedDefault(filter)
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -1486,6 +1640,15 @@ private fun FilterRow(
                     )
                     Text(" ✓", color = OkGreen, fontSize = 12.sp)
                 }
+            }
+            if (unnamed) {
+                Text(
+                    "Learn this menu again to name its default",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
         Spacer(Modifier.width(6.dp))

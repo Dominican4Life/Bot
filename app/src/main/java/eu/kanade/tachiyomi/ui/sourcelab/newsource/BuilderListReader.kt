@@ -423,6 +423,11 @@ internal object BuilderListReader {
         val descValue: String,
         val menus: List<CollectionMenu>,
         val note: String,
+        /**
+         * KMK (r109): the page's custom drop-downs not read yet ("Sort: Most videos" whose entries are buttons, or a list
+         * the site adds only when it opens): the card's "Learn the menus" presses them on the page
+         */
+        val custom: List<BuilderDirMenus.Menu> = emptyList(),
     ) {
         fun part(kind: String): DirPart? = parts.firstOrNull { it.kind == kind }
 
@@ -645,12 +650,28 @@ internal object BuilderListReader {
                     "videos" -> if (p.bare) v else "$v videos"
                     "views" -> if (p.bare) v else "$v views"
                     "likes" -> if (p.bare) v else "$v ♥"
-                    "picture" -> (p.selector.ifEmpty { "img" }) + (if (p.attr.isNotEmpty()) " (${p.attr})" else "")
+                    "picture" -> (p.selector.ifEmpty { "the card" }) + (if (p.attr.isNotEmpty()) " (${p.attr})" else "")
                     else -> v
                 },
             )
         }.filter { it.example.isNotBlank() } + listOfNotNull(follow?.let { DirPart("follow", "", "a button · never kept") })
-        val pageMenus = siteMenus(doc, url, cardSet)
+        val siteFound = siteMenus(doc, url, cardSet)
+        // KMK (r109): the custom drop-downs ("Sort: Most videos", "Height: Any height"): their link entries give codes now,
+        // the others are pressed on the page later; they win over the plain link groups of the same parameter
+        val customMenus = runCatching { BuilderDirMenus.find(doc, url, cardSet) }.getOrDefault(emptyList())
+        val custom = BuilderDirMenus.resolve(customMenus, url)
+        val pageMenus = if (custom.sorts.isEmpty() && custom.menus.isEmpty()) {
+            siteFound
+        } else {
+            val sortFromCustom = custom.sorts.isNotEmpty()
+            val sortParam = if (sortFromCustom) custom.sortParam else siteFound.sortParam
+            siteFound.copy(
+                sorts = if (sortFromCustom) custom.sorts else siteFound.sorts,
+                sortParam = sortParam,
+                menus = (custom.menus + siteFound.menus.filter { it.key !in custom.claimed && it.key != sortParam }).take(8),
+            )
+        }
+        val pending = custom.pending.filter { m -> !(m.sort && pageMenus.sorts.isNotEmpty()) }
         val total = totalOf(doc, cardSet, entries.size)
         AppLog.add(
             'D',
@@ -658,7 +679,9 @@ internal object BuilderListReader {
             "extras directory scan $url: ${entries.size} entries in $item, parts " +
                 withExamples.joinToString(", ") { "${it.kind}=${it.selector.ifEmpty { "(card)" }}" } +
                 ", pages $pages${if (template != null) " ($template)" else ""}, total $total, sorts ${pageMenus.sorts.size}" +
-                (if (pageMenus.sortParam.isNotEmpty()) " (${pageMenus.sortParam})" else "") + ", menus ${pageMenus.menus.size}",
+                (if (pageMenus.sortParam.isNotEmpty()) " (${pageMenus.sortParam})" else "") + ", menus ${pageMenus.menus.size}" +
+                (if (customMenus.isNotEmpty()) ", drop-downs " + customMenus.joinToString(", ") { "${it.label}: ${it.current} (${it.items.size})" } else "") +
+                (if (pending.isNotEmpty()) ", to press ${pending.joinToString(", ") { it.label }}" else ""),
         )
         return DirScan(
             url = url,
@@ -678,6 +701,7 @@ internal object BuilderListReader {
             descValue = pageMenus.descValue,
             menus = pageMenus.menus,
             note = if (entries.isEmpty()) "its entries couldn't be read apart" else "",
+            custom = pending,
         )
     }
 
@@ -777,6 +801,53 @@ internal object BuilderListReader {
         }
         AppLog.add('I', "lab", "extras read directory: ${items.size} entries from $done pages ($reason)")
         return DirRead(items.values.toList(), done, reason)
+    }
+
+    /**
+     * KMK (r109): "Tap the picture on the page": the picture part from the owner's tap on one card. [selectors] are the
+     * ways to reach the tapped picture inside its card (picker.js `pictureMode`: the steps down from the card, its own
+     * tag and classes), [attrs] the attributes that held its address on the live page. The directory's first page is read
+     * again and the selector + attribute that give a picture on the most cards (at least half) wins; the entries are read
+     * again with it. Returns the new scan, or null and why
+     */
+    suspend fun withPicture(scan: DirScan, selectors: List<String>, attrs: List<String>): Pair<DirScan?, String> {
+        val referer = Detector.normalize(scan.url) + "/"
+        val fetched = fetch(scan.url, referer)
+        if (fetched.first >= 400) return null to "the site answered ${fetched.first}"
+        return withContext(Dispatchers.Default) {
+            val doc = Jsoup.parse(fetched.second, scan.url)
+            val cards = runCatching { doc.select(scan.item) }.getOrNull().orEmpty().toList()
+            if (cards.isEmpty()) return@withContext null to "the cards (${scan.item}) aren't in the page's HTML"
+            val base = doc.baseUri().ifEmpty { scan.url }
+            val tries = (attrs + "").distinct()
+            var best: Triple<String, String, Int>? = null
+            for (sel in selectors.distinct()) {
+                for (attr in tries) {
+                    val hits = cards.count { c -> pick(c, sel)?.let { e -> pictureIn(e, attr, base) } != null }
+                    if (hits > (best?.third ?: 0)) best = Triple(sel, attr, hits)
+                }
+            }
+            val found = best
+            if (found == null || found.third * 2 < cards.size) {
+                return@withContext null to if (found == null) {
+                    "the page's HTML has no picture there (the site's script puts it in later)"
+                } else {
+                    "a picture on only ${found.third} of ${cards.size} cards"
+                }
+            }
+            // the attribute that really held it on the first card that has one (pictureIn's own order otherwise)
+            val attr = cards.firstNotNullOfOrNull { c -> pick(c, found.first)?.let { e -> pictureIn(e, found.second, base)?.first } }.orEmpty()
+            val part = DirPart("picture", found.first, "", attr = attr)
+            val parts = scan.parts.filter { it.kind != "picture" && it.kind != "follow" } + part
+            val entries = cards.mapNotNull { entryOf(it, scan.shape, scan.link, parts) }.distinctBy { it.href }
+            val example = (found.first.ifEmpty { "the card" }) + (if (attr.isNotEmpty()) " ($attr)" else "")
+            val kept = scan.parts.filter { it.kind != "picture" }.let { old ->
+                val at = old.indexOfFirst { it.kind == "follow" }
+                if (at < 0) old + part.copy(example = example) else old.toMutableList().also { it.add(at, part.copy(example = example)) }
+            }
+            AppLog.add('I', "lab", "extras directory picture ${scan.url}: ${found.first.ifEmpty { "(card)" }} ${attr.ifEmpty { "-" }} on ${found.third} of ${cards.size} cards")
+            scan.copy(parts = kept, entries = entries.ifEmpty { scan.entries }) to ""
+        }
     }
 
     /** The list's links by href (each with every anchor that has it), in page order: the largest group of one shape */
@@ -998,10 +1069,51 @@ internal object BuilderListReader {
             f.picture = img
             f.pictureAttr = pictureOf(img, "", base)?.first.orEmpty()
         }
+        // KMK (r109): no <img> with a picture (the owner's round faces): a <picture>'s <source>, a background-image or
+        // data-bg on the card or inside it, an <img> inside <noscript>
+        if (f.picture == null) {
+            // KMK (r109) fix: the card itself only with a picture's address that isn't its own link (no fake part)
+            val linkUrl = link.absUrl("href")
+            fun real(el: Element): Boolean {
+                val got = pictureOwn(el, "", base) ?: return false
+                return el !== card || (looksPicture(got.second) && got.second != linkUrl)
+            }
+            val holders = listOf(card) + runCatching { card.select(PICTURE_HOLDERS) }.getOrNull().orEmpty()
+            holders.firstOrNull { outside(it) && real(it) }?.let { el ->
+                f.picture = el
+                f.pictureAttr = pictureOwn(el, "", base)?.first.orEmpty()
+            }
+        }
         return f
     }
 
     private val PICTURE_ATTRS = listOf("data-src", "data-lazy-src", "data-original", "data-srcset", "srcset", "src")
+
+    // KMK (r109): more lazy-load attributes, a <source>'s, a background's and a poster; then "style" (background-image)
+    // KMK (r109) fix: no data-url (a card's link); data-echo / data-image / data-img / data-thumb only with a picture's address
+    private val MORE_PICTURE_ATTRS = listOf(
+        "data-lazy", "data-original-src", "data-hi-res-src", "lazy-src", "data-echo", "data-image", "data-img",
+        "data-bg", "data-background", "data-background-image", "data-bg-src", "data-thumb", "poster", "style",
+    )
+
+    // KMK (r109) fix: the attributes known to hold a picture; any other gives one only when its address looks like one
+    private val PLAIN_PICTURE_ATTRS = PICTURE_ATTRS.toSet() + setOf(
+        "style", "noscript", "data-lazy", "data-original-src", "data-hi-res-src", "lazy-src", "data-bg", "data-background",
+        "data-background-image", "data-bg-src", "poster",
+    )
+    private val PICTURE_PATH = Regex("""\.(?:jpe?g|png|webp|gif|avif|bmp)$|/(?:img|image|thumb|cover|poster|avatar|photo|pic)""", RegexOption.IGNORE_CASE)
+
+    /** KMK (r109) fix: a picture's address: a picture file's extension or a picture folder in its path */
+    private fun looksPicture(url: String): Boolean =
+        PICTURE_PATH.containsMatchIn(url.substringAfter("://").substringAfter('/', "").let { "/$it" }.substringBefore('?').substringBefore('#'))
+    private const val PICTURE_HOLDERS =
+        "picture source, [style*=background], [data-bg], [data-background], [data-background-image], [data-bg-src], noscript"
+
+    // No braces in these patterns (ICU)
+    private val BG_URL = Regex("""background(?:-image)?\s*:[^;]*url\(\s*['"]?([^'")]+)['"]?\s*\)""", RegexOption.IGNORE_CASE)
+    private val PICTURE_NAME = Regex("""src|img|image|bg|background|poster|thumb|avatar|photo""", RegexOption.IGNORE_CASE)
+    private val IMAGE_FILE = Regex("""\.(?:jpe?g|png|webp|gif|avif)(?:[?#].*)?$""", RegexOption.IGNORE_CASE)
+    private val NOSCRIPT_IMG = Regex("""<img[^>]+?(?:data-src|src)\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
     private val PLACEHOLDER = Regex(
         """^(placeholder|blank|spacer|transparent|pixel|1x1|empty|lazy|lazyload|loading|loader|grey|gray|no[-_]?(image|img|cover|thumb|poster))([-_.](min|small|\d+x\d+))?\.(gif|png|jpe?g|webp|svg)$""",
     )
@@ -1010,7 +1122,7 @@ internal object BuilderListReader {
     private fun pictureOf(img: Element, first: String, base: String): Pair<String, String>? {
         val names = (listOf(first) + PICTURE_ATTRS).filter { it.isNotEmpty() }.distinct()
         for (n in names) {
-            var v = img.attr(n).trim()
+            var v = attrPicture(img, n)
             if (v.isEmpty()) continue
             v = if (n.contains("srcset")) v.split(Regex(""",\s+""")).first().trim().split(SPACES).first() else v.split(SPACES).first()
             if (v.isEmpty() || v.startsWith("data:", ignoreCase = true) || v.startsWith("about:", ignoreCase = true)) continue
@@ -1018,9 +1130,70 @@ internal object BuilderListReader {
             if (PLACEHOLDER.matches(file)) continue
             val abs = base.toHttpUrlOrNull()?.resolve(v)?.toString() ?: v
             if (!abs.startsWith("http")) continue
+            if (n !in PLAIN_PICTURE_ATTRS && !looksPicture(abs)) continue // KMK (r109) fix
             return n to abs
         }
         return null
+    }
+
+    /**
+     * KMK (r109): an attribute's picture text: a background-image's url() for "style", a <noscript>'s <img> for
+     * "noscript", else the attribute without the quotes a script binding puts around a literal ('https://…')
+     */
+    private fun attrPicture(el: Element, name: String): String = when (name) {
+        "style" -> BG_URL.find(el.attr("style"))?.groupValues?.get(1)?.trim().orEmpty()
+        "noscript" -> if (el.normalName() == "noscript") {
+            NOSCRIPT_IMG.find(el.html().ifBlank { el.data() })?.groupValues?.get(1)?.trim().orEmpty()
+        } else {
+            ""
+        }
+        else -> el.attr(name).trim().removeSurrounding("'").removeSurrounding("\"")
+    }
+
+    /**
+     * KMK (r109): an element's own picture (any element, not only an img): [first], the lazy-load attributes, srcset,
+     * src, a background's, a poster, a background-image style, a noscript's img, then any attribute named like a
+     * picture holding a picture file's address
+     */
+    private fun pictureOwn(el: Element, first: String, base: String): Pair<String, String>? {
+        val names = (listOf(first) + PICTURE_ATTRS + MORE_PICTURE_ATTRS + "noscript").filter { it.isNotEmpty() }.distinct()
+        pictureOf(el, "", base)?.takeIf { first.isEmpty() || it.first == first }?.let { return it }
+        for (n in names) {
+            val got = pictureFrom(el, n, base)
+            if (got != null) return n to got
+        }
+        for (a in el.attributes()) {
+            if (a.key in names || !PICTURE_NAME.containsMatchIn(a.key)) continue
+            val v = a.value.trim().removeSurrounding("'").removeSurrounding("\"")
+            if (!IMAGE_FILE.containsMatchIn(v.substringBefore(' '))) continue
+            val got = pictureFrom(el, a.key, base) ?: continue
+            return a.key to got
+        }
+        return null
+    }
+
+    /** One attribute's picture address (absolute, never a placeholder / data: address), null when none */
+    private fun pictureFrom(el: Element, name: String, base: String): String? {
+        var v = attrPicture(el, name)
+        if (v.isEmpty()) return null
+        v = if (name.contains("srcset")) v.split(Regex(""",\s+""")).first().trim().split(SPACES).first() else v.split(SPACES).first()
+        if (v.isEmpty() || v.startsWith("data:", ignoreCase = true) || v.startsWith("about:", ignoreCase = true)) return null
+        val file = v.substringBefore('?').substringBefore('#').substringAfterLast('/').lowercase()
+        if (PLACEHOLDER.matches(file)) return null
+        val abs = base.toHttpUrlOrNull()?.resolve(v)?.toString() ?: v
+        // KMK (r109) fix: a loose attribute (data-image, data-thumb, a picked one…) only with a picture's address
+        if (name !in PLAIN_PICTURE_ATTRS && !looksPicture(abs)) return null
+        return abs.takeIf { it.startsWith("http") }
+    }
+
+    /**
+     * KMK (r109): the picture of a part's element [e]: its own ([attr] first), else an img inside it, a <picture>'s
+     * source, a noscript's img or a background inside it
+     */
+    private fun pictureIn(e: Element, attr: String, base: String): Pair<String, String>? {
+        pictureOwn(e, attr, base)?.let { return it }
+        e.select("img").firstNotNullOfOrNull { pictureOf(it, attr, base) }?.let { return it }
+        return runCatching { e.select(PICTURE_HOLDERS) }.getOrNull().orEmpty().firstNotNullOfOrNull { pictureOwn(it, attr, base) }
     }
 
     /** One card as an entry, read with the scan's selectors (the template's directoryItems does the same) */
@@ -1060,11 +1233,9 @@ internal object BuilderListReader {
             val e = pick(card, p.selector) ?: return ""
             return countOf(kind, e.text(), p.bare)
         }
+        // KMK (r109): the part may be a background, a <source> or a wrapper (pictureIn looks inside it too)
         val picture = parts.firstOrNull { it.kind == "picture" }?.let { p ->
-            pick(card, p.selector)?.let { e ->
-                val img = if (e.normalName() == "img") e else e.selectFirst("img") ?: e
-                pictureOf(img, p.attr, card.baseUri())?.second
-            }
+            pick(card, p.selector)?.let { e -> pictureIn(e, p.attr, card.baseUri())?.second }
         }.orEmpty()
         return DirEntry(label, href, count("number"), count("videos"), count("views"), count("likes"), picture)
     }

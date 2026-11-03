@@ -65,6 +65,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -81,6 +82,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
@@ -235,6 +238,7 @@ internal class BuilderScreen(
         var tabStep by rememberSaveable { mutableStateOf(if (firstTab != null) model.state.value.step.name else "") }
         var titleSub by rememberSaveable { mutableStateOf<String?>(null) }
         val panelScroll = rememberScrollState()
+        val panelScrollRef = remember(panelScroll) { PanelScroll(panelScroll) } // KMK (r109) fix
         // r106 (phone): bumped to open a peeked sheet to half (a menu card to look at, the helper's verdict)
         var sheetOpenTick by remember { mutableIntStateOf(0) }
         // r106 (W2): the Lists & filters pane's scroll requests already handled (-1: none seen yet)
@@ -309,6 +313,8 @@ internal class BuilderScreen(
                 tab = TAB_LISTS
                 sheetOpenTick++
             }
+            // KMK (r109) fix: a read's progress box is in Lists & filters: that tab shows (the sheet stays as it is)
+            if (target.startsWith("read:") && tab != TAB_LISTS) tab = TAB_LISTS
         }
         // r106: Edit by tapping's note ("Editing X: your picks are back", "edited by hand since") shows once, as a
         // snackbar (r102–r105: a banner over the page)
@@ -528,10 +534,14 @@ internal class BuilderScreen(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .weight(1f)
+                                        // KMK (r109) fix: the viewport's top, for a card brought to the panel's top
+                                        .onGloballyPositioned { panelScrollRef.viewportTop = it.positionInRoot().y }
                                         .verticalScroll(panelScroll)
                                         .padding(horizontal = 16.dp, vertical = 14.dp),
                                 ) {
-                                    PanelBody(state, model, tab, titleSub, { titleSub = it }, askOptions)
+                                    CompositionLocalProvider(LocalPanelScroll provides panelScrollRef) {
+                                        PanelBody(state, model, tab, titleSub, { titleSub = it }, askOptions)
+                                    }
                                 }
                                 PanelFooter(state, model, tab, copyAll, saveMain)
                             }
@@ -1025,6 +1035,8 @@ internal class BuilderScreen(
         if (runCatching { model.extras.state.value.groupMode }.getOrDefault(false)) {
             view.evaluateJavascript("window.__labPicker && window.__labPicker.menuMode && window.__labPicker.menuMode(true)", null)
         }
+        // KMK (r109) fix: so does a waiting "Tap the picture on the page"
+        runCatching { model.extras.picturePickScript() }.getOrNull()?.let { view.evaluateJavascript(it, null) }
     }
 
     @SuppressLint("SetJavaScriptEnabled")

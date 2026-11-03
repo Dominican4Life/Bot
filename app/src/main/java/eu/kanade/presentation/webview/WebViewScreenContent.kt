@@ -45,6 +45,8 @@ import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarActions
 import eu.kanade.presentation.components.WarningBanner
 import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.ui.webview.PhoneLayoutHosts
+import eu.kanade.tachiyomi.ui.webview.WebViewPageScripts
 import eu.kanade.tachiyomi.util.system.getHtml
 import eu.kanade.tachiyomi.util.system.isDebugBuildType
 import eu.kanade.tachiyomi.util.system.setDefaultSettings
@@ -96,6 +98,9 @@ fun WebViewScreenContent(
     var currentUrl by remember { mutableStateOf(url) }
     var showCloudflareHelp by remember { mutableStateOf(false) }
 
+    // KMK (r109): the site's phone layout, remembered per host (the ⋮ menu's "Phone layout")
+    var phoneLayout by remember { mutableStateOf(PhoneLayoutHosts.isOn(url)) }
+
     val webClient = remember {
         object : AccompanistWebViewClient() {
             override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
@@ -103,11 +108,25 @@ fun WebViewScreenContent(
                 url?.let {
                     currentUrl = it
                     onUrlChange(it)
+                    // KMK (r109)
+                    phoneLayout = PhoneLayoutHosts.isOn(it)
                 }
+                // KMK (r109): as early as the page allows, so it's laid out phone-wide from the start
+                if (PhoneLayoutHosts.isOn(url)) view.evaluateJavascript(WebViewPageScripts.PHONE_LAYOUT, null)
             }
+
+            // KMK (r109) -->
+            override fun onPageCommitVisible(view: WebView?, url: String?) {
+                super.onPageCommitVisible(view, url)
+                if (PhoneLayoutHosts.isOn(url)) view?.evaluateJavascript(WebViewPageScripts.PHONE_LAYOUT, null)
+            }
+            // KMK (r109) <--
 
             override fun onPageFinished(view: WebView, url: String?) {
                 super.onPageFinished(view, url)
+                // KMK (r109): hover menus open on a tap; the phone layout once more in case the page replaced it
+                view.evaluateJavascript(WebViewPageScripts.HOVER_MENUS, null)
+                if (PhoneLayoutHosts.isOn(url)) view.evaluateJavascript(WebViewPageScripts.PHONE_LAYOUT, null)
                 scope.launch {
                     val html = view.getHtml()
                     showCloudflareHelp = "window._cf_chl_opt" in html || "Ray ID is" in html
@@ -123,6 +142,8 @@ fun WebViewScreenContent(
                 url?.let {
                     currentUrl = it
                     onUrlChange(it)
+                    // KMK (r109)
+                    phoneLayout = PhoneLayoutHosts.isOn(it)
                 }
             }
 
@@ -232,6 +253,18 @@ fun WebViewScreenContent(
                                     AppBar.OverflowAction(
                                         title = stringResource(MR.strings.pref_clear_cookies),
                                         onClick = { onClearCookies(currentUrl) },
+                                    ),
+                                    // KMK (r109): the site's phone layout for this host, then the page again
+                                    AppBar.OverflowAction(
+                                        title = "Phone layout",
+                                        checked = phoneLayout,
+                                        onClick = {
+                                            val on = !phoneLayout
+                                            if (PhoneLayoutHosts.set(currentUrl, on)) {
+                                                phoneLayout = on
+                                                navigator.reload()
+                                            }
+                                        },
                                     ),
                                 ).builder().apply {
                                     if (windowStack.size > 1) {

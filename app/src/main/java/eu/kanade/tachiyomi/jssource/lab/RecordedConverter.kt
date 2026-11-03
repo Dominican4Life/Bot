@@ -63,6 +63,7 @@ internal object RecordedConverter {
         val settingsUsed: Set<String> = emptySet(),   // r98 fix: setting keys this part reads
         val pageRules: List<PageRule> = emptyList(),  // r98 fix: Popular's page pattern, for Latest and Search
         val check: String? = null,                    // r105: "20 of 20 items" the written code reproduces
+        val reason: String? = null,                   // r109: why a TODO part wasn't written (one line)
     )
 
     private val pretty = Json { prettyPrint = false }
@@ -130,7 +131,13 @@ internal object RecordedConverter {
             if (checked.isNotEmpty()) add("Checked against the extension's own results: ${checked.entries.joinToString(", ") { (id, p) -> "${titles[id] ?: id} ${p.check}" }}.")
             rec.botCheck?.let { add("Bot check seen: $it (at ${rec.botCheckUrl ?: rec.baseUrl}); get() passes it once in the hidden browser.") }
             facts?.themeClass?.let { add("APK theme: $it.") }
+            // r109: the recording step by step, so a TODO can be debugged from the code (the Issue report zips it)
+            addAll(recordingSummary(rec, parts))
         }.map(::commentSafe)
+        // r109: each TODO's reason in the log too (the owner's videos show the log, not the code)
+        parts.forEach { (id, p) ->
+            if (id != "constants" && p.todo) AppLog.add('W', "lab", "Record and convert of ${rec.row.sourceName}: $id left as TODO: ${p.reason ?: p.explain}")
+        }
 
         val leading = ExplainEntry(
             id = "recorded",
@@ -197,6 +204,51 @@ internal object RecordedConverter {
             botCheck = rec.botCheck,
             checks = parts.filter { (id, p) -> id != "constants" && p.check != null }.map { (id, p) -> "${titles[id] ?: id} ${p.check}" },
         )
+    }
+
+    /**
+     * r109: one block per recorded step: its requests (method, address, status, type, size; cookie values are never
+     * kept), how many items the extension returned and the first three by name and address, and what became of the
+     * part (written, or TODO with its reason). Video addresses are left out (they can carry tokens): only their names.
+     */
+    private fun recordingSummary(rec: Recording, parts: Map<String, PartCode>): List<String> = buildList {
+        if (rec.steps.isEmpty()) return@buildList
+        add("")
+        add("Recording, step by step (requests; what the extension returned; result):")
+        for (step in rec.steps) {
+            val partId = when (step.id) {
+                "popular" -> "getPopular"
+                "popular2" -> null
+                "latest" -> "getLatest"
+                "search" -> "search"
+                "details" -> "getDetails"
+                "chapters" -> "getChapterList"
+                "pages" -> "getPageList"
+                "videos" -> "getVideoList"
+                else -> null
+            }
+            val part = partId?.let { parts[it] }
+            val result = when {
+                step.id == "popular2" -> "used for Popular's paging"
+                part == null -> "no part"
+                part.todo -> "TODO: ${part.reason ?: part.explain}".take(300)
+                else -> "written" + (part.check?.let { ", checked $it" } ?: "")
+            }
+            add("- ${step.id} (${step.name}): ${step.items.size} item(s), ${step.requests.size} request(s), ${step.ms} ms${step.error?.let { ", error: $it" } ?: ""} → $result")
+            val shown = step.requests.filter { !it.image }
+            shown.take(4).forEach { add("    ${requestLine(it)}") }
+            if (shown.size > 4) add("    … ${shown.size - 4} more")
+            if (step.items.isNotEmpty()) {
+                val first = step.items.take(3).joinToString(" | ") { e ->
+                    if (step.id == "videos") {
+                        "\"${e["quality"].orEmpty().take(60)}\""
+                    } else {
+                        listOfNotNull((e["title"] ?: e["name"])?.let { "\"${it.take(60)}\"" }, (e["url"] ?: e["imageUrl"])?.let(::shortUrl)).joinToString(" ")
+                    }
+                }
+                add("    returned: $first")
+            }
+        }
     }
 
     /** A converter bug in one part must not lose the others: it becomes that part's TODO */
@@ -1169,16 +1221,29 @@ internal object RecordedConverter {
                 mapped.fields.entries.joinToString(", ") { (f, e) -> "${jsField(kind, f)} = ${e.words}" }
         } else {
             val doc = plan.doc(best) ?: return todoPart(method, "the reply of ${shortUrl(request.url)} is neither JSON nor HTML", step, returnFor(method))
-            val mapped = mapHtmlList(doc, samples, kind)
-                ?: return todoPart(method, "the page ${shortUrl(request.url)} holds the values, but no selector finds at least 3 in 5 of the returned items in the same place", step, returnFor(method))
+            // r109: what was found on the page and where it stopped goes into the TODO
+            val why = ArrayList<String>()
+            val mapped = mapHtmlList(doc, samples, kind, why)
+                ?: return todoPart(
+                    method,
+                    "the page ${shortUrl(request.url)} holds the values, but no selector finds at least 3 in 5 of the returned items in the same place" +
+                        (why.lastOrNull()?.let { ": $it" } ?: ""),
+                    step,
+                    returnFor(method),
+                    diagnosis = why,
+                )
             // r105: the selectors run on the recorded page (Jsoup) and compared with what the extension returned
-            check = checkList(htmlOutput(doc, mapped, kind), step.items, kind, paged = loop != null, withName = "name" in mapped.fields, replyMatched = mapped.matched)
+            val output = htmlOutput(doc, mapped, kind)
+            check = checkList(output, step.items, kind, paged = loop != null, withName = "name" in mapped.fields, replyMatched = mapped.matched)
             if (!check.ok && (check.matched == 0 || check.matched * 2 < check.of)) {
                 return todoPart(
                     method,
                     "the page ${shortUrl(request.url)} holds the values, but the selectors found give only ${check.matched} of ${check.of} of the extension's ${itemNoun(kind)} (it picks them in its own code)",
                     step,
                     returnFor(method),
+                    diagnosis = why + listOf(
+                        "cards \"${mapped.item}\", " + mapped.fields.entries.joinToString(", ") { (f, p) -> "${jsField(kind, f)} from \"${p.css.ifBlank { "the item" }}\" ${p.how}${if (p.transform.isNotEmpty()) " (${p.transform})" else ""}" },
+                    ) + outputDiff(output, step.items, kind),
                 )
             }
             val fetch = "await get($address)"
@@ -1939,10 +2004,40 @@ internal object RecordedConverter {
         }
     }
 
-    private fun mapHtmlList(doc: Document, samples: List<Map<String, String>>, kind: Kind): HtmlList? {
+    /**
+     * r109: where an element sits on the page, to tell the list's own links from the same addresses elsewhere (a
+     * featured slider or a sidebar above the list, breadcrumbs, a "first episode" / prev / next button): its tag, then
+     * the tag and class words of its parent and grandparent (words with digits left out, so WordPress's `post-123`
+     * doesn't make every card a place of its own)
+     */
+    private fun placeOf(el: Element, withClasses: Boolean = true): String = buildString {
+        append(el.tagName())
+        var cur = el.parent()
+        var n = 0
+        while (cur != null && n < 2 && cur.tagName() != "#root" && cur.tagName() != "html") {
+            append(" < ").append(cur.tagName())
+            if (withClasses) stableClasses(cur).filter { c -> c.none { it.isDigit() } }.sorted().forEach { append('.').append(it) }
+            cur = cur.parent()
+            n++
+        }
+    }
+
+    /**
+     * The cards of the list on [doc] that holds [samples], with a selector for each field; null when there is none,
+     * with the reasons added to [why] (r109: they go into the TODO, so a recording that isn't converted says what was
+     * found on the page and where it stopped).
+     *
+     * r109 fix: an item's address is taken from the place on the page (see [placeOf]) where most items' addresses are,
+     * not from its first appearance in the page: a slider, sidebar, breadcrumb or "first episode" button that links
+     * one of the items before the list made that item's "card" something else, so no selector picked all the cards
+     * (two list sites: their lists and episodes, episodes read from an episode page). And each card level that
+     * holds the titles is tried in turn (r105 stopped at the first, even when a field couldn't be read there).
+     */
+    private fun mapHtmlList(doc: Document, samples: List<Map<String, String>>, kind: Kind, why: MutableList<String> = ArrayList()): HtmlList? {
         val pageUrl = doc.location()
         // The element holding each item's address (entries and chapters) or picture (pages)
         val anchorField = if (kind == Kind.Pages) "imageUrl" else "url"
+        val what = if (kind == Kind.Pages) "pictures" else "addresses"
         val found = ArrayList<Triple<Map<String, String>, Element, Pair<String, String>>>()   // item, element, (attr, transform)
         val combos = HashMap<String, Int>()
         val index = urlIndex(doc)
@@ -1950,42 +2045,104 @@ internal object RecordedConverter {
             val target = s[anchorField]
             if (target == null) emptyList() else index[target].orEmpty()
         }
+        val located = perItem.count { it.isNotEmpty() }
+        if (located < samples.size) {
+            val missing = samples.indices.first { perItem[it].isEmpty() }
+            why.add("$located of ${samples.size} returned $what are a link or attribute of the page (as they are, absolute or as a path); not found: ${shortUrl(samples[missing][anchorField].orEmpty())}")
+        }
         perItem.forEach { list -> list.map { "${it.first.tagName()}|${it.second}|${it.third}" }.distinct().forEach { combos[it] = (combos[it] ?: 0) + 1 } }
-        val combo = combos.maxByOrNull { it.value }?.key ?: return null
+        val combo = combos.maxByOrNull { it.value }?.key ?: run {
+            why.add("none of the returned $what is on the page (first: ${shortUrl(samples.firstOrNull()?.get(anchorField).orEmpty())}): the extension builds them in its own code")
+            return null
+        }
         val (tag, attr, transform) = combo.split('|').let { Triple(it[0], it[1], it.getOrElse(2) { "" }) }
-        val usedEls = HashSet<Element>()
-        samples.forEachIndexed { i, s ->
-            val hit = perItem[i].firstOrNull { (el, a, t) -> el.tagName() == tag && a == attr && t == transform && usedEls.none { it === el } }
-            if (hit != null) {
-                usedEls.add(hit.first)
-                found.add(Triple(s, hit.first, attr to transform))
+        val matching: List<List<Element>> = perItem.map { list ->
+            list.filter { (el, a, t) -> el.tagName() == tag && a == attr && t == transform }.map { it.first }
+        }
+        // r109: the place holding the most items' addresses (ties: the one met first in the page). Places are told
+        // apart by tags and class words first, then by tags only (a list whose rows alternate `odd` / `even`), and
+        // when neither holds 3 in 5 of the items, each item's first address in the page is taken as before r109
+        val order = java.util.IdentityHashMap<Element, Int>()
+        doc.allElements.forEachIndexed { i, el -> order[el] = i }
+        var tried = ""
+        for (withClasses in listOf(true, false, null)) {
+            found.clear()
+            val placeCache = java.util.IdentityHashMap<Element, String>()
+            fun place(el: Element): String = if (withClasses == null) "" else placeCache.getOrPut(el) { placeOf(el, withClasses == true) }
+            val placeCount = LinkedHashMap<String, Int>()
+            val placeFirst = HashMap<String, Int>()
+            matching.forEach { els ->
+                els.forEach { el -> place(el).let { p -> placeFirst[p] = minOf(placeFirst[p] ?: Int.MAX_VALUE, order[el] ?: Int.MAX_VALUE) } }
+                els.map { place(it) }.distinct().forEach { placeCount[it] = (placeCount[it] ?: 0) + 1 }
+            }
+            val listPlace = placeCount.entries
+                .maxWithOrNull(compareBy<Map.Entry<String, Int>> { it.value }.thenByDescending { placeFirst[it.key] ?: Int.MAX_VALUE })
+                ?.key ?: return null
+            val usedEls = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Element, Boolean>())
+            samples.forEachIndexed { i, s ->
+                val hit = matching[i].firstOrNull { el -> place(el) == listPlace && el !in usedEls }
+                if (hit != null) {
+                    usedEls.add(hit)
+                    found.add(Triple(s, hit, attr to transform))
+                }
+            }
+            if (withClasses != null) {
+                tried = placeCount.entries.sortedByDescending { it.value }.take(3).joinToString(", ") { "${it.value} in \"${it.key}\"" }
+            }
+            if (found.isNotEmpty() && found.size * 5 >= samples.size * 3) {
+                if (placeCount.size > 1) why.add("the $what were found in ${placeCount.size} places ($tried); the list was taken as \"$listPlace\" (${found.size} of ${samples.size})")
+                break
             }
         }
-        if (found.isEmpty() || found.size * 5 < samples.size * 3) return null
+        if (found.isEmpty() || found.size * 5 < samples.size * 3) {
+            why.add("the returned $what (@$attr of <$tag>) are in different places of the page, none with at least 3 in 5 of them: $tried")
+            return null
+        }
 
-        // The card: the smallest ancestor level that holds the title too and isn't shared between items
+        // The card: the smallest ancestor level that holds the title too and isn't shared between items; r109: when a
+        // level gives no selector for every field, the next one that holds the titles is tried
         val titleField = when (kind) {
             Kind.Entries -> "title"
             Kind.Chapters -> "name"
             Kind.Pages -> null
         }
-        var chosen: Int? = null
+        val depths = ArrayList<Int>()
         if (titleField != null) {
             for (d in 0..6) {
                 val level = found.map { ancestor(it.second, d) }
                 if (level.any { it == null }) break
                 if (level.distinctBy { System.identityHashCode(it) }.size < level.size) break
                 val holds = found.indices.count { i -> textTarget(level[i]!!, found[i].first[titleField]) != null }
-                if (holds * 5 >= found.size * 4) {
-                    chosen = d
-                    break
-                }
+                if (holds * 5 >= found.size * 4) depths.add(d)
+            }
+            if (depths.isEmpty()) {
+                why.add("no card up to 6 levels above the $what holds the returned ${if (kind == Kind.Entries) "titles" else "names"} as text or a title/alt attribute (first: \"${found.first().first[titleField].orEmpty().take(60)}\")")
             }
         }
-        val depth = chosen ?: 0
-        val cards = found.map { ancestor(it.second, depth) ?: it.second }
-        val item = commonSelector(doc, cards) ?: return null
+        if (depths.isEmpty()) depths.add(0)
+        for (depth in depths) {
+            buildHtmlList(doc, found, depth, kind, anchorField, attr, transform, pageUrl, why)?.let { return it }
+        }
+        return null
+    }
 
+    /** r109: [mapHtmlList] at one card level ([depth] above the address elements); null with the reason in [why] */
+    private fun buildHtmlList(
+        doc: Document,
+        found: List<Triple<Map<String, String>, Element, Pair<String, String>>>,
+        depth: Int,
+        kind: Kind,
+        anchorField: String,
+        attr: String,
+        transform: String,
+        pageUrl: String,
+        why: MutableList<String>,
+    ): HtmlList? {
+        val cards = found.map { ancestor(it.second, depth) ?: it.second }
+        val item = commonSelector(doc, cards) ?: run {
+            why.add("cards $depth level(s) above the addresses (\"${placeOf(cards.first())}\"): no selector picks all of them and at most 3× as many elements")
+            return null
+        }
         val fields = LinkedHashMap<String, HtmlPick>()
         // The address / picture
         val anchorCss = relativeSelector(cards, found.map { it.second }) { card, css ->
@@ -1993,15 +2150,23 @@ internal object RecordedConverter {
             val i = cards.indexOfFirst { it === card }
             val target = found.getOrNull(i)?.first?.get(anchorField)
             el != null && target != null && urlTransform(attr, el.attr(attr), pageUrl, target) == transform
-        } ?: return null
+        } ?: run {
+            why.add("cards \"$item\": no selector inside them reads the ${if (kind == Kind.Pages) "picture" else "address"} the same way in each")
+            return null
+        }
         fields[anchorField] = HtmlPick(anchorCss, "@$attr", transform)
-        // The other fields, each checked on every sample
+        // The other fields, each checked on every sample (r109: on 9 in 10 when no reading fits all)
         for (field in fieldsOf(kind)) {
             if (field == anchorField || field == "number" || field == "date") continue
             val pick = fieldPick(cards, found.map { it.first[field] }, pageUrl, isUrl = field == "coverUrl") ?: continue
             fields[field] = pick
         }
-        if (required(kind).any { it !in fields }) return null
+        val missing = required(kind).filter { it !in fields }
+        if (missing.isNotEmpty()) {
+            val f = missing.first()
+            why.add("cards \"$item\": the ${jsField(kind, f)} isn't read the same way in 9 in 10 cards (the extension's first: \"${found.first().first[f].orEmpty().take(60)}\")")
+            return null
+        }
         val numberFromTitle = kind == Kind.Chapters && "name" in fields &&
             found.any { it.first["number"] != null } &&
             found.all { (s, _, _) -> s["number"]?.toDoubleOrNull()?.let { numberIn(s["name"]) == it } ?: true }
@@ -2065,10 +2230,25 @@ internal object RecordedConverter {
     }
 
     /** A field read the same way inside every card: text, a text attribute or (covers) an address attribute */
+    /**
+     * A field read the same way inside every card. r109: when no reading fits every card, one that fits 9 in 10 is
+     * taken (the list's check on the recorded page then decides), and the first three cards are each tried as the
+     * one the reading is learned from (an odd first card no longer loses the field)
+     */
     private fun fieldPick(cards: List<Element>, values: List<String?>, pageUrl: String, isUrl: Boolean): HtmlPick? {
         val present = cards.indices.filter { !values[it].isNullOrBlank() }
         if (present.isEmpty() || present.size * 2 < cards.size) return null
-        val first = present.first()
+        val strict = present.size
+        val loose = (present.size * 9 + 9) / 10
+        for (need in listOf(strict, loose).distinct()) {
+            for (first in present.take(3)) {
+                fieldPickFrom(cards, values, present, first, need, pageUrl, isUrl)?.let { return it }
+            }
+        }
+        return null
+    }
+
+    private fun fieldPickFrom(cards: List<Element>, values: List<String?>, present: List<Int>, first: Int, need: Int, pageUrl: String, isUrl: Boolean): HtmlPick? {
         val card0 = cards[first]
         val value0 = values[first]!!
         if (isUrl) {
@@ -2077,7 +2257,7 @@ internal object RecordedConverter {
                     val raw = el.attr(a)
                     if (raw.isEmpty()) continue
                     val t = urlTransform(a, raw, pageUrl, value0) ?: continue
-                    val css = relativeSelector(present.map { cards[it] }, null, el, card0) { card, sel ->
+                    val css = relativeSelector(present.map { cards[it] }, null, el, card0, need) { card, sel ->
                         val target = if (sel.isEmpty()) card else card.selectFirst(sel)
                         val i = cards.indexOfFirst { it === card }
                         target != null && urlTransform(a, target.attr(a), pageUrl, values[i]!!) == t
@@ -2088,7 +2268,7 @@ internal object RecordedConverter {
             return null
         }
         val (el, how) = textTarget(card0, value0) ?: return null
-        val css = relativeSelector(present.map { cards[it] }, null, el, card0) { card, sel ->
+        val css = relativeSelector(present.map { cards[it] }, null, el, card0, need) { card, sel ->
             val target = if (sel.isEmpty()) card else card.selectFirst(sel)
             val i = cards.indexOfFirst { it === card }
             target != null && norm(if (how == "text") target.text() else target.attr(how.removePrefix("@"))) == norm(values[i]!!)
@@ -2096,8 +2276,18 @@ internal object RecordedConverter {
         return HtmlPick(css, how, "")
     }
 
-    /** A selector from each card to its target, the same for all, checked by [ok] on every card */
-    private fun relativeSelector(cards: List<Element>, targets: List<Element>?, target0: Element? = null, card0: Element? = null, ok: (Element, String) -> Boolean): String? {
+    /**
+     * A selector from each card to its target, the same for all, checked by [ok] on every card (r109: on at least
+     * [need] of them, every card when not given)
+     */
+    private fun relativeSelector(
+        cards: List<Element>,
+        targets: List<Element>?,
+        target0: Element? = null,
+        card0: Element? = null,
+        need: Int = cards.size,
+        ok: (Element, String) -> Boolean,
+    ): String? {
         val t0 = target0 ?: targets?.firstOrNull() ?: return null
         val c0 = card0 ?: cards.first()
         val candidates = LinkedHashSet<String>()
@@ -2115,7 +2305,8 @@ internal object RecordedConverter {
             if (pc.isNotEmpty()) candidates.add(parent.tagName() + "." + pc.first() + " > " + t0.tagName())
             candidates.add(parent.tagName() + " > " + t0.tagName())
         }
-        return candidates.firstOrNull { css -> cards.all { card -> ok(card, css) } }
+        val least = need.coerceIn(1, cards.size.coerceAtLeast(1))
+        return candidates.firstOrNull { css -> if (least >= cards.size) cards.all { card -> ok(card, css) } else cards.count { card -> ok(card, css) } >= least }
     }
 
     private fun stableClasses(el: Element): List<String> =
@@ -2737,9 +2928,39 @@ internal object RecordedConverter {
 
     // ---------- TODO parts ----------
 
-    private fun todoPart(method: String, reason: String, step: RecordedStep?, last: String, extra: List<String> = emptyList()): PartCode {
+    /**
+     * r109: the first items where the code's output on the recorded page and the extension's list differ, one line
+     * each (what the code gave, what the extension returned), for the TODO's diagnosis
+     */
+    private fun outputDiff(output: List<Map<String, String>>, returned: List<Map<String, String>>, kind: Kind): List<String> {
+        val anchor = if (kind == Kind.Pages) "imageUrl" else "url"
+        val label = if (kind == Kind.Entries) "title" else "name"
+        fun show(e: Map<String, String>): String = listOfNotNull(e[label]?.let { "\"${it.take(60)}\"" }, e[anchor]?.let(::shortUrl)).joinToString(" ")
+        val gotUrls = output.mapNotNull { it[anchor] }.toHashSet()
+        val wantUrls = returned.mapNotNull { it[anchor] }.toHashSet()
+        return buildList {
+            add("the code gives ${output.size} on the recorded page, the extension returned ${returned.size}")
+            output.take(3).forEachIndexed { i, e -> add("code item ${i + 1}: ${show(e)}") }
+            returned.firstOrNull { it[anchor] !in gotUrls }?.let { add("first extension item the code misses: ${show(it)}") }
+            output.firstOrNull { it[anchor] !in wantUrls }?.let { add("first code item the extension doesn't return: ${show(it)}") }
+        }
+    }
+
+    private fun todoPart(
+        method: String,
+        reason: String,
+        step: RecordedStep?,
+        last: String,
+        extra: List<String> = emptyList(),
+        diagnosis: List<String> = emptyList(),
+    ): PartCode {
         val lines = ArrayList<String>()
         lines.add("// TODO (not converted): ${commentSafe(reason)}")
+        // r109: what the converter found on the way, so a TODO can be debugged from the code (and the Issue report's copy)
+        if (diagnosis.isNotEmpty()) {
+            lines.add("// What the converter found:")
+            diagnosis.distinct().take(12).forEach { lines.add("//   - ${commentSafe(it.take(400))}") }
+        }
         if (step != null) {
             val shown = step.requests.filter { !it.image }.take(12)
             lines.add("// Recorded requests of \"${commentSafe(step.name)}\" (${step.requests.size}, ${step.ms} ms), in order:")
@@ -2758,12 +2979,18 @@ internal object RecordedConverter {
             if (step.items.isNotEmpty()) {
                 lines.add("// The extension returned (${step.items.size}), first:")
                 step.items.first().entries.take(6).forEach { (k, v) -> lines.add("//   $k = ${commentSafe(v.take(140))}") }
+                // r109: the next few too, by name and address, to compare with the reply
+                step.items.drop(1).take(3).forEach { e ->
+                    val name = e["title"] ?: e["name"] ?: e["quality"]
+                    val where = e["url"] ?: e["imageUrl"]
+                    lines.add("//   then: ${commentSafe(listOfNotNull(name?.let { "\"${it.take(80)}\"" }, where?.let(::shortUrl)).joinToString(" "))}")
+                }
             }
             step.error?.let { lines.add("// Error: ${commentSafe(it)}") }
         }
         extra.forEach { lines.add("// (derived so far) ${commentSafe(it)}") }
         lines.add(last)
-        return PartCode(lines, written = false, explain = "Not converted: ${reason}. The recorded requests and a reply excerpt are in the code.")
+        return PartCode(lines, written = false, explain = "Not converted: ${reason}. The recorded requests and a reply excerpt are in the code.", reason = reason)
     }
 
     // ---------- small helpers ----------

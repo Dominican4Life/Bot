@@ -1148,25 +1148,22 @@ private fun LazyListScope.relatedItems(
                 }
             }
         }
-        // r105: one row per group: a JS source's named groups under their own names ("Related videos", "You may
-        // like"), each arrow opening the full screen at that group; the plain list stays the one "Suggestions" row
-        groups.forEachIndexed { index, group ->
-            item(key = if (index == 0) "related" else "related-$index") {
+        // r105: one row per group. KMK (r109): ONE "Suggestions" row again (the owner's choice): a JS source's named
+        // groups in it with the related ones first, then the others in the source's order, each title once
+        // ([AnimeSuggestions.arrange] / [AnimeSuggestions.row]); the arrow opens the full screen, which shows each
+        // group as its own section in the same order
+        if (groups.isNotEmpty()) {
+            item(key = "related") {
                 Column {
-                    val name = group.name
-                    val title = name ?: stringResource(KMR.strings.pref_source_related_mangas)
+                    val title = stringResource(KMR.strings.pref_source_related_mangas)
                     RelatedMangaTitle(
                         title = if (uppercaseTitle) title.uppercase() else title,
                         subtitle = null,
-                        onClick = if (name != null) {
-                            { actions.onRelatedGroup(name) }
-                        } else {
-                            actions.onRelatedScreen
-                        },
+                        onClick = actions.onRelatedScreen,
                         onLongClick = null,
                         modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
                     )
-                    AnimeSuggestionsRow(suggestions = group.items, onClick = actions.onOpenAnime)
+                    AnimeSuggestionsRow(suggestions = AnimeSuggestions.row(groups), onClick = actions.onOpenAnime)
                 }
             }
         }

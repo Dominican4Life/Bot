@@ -23,7 +23,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
@@ -39,6 +43,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -51,18 +56,27 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import cafe.adriel.voyager.navigator.LocalNavigator
+import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
 import eu.kanade.tachiyomi.jssource.JsIcons
 import eu.kanade.tachiyomi.jssource.JsSourceManager
 import eu.kanade.tachiyomi.jssource.lab.ApkImport
 import eu.kanade.tachiyomi.jssource.lab.HealthState
 import eu.kanade.tachiyomi.jssource.lab.LabSource
+import eu.kanade.tachiyomi.jssource.lab.LabStore
 import eu.kanade.tachiyomi.jssource.lab.LabTemplate
 import eu.kanade.tachiyomi.jssource.lab.StepStatus
 import eu.kanade.tachiyomi.jssource.lab.Templates
+import eu.kanade.tachiyomi.ui.anime.source.AnimeSourceScreen
+import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreen
+import eu.kanade.tachiyomi.ui.webview.WebViewScreen
 import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import tachiyomi.domain.source.interactor.GetRemoteManga
+import tachiyomi.domain.source.service.SourceManager
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
@@ -427,6 +441,38 @@ private fun Cell(text: String, modifier: Modifier, mono: Boolean = false) {
 @Composable
 private fun RowMenu(source: LabSource, onOpen: (String, LabTab) -> Unit) {
     var open by remember { mutableStateOf(false) }
+    // KMK (r109): Delete, asked first (the source, its versions, tests and settings go; library entries stay)
+    var confirmDelete by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val navigator = LocalNavigator.current
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete ${source.name.ifBlank { "this source" }}?") },
+            text = {
+                Text(
+                    "Its code, every saved version, test runs, settings and stored data are deleted. Titles in your " +
+                        "library stay, but won't open until a source with the same id is added again.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmDelete = false
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                runCatching { Injekt.get<JsSourceManager>().delete(source.key) }
+                                    .onSuccess { AppLog.add('I', "lab", "Deleted the source ${source.name} (${source.key})") }
+                                    .onFailure { AppLog.add('W', "lab", "Couldn't delete ${source.name}: ${ApkImport.describe(it)}") }
+                                LabStore.invalidate(source.key)
+                            }
+                        }
+                    },
+                ) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
+        )
+    }
     Box {
         IconButton(onClick = { open = true }) {
             Icon(Icons.Outlined.MoreVert, contentDescription = "More for ${source.name}")
@@ -448,6 +494,54 @@ private fun RowMenu(source: LabSource, onOpen: (String, LabTab) -> Unit) {
                     },
                 )
             }
+            // KMK (r109): Browse (switched on first if it's off, and opened once Browse has it) and WebView
+            HorizontalDivider()
+            DropdownMenuItem(
+                text = { Text("Open in Browse") },
+                leadingIcon = { Icon(Icons.Outlined.Explore, contentDescription = null) },
+                onClick = {
+                    open = false
+                    scope.launch {
+                        val manager = Injekt.get<JsSourceManager>()
+                        val id = manager.idOf(source.key)
+                        if (manager.get(source.key)?.enabled == false) {
+                            withContext(Dispatchers.IO) { manager.setEnabled(source.key, true) }
+                            AppLog.add('I', "lab", "Open in Browse: ${source.name} was switched off; switched it on")
+                        }
+                        var tries = 0
+                        while (tries < 30 && !inBrowse(source.anime, id)) {
+                            delay(100)
+                            tries++
+                        }
+                        navigator?.push(
+                            if (source.anime) AnimeSourceScreen(id) else BrowseSourceScreen(id, GetRemoteManga.QUERY_POPULAR),
+                        )
+                    }
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("WebView") },
+                leadingIcon = { Icon(Icons.Outlined.Public, contentDescription = null) },
+                onClick = {
+                    open = false
+                    val manager = Injekt.get<JsSourceManager>()
+                    val url = manager.get(source.key)?.baseUrl.orEmpty().ifBlank { source.lab?.siteUrl.orEmpty() }
+                    if (url.isNotBlank()) {
+                        navigator?.push(WebViewScreen(url, source.name, manager.idOf(source.key)))
+                    } else {
+                        AppLog.add('W', "lab", "WebView: ${source.name} has no site address")
+                    }
+                },
+            )
+            HorizontalDivider()
+            DropdownMenuItem(
+                text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
+                leadingIcon = { Icon(Icons.Outlined.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                onClick = {
+                    open = false
+                    confirmDelete = true
+                },
+            )
         }
     }
 }
@@ -538,3 +632,9 @@ internal fun StepStatus.strip(): StripColor = when (this) {
     StepStatus.Skipped -> StripColor.Neutral
     StepStatus.Running -> StripColor.Blue
 }
+
+/** KMK (r109): whether Browse has the source with [id] (its source manager knows it) */
+private fun inBrowse(anime: Boolean, id: Long): Boolean = runCatching {
+    if (anime) Injekt.get<AnimeSourceManager>().get(id) != null else Injekt.get<SourceManager>().get(id) != null
+}.getOrDefault(true)
+

@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.sourcelab
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -24,7 +25,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.BugReport
@@ -43,6 +43,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -55,6 +56,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.navigator.LocalNavigator
 import coil3.compose.AsyncImage
+import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
+import eu.kanade.tachiyomi.jssource.JsSourceManager
 import eu.kanade.tachiyomi.jssource.lab.ExplainEntry
 import eu.kanade.tachiyomi.jssource.lab.StepStatus
 import eu.kanade.tachiyomi.jssource.lab.TestItem
@@ -64,11 +67,19 @@ import eu.kanade.tachiyomi.jssource.lab.TestStep
 import eu.kanade.tachiyomi.ui.anime.source.AnimeSourceScreen
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreen
 import eu.kanade.tachiyomi.ui.codeeditor.SourceEditorScreenModel
+import eu.kanade.tachiyomi.util.system.AppLog
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import tachiyomi.domain.source.interactor.GetRemoteManga
+import tachiyomi.domain.source.service.SourceManager
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 /**
  * KMK (r96, r106): the Test pane (mock ETest): a bar with the search word, Run all (Stop while running), Issue report,
@@ -102,10 +113,25 @@ internal fun TestPane(
         model.showPart(entry)
         model.setTab(LabTab.Code)
     }
+    val browseScope = rememberCoroutineScope()
     val openInBrowse: (() -> Unit)? = if (source != null && editorState.saved) {
         {
-            val id = editor.sourceId(source.key)
-            navigator?.push(if (source.anime) AnimeSourceScreen(id) else BrowseSourceScreen(id, GetRemoteManga.QUERY_POPULAR))
+            // KMK (r109): a source switched off in Extensions (or saved a moment ago) isn't in Browse yet, which showed
+            // "Source not installed: <id>": switch it on and wait (3 s at most) until Browse has it, then open it
+            browseScope.launch {
+                val id = editor.sourceId(source.key)
+                val manager = Injekt.get<JsSourceManager>()
+                if (manager.get(source.key)?.enabled == false) {
+                    withContext(Dispatchers.IO) { manager.setEnabled(source.key, true) }
+                    AppLog.add('I', "lab", "Open in Browse: ${source.name} was switched off; switched it on")
+                }
+                var tries = 0
+                while (tries < 30 && !inBrowse(source.anime, id)) {
+                    delay(100)
+                    tries++
+                }
+                navigator?.push(if (source.anime) AnimeSourceScreen(id) else BrowseSourceScreen(id, GetRemoteManga.QUERY_POPULAR))
+            }
         }
     } else {
         null
@@ -616,3 +642,9 @@ private fun CameBack(step: TestStep) {
         Spacer(Modifier.height(2.dp))
     }
 }
+
+/** KMK (r109): whether Browse has the source with [id] (its source manager knows it) */
+private fun inBrowse(anime: Boolean, id: Long): Boolean = runCatching {
+    if (anime) Injekt.get<AnimeSourceManager>().get(id) != null else Injekt.get<SourceManager>().get(id) != null
+}.getOrDefault(true)
+
