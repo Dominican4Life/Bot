@@ -79,6 +79,7 @@ import eu.kanade.tachiyomi.jssource.lab.LabTemplate
 import eu.kanade.tachiyomi.jssource.lab.RecordedConverter
 import eu.kanade.tachiyomi.jssource.lab.StepStatus
 import eu.kanade.tachiyomi.ui.sourcelab.LabStatusStrip
+import eu.kanade.tachiyomi.ui.sourcelab.LabTopBar
 import eu.kanade.tachiyomi.ui.sourcelab.MonoCard
 import eu.kanade.tachiyomi.ui.sourcelab.StripColor
 import eu.kanade.tachiyomi.ui.sourcelab.tint
@@ -102,34 +103,16 @@ internal class NewSourceScreen(private val kindHint: Boolean? = null) : Screen()
     @Composable
     override fun Content() {
         val navigator = LocalNavigator.currentOrThrow
-        val context = LocalContext.current
         val model = rememberScreenModel { NewSourceScreenModel(kindHint) }
         val state by model.state.collectAsState()
-        val tablet = isTabletUi()
 
-        LaunchedEffect(state.delivered) {
-            if (state.delivered) navigator.popUntil { it !is LabFlowScreen }
-        }
-        // The system Back does what the bar's arrow does: a detection result goes back to the entry page first
-        BackHandler(enabled = state.phase != NewSourceScreenModel.Phase.Entry) { model.backToEntry() }
-
-        val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-            if (uri != null) model.importFile(uri)
-        }
-        val pickFile: (String) -> Unit = { mime -> filePicker.launch(mime) }
-
-        val host = state.url.trim().removePrefix("https://").removePrefix("http://").substringBefore('/')
-        val subtitle = when (state.phase) {
-            NewSourceScreenModel.Phase.Entry -> "paste the site address"
-            NewSourceScreenModel.Phase.Detecting -> "$host · detecting the engine"
-            NewSourceScreenModel.Phase.Detected -> state.best?.let { "$host · ${it.engineName} ${it.confidence} %" } ?: "$host · no engine matched"
-        }
-
+        // KMK (r110): the pushed form (the Lab itself shows the embedded one, [LabNewSourcePane]); the body, Back and
+        // the dialogs are [NewSourceContent], shared by both
         Scaffold(
             topBar = {
                 AppBar(
                     title = "New source",
-                    subtitle = subtitle,
+                    subtitle = newSourceSubtitle(state),
                     navigateUp = {
                         if (state.phase != NewSourceScreenModel.Phase.Entry) model.backToEntry() else navigator.pop()
                         Unit
@@ -137,134 +120,208 @@ internal class NewSourceScreen(private val kindHint: Boolean? = null) : Screen()
                 )
             },
         ) { padding ->
-            Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-                val (head, color) = when (state.phase) {
-                    NewSourceScreenModel.Phase.Entry -> "New" to StripColor.Blue
-                    NewSourceScreenModel.Phase.Detecting -> "Detecting" to StripColor.Blue
-                    NewSourceScreenModel.Phase.Detected -> if (state.result?.writeOffered == true) "Detected" to StripColor.Green else "Detected" to StripColor.Amber
-                }
-                LabStatusStrip(
-                    head = head,
-                    color = color,
-                    figures = listOf(
-                        "Requests" to state.requests.toString(),
-                        "Engine" to (state.best?.engineName?.substringBefore(" (") ?: "—"),
-                        "Kind" to when (state.best?.kind ?: state.kindHint?.let { if (it) "anime" else "manga" }) {
-                            "anime" -> "Anime"
-                            "manga" -> "Manga"
-                            else -> "auto"
-                        },
-                    ),
-                )
-                if (state.busy != null) {
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp))
-                    Text(
-                        text = state.busy.orEmpty(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                    )
-                }
-                if (tablet) {
-                    Row(modifier = Modifier.fillMaxSize()) {
-                        MainColumn(state, model, pickFile, modifier = Modifier.weight(1f).fillMaxHeight())
-                        Column(
-                            modifier = Modifier
-                                .width(380.dp)
-                                .fillMaxHeight()
-                                .verticalScroll(rememberScrollState())
-                                .padding(end = 16.dp, bottom = 16.dp),
-                        ) {
-                            HowDetectionWorksCard(state.fingerprints)
-                        }
-                    }
-                } else {
-                    MainColumn(state, model, pickFile, modifier = Modifier.fillMaxSize(), howCard = true)
-                }
-            }
+            NewSourceContent(
+                model = model,
+                embedded = false,
+                onDelivered = { navigator.popUntil { it !is LabFlowScreen } },
+                modifier = Modifier.fillMaxSize().padding(padding),
+            )
         }
+    }
+}
 
-        // Pickers and cards over the screen
-        when (state.picker) {
-            NewSourceScreenModel.Picker.Template -> TemplatePickerDialog(
-                // KMK (r98): the recorded-* templates are only written by Record and convert
-                templates = state.templates.filter { !it.id.startsWith("recorded-") },
-                onPick = model::writeTemplate,
-                onDismiss = model::closePicker,
-            )
-            NewSourceScreenModel.Picker.Duplicate -> ListPickerDialog(
-                title = "Duplicate a source",
-                empty = "No saved sources yet",
-                items = state.savedSources.map { it.first to it.second },
-                onPick = model::duplicate,
-                onDismiss = model::closePicker,
-            )
-            NewSourceScreenModel.Picker.Extension -> {
-                val import = state.extensionImport
-                val recordSteps = state.recordSteps
-                if (recordSteps != null) {
-                    // KMK (r98): Record and convert
-                    RecordDialog(
-                        row = state.extensionRow,
-                        steps = recordSteps,
-                        running = state.recording,
-                        result = state.recorded,
-                        error = state.recordError,
-                        busy = state.busy,
-                        onStop = model::stopRecording,
-                        onWrite = model::confirmRecorded,
-                        onBack = model::closeRecording,
-                    )
-                } else if (import != null) {
-                    ExtensionImportDialog(
-                        result = import,
-                        host = state.extensionRow?.baseUrl.orEmpty(),
-                        onWrite = model::confirmExtensionImport,
-                        onRecord = model::startRecording,
-                        onGitHub = {
-                            val q = import.generated.lab.fromExtension.orEmpty().substringAfterLast('.')
-                            context.openInBrowser("https://github.com/keiyoushi/extensions-source/search?q=$q")
-                        },
-                        onDismiss = model::closePicker,
-                    )
-                } else {
-                    ExtensionPickerDialog(
-                        rows = state.extensions,
-                        busy = state.busy,
-                        error = state.error,
-                        onPick = model::importExtension,
-                        onDismiss = model::closePicker,
-                    )
+/**
+ * KMK (r110): "New source" inside the Source Lab, next to its rail / above its bottom bar (the rail's New is a place,
+ * not a pushed screen). The model belongs to [owner] (the Lab screen) under a tag with [generation] in it: the Lab
+ * bumps the generation once a source was delivered, so the next New starts on a fresh entry page, while switching to
+ * another rail place and back keeps what was typed. The older models are removed with the Lab screen.
+ * [onDelivered] is called once the hand-off happened (the Lab opens the source through LabHandoff as before).
+ */
+@Composable
+internal fun LabNewSourcePane(
+    owner: VoyagerScreen,
+    generation: Int,
+    onDelivered: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val model = owner.rememberScreenModel(tag = "labNewSource:$generation") { NewSourceScreenModel(null) }
+    NewSourceContent(model = model, embedded = true, onDelivered = onDelivered, modifier = modifier)
+}
+
+/** KMK (r110): the top bar's subtitle, for both forms */
+private fun newSourceSubtitle(state: NewSourceScreenModel.State): String {
+    val host = state.url.trim().removePrefix("https://").removePrefix("http://").substringBefore('/')
+    return when (state.phase) {
+        NewSourceScreenModel.Phase.Entry -> "paste the site address"
+        NewSourceScreenModel.Phase.Detecting -> "$host · detecting the engine"
+        NewSourceScreenModel.Phase.Detected -> state.best?.let { "$host · ${it.engineName} ${it.confidence} %" } ?: "$host · no engine matched"
+    }
+}
+
+/**
+ * KMK (r110): the New-source screen's body (strip, entry / detection, the how-it-works card) and its dialogs.
+ * [embedded]: inside the Lab, which has no back arrow for its rail places: the Lab's top bar ([LabTopBar]) is drawn
+ * here, with "Start over" in place of the arrow while a detection is shown (the system Back does the same).
+ */
+@Composable
+private fun NewSourceContent(
+    model: NewSourceScreenModel,
+    embedded: Boolean,
+    onDelivered: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val navigator = LocalNavigator.currentOrThrow
+    val context = LocalContext.current
+    val state by model.state.collectAsState()
+    val tablet = isTabletUi()
+
+    LaunchedEffect(state.delivered) {
+        if (state.delivered) onDelivered()
+    }
+    // The system Back does what the bar's arrow does: a detection result goes back to the entry page first
+    BackHandler(enabled = state.phase != NewSourceScreenModel.Phase.Entry) { model.backToEntry() }
+
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) model.importFile(uri)
+    }
+    val pickFile: (String) -> Unit = { mime -> filePicker.launch(mime) }
+
+    val host = state.url.trim().removePrefix("https://").removePrefix("http://").substringBefore('/')
+
+    Column(modifier = modifier) {
+        if (embedded) {
+            LabTopBar(title = "New source", subtitle = newSourceSubtitle(state), onBack = null) {
+                if (state.phase != NewSourceScreenModel.Phase.Entry) {
+                    OutlinedButton(onClick = model::backToEntry) { Text("Start over") }
                 }
             }
-            NewSourceScreenModel.Picker.None -> Unit
+            HorizontalDivider()
         }
-        val error = state.error
-        if (error != null && state.picker == NewSourceScreenModel.Picker.None) {
-            AlertDialog(
-                onDismissRequest = model::clearError,
-                title = { Text("Source Lab") },
-                text = { Text(error) },
-                confirmButton = { TextButton(onClick = model::clearError) { Text("OK") } },
-            )
+        val (head, color) = when (state.phase) {
+            NewSourceScreenModel.Phase.Entry -> "New" to StripColor.Blue
+            NewSourceScreenModel.Phase.Detecting -> "Detecting" to StripColor.Blue
+            NewSourceScreenModel.Phase.Detected -> if (state.result?.writeOffered == true) "Detected" to StripColor.Green else "Detected" to StripColor.Amber
         }
-        val botCheck = state.botCheckUrl
-        if (botCheck != null) {
-            AlertDialog(
-                onDismissRequest = model::backToEntry,
-                title = { Text("The site wants a bot check") },
-                text = { Text("Open it in WebView, pass the check, then detect again. The check counts for the app's connection too.") },
-                confirmButton = {
-                    TextButton(
-                        onClick = {
-                            model.backToEntry()
-                            navigator.push(WebViewScreen(url = botCheck, initialTitle = host, sourceId = null))
-                        },
-                    ) { Text("Open in WebView") }
+        LabStatusStrip(
+            head = head,
+            color = color,
+            figures = listOf(
+                "Requests" to state.requests.toString(),
+                "Engine" to (state.best?.engineName?.substringBefore(" (") ?: "—"),
+                "Kind" to when (state.best?.kind ?: state.kindHint?.let { if (it) "anime" else "manga" }) {
+                    "anime" -> "Anime"
+                    "manga" -> "Manga"
+                    else -> "auto"
                 },
-                dismissButton = { TextButton(onClick = model::backToEntry) { Text("Later") } },
+            ),
+        )
+        if (state.busy != null) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp))
+            Text(
+                text = state.busy.orEmpty(),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
             )
         }
+        if (tablet) {
+            Row(modifier = Modifier.fillMaxSize()) {
+                MainColumn(state, model, pickFile, modifier = Modifier.weight(1f).fillMaxHeight())
+                Column(
+                    modifier = Modifier
+                        .width(380.dp)
+                        .fillMaxHeight()
+                        .verticalScroll(rememberScrollState())
+                        .padding(end = 16.dp, bottom = 16.dp),
+                ) {
+                    HowDetectionWorksCard(state.fingerprints)
+                }
+            }
+        } else {
+            MainColumn(state, model, pickFile, modifier = Modifier.fillMaxSize(), howCard = true)
+        }
+    }
+
+    // Pickers and cards over the screen
+    when (state.picker) {
+        NewSourceScreenModel.Picker.Template -> TemplatePickerDialog(
+            // KMK (r98): the recorded-* templates are only written by Record and convert
+            templates = state.templates.filter { !it.id.startsWith("recorded-") },
+            onPick = model::writeTemplate,
+            onDismiss = model::closePicker,
+        )
+        NewSourceScreenModel.Picker.Duplicate -> ListPickerDialog(
+            title = "Duplicate a source",
+            empty = "No saved sources yet",
+            items = state.savedSources.map { it.first to it.second },
+            onPick = model::duplicate,
+            onDismiss = model::closePicker,
+        )
+        NewSourceScreenModel.Picker.Extension -> {
+            val import = state.extensionImport
+            val recordSteps = state.recordSteps
+            if (recordSteps != null) {
+                // KMK (r98): Record and convert
+                RecordDialog(
+                    row = state.extensionRow,
+                    steps = recordSteps,
+                    running = state.recording,
+                    result = state.recorded,
+                    error = state.recordError,
+                    busy = state.busy,
+                    onStop = model::stopRecording,
+                    onWrite = model::confirmRecorded,
+                    onBack = model::closeRecording,
+                )
+            } else if (import != null) {
+                ExtensionImportDialog(
+                    result = import,
+                    host = state.extensionRow?.baseUrl.orEmpty(),
+                    onWrite = model::confirmExtensionImport,
+                    onRecord = model::startRecording,
+                    onGitHub = {
+                        val q = import.generated.lab.fromExtension.orEmpty().substringAfterLast('.')
+                        context.openInBrowser("https://github.com/keiyoushi/extensions-source/search?q=$q")
+                    },
+                    onDismiss = model::closePicker,
+                )
+            } else {
+                ExtensionPickerDialog(
+                    rows = state.extensions,
+                    busy = state.busy,
+                    error = state.error,
+                    onPick = model::importExtension,
+                    onDismiss = model::closePicker,
+                )
+            }
+        }
+        NewSourceScreenModel.Picker.None -> Unit
+    }
+    val error = state.error
+    if (error != null && state.picker == NewSourceScreenModel.Picker.None) {
+        AlertDialog(
+            onDismissRequest = model::clearError,
+            title = { Text("Source Lab") },
+            text = { Text(error) },
+            confirmButton = { TextButton(onClick = model::clearError) { Text("OK") } },
+        )
+    }
+    val botCheck = state.botCheckUrl
+    if (botCheck != null) {
+        AlertDialog(
+            onDismissRequest = model::backToEntry,
+            title = { Text("The site wants a bot check") },
+            text = { Text("Open it in WebView, pass the check, then detect again. The check counts for the app's connection too.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        model.backToEntry()
+                        navigator.push(WebViewScreen(url = botCheck, initialTitle = host, sourceId = null))
+                    },
+                ) { Text("Open in WebView") }
+            },
+            dismissButton = { TextButton(onClick = model::backToEntry) { Text("Later") } },
+        )
     }
 }
 
@@ -885,7 +942,7 @@ private fun RecordNote(host: String) {
     val site = host.removePrefix("https://").removePrefix("http://").trimEnd('/').ifBlank { "the site" }
     Text(
         text = "It uses your installed extension and your connection: about 10–20 requests to $site and the hosts it calls, " +
-            "${ExtensionRecorder.STEP_TIMEOUT_MS / 1000} s per step at most. Nothing is added to your library. Cookie and login " +
+            "${ExtensionRecorder.STEP_TIMEOUT_MS / 1000} s per step (up to ${ExtensionRecorder.STEP_MAX_MS / 1000} s while a reply is on its way). Nothing is added to your library. Cookie and login " +
             "values are left out of what is kept. The extension may save to its own settings as it always does. Only its " +
             "requests are recorded, but one the app makes meanwhile to the same site can slip in, so wait on this screen.",
         style = MaterialTheme.typography.bodySmall,

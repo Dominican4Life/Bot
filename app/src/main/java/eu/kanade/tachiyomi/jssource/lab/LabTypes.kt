@@ -40,6 +40,9 @@ internal data class HealthLastError(val time: Long, val method: String, val mess
 internal data class SourceHealthFile(
     val days: List<HealthDay> = emptyList(),      // at most 14, oldest first
     val lastError: HealthLastError? = null,
+    // KMK (r110) fix: when the latest errors happened (ms, newest last, at most 10): "Failing" counts only those after
+    // the latest Test Run. Missing in older files = none
+    val recentErrors: List<Long> = emptyList(),
 )
 
 @Immutable

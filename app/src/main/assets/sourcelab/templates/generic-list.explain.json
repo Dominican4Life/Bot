@@ -163,6 +163,12 @@
         "helpers"
       ],
       "note": "Collections: getDirectory also serves collections kept in the source (Browse reads the site's pages when its own sort or a menu such as Height, Cup or Age is picked); a sort's first option can be the site's default under its own name (“Most videos”), never “Site default”. Pictures: when a card's img has no address or a placeholder, its lazy-load attributes, a <picture>'s <source>, a background-image or data-bg, or an img inside <noscript> are read (suggestions, list covers, collection faces)."
+    },
+    "12": {
+      "parts": [
+        "helpers"
+      ],
+      "note": "A collection entry's part that can't be read (its selector fails) is now logged once in the console instead of being skipped silently, so Lint no longer flags “a catch that swallows the error” in sources made from this template."
     }
   }
 }

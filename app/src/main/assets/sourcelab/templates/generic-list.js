@@ -1,4 +1,4 @@
-// @version 11
+// @version 12
 // Generic list template of the Source Lab, written for {{name}} ({{baseUrl}}) from what was tapped in Build by
 // tapping (or filled by hand). Lists are pages of ITEM cards, chapters / episodes are the links of CHAPTER on a
 // title page, pages are the IMAGE pictures of a chapter page, videos the VIDEO_FRAME of an episode page.
@@ -33,6 +33,7 @@
 // on a list it keeps); a sort's first option may be the site's default (value "": the directory's own order). A card's
 // picture is also found when its img has none or a placeholder: a <picture>'s <source>, a background-image or data-bg…
 // on the card or inside it, an img inside <noscript> (suggestions, list covers and collection pictures).
+// r110 (v12): a collection entry's part that can't be read is logged once in the console instead of skipped silently.
 
 /*@part id="headers"*/
 // Headers and constants: the site as Referer on every picture; the selectors the builder derived (each with
@@ -1198,7 +1199,17 @@ async function directoryItems(f, doc) {
 async function partEl(card, p) {
   if (!p) return null;
   if (!p.sel) return card;
-  try { return await card.selectOne(p.sel); } catch (e) { return null; }
+  // r110: a part whose selector can't be read is logged once (rules 11.7: no silent catch in a template helper)
+  try {
+    return await card.selectOne(p.sel);
+  } catch (e) {
+    if (!partEl.told) partEl.told = {};
+    if (!partEl.told[p.sel]) {
+      partEl.told[p.sel] = true;
+      console.log("Directory part " + p.sel + " wasn't read: " + (e && e.message));
+    }
+    return null;
+  }
 }
 // A part's text: [whole] = all of it (a count), else the name: its attribute when it has one (alt, title), its own text
 // without its children's when "own" (a name with a count inside the same element)

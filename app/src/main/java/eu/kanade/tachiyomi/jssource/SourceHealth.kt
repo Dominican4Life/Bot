@@ -56,8 +56,18 @@ internal class SourceHealth(private val filesDir: File) {
         val lintBad = lastLint?.findings.orEmpty().any {
             !it.ignored && (it.severity == LintSeverity.Error || it.severity == LintSeverity.Warn)
         }
+        // KMK (r110): errors seen in Browse before the latest Test Run (an older version of the code) don't keep the
+        // source "Failing" once that run passed: they only make it ask for attention. KMK (r110) fix: Failing needs 3
+        // errors today AFTER that run (one new error after a passed run with 3 older ones no longer counts as 3)
+        val failingErrors = if (lastRun == null) {
+            errorsToday
+        } else {
+            val dayStart = LocalDate.now(ZoneOffset.UTC).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+            val since = maxOf(lastRun.startedAt, dayStart)
+            file.recentErrors.count { it > since }
+        }
         val state = when {
-            lastRun?.worst == StepStatus.Red || errorsToday >= 3 -> HealthState.Failing
+            lastRun?.worst == StepStatus.Red || failingErrors >= 3 -> HealthState.Failing
             lintBad || lastRun?.worst == StepStatus.Amber || errorsToday >= 1 -> HealthState.Attention
             lastRun == null && file.days.isEmpty() -> HealthState.Unknown
             else -> HealthState.Good
@@ -119,7 +129,9 @@ internal class SourceHealth(private val filesDir: File) {
             }
             days.sortBy { it.day }
             while (days.size > 14) days.removeAt(0)
-            data = SourceHealthFile(days = days, lastError = error ?: now.lastError)
+            // KMK (r110) fix: the latest error times kept too (Failing counts the ones after the latest Test Run)
+            val recent = if (error == null) now.recentErrors else (now.recentErrors + error.time).takeLast(RECENT_ERRORS)
+            data = SourceHealthFile(days = days, lastError = error ?: now.lastError, recentErrors = recent)
             dirty = true
             scheduleWrite()
         }
@@ -161,6 +173,7 @@ internal class SourceHealth(private val filesDir: File) {
 
     companion object {
         private const val WRITE_EVERY_MS = 60_000L
+        private const val RECENT_ERRORS = 10
 
         @Volatile
         private var instance: SourceHealth? = null

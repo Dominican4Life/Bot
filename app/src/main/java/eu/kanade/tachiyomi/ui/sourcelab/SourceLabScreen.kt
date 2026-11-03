@@ -81,7 +81,7 @@ import eu.kanade.tachiyomi.ui.codeeditor.SourceEditorScreenModel
 import eu.kanade.tachiyomi.ui.codeeditor.rememberEditorActions
 import eu.kanade.tachiyomi.ui.diagnostics.DiagnosticsScreen
 import eu.kanade.tachiyomi.ui.sourcelab.newsource.BuilderScreen
-import eu.kanade.tachiyomi.ui.sourcelab.newsource.LabFlowScreenFactory
+import eu.kanade.tachiyomi.ui.sourcelab.newsource.LabNewSourcePane
 import eu.kanade.tachiyomi.ui.sourcelab.newsource.TemplatesPane
 import kotlinx.coroutines.delay
 import tachiyomi.presentation.core.components.material.Scaffold
@@ -114,6 +114,8 @@ internal class SourceLabScreen(
         var findOpen by remember { mutableStateOf(false) }
         var query by rememberSaveable { mutableStateOf(model.lastQuery()) }
         var railDest by rememberSaveable { mutableStateOf(RailDest.Sources) }
+        // KMK (r110): bumped once the embedded New source delivered, so the next New starts on a fresh entry page
+        var newSourceGeneration by rememberSaveable { mutableStateOf(0) }
         var showMenu by remember { mutableStateOf(false) }
         var confirmTemplateUpdate by remember { mutableStateOf(false) } // KMK (r100)
         // KMK (r101, r106): Source info as a sheet (⋮ Source info; the phone's Code header row too). r106: the tablet's
@@ -132,6 +134,12 @@ internal class SourceLabScreen(
         // (the generated source is saved either way; a cancelled open leaves it on Home)
         // (reads the editor's live state, not the composition's: the effects below keep their first lambda)
         val adopt: (GeneratedSource) -> Unit = { generated ->
+            // KMK (r110): New is a rail place now: the arriving source shows on Sources (from the embedded New, or
+            // from the builder pushed over it)
+            railDest = RailDest.Sources
+            // KMK (r110) fix: from any flow (Build by tapping pushed over New, a template, an import…): the next New
+            // starts on a fresh entry page, not on the finished one
+            newSourceGeneration++
             model.adoptGenerated(editor, generated) { what, open ->
                 if (editor.state.value.dirty) actions.confirmReplace.value = what to open else open()
             }
@@ -292,7 +300,8 @@ internal class SourceLabScreen(
                         model.open(null)
                     }
                 }
-                navigator.push(LabFlowScreenFactory.newSource(null))
+                // KMK (r110): the rail place New (next to the rail / above the bottom bar), no pushed screen
+                railDest = RailDest.New
             }
         }
         // Back inside the Lab: Templates → what was behind it; a source opened from Home → Home (phone and tablet
@@ -331,7 +340,8 @@ internal class SourceLabScreen(
             model.runTest(editor, query)
             if (model.state.value.tab != LabTab.Code) model.setTab(LabTab.Test)
         }
-        val openRules: () -> Unit = { navigator.push(RulesScreen()) }
+        // KMK (r110): the rail place Rules (Lint's / Explain's "Read the rule" still push RulesScreen(ruleId))
+        val openRules: () -> Unit = { railDest = RailDest.Rules }
         if (confirmFixAll && safeFixes.isNotEmpty()) {
             AlertDialog(
                 onDismissRequest = { confirmFixAll = false },
@@ -364,7 +374,7 @@ internal class SourceLabScreen(
                     LabBottomBar(
                         sourceOpen = state.key != null && railDest == RailDest.Sources,
                         tab = state.tab,
-                        templatesShown = railDest == RailDest.Templates,
+                        dest = railDest,
                         lintCount = lintCount,
                         onSources = goHome,
                         onNewSource = newSource,
@@ -381,7 +391,7 @@ internal class SourceLabScreen(
                     LabRail(
                         sourceOpen = state.key != null && railDest == RailDest.Sources,
                         tab = state.tab,
-                        templatesShown = railDest == RailDest.Templates,
+                        dest = railDest,
                         lintCount = lintCount,
                         onSources = goHome,
                         onNewSource = newSource,
@@ -394,11 +404,14 @@ internal class SourceLabScreen(
                 }
                 Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
                     // KMK (r106): one top bar per place (Templates, Home, a source); the status strip is gone
+                    // KMK (r110): New and Rules draw their own LabTopBar (their subtitles come from their state); no
+                    // rail place has a back arrow (the rail / bottom bar switches places, the system Back goes to Sources)
                     when {
+                        railDest == RailDest.New || railDest == RailDest.Rules -> Unit
                         railDest == RailDest.Templates -> LabTopBar(
                             title = "Templates",
                             subtitle = "the files the Lab writes sources from",
-                            onBack = { back() },
+                            onBack = null,
                         ) {}
                         state.key == null -> LabTopBar(
                             title = "Source Lab",
@@ -592,9 +605,11 @@ internal class SourceLabScreen(
                             }
                         }
                     }
-                    if (editorState.running != null || state.running || state.retestProgress != null || state.reportBuilding) {
+                    // KMK (r110): New and Rules draw their own divider, under their own top bar
+                    val ownTopBar = railDest == RailDest.New || railDest == RailDest.Rules
+                    if (!ownTopBar && (editorState.running != null || state.running || state.retestProgress != null || state.reportBuilding)) {
                         LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                    } else {
+                    } else if (!ownTopBar) {
                         HorizontalDivider()
                     }
                     // KMK (r100): the source's template has a newer version (Lint has its own card for it)
@@ -607,6 +622,20 @@ internal class SourceLabScreen(
                         )
                     }
                     when {
+                        // KMK (r110): New and Rules next to the rail like Sources and Templates. New's model belongs to
+                        // this screen (tagged by generation); Rules shares the Lab's model (its snackbar, its rules)
+                        railDest == RailDest.New -> LabNewSourcePane(
+                            owner = this@SourceLabScreen,
+                            generation = newSourceGeneration,
+                            onDelivered = { newSourceGeneration++ },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        railDest == RailDest.Rules -> RulesContent(
+                            model = model,
+                            ruleId = null,
+                            onBack = null,
+                            modifier = Modifier.fillMaxSize(),
+                        )
                         railDest == RailDest.Templates -> TemplatesPane(modifier = Modifier.fillMaxSize())
                         state.key == null -> Column(modifier = Modifier.fillMaxSize()) {
                             if (!tablet && homeSearchOpen) {
@@ -770,8 +799,11 @@ internal class SourceLabScreen(
     }
 }
 
-/** What the tablet rail (or the phone's ⋮) shows in the main area besides a source */
-internal enum class RailDest { Sources, Templates }
+/**
+ * What the tablet rail (or the phone's bottom bar) shows in the main area besides a source.
+ * KMK (r110): New and Rules joined (they were pushed screens with a back arrow)
+ */
+internal enum class RailDest { Sources, New, Rules, Templates }
 
 /** The source tabs other than Code (Code is [CodeTab], with the Parts outline and Test Run panel on a tablet) */
 @Composable

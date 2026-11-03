@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.ui.sourcelab.newsource
 
 import androidx.compose.runtime.Immutable
+import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -46,6 +47,8 @@ internal object BuilderDirMenus {
         val defaultLabel: String,
         val note: String,
         val pathMode: Boolean = false,
+        /** KMK (r110): each entry's text and the value it gave ("" = the default), in the order pressed */
+        val each: List<Pair<String, String>> = emptyList(),
     ) {
         val ok: Boolean get() = options.count { it.value.isNotEmpty() } >= 1 && options.size >= 2 && (param.isNotEmpty() || pathMode)
     }
@@ -259,32 +262,54 @@ internal object BuilderDirMenus {
     }
 
     /**
-     * The codes of a menu from where each entry goes ([rows], [base] = the directory page): the query parameter most
-     * entries change (page numbers left out); when none and [sort], entries that open other paths are paths of their
-     * own. The default (the entry that left the address as it was or has no code, else the one marked current or reading
-     * [current]) comes first with value "" and its own label; options deduped by value
+     * The codes of a menu from where each entry goes ([rows], [base] = the directory page as the site shows it with
+     * every menu at its default): the query parameter whose VALUE most entries change (page numbers left out; a missing
+     * parameter and an empty one are the same: the site writes `?height=&cup=` for "nothing picked"); when none and
+     * [sort], entries that open other paths are paths of their own. The default (the entry that left the address as it
+     * was or has no code, else the one marked current or reading [current]) comes first with value "" and its own
+     * label; options deduped by value. [siteFilled]: parameters the site filled in itself when the plain directory
+     * address loaded (`sort=count`): an entry giving that same value is the default too
+     *
+     * KMK (r110) fix: r109 counted every parameter an entry's address merely carried (`q=`, `cup=`, `age=` beside the
+     * one that changed) when the scanned address had none, picked `q` and found no codes: "no entry changed the
+     * address" for every menu on the owner's Actresses page. Values are compared now.
      */
-    fun codesOf(base: String, rows: List<Row>, current: String, sort: Boolean): Coded {
+    fun codesOf(base: String, rows: List<Row>, current: String, sort: Boolean, siteFilled: Set<String> = emptySet()): Coded {
         val b = base.toHttpUrlOrNull() ?: return Coded("", emptyList(), "", "the page has no address")
         val basePath = b.encodedPath.trimEnd('/')
         val parsed = rows.map { r -> r to r.url?.toHttpUrlOrNull()?.takeIf { it.host == b.host } }
         val counts = LinkedHashMap<String, Int>()
         val otherPaths = HashSet<String>()
+        // KMK (r110) fix: the same-page addresses of the entries (an entry that changed nothing reads as [b] itself)
+        val samePage = ArrayList<HttpUrl>()
         for ((r, u) in parsed) {
-            if (r.url == null || u == null) continue
+            if (r.url == null) {
+                samePage += b
+                continue
+            }
+            if (u == null) continue
             if (u.encodedPath.trimEnd('/') != basePath) {
                 otherPaths += u.encodedPath
                 continue
             }
-            u.queryParameterNames
-                .filter { it.lowercase() !in PAGE_PARAMS && u.queryParameter(it) != b.queryParameter(it) }
-                .forEach { counts[it] = (counts[it] ?: 0) + 1 }
+            samePage += u
+            for (name in changedNames(b, u)) {
+                counts[name] = (counts[name] ?: 0) + 1
+            }
         }
-        val param = counts.maxByOrNull { it.value }?.key.orEmpty()
+        // KMK (r110) fix: every value a parameter takes over all the entries. The owner's plain address `/en/actresses`
+        // has no parameters; after ANY press the site writes `?page=1&q=&height=…&sort=count`, so `sort=count` "changed"
+        // for every entry (even "Any height") and won over `height`. A parameter with one value for every entry can't
+        // be the menu's: the site filled it in. The most different values wins, then the most entries changed
+        val distinct = counts.keys.associateWith { n -> samePage.mapTo(HashSet()) { it.queryParameter(n).orEmpty() }.size }
+        val param = counts.entries
+            .filter { (distinct[it.key] ?: 0) >= 2 }
+            .maxWithOrNull(compareBy({ distinct[it.key] ?: 0 }, { it.value }))?.key.orEmpty()
         val pathMode = param.isEmpty() && sort && otherPaths.size >= 2
         if (param.isEmpty() && !pathMode) {
-            return Coded("", emptyList(), "", "no entry changed an address parameter of ${b.encodedPath}")
+            return Coded("", emptyList(), "", "no entry changed a value in the address of ${b.encodedPath}")
         }
+        val baseValue = if (pathMode) "" else b.queryParameter(param).orEmpty()
         val values = ArrayList<Pair<Row, String>>()
         for ((r, u) in parsed) {
             val v = when {
@@ -292,15 +317,17 @@ internal object BuilderDirMenus {
                 u == null -> null
                 pathMode -> if (u.encodedPath.trimEnd('/') == basePath && u.query.isNullOrEmpty()) "" else u.encodedPath + (u.encodedQuery?.let { "?$it" } ?: "")
                 u.encodedPath.trimEnd('/') != basePath -> null
-                else -> u.queryParameter(param) ?: ""
+                // KMK (r110): the value the site put in the plain address itself is its default
+                param in siteFilled && u.queryParameter(param).orEmpty() == baseValue -> ""
+                else -> u.queryParameter(param).orEmpty()
             } ?: continue
             values += r to v
         }
         // the default: no code (or no change), else marked current, else the button's value
         var at = values.indexOfFirst { it.second.isEmpty() }
         // KMK (r109) fix: the marked / shown entry is the site's default only when the page's address has no value for
-        // the parameter (on ?sort=views it is that pick)
-        val pageHasValue = !pathMode && !b.queryParameter(param).isNullOrEmpty()
+        // the parameter (on ?sort=views it is that pick). KMK (r110): a value the site filled in itself doesn't count
+        val pageHasValue = !pathMode && baseValue.isNotEmpty() && param !in siteFilled
         if (at < 0 && !pageHasValue) at = values.indexOfFirst { it.first.current }
         if (at < 0 && !pageHasValue && current.isNotBlank()) at = values.indexOfFirst { it.first.text.equals(current, ignoreCase = true) }
         val defaultLabel = if (at >= 0) values[at].first.text else ""
@@ -311,7 +338,85 @@ internal object BuilderDirMenus {
             ordered += ExtrasOption(r.text, v)
         }
         val options = ordered.distinctBy { it.value }.take(MAX_ITEMS)
-        return Coded(if (pathMode) "" else param, options, defaultLabel, "", pathMode)
+        val each = values.mapIndexed { i, (r, v) -> r.text to if (i == at) "" else v }
+        return Coded(if (pathMode) "" else param, options, defaultLabel, "", pathMode, each)
+    }
+
+    /**
+     * KMK (r110) fix: what entry address [url] picks for [coded]'s parameter, as its row shows it: "height=150-154"
+     * (only the menu's parameter, never `sort=count` the site wrote beside it), the address when the menu's entries are
+     * addresses of their own, "" = no change (the parameter empty or as in [base]: the default)
+     */
+    fun codeFor(coded: Coded, base: String, url: String?): String {
+        if (coded.pathMode) return changeOf(base, url)
+        if (coded.param.isEmpty()) return ""
+        val u = url?.trim()?.substringBefore('#')?.toHttpUrlOrNull() ?: return ""
+        val v = u.queryParameter(coded.param).orEmpty()
+        val baseValue = base.toHttpUrlOrNull()?.queryParameter(coded.param).orEmpty()
+        return if (v.isEmpty() || v == baseValue) "" else "${coded.param}=$v"
+    }
+
+    /**
+     * KMK (r110): the query parameters whose value differs between [a] and [b] (page numbers left out; missing = empty),
+     * in [b]'s order then [a]'s
+     */
+    private fun changedNames(a: HttpUrl, b: HttpUrl): List<String> {
+        val names = LinkedHashSet<String>().apply {
+            addAll(b.queryParameterNames)
+            addAll(a.queryParameterNames)
+        }
+        return names.filter { n -> n.isNotBlank() && n.lowercase() !in PAGE_PARAMS && a.queryParameter(n).orEmpty() != b.queryParameter(n).orEmpty() }
+    }
+
+    /**
+     * KMK (r110): what an address picks: its host and path (no trailing "/") and every query parameter that has a value
+     * (page numbers left out). `/en/actresses?page=1&q=&height=&sort=count` and `/en/actresses?sort=count` pick the same
+     */
+    fun valuesOf(url: String?): Pair<String, Map<String, String>>? {
+        val u = url?.trim()?.substringBefore('#')?.toHttpUrlOrNull() ?: return null
+        val out = sortedMapOf<String, String>()
+        for (n in u.queryParameterNames) {
+            if (n.isBlank() || n.lowercase() in PAGE_PARAMS) continue
+            val v = u.queryParameter(n).orEmpty()
+            if (v.isNotEmpty()) out[n] = v
+        }
+        return (u.host + u.encodedPath.trimEnd('/')) to out
+    }
+
+    /** KMK (r110): [a] and [b] pick the same (see [valuesOf]); false when either isn't an address */
+    fun sameValues(a: String?, b: String?): Boolean {
+        val x = valuesOf(a) ?: return false
+        val y = valuesOf(b) ?: return false
+        return x == y
+    }
+
+    /** KMK (r110): [a] and [b] are the same page (host and path), whatever their parameters */
+    fun samePage(a: String?, b: String?): Boolean {
+        val x = valuesOf(a) ?: return false
+        val y = valuesOf(b) ?: return false
+        return x.first == y.first
+    }
+
+    /**
+     * KMK (r110): what a press changed, as the card shows it: "height=150-154" (the values that differ from [from]),
+     * the new path when it left the page, "" when nothing differs
+     */
+    fun changeOf(from: String?, to: String?): String {
+        val a = from?.trim()?.substringBefore('#')?.toHttpUrlOrNull() ?: return ""
+        val b = to?.trim()?.substringBefore('#')?.toHttpUrlOrNull() ?: return ""
+        if (a.host != b.host || a.encodedPath.trimEnd('/') != b.encodedPath.trimEnd('/')) return b.encodedPath
+        return changedNames(a, b).joinToString("&") { "$it=${b.queryParameter(it).orEmpty()}" }
+    }
+
+    /**
+     * KMK (r110): the parameters the site filled in itself: they have a value in [loaded] (the plain directory address
+     * as the page shows it after loading) and none in [asked] (the address the builder loaded)
+     */
+    fun siteFilled(asked: String, loaded: String): Set<String> {
+        val a = valuesOf(asked) ?: return emptySet()
+        val l = valuesOf(loaded) ?: return emptySet()
+        if (a.first != l.first) return emptySet()
+        return l.second.keys.filter { it !in a.second }.toSet()
     }
 
     /** The value a menu's button shows after its colon ("Sort: Most videos ▾" → "Most videos"), "" when none */

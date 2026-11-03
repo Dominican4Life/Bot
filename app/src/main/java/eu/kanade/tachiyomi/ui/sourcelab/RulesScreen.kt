@@ -16,12 +16,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SnackbarHost
@@ -74,33 +70,9 @@ internal class RulesScreen(private val ruleId: String? = null) : Screen() {
     @Composable
     override fun Content() {
         val navigator = LocalNavigator.currentOrThrow
-        val context = LocalContext.current
         val model = rememberScreenModel { SourceLabScreenModel(null, LabTab.Code) }
         val state by model.state.collectAsState()
         val snackbar = remember { SnackbarHostState() }
-        var view by rememberSaveable { mutableStateOf(0) } // 0 reading, 1 machine rules, 2 versions
-        val rules = state.rules
-        val listState = rememberLazyListState()
-        // KMK (r103): the markdown is split, and the asset rules.md plus the imported versions are read, off the main
-        // thread (they were read in composition)
-        val blocks by produceState(emptyList<Block>(), rules?.body) {
-            val body = rules?.body
-            value = if (body == null) emptyList() else withContext(Dispatchers.Default) { markdownBlocks(body) }
-        }
-        val machine = rules?.rules.orEmpty().filter { it.check != "text" && it.check.isNotBlank() }
-        val versions by produceState(emptyList<Pair<Int, String>>(), rules) {
-            value = withContext(Dispatchers.IO) {
-                val started = System.nanoTime()
-                val list = runCatching { model.rulesVersions() }.getOrDefault(emptyList())
-                val ms = (System.nanoTime() - started) / 1_000_000
-                AppLog.add('D', "lab", "Rules: ${list.size} versions read off the main thread in $ms ms")
-                list
-            }
-        }
-        val hits = remember(state.sources) {
-            state.sources.flatMap { s -> s.lastLint?.findings.orEmpty().filter { !it.ignored }.map { it.ruleId }.distinct() }
-                .groupingBy { it }.eachCount()
-        }
 
         LaunchedEffect(state.message) {
             val message = state.message ?: return@LaunchedEffect
@@ -110,127 +82,168 @@ internal class RulesScreen(private val ruleId: String? = null) : Screen() {
                 model.consumeMessage(message)
             }
         }
-        // Read the rule: jump to its section once the body is there
-        LaunchedEffect(blocks.size, ruleId) {
-            val rule = ruleId?.let { id -> rules?.rules?.firstOrNull { it.id == id } } ?: return@LaunchedEffect
-            val index = blocks.indexOfFirst { it is Block.Heading && it.number == rule.section }
-            if (index >= 0) listState.scrollToItem(index + 2) // after the file card and the view chips
-        }
-        val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            uri ?: return@rememberLauncherForActivityResult
-            runCatching {
-                val text = context.contentResolver.openInputStream(uri)!!.bufferedReader().use { it.readText() }
-                val name = runCatching {
-                    context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
-                        if (c.moveToFirst()) c.getString(0) else null
-                    }
-                }.getOrNull() ?: uri.lastPathSegment
-                model.updateRules(text, name)
-            }.onFailure { context.toast("Couldn't read the file: ${it.message}") }
-        }
-
+        // KMK (r110): the pushed form (Lint's / Explain's "Read the rule"); the Lab's rail shows [RulesContent] in place
         Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { padding ->
-            Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(4.dp)) {
-                    IconButton(onClick = { navigator.pop() }) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back") }
-                    Column(modifier = Modifier.weight(1f).padding(start = 4.dp)) {
-                        Text("Rules file", style = MaterialTheme.typography.titleLarge)
-                        Text(
-                            text = if (rules == null) "no rules file" else "v${rules.version} · ${rules.rules.size} rules · ${machine.size} checked by the Lab",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+            RulesContent(
+                model = model,
+                ruleId = ruleId,
+                onBack = { navigator.pop() },
+                modifier = Modifier.fillMaxSize().padding(padding),
+            )
+        }
+    }
+}
+
+/**
+ * KMK (r110): the Rules file's body, shared by the pushed [RulesScreen] and the Lab's rail place "Rules" (shown next
+ * to the rail, no back arrow: [onBack] null). [model] is the caller's: the Lab passes its own, so its snackbar shows
+ * the messages (Check all sources, Update from file) and Lint sees a new rules file at once. The top bar is the Lab's
+ * [LabTopBar] in both forms (the pushed one with its back arrow).
+ */
+@Composable
+internal fun RulesContent(
+    model: SourceLabScreenModel,
+    ruleId: String?,
+    onBack: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val state by model.state.collectAsState()
+    var view by rememberSaveable { mutableStateOf(0) } // 0 reading, 1 machine rules, 2 versions
+    val rules = state.rules
+    val listState = rememberLazyListState()
+    // KMK (r103): the markdown is split, and the asset rules.md plus the imported versions are read, off the main
+    // thread (they were read in composition)
+    val blocks by produceState(emptyList<Block>(), rules?.body) {
+        val body = rules?.body
+        value = if (body == null) emptyList() else withContext(Dispatchers.Default) { markdownBlocks(body) }
+    }
+    val machine = rules?.rules.orEmpty().filter { it.check != "text" && it.check.isNotBlank() }
+    val versions by produceState(emptyList<Pair<Int, String>>(), rules) {
+        value = withContext(Dispatchers.IO) {
+            val started = System.nanoTime()
+            val list = runCatching { model.rulesVersions() }.getOrDefault(emptyList())
+            val ms = (System.nanoTime() - started) / 1_000_000
+            AppLog.add('D', "lab", "Rules: ${list.size} versions read off the main thread in $ms ms")
+            list
+        }
+    }
+    val hits = remember(state.sources) {
+        state.sources.flatMap { s -> s.lastLint?.findings.orEmpty().filter { !it.ignored }.map { it.ruleId }.distinct() }
+            .groupingBy { it }.eachCount()
+    }
+
+    // Read the rule: jump to its section once the body is there
+    LaunchedEffect(blocks.size, ruleId) {
+        val rule = ruleId?.let { id -> rules?.rules?.firstOrNull { it.id == id } } ?: return@LaunchedEffect
+        val index = blocks.indexOfFirst { it is Block.Heading && it.number == rule.section }
+        if (index >= 0) listState.scrollToItem(index + 2) // after the file card and the view chips
+    }
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        runCatching {
+            val text = context.contentResolver.openInputStream(uri)!!.bufferedReader().use { it.readText() }
+            val name = runCatching {
+                context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                    if (c.moveToFirst()) c.getString(0) else null
+                }
+            }.getOrNull() ?: uri.lastPathSegment
+            model.updateRules(text, name)
+        }.onFailure { context.toast("Couldn't read the file: ${it.message}") }
+    }
+
+    Column(modifier = modifier) {
+        LabTopBar(
+            title = "Rules file",
+            subtitle = if (rules == null) "no rules file" else "v${rules.version} · ${rules.rules.size} rules · ${machine.size} checked by the Lab",
+            onBack = onBack,
+        ) {}
+        HorizontalDivider()
+        LabStatusStrip(
+            head = if (rules == null) "Missing" else "Good",
+            color = if (rules == null) StripColor.Red else StripColor.Green,
+            figures = listOf(
+                "Version" to (rules?.version?.let { "v$it" } ?: "—"),
+                "Rules" to (rules?.rules?.size ?: 0).toString(),
+                "Machine" to machine.size.toString(),
+                "Sources hit" to hits.keys.size.toString(),
+            ),
+        )
+        LazyColumn(
+            state = listState,
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            item(key = "card") {
+                LabCard(title = "rules.md") {
+                    Text(
+                        text = buildString {
+                            if (rules == null) {
+                                append(state.rulesError ?: "The built-in file didn't parse.")
+                            } else {
+                                append("v${rules.version}")
+                                append(rules.importedAt?.let { " · imported ${SourceLabScreenModel.agoText(it)}" } ?: " · built into this release")
+                                rules.fileName?.let { append(" from $it") }
+                                append(" · markdown with a YAML front matter")
+                            }
+                            state.rulesError?.takeIf { rules != null }?.let { append("\nLast import refused: $it") }
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                        OutlinedButton(onClick = { importLauncher.launch(arrayOf("text/*", "application/octet-stream", "*/*")) }) { Text("Update from file") }
+                        OutlinedButton(onClick = model::checkAllSources) { Text("Check all sources") }
+                        OutlinedButton(
+                            onClick = {
+                                val file = model.exportRules()
+                                if (file == null) {
+                                    context.toast("Nothing to export")
+                                } else {
+                                    runCatching { context.startActivity(file.getUriCompat(context).toShareIntent(context, type = "text/plain")) }
+                                        .onFailure { context.toast(it.message ?: "Couldn't share") }
+                                }
+                            },
+                        ) { Text("Export") }
                     }
                 }
-                LabStatusStrip(
-                    head = if (rules == null) "Missing" else "Good",
-                    color = if (rules == null) StripColor.Red else StripColor.Green,
-                    figures = listOf(
-                        "Version" to (rules?.version?.let { "v$it" } ?: "—"),
-                        "Rules" to (rules?.rules?.size ?: 0).toString(),
-                        "Machine" to machine.size.toString(),
-                        "Sources hit" to hits.keys.size.toString(),
-                    ),
-                )
-                LazyColumn(
-                    state = listState,
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 32.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    item(key = "card") {
-                        LabCard(title = "rules.md") {
-                            Text(
-                                text = buildString {
-                                    if (rules == null) {
-                                        append(state.rulesError ?: "The built-in file didn't parse.")
-                                    } else {
-                                        append("v${rules.version}")
-                                        append(rules.importedAt?.let { " · imported ${SourceLabScreenModel.agoText(it)}" } ?: " · built into this release")
-                                        rules.fileName?.let { append(" from $it") }
-                                        append(" · markdown with a YAML front matter")
-                                    }
-                                    state.rulesError?.takeIf { rules != null }?.let { append("\nLast import refused: $it") }
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            Spacer(Modifier.height(8.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                                OutlinedButton(onClick = { importLauncher.launch(arrayOf("text/*", "application/octet-stream", "*/*")) }) { Text("Update from file") }
-                                OutlinedButton(onClick = model::checkAllSources) { Text("Check all sources") }
-                                OutlinedButton(
-                                    onClick = {
-                                        val file = model.exportRules()
-                                        if (file == null) {
-                                            context.toast("Nothing to export")
-                                        } else {
-                                            runCatching { context.startActivity(file.getUriCompat(context).toShareIntent(context, type = "text/plain")) }
-                                                .onFailure { context.toast(it.message ?: "Couldn't share") }
-                                        }
-                                    },
-                                ) { Text("Export") }
-                            }
-                        }
+            }
+            item(key = "views") {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = view == 0, onClick = { view = 0 }, label = { Text("Reading view") })
+                    FilterChip(selected = view == 1, onClick = { view = 1 }, label = { Text("Machine rules") })
+                    FilterChip(selected = view == 2, onClick = { view = 2 }, label = { Text("Versions") })
+                }
+            }
+            when (view) {
+                0 -> items(blocks.size, key = { "b$it" }) { index ->
+                    val block = blocks[index]
+                    val machineRule = (block as? Block.Heading)?.let { h -> machine.firstOrNull { it.section == h.number } }
+                    MarkdownBlock(block, machineRule?.id)
+                }
+                1 -> items(machine.size, key = { "m${machine[it].id}" }) { index ->
+                    val rule = machine[index]
+                    RuleRow(rule = rule, hits = hits[rule.id] ?: 0, known = LintCheck.of(rule.check) != null)
+                }
+                else -> {
+                    if (versions.isEmpty()) {
+                        item(key = "no-versions") { Text("No versions yet.", style = MaterialTheme.typography.bodyMedium) }
                     }
-                    item(key = "views") {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            FilterChip(selected = view == 0, onClick = { view = 0 }, label = { Text("Reading view") })
-                            FilterChip(selected = view == 1, onClick = { view = 1 }, label = { Text("Machine rules") })
-                            FilterChip(selected = view == 2, onClick = { view = 2 }, label = { Text("Versions") })
-                        }
-                    }
-                    when (view) {
-                        0 -> items(blocks.size, key = { "b$it" }) { index ->
-                            val block = blocks[index]
-                            val machineRule = (block as? Block.Heading)?.let { h -> machine.firstOrNull { it.section == h.number } }
-                            MarkdownBlock(block, machineRule?.id)
-                        }
-                        1 -> items(machine.size, key = { "m${machine[it].id}" }) { index ->
-                            val rule = machine[index]
-                            RuleRow(rule = rule, hits = hits[rule.id] ?: 0, known = LintCheck.of(rule.check) != null)
-                        }
-                        else -> {
-                            if (versions.isEmpty()) {
-                                item(key = "no-versions") { Text("No versions yet.", style = MaterialTheme.typography.bodyMedium) }
-                            }
-                            items(versions.size, key = { "v${versions[it].first}" }) { index ->
-                                val (version, label) = versions[index]
-                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                                    Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                                    val current = rules != null &&
-                                        ((version == 0 && rules.importedAt == null) || (version > 0 && rules.importedAt != null && rules.version == version))
-                                    if (current) {
-                                        Text("current", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                                    } else {
-                                        TextButton(onClick = { model.rollBackRules(version) }) { Text("Roll back") }
-                                    }
-                                }
-                                HorizontalDivider()
+                    items(versions.size, key = { "v${versions[it].first}" }) { index ->
+                        val (version, label) = versions[index]
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                            Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                            val current = rules != null &&
+                                ((version == 0 && rules.importedAt == null) || (version > 0 && rules.importedAt != null && rules.version == version))
+                            if (current) {
+                                Text("current", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                            } else {
+                                TextButton(onClick = { model.rollBackRules(version) }) { Text("Roll back") }
                             }
                         }
+                        HorizontalDivider()
                     }
                 }
             }

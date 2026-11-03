@@ -62,12 +62,14 @@ import eu.kanade.tachiyomi.jssource.lab.TestRun
 /**
  * The tablet rail. At home: Sources, New, Rules, Templates and (bottom) Logs. With a source open ([sourceOpen]):
  * ‹ Sources, Code, Explain, Test, Lint (with [lintCount] as a badge), History, Report and (bottom) Logs.
+ * KMK (r110): New and Rules are places like Sources and Templates (shown next to the rail, item lit), not pushed.
  */
 @Composable
 internal fun LabRail(
     sourceOpen: Boolean,
     tab: LabTab,
-    templatesShown: Boolean,
+    // KMK (r110): the rail place shown (Sources, New, Rules, Templates): each lights its own item
+    dest: RailDest,
     lintCount: Int,
     onSources: () -> Unit,
     onNewSource: () -> Unit,
@@ -105,25 +107,25 @@ internal fun LabRail(
             }
         } else {
             NavigationRailItem(
-                selected = !templatesShown,
+                selected = dest == RailDest.Sources,
                 onClick = onSources,
                 icon = { Icon(Icons.AutoMirrored.Outlined.List, contentDescription = null) },
                 label = { Text("Sources") },
             )
             NavigationRailItem(
-                selected = false,
+                selected = dest == RailDest.New,
                 onClick = onNewSource,
                 icon = { Icon(Icons.Outlined.Add, contentDescription = null) },
                 label = { Text("New") },
             )
             NavigationRailItem(
-                selected = false,
+                selected = dest == RailDest.Rules,
                 onClick = onRules,
                 icon = { Icon(Icons.Outlined.Checklist, contentDescription = null) },
                 label = { Text("Rules") },
             )
             NavigationRailItem(
-                selected = templatesShown,
+                selected = dest == RailDest.Templates,
                 onClick = onTemplates,
                 icon = { Icon(Icons.Outlined.Dashboard, contentDescription = null) },
                 label = { Text("Templates") },
@@ -237,7 +239,8 @@ internal fun LabTopBar(
 internal fun LabBottomBar(
     sourceOpen: Boolean,
     tab: LabTab,
-    templatesShown: Boolean,
+    // KMK (r110): the rail place shown (Sources, New, Rules, Templates): each lights its own item
+    dest: RailDest,
     lintCount: Int,
     onSources: () -> Unit,
     onNewSource: () -> Unit,
@@ -305,25 +308,25 @@ internal fun LabBottomBar(
             )
         } else {
             NavigationBarItem(
-                selected = !templatesShown,
+                selected = dest == RailDest.Sources,
                 onClick = onSources,
                 icon = { Icon(Icons.AutoMirrored.Outlined.List, contentDescription = null) },
                 label = { Text("Sources", maxLines = 1) },
             )
             NavigationBarItem(
-                selected = false,
+                selected = dest == RailDest.New,
                 onClick = onNewSource,
                 icon = { Icon(Icons.Outlined.Add, contentDescription = null) },
                 label = { Text("New", maxLines = 1) },
             )
             NavigationBarItem(
-                selected = false,
+                selected = dest == RailDest.Rules,
                 onClick = onRules,
                 icon = { Icon(Icons.Outlined.Checklist, contentDescription = null) },
                 label = { Text("Rules", maxLines = 1) },
             )
             NavigationBarItem(
-                selected = templatesShown,
+                selected = dest == RailDest.Templates,
                 onClick = onTemplates,
                 icon = { Icon(Icons.Outlined.Dashboard, contentDescription = null) },
                 label = { Text("Templates", maxLines = 1) },

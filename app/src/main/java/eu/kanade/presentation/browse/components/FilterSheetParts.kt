@@ -35,6 +35,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -98,6 +99,8 @@ fun filterFieldColor(highlighted: Boolean): Color = if (highlighted) {
 /**
  * A filled field box: [label] small above [value], a caret on the right, a ring in the primary colour while [open].
  * [leading] shows before the value (a sort arrow).
+ * KMK (r110): [shape] (a collection's open box has square bottom corners: its panel hangs under it) and [trailing], a
+ * small part before the caret (a collection's sort chip)
  */
 @Composable
 fun FilterFieldBox(
@@ -109,16 +112,18 @@ fun FilterFieldBox(
     modifier: Modifier = Modifier,
     dimValue: Boolean = false,
     leading: ImageVector? = null,
+    shape: Shape = FilterFieldShape,
+    trailing: (@Composable () -> Unit)? = null,
 ) {
     val ring = if (open) {
-        Modifier.border(2.dp, MaterialTheme.colorScheme.primary, FilterFieldShape)
+        Modifier.border(2.dp, MaterialTheme.colorScheme.primary, shape)
     } else {
         Modifier
     }
     Row(
         modifier = modifier
             .height(FilterFieldHeight)
-            .clip(FilterFieldShape)
+            .clip(shape)
             .then(ring)
             .clickable(onClick = onClick)
             .padding(start = 14.dp, end = 8.dp),
@@ -155,6 +160,12 @@ fun FilterFieldBox(
                 )
             }
         }
+        // KMK (r110)
+        if (trailing != null) {
+            Spacer(Modifier.width(8.dp))
+            trailing()
+            Spacer(Modifier.width(2.dp))
+        }
         Icon(
             imageVector = if (open) Icons.Filled.ArrowDropUp else Icons.Filled.ArrowDropDown,
             contentDescription = null,
@@ -174,10 +185,13 @@ fun FilledFilterField(
     modifier: Modifier = Modifier,
     dimValue: Boolean = false,
     leading: ImageVector? = null,
+    // KMK (r110): see [FilterFieldBox]
+    shape: Shape = FilterFieldShape,
+    trailing: (@Composable () -> Unit)? = null,
 ) {
     Surface(
         modifier = modifier,
-        shape = FilterFieldShape,
+        shape = shape,
         color = filterFieldColor(open || set),
     ) {
         FilterFieldBox(
@@ -188,6 +202,8 @@ fun FilledFilterField(
             onClick = onClick,
             dimValue = dimValue,
             leading = leading,
+            shape = shape,
+            trailing = trailing,
         )
     }
 }

@@ -1192,19 +1192,32 @@ private fun DirMenusBox(group: MenuGroup, scan: BuilderListReader.DirScan, st: B
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                // KMK (r110): the progress box of mock CLearn: menu, entry being pressed, n of m, time left, bar, Stop
                 if (learning != null && learning.running) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            "Learning ${learning.label} · ${learning.done} of ${learning.total} pressed",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.weight(1f),
-                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                learning.label + if (learning.entry.isNotEmpty()) " · pressing \"${learning.entry}\"" else "",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                "${learning.done} of ${learning.total} entries" + leftText(learning.leftMs),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                         OutlinedButton(onClick = extras::stopLearn) { Text("Stop") }
                     }
                     LinearProgressIndicator(
                         progress = { (learning.done.toFloat() / learning.total.coerceAtLeast(1)).coerceIn(0f, 1f) },
                         modifier = Modifier.fillMaxWidth(),
+                    )
+                    Hint(
+                        "Before each menu the page goes back to the plain address, so one menu's choice isn't still set " +
+                            "while the next is learned. An entry that shows \"Nothing found\" is still learned.",
                     )
                 } else if (scan.custom.isNotEmpty()) {
                     Text(
@@ -1223,8 +1236,22 @@ private fun DirMenusBox(group: MenuGroup, scan: BuilderListReader.DirScan, st: B
                         Text(if (entries > 0) "Learn the menus ($entries entries)" else "Learn the menus")
                     }
                 }
-                learning?.found?.forEach { line ->
-                    Text(line, style = MaterialTheme.typography.bodySmall, color = if (line.contains(" options")) OkGreen else WarnAmber)
+                if (learning != null && learning.menus.isNotEmpty()) {
+                    learning.menus.forEach { m ->
+                        key(m.label) {
+                            DirLearnMenuRow(
+                                m,
+                                learning.collection,
+                                running = learning.running,
+                                onPick = { extras.pickDirMenu(group.id, sort = m.sort) },
+                                onLearnAgain = { extras.learnDirMenus(group.id) },
+                            )
+                        }
+                    }
+                } else {
+                    learning?.found?.forEach { line ->
+                        Text(line, style = MaterialTheme.typography.bodySmall, color = if (line.contains(" options")) OkGreen else WarnAmber)
+                    }
                 }
                 if (learning != null && !learning.running && learning.note.isNotEmpty()) Hint(learning.note)
             }
@@ -1275,6 +1302,139 @@ private fun DirMenusBox(group: MenuGroup, scan: BuilderListReader.DirScan, st: B
         }
     }
 }
+
+/** KMK (r110): " · about 1 min left" from [ms] (-1 = not known yet) */
+private fun leftText(ms: Long): String = when {
+    ms < 0L -> ""
+    ms < 60_000L -> " · less than a minute left"
+    else -> " · about ${(ms + 30_000L) / 60_000L} min left"
+}
+
+/**
+ * KMK (r110): one menu's row while / after "Learn the menus" (mock CLearn): ✓ done (its parameter, option count,
+ * default, entries that showed nothing / failed; tap to see the learned codes "only for <collection>"), … running
+ * (the last code, n of m so far), waiting, ! can't be learned (why, and "Pick it on the page")
+ */
+@Composable
+private fun DirLearnMenuRow(m: DirLearnMenu, collection: String, running: Boolean, onPick: () -> Unit, onLearnAgain: () -> Unit) {
+    // KMK (r110) fix: a finished menu's codes show open at first (tap the row to fold them)
+    val isDone = m.state == "done"
+    var open by remember(m.label, isDone) { mutableStateOf(isDone) }
+    // KMK (r110) fix: "12 actresses" on the codes' rows when the collection's name is known, else "12 found"
+    val noun = collection.trim().lowercase().ifEmpty { "found" }
+    val (mark, tint) = when (m.state) {
+        "done" -> "✓" to OkGreen
+        "running" -> "…" to MaterialTheme.colorScheme.primary
+        "failed" -> "!" to WarnAmber
+        "stopped" -> "■" to WarnAmber
+        else -> "·" to MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val param = when {
+        m.pathMode -> "own addresses"
+        m.param.isNotEmpty() -> "${m.param}="
+        else -> ""
+    }
+    val detail = when (m.state) {
+        "done" -> buildString {
+            append("${m.options} options")
+            if (m.defaultLabel.isNotEmpty()) append(" · default \"${m.defaultLabel}\"")
+            if (m.empty > 0) append(" · ${m.empty} showed nothing, kept")
+            if (m.failed > 0) append(" · ${m.failed} failed")
+        }
+        "running" -> {
+            val last = m.rows.lastOrNull { it.status != "pressing" }
+            val so = "${m.rows.count { it.status != "pressing" }} of ${m.entries.coerceAtLeast(m.rows.size)} so far"
+            if (last == null) so else "${last.text} = ${last.code.ifEmpty { "no change" }} · $so"
+        }
+        "failed" -> "can't be learned: ${m.note.ifEmpty { "no entry changed a value in the address" }}"
+        // KMK (r110) fix: Stop: the menu cut short isn't saved; the ones never reached aren't learned
+        "stopped" -> m.note.ifEmpty { "stopped" } + if (m.note == "stopped") " · not saved" else ""
+        else -> "waiting"
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .clickable(enabled = m.state == "done" && m.rows.isNotEmpty()) { open = !open },
+        ) {
+            Text(mark, color = tint, fontWeight = FontWeight.Bold, modifier = Modifier.width(20.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(m.label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                    if (param.isNotEmpty()) {
+                        Spacer(Modifier.width(6.dp))
+                        Text(param, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                Text(
+                    detail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (m.state == "failed") WarnAmber else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (m.state == "done" && m.rows.isNotEmpty()) {
+                Icon(if (open) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, contentDescription = null, modifier = Modifier.size(18.dp))
+            }
+        }
+        if (m.state == "failed" && !running) {
+            TextButton(onClick = onPick, modifier = Modifier.padding(start = 14.dp)) { Text("Pick it on the page") }
+        }
+        if (m.state == "stopped" && !running) {
+            TextButton(onClick = onLearnAgain, modifier = Modifier.padding(start = 14.dp)) { Text("Learn again") }
+        }
+        if (open && m.state == "done") {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.padding(start = 20.dp)) {
+                Text(
+                    "${m.label} · learned" + if (collection.isNotEmpty()) " · only for $collection" else "",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                m.rows.take(LEARNED_SHOWN).forEach { r ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            r.text + if (r.status == "default") " (default)" else "",
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            when (r.status) {
+                                "default" -> "no change"
+                                "failed" -> "failed"
+                                else -> r.code
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = if (r.status == "failed") WarnAmber else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            when {
+                                r.status == "empty" -> "nothing found · kept"
+                                r.cards > 0 -> "${r.cards} $noun"
+                                else -> ""
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (r.status == "empty") WarnAmber else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.widthIn(min = 72.dp).padding(start = 6.dp),
+                        )
+                    }
+                }
+                if (m.rows.size > LEARNED_SHOWN) {
+                    Text("… ${m.rows.size - LEARNED_SHOWN} more", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+    }
+}
+
+/** KMK (r110): how many learned entries a done menu's row lists */
+private const val LEARNED_SHOWN = 12
 
 /** r107: one way to get the names (mock BRead): a radio, its title (and tag), what it means; tap anywhere to pick it */
 @Composable

@@ -16,6 +16,11 @@
 // menu's button is the element reading "<label>: …" when `opener` finds nothing (and its own text is never the entry).
 // items({ id, label, opener, current }) opens such a menu (the same 3 ways) and reads the entries that showed (text,
 // href, value, current), then closes it; it answers "learn: items #<id> <json>" ({ ok, items, reason }).
+//
+// KMK (r110): press() takes `banner` too ("Learning the menus · pressing "Cup: D cup" (14 of 50)"): shown in a bar
+// at the page's top (it never takes taps), and the pressed entry and the menu's button get an orange outline;
+// banner(null) takes both away. count({ id, selector }) answers "learn: count #<id> <n>": how many of the directory's
+// cards the page shows (0 = "Nothing found").
 (function () {
   if (window.__labLearn) return;
 
@@ -69,7 +74,56 @@
   var CANDIDATES = ACTIVE + ", span, div, p, td";
 
   function own(el) {
-    return !el.closest || !el.closest("#__lab-badge");
+    return !el.closest || !el.closest("#__lab-badge, #__lab-learn-banner");
+  }
+
+  // r110: the bar at the page's top while the menus are learned, and the orange outline on what was pressed
+  var BANNER_ID = "__lab-learn-banner";
+  var MARK = "data-lab-learn-mark";
+  function unmark() {
+    var old = queryAll("[" + MARK + "]");
+    for (var i = 0; i < old.length; i++) {
+      try {
+        old[i].style.outline = old[i].getAttribute(MARK + "-outline") || "";
+        old[i].style.outlineOffset = old[i].getAttribute(MARK + "-offset") || "";
+        old[i].removeAttribute(MARK);
+        old[i].removeAttribute(MARK + "-outline");
+        old[i].removeAttribute(MARK + "-offset");
+      } catch (e) { /* nothing */ }
+    }
+  }
+  function mark(el) {
+    if (!el || !el.style || el.hasAttribute(MARK)) return;
+    try {
+      el.setAttribute(MARK + "-outline", el.style.outline || "");
+      el.setAttribute(MARK + "-offset", el.style.outlineOffset || "");
+      el.setAttribute(MARK, "1");
+      el.style.outline = "2px solid #f59e0b";
+      el.style.outlineOffset = "2px";
+    } catch (e) { /* nothing */ }
+  }
+  // KMK (r110) fix: banner(null) (the run ended or Stop) cancels the presses still waiting for their menu to open:
+  // check() reads it before outlining or pressing. A new press / begin() clears it; [gen] keeps the old ones cancelled
+  var cancelled = false;
+  var gen = 0;
+  function banner(text) {
+    var bar = document.getElementById(BANNER_ID);
+    if (!text) {
+      cancelled = true;
+      gen++;
+      if (bar && bar.parentNode) bar.parentNode.removeChild(bar);
+      unmark();
+      return;
+    }
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.id = BANNER_ID;
+      bar.setAttribute("style", "position:fixed;left:0;right:0;top:0;z-index:2147483646;pointer-events:none;" +
+        "background:#f59e0b;color:#1f1300;font:600 13px/1.3 system-ui,sans-serif;padding:6px 12px;" +
+        "box-shadow:0 2px 6px rgba(0,0,0,.3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis");
+      (document.body || document.documentElement).appendChild(bar);
+    }
+    bar.textContent = String(text);
   }
 
   // The element of [pool] whose text is [text] (exact, else any case): the innermost one, lifted to the control
@@ -278,17 +332,25 @@
     current = typeof req.id === "number" || typeof req.id === "string" ? String(req.id) : null;
     var name = "\"" + norm(entry.text).slice(0, 40) + "\"";
     disarm();
+    cancelled = false; // KMK (r110) fix: a new press
+    var myGen = gen;
+    function gone() { return cancelled || myGen !== gen; }
+    var showing = !!req.banner;
+    if (showing) { unmark(); banner(req.banner); }
     var label = req.label ? String(req.label) : "";
     var el = findEntry(entry, req.opener, label);
     if (el && visible(el)) {
       finish("pressed", name);
+      if (showing) mark(el);
       press(el);
       return "pressed";
     }
     var op = findOpener(req.opener, el, label);
+    if (op && showing) mark(op);
     if (!op) {
       if (el) {
         finish("pressed", name + " (hidden, no menu button found)");
+        if (showing) mark(el);
         press(el);
         return "pressed-hidden";
       }
@@ -299,12 +361,15 @@
     var mine = current;
     function attempt(k) {
       current = mine; // a later press() replaced it meanwhile: this one still reports under its own id
+      if (gone()) { finish("stopped", name + " (learning stopped)"); return; } // KMK (r110) fix
       OPENERS[k](op);
       function check(second) {
         current = mine;
+        if (gone()) { finish("stopped", name + " (learning stopped)"); return; } // KMK (r110) fix
         var e2 = findEntry(entry, req.opener, label);
         if (e2 && visible(e2)) {
           finish("pressed", name + " (menu opened, way " + (k + 1) + ")");
+          if (showing) mark(e2);
           press(e2);
           return;
         }
@@ -394,7 +459,7 @@
   }
 
   window.__labLearn = {
-    version: 2,
+    version: 3, // r110: banner, count
     // r109: a custom drop-down's entries, opened on the page
     items: function (req) {
       try {
@@ -411,6 +476,23 @@
         finish("error", e && e.message ? e.message : String(e));
         return "error";
       }
+    },
+    // r110: the learning bar (null = gone, outlines too) and the directory's cards counted
+    banner: function (text) {
+      try { banner(text); } catch (e) { /* nothing */ }
+    },
+    // KMK (r110) fix: a new learning run starts: presses aren't cancelled any more
+    begin: function () { cancelled = false; },
+    count: function (req) {
+      req = req || {};
+      var id = String(req.id === undefined ? "" : req.id);
+      var n = -1;
+      try {
+        // a selector the page can't read is "not known", never "nothing found"
+        if (req.selector) n = Array.prototype.slice.call(document.querySelectorAll(String(req.selector))).filter(own).length;
+      } catch (e) { n = -1; }
+      log("count #" + id + " " + n);
+      return n;
     },
     // For checks: what press() would use, without pressing
     find: function (req) {

@@ -241,7 +241,44 @@ internal data class DirLearn(
     val total: Int,
     val found: List<String> = emptyList(),
     val note: String = "",
+    /** KMK (r110): the entry being pressed now ("D cup"), "" = none */
+    val entry: String = "",
+    /** KMK (r110): one row per menu (mock CLearn): done / running / waiting / can't be learned */
+    val menus: List<DirLearnMenu> = emptyList(),
+    /** KMK (r110): about how long the presses left take (ms), -1 = not known yet */
+    val leftMs: Long = -1L,
+    /** KMK (r110): the directory's name ("Actresses"): learned menus are "only for" it */
+    val collection: String = "",
 )
+
+/**
+ * KMK (r110): one menu of "Learn the menus" as its row shows it: [state] waiting|running|done|failed ("can't be
+ * learned": no entry changed any value)|stopped (KMK (r110) fix: Stop cut it short or it was never reached; not saved), the address parameter, how many options, the default's label, entries whose
+ * page showed nothing ([empty], kept) or whose press did nothing ([failed]), each entry's row, why it failed ([note])
+ */
+@Immutable
+internal data class DirLearnMenu(
+    val label: String,
+    val sort: Boolean,
+    val state: String,
+    val param: String = "",
+    val pathMode: Boolean = false,
+    val options: Int = 0,
+    val defaultLabel: String = "",
+    val empty: Int = 0,
+    val failed: Int = 0,
+    val entries: Int = 0,
+    val rows: List<DirLearnRow> = emptyList(),
+    val note: String = "",
+)
+
+/**
+ * KMK (r110): one pressed entry: its text, what it changed ("height=150-154", "" = nothing), [status]
+ * default|learned|empty (the address changed, the page showed no cards: kept)|failed (the press did nothing / the
+ * entry wasn't found)|pressing, and the cards its page showed (-1 = not counted)
+ */
+@Immutable
+internal data class DirLearnRow(val text: String, val code: String, val status: String, val cards: Int = -1)
 
 /**
  * r103: a menu group of the site as its card shows it: [name] (the heading, cleaned: "Year: All ▾" → "Year"; "" when
@@ -1444,13 +1481,123 @@ internal object BuilderExtrasLogic {
     fun withDirMenu(scan: BuilderListReader.DirScan, m: BuilderDirMenus.Menu, coded: BuilderDirMenus.Coded): BuilderListReader.DirScan {
         val rest = scan.custom.filterNot { it.label.equals(m.label, ignoreCase = true) }
         return when {
-            m.sort -> scan.copy(sorts = coded.options, sortParam = coded.param, custom = rest)
+            // KMK (r110) fix: a menu never shares the sort's parameter (r110's Height / Cup / Age learned as `sort`
+            // replaced each other and the sort); the sort takes it over from a menu
+            m.sort -> scan.copy(
+                sorts = coded.options,
+                sortParam = coded.param,
+                menus = if (coded.param.isEmpty()) scan.menus else scan.menus.filter { it.key != coded.param },
+                custom = rest,
+            )
             coded.param.isEmpty() -> scan.copy(custom = rest)
+            coded.param == scan.sortParam -> scan.copy(custom = rest)
             else -> scan.copy(
                 menus = (scan.menus.filter { it.key != coded.param } + CollectionMenu(coded.param, m.label, coded.options)).take(8),
                 custom = rest,
             )
         }
+    }
+
+    /** KMK (r110): an address's path ("/en/actresses"), without "?…" and a trailing "/"; relative ones too */
+    fun pathOnly(address: String): String {
+        val t = address.trim()
+        if (t.isEmpty()) return ""
+        val path = t.toHttpUrlOrNull()?.encodedPath ?: t.substringBefore('#').substringBefore('?')
+        return path.trimEnd('/')
+    }
+
+    /** KMK (r110): the path of a collection's directory page ("/en/actresses"), "" = not a collection / unknown */
+    fun directoryPath(f: ExtrasFilter): String {
+        val c = f.collection ?: return ""
+        if (f.type != "collection") return ""
+        return pathOnly(c.first)
+    }
+
+    /**
+     * KMK (r110): [f] was made on directory page [dir] (picked there: [ExtrasFilter.seenOn]) or opens it ([path] /
+     * [linkPath]). [dir] "" or the site's root never matches
+     */
+    fun madeOnDirectory(f: ExtrasFilter, dir: String): Boolean {
+        if (dir.isEmpty()) return false
+        return listOf(f.seenOn, f.path, f.linkPath).any { it.isNotBlank() && pathOnly(it) == dir }
+    }
+
+    /**
+     * KMK (r110): a parameter filter made from a menu of a directory page (Height / Cup / Age / Sort picked on the
+     * Actresses page) as that directory's own menu: its options with the default ("" value) first, named after the
+     * site's default when known. Null = not one ([f] is a collection, a path filter, has no parameter or no codes)
+     */
+    fun asDirectoryMenu(f: ExtrasFilter): CollectionMenu? {
+        if (f.type == "collection" || f.collection != null || f.mode != "param" || f.param.isBlank()) return null
+        if (f.options.none { it.value.isNotEmpty() }) return null
+        val name = f.siteDefault.trim()
+        val opts = withAny(f.options).map { if (it.value.isEmpty() && name.isNotEmpty()) it.copy(label = name) else it }
+        return CollectionMenu(f.param, f.name.ifBlank { f.param }, opts)
+    }
+
+    /**
+     * KMK (r110): a scan with [menu] kept as its sort ([sort]) or one of its menus (replacing the one on the same
+     * parameter), as [withDirMenu] does for a learned drop-down
+     */
+    fun withMenu(scan: BuilderListReader.DirScan, menu: CollectionMenu, sort: Boolean): BuilderListReader.DirScan =
+        if (sort) {
+            scan.copy(sorts = menu.options, sortParam = menu.key)
+        } else if (menu.key == scan.sortParam) {
+            scan // KMK (r110) fix: never a menu on the sort's parameter
+        } else {
+            scan.copy(menus = (scan.menus.filter { it.key != menu.key } + menu).take(8))
+        }
+
+    /** KMK (r110): the same for a collection already made */
+    fun withMenu(c: CollectionSpec, menu: CollectionMenu, sort: Boolean): CollectionSpec =
+        if (sort) {
+            c.copy(sorts = menu.options, sortParam = menu.key)
+        } else if (menu.key == c.sortParam) {
+            c // KMK (r110) fix: never a menu on the sort's parameter
+        } else {
+            c.copy(menus = (c.menus.filter { it.key != menu.key } + menu).take(8))
+        }
+
+    /**
+     * KMK (r110) repair: the owner's r109 save had Height / Cup / Age (picked on the Actresses page) as top-level
+     * filters in Browse's Options next to Type / Year. A directory's menus belong only to its collection: a top-level
+     * parameter filter is dropped when its parameter is one of a collection's menus (or its sort parameter) AND it was
+     * made on that directory's page (or its path is the directory's). Returns the filters kept and those dropped
+     *
+     * KMK (r110) fix: also when its name is one of the directory page's menu labels ([menuLabels]: directory path →
+     * "Height", "Cup", "Age"… of the scanned card, learned or not; a collection's own menu names count too), even when
+     * the collection has no such menu yet or isn't made
+     */
+    fun dropDirectoryMenus(
+        filters: List<ExtrasFilter>,
+        menuLabels: Map<String, Collection<String>> = emptyMap(),
+    ): Pair<List<ExtrasFilter>, List<ExtrasFilter>> {
+        val dirs = filters.filter { it.type == "collection" && it.collection != null }
+        // directory path → its parameters and its menu labels (lower case)
+        val known = LinkedHashMap<String, Pair<MutableSet<String>, MutableSet<String>>>()
+        fun at(path: String) = known.getOrPut(path) { HashSet<String>() to HashSet() }
+        for (d in dirs) {
+            val c = d.collection ?: continue
+            val path = directoryPath(d)
+            if (path.isEmpty()) continue
+            at(path).first.addAll(c.menus.map { it.key } + listOfNotNull(c.sortParam.takeIf { it.isNotEmpty() }))
+            at(path).second.addAll(c.menus.map { it.name.trim().lowercase() }.filter { it.isNotEmpty() })
+        }
+        for ((path, labels) in menuLabels) {
+            if (path.isEmpty()) continue
+            at(path).second.addAll(labels.map { it.trim().lowercase() }.filter { it.isNotEmpty() })
+        }
+        if (known.isEmpty()) return filters to emptyList()
+        val kept = ArrayList<ExtrasFilter>()
+        val dropped = ArrayList<ExtrasFilter>()
+        for (f in filters) {
+            val isMenu = f.type != "collection" && f.collection == null && f.mode == "param" && f.param.isNotBlank() &&
+                known.any { (path, k) ->
+                    (f.param in k.first || f.name.trim().lowercase() in k.second) && madeOnDirectory(f, path)
+                }
+            if (isMenu) dropped.add(f) else kept.add(f)
+        }
+        return kept to dropped
     }
 
     /** r107: a collection's entries edited as text keep the parts of the entries whose value stayed */
@@ -2970,6 +3117,8 @@ internal class BuilderExtrasModel {
         kind: String = "",
     ): ExtrasFilter? {
         val f = derived.filter
+        // KMK (r110): a menu picked / learned on a directory's page goes to that directory, never to the top level
+        if (f != null) toDirectory(f, from)?.let { return it }
         if (f != null && onConflict == null) {
             val clash = BuilderExtrasLogic.conflicts(mutable.value.filters, f, replaces)
             if (clash.isNotEmpty()) {
@@ -3034,6 +3183,48 @@ internal class BuilderExtrasModel {
         }
         derived.listUrl?.let { AppLog.add('D', "lab", "extras offer: read the whole list of $it") }
         return made
+    }
+
+    /**
+     * KMK (r110): [f] made from a menu on a directory's page (a scanned directory card's page, or a collection's): it
+     * becomes that directory's sort / menu (its scan, and its collection when made) and is NOT added to the top-level
+     * filters; top-level filters already made from that menu are dropped ([BuilderExtrasLogic.dropDirectoryMenus]).
+     * Returns [f] when it went there (the card that made it says so), null = not a directory's menu
+     */
+    private fun toDirectory(f: ExtrasFilter, from: String): ExtrasFilter? {
+        val menu = BuilderExtrasLogic.asDirectoryMenu(f) ?: return null
+        val s = mutable.value
+        val sort = f.type == "sort"
+        val card = s.menuGroups.firstOrNull { g ->
+            val url = g.probe?.scan?.url ?: return@firstOrNull false
+            BuilderExtrasLogic.madeOnDirectory(f, BuilderExtrasLogic.pathOnly(url))
+        }
+        val cardMade = card?.made?.takeIf { it.isNotEmpty() && it != "tabs" && it != "?" }
+        val dir = s.filters.firstOrNull { d ->
+            d.type == "collection" && d.collection != null && BuilderExtrasLogic.madeOnDirectory(f, BuilderExtrasLogic.directoryPath(d))
+        }
+        if (card == null && dir == null) return null
+        if (card != null) updateScan(card.id) { sc -> BuilderExtrasLogic.withMenu(sc, menu, sort) }
+        val where = dir?.name ?: card?.name.orEmpty()
+        mutable.update { st ->
+            // the collection the card didn't make (updateScan changed that one already)
+            val withMenu = st.filters.map { d ->
+                val c = d.collection
+                if (dir != null && d.key == dir.key && d.key != cardMade && c != null) d.copy(collection = BuilderExtrasLogic.withMenu(c, menu, sort)) else d
+            }
+            val (kept, dropped) = BuilderExtrasLogic.dropDirectoryMenus(withMenu, dirMenuLabels(st.menuGroups))
+            if (dropped.isNotEmpty()) {
+                AppLog.add('I', "lab", "extras filters ${dropped.joinToString(", ") { "\"${it.name}\"" }}: menus of a directory, dropped from the top level")
+            }
+            st.copy(
+                filters = kept,
+                message = "\"${f.name}\" is a menu of the directory \"$where\": kept with it only (in its drop-down), not as a filter of its own.",
+                groupMode = false,
+                rev = st.rev + 1,
+            )
+        }
+        AppLog.add('I', "lab", "extras \"${f.name}\" (${f.param}, ${menu.options.size} options) from $from → the directory \"$where\"'s ${if (sort) "sort" else "menus"}")
+        return f
     }
 
     /**
@@ -3117,6 +3308,34 @@ internal class BuilderExtrasModel {
         }
     }
 
+    /**
+     * KMK (r110) fix: the scanned directory cards' menu labels by directory path ("/en/actresses" → Height, Cup, Age,
+     * Sort): learned (its menus) or still to learn (its custom drop-downs)
+     */
+    private fun dirMenuLabels(groups: List<MenuGroup>): Map<String, Collection<String>> {
+        val out = LinkedHashMap<String, MutableSet<String>>()
+        for (g in groups) {
+            val scan = g.probe?.scan ?: continue
+            val path = BuilderExtrasLogic.pathOnly(scan.url)
+            if (path.isEmpty()) continue
+            out.getOrPut(path) { LinkedHashSet() }.addAll(scan.menus.map { it.name } + scan.custom.map { it.label })
+        }
+        return out
+    }
+
+    /** KMK (r110) fix: top-level filters that are a directory's menus go (right after a learning run saved its codes) */
+    private fun dropDirectoryMenusNow() {
+        var gone: List<ExtrasFilter> = emptyList()
+        mutable.update { st ->
+            val (kept, dropped) = BuilderExtrasLogic.dropDirectoryMenus(st.filters, dirMenuLabels(st.menuGroups))
+            gone = dropped
+            if (dropped.isEmpty()) st else st.copy(filters = kept, rev = st.rev + 1)
+        }
+        if (gone.isNotEmpty()) {
+            AppLog.add('I', "lab", "extras filters ${gone.joinToString(", ") { "\"${it.name}\" (${it.param})" }}: menus of a directory, dropped from the top level")
+        }
+    }
+
     private fun showDirLearn(id: Int, change: (DirLearn?) -> DirLearn?) = mutable.update { s ->
         s.copy(menuGroups = s.menuGroups.map { if (it.id == id) it.copy(dirLearn = change(it.dirLearn)) else it })
     }
@@ -3158,44 +3377,122 @@ internal class BuilderExtrasModel {
         requestScroll("menu:$id", reveal = false)
     }
 
+    /**
+     * KMK (r110) rewrite after the owner's r109 run on the Actresses directory (Height, Cup, Age, Sort all "no entry
+     * changed the address", nothing saved):
+     * - a press counts when it changes a VALUE of the address ([BuilderDirMenus.sameValues]); the site writes every
+     *   parameter even when empty (`?page=1&q=&height=&cup=&age=&sort=count`), so "the parameter is there" says nothing
+     * - before each menu and after it the page goes back to the plain directory address (every menu at its default), so
+     *   Height's choice isn't still set while Cup is learned; the address the site shows then is the codes' base
+     * - an entry whose page shows no cards is kept ("nothing found"); one the press did nothing for is "failed"; neither
+     *   stops the menu. A menu "can't be learned" only when no entry changed any value
+     * - the codes go to this card's scan (and its collection), never to the top-level filters
+     */
     private suspend fun runDirLearn(id: Int, base: String, menus: List<BuilderDirMenus.Menu>, low: Long, high: Long) {
+        val card = mutable.value.menuGroups.firstOrNull { it.id == id }
+        val itemSelector = card?.probe?.scan?.item.orEmpty()
+        val collection = card?.name.orEmpty().ifBlank { BuilderExtrasLogic.nameFromUrl(base).orEmpty() }
         val found = ArrayList<String>()
+        val states = menus.map { DirLearnMenu(it.label, it.sort, "waiting", entries = it.items.size) }.toMutableList()
+        // the rows of menus learned before (a "Pick it on the page" learns one menu again) stay
+        val earlier = card?.dirLearn?.menus.orEmpty().filter { e -> menus.none { it.label.equals(e.label, ignoreCase = true) } }
         var done = 0
         var total = menus.sumOf { it.items.size.coerceAtLeast(1) }
         var stopReason: String? = null
-        showDirLearn(id) { DirLearn(running = true, label = menus.first().label, done = 0, total = total) }
+        var label = menus.first().label
+        var entryNow = ""
+        val started = System.currentTimeMillis()
+        fun left(): Long = if (done <= 0) -1L else (System.currentTimeMillis() - started) / done * (total - done).coerceAtLeast(0)
+        fun show() = showDirLearn(id) {
+            DirLearn(
+                running = true,
+                label = label,
+                done = done,
+                total = total,
+                found = found.toList(),
+                entry = entryNow,
+                menus = earlier + states,
+                leftMs = left(),
+                collection = collection,
+            )
+        }
+        show()
         AppLog.add('I', "lab", "learn menus on $base: ${menus.joinToString(", ") { "${it.label} (${it.items.size})" }}, pause $low–$high ms")
+        // The plain directory address as the site shows it (it may fill in every parameter: `?page=1&q=&sort=count`)
+        var plain = base
+        var siteFilled = emptySet<String>()
+        var loadFails = 0
+
+        // Back to the plain address unless the page already picks the same
+        suspend fun reset(): Boolean {
+            if (BuilderDirMenus.sameValues(currentUrl(), plain)) return true
+            if (!loadPage(base)) return false
+            pause(SETTLE_MS)
+            return true
+        }
         try {
-            for (m in menus) {
+            if (!loadPage(base)) {
+                stopReason = "The directory page didn't load ($base)."
+                return
+            }
+            pause(SETTLE_MS)
+            // KMK (r110) fix: a new run: learn.js's presses aren't cancelled any more (banner(null) of the last run)
+            inPage("window.__labLearn&&window.__labLearn.begin&&window.__labLearn.begin();")
+            val shown = currentUrl()
+            if (BuilderDirMenus.samePage(shown, base)) {
+                plain = clean(shown)
+                siteFilled = BuilderDirMenus.siteFilled(base, plain)
+            }
+            AppLog.add('D', "lab", "learn menus: plain address $plain" + if (siteFilled.isEmpty()) "" else " (the site filled in ${siteFilled.joinToString(", ")})")
+            for ((mi, m) in menus.withIndex()) {
                 if (stopLearning) {
                     stopReason = "Stopped by you."
                     break
                 }
-                showDirLearn(id) { it?.copy(label = m.label, done = done, total = total, found = found.toList()) }
-                if (!onPage(base) && !loadPage(base)) {
-                    stopReason = "The directory page didn't load ($base)."
-                    break
+                label = m.label
+                entryNow = ""
+                states[mi] = states[mi].copy(state = "running")
+                show()
+                if (!reset()) {
+                    if (stopLearning) {
+                        // KMK (r110) fix: Stop while the page went back to the plain address: not a load failure
+                        stopReason = "Stopped by you."
+                        break
+                    }
+                    states[mi] = states[mi].copy(state = "failed", note = "the directory page didn't load")
+                    found += "${m.label}: the directory page didn't load"
+                    if (++loadFails >= LOAD_FAILS) {
+                        stopReason = "The directory page didn't load ($base)."
+                        break
+                    }
+                    continue
                 }
-                pause(SETTLE_MS)
                 var items = m.items
                 if (items.isEmpty()) {
                     // its list isn't in the page until it opens: learn.js opens it and reads the entries
                     items = readMenuItems(m)
                     total += (items.size - 1).coerceAtLeast(0)
+                    states[mi] = states[mi].copy(entries = items.size)
                     AppLog.add('D', "lab", "learn menus: ${m.label} opened: ${items.size} entries")
                 }
                 if (items.size < 2) {
+                    states[mi] = states[mi].copy(state = "failed", note = "its entries didn't show when it was pressed")
                     found += "${m.label}: its entries didn't show when it was pressed"
                     continue
                 }
                 val rows = ArrayList<BuilderDirMenus.Row>()
+                val shownRows = ArrayList<DirLearnRow>()
+                // KMK (r110) fix: the address each shown row opened (its code is redone for the menu's parameter only)
+                val shownUrls = ArrayList<String?>()
+                // KMK (r110) fix: Stop cut this menu short: it isn't saved
+                var cut = false
                 if (items.count { it.href != null } * 2 >= items.size) {
                     // links: where each goes is in the page, nothing to press
-                    items.filter { it.href != null || it.current }.forEach { rows += BuilderDirMenus.Row(it.text, it.href ?: base, it.current) }
+                    items.filter { it.href != null || it.current }.forEach { rows += BuilderDirMenus.Row(it.text, it.href ?: plain, it.current) }
                     done += items.size
                 } else {
                     val group = LearnGroup(
-                        pageUrl = base,
+                        pageUrl = plain,
                         opener = m.opener.ifEmpty { null },
                         likeSelector = "",
                         name = m.label,
@@ -3207,6 +3504,7 @@ internal class BuilderExtrasModel {
                     for ((k, item) in items.withIndex()) {
                         if (stopLearning) {
                             stopReason = "Stopped by you."
+                            cut = true
                             break
                         }
                         if (done >= MAX_PRESSES * 2) {
@@ -3214,67 +3512,217 @@ internal class BuilderExtrasModel {
                             break
                         }
                         if (k > 0 && high > 0) pause(Random.nextLong(low, high + 1))
-                        showDirLearn(id) { it?.copy(label = m.label, done = done, total = total, found = found.toList()) }
-                        val (status, url) = pressOnce(group, LearnEntry(item.text, null, null), base)
+                        entryNow = item.text
+                        states[mi] = states[mi].copy(rows = shownRows + DirLearnRow(item.text, "", "pressing"))
+                        show()
+                        val banner = "Learning the menus · pressing \"${m.label}: ${item.text}\" (${done + 1} of $total)"
+                        val r = pressOnce(group, LearnEntry(item.text, null, null), plain, base, itemSelector, banner)
                         done++
-                        AppLog.add('D', "lab", "learn menus: ${m.label} › ${item.text} → ${url ?: status}")
-                        if (status == "stopped") {
-                            stopReason = "Stopped by you."
-                            break
+                        AppLog.add('D', "lab", "learn menus: ${m.label} › ${item.text} → ${r.url ?: r.status}" + if (r.cards >= 0) " (${r.cards} cards)" else "")
+                        when (r.status) {
+                            "stopped" -> {
+                                stopReason = "Stopped by you."
+                                cut = true
+                            }
+                            "learned" -> {
+                                loadFails = 0
+                                rows += BuilderDirMenus.Row(item.text, r.url, item.current)
+                                // back at the plain address's values ("Any height" pressed after "150–154 cm"): the default
+                                val code = BuilderDirMenus.changeOf(plain, r.url)
+                                val status = when {
+                                    code.isEmpty() -> "default"
+                                    r.cards == 0 -> "empty"
+                                    else -> "learned"
+                                }
+                                shownRows += DirLearnRow(item.text, code, status, r.cards)
+                                shownUrls.add(r.url)
+                            }
+                            "nochange" -> {
+                                loadFails = 0
+                                rows += BuilderDirMenus.Row(item.text, null, item.current)
+                                shownRows += DirLearnRow(item.text, "", "default", r.cards)
+                                shownUrls.add(null)
+                            }
+                            else -> {
+                                // "missing" (not found on the page) or "failed" (the page didn't load again): kept as
+                                // failed, the next entry is pressed
+                                shownRows += DirLearnRow(item.text, "", "failed")
+                                shownUrls.add(null)
+                                if (r.status == "failed" && ++loadFails >= LOAD_FAILS) stopReason = "The directory page didn't load again ($base)."
+                            }
                         }
-                        if (status == "failed") {
-                            stopReason = "The directory page didn't load again ($base)."
-                            break
-                        }
-                        if (status == "learned") rows += BuilderDirMenus.Row(item.text, url, item.current)
-                        if (status == "nochange") rows += BuilderDirMenus.Row(item.text, null, item.current)
+                        states[mi] = states[mi].copy(rows = shownRows.toList())
+                        if (stopReason != null) break
                     }
+                    entryNow = ""
                 }
-                val coded = BuilderDirMenus.codesOf(base, rows, m.current, m.sort)
+                if (cut) {
+                    // KMK (r110) fix: Stop interrupted this menu: its few codes aren't saved (they'd replace a whole
+                    // menu); its row says "stopped" and offers "Learn again"
+                    states[mi] = states[mi].copy(state = "stopped", note = "stopped", rows = shownRows.toList())
+                    found += "${m.label}: stopped, not saved"
+                    AppLog.add('I', "lab", "learn menus: ${found.last()}")
+                    show()
+                    break
+                }
+                val coded = BuilderDirMenus.codesOf(plain, rows, m.current, m.sort, siteFilled)
+                // After the menu: back to the plain address (the next menu starts there too)
+                if (!stopLearning) reset()
                 if (coded.ok && (m.sort || coded.param.isNotEmpty())) {
                     updateScan(id) { sc -> BuilderExtrasLogic.withDirMenu(sc, m, coded) }
+                    // KMK (r110) fix: Height / Cup / Age already made as top-level filters on this page go now
+                    dropDirectoryMenusNow()
+                    // an entry that changed nothing and isn't the default: its press did nothing. KMK (r110) fix: each
+                    // row's code is the menu's parameter only ("height=150-154", not "…&sort=count"); "" = no change
+                    val finalRows = shownRows.mapIndexed { i, row0 ->
+                        val row = if (row0.status == "learned" || row0.status == "empty" || row0.status == "default") {
+                            val code = BuilderDirMenus.codeFor(coded, plain, shownUrls.getOrNull(i))
+                            when {
+                                code.isEmpty() -> row0.copy(code = "", status = "default")
+                                row0.status == "default" -> row0.copy(code = code, status = "learned")
+                                else -> row0.copy(code = code)
+                            }
+                        } else {
+                            row0
+                        }
+                        if (row.status == "default" && !row.text.equals(coded.defaultLabel, ignoreCase = true)) row.copy(status = "failed") else row
+                    }.ifEmpty {
+                        coded.each.map { (t, v) -> DirLearnRow(t, if (v.isEmpty()) "" else if (coded.pathMode) v else "${coded.param}=$v", if (v.isEmpty()) "default" else "learned") }
+                    }
+                    val empty = finalRows.count { it.status == "empty" }
+                    val failed = finalRows.count { it.status == "failed" }
+                    states[mi] = states[mi].copy(
+                        state = "done",
+                        param = coded.param,
+                        pathMode = coded.pathMode,
+                        options = coded.options.size,
+                        defaultLabel = coded.defaultLabel,
+                        empty = empty,
+                        failed = failed,
+                        rows = finalRows,
+                    )
                     found += "${m.label}: ${coded.options.size} options" +
                         (if (coded.defaultLabel.isNotEmpty()) " (default ${coded.defaultLabel})" else "") +
-                        (if (coded.pathMode) ", each its own address" else ", ${coded.param}=…")
+                        (if (coded.pathMode) ", each its own address" else ", ${coded.param}=…") +
+                        (if (empty > 0) ", $empty showed nothing, kept" else "") +
+                        (if (failed > 0) ", $failed failed" else "")
                 } else {
-                    found += "${m.label}: " + coded.note.ifEmpty { "no entry changed the address" }
+                    val why = coded.note.ifEmpty { "no entry changed a value in the address" }
+                    states[mi] = states[mi].copy(state = "failed", note = why, rows = shownRows.toList())
+                    found += "${m.label}: $why"
                 }
                 AppLog.add('I', "lab", "learn menus: ${found.last()}")
+                show()
                 if (stopReason != null) break
             }
         } finally {
-            val note = stopReason ?: "Done: the codes are kept with this directory."
-            showDirLearn(id) { DirLearn(running = false, label = "", done = done, total = total, found = found.toList(), note = note) }
+            val note = stopReason ?: "Done: the codes are kept with this directory only."
+            // menus never reached stay "waiting"; the one cut short says so. KMK (r110) fix: after Stop they are
+            // "not learned (stopped)" (with "Learn again"), never "can't be learned"
+            val byYou = stopLearning || found.any { it.endsWith(": stopped, not saved") }
+            val ended = states.map {
+                when {
+                    byYou && it.state == "running" -> it.copy(state = "stopped", note = "stopped")
+                    byYou && it.state == "waiting" -> it.copy(state = "stopped", note = "not learned (stopped)")
+                    it.state == "running" -> it.copy(state = "failed", note = stopReason ?: "stopped")
+                    else -> it
+                }
+            }
+            showDirLearn(id) {
+                DirLearn(
+                    running = false,
+                    label = "",
+                    done = done,
+                    total = total,
+                    found = found.toList(),
+                    note = note,
+                    menus = earlier + ended,
+                    collection = collection,
+                )
+            }
             AppLog.add('I', "lab", "learn menus on $base: ${found.joinToString(" · ")} ($note)")
+            runCatching { inPage("window.__labLearn&&window.__labLearn.banner&&window.__labLearn.banner(null);") }
         }
-        // Back to the directory page, so the page shows what was learned from
-        if (!onPage(base)) runCatching { loadPage(base) }
+        // Back to the plain directory page, so the page shows what was learned from
+        if (!BuilderDirMenus.sameValues(currentUrl(), plain)) runCatching { loadPage(base) }
     }
 
+    /** KMK (r110): one press's outcome: learned|nochange|missing|stopped|failed, the address it opened, cards shown */
+    private data class PressResult(val status: String, val url: String?, val cards: Int = -1)
+
     /**
-     * r109: one press of [entry] on [base] (loaded again when the page left it), as runLearn presses: "learned" with the
-     * address it opened, "nochange", "missing" (learn.js didn't find it), "stopped" or "failed" (the page didn't load)
+     * r109: one press of [entry] on the directory page (loaded again from [base] when the page left it): "learned" with
+     * the address it opened, "nochange", "missing" (learn.js didn't find it), "stopped" or "failed" (the page didn't
+     * load). KMK (r110): an address counts as changed only when a value differs (`?height=` → `?height=150-154`); a
+     * press that changed nothing while the page wasn't at [plain] (a previous entry's choice still set) is pressed again
+     * from [plain] once; the cards ([itemSelector]) are counted on the page it opened (0 = "nothing found")
      */
-    private suspend fun pressOnce(group: LearnGroup, entry: LearnEntry, base: String): Pair<String, String?> {
-        if (!onPage(base) && !loadPage(base)) return (if (stopLearning) "stopped" else "failed") to null
+    private suspend fun pressOnce(
+        group: LearnGroup,
+        entry: LearnEntry,
+        plain: String,
+        base: String,
+        itemSelector: String,
+        banner: String,
+        again: Boolean = true,
+    ): PressResult {
+        if (!BuilderDirMenus.samePage(currentUrl(), plain)) {
+            if (!loadPage(base)) return PressResult(if (stopLearning) "stopped" else "failed", null)
+        }
         pause(SETTLE_MS)
-        if (stopLearning) return "stopped" to null
-        val from = clean(currentUrl())
+        if (stopLearning) return PressResult("stopped", null)
+        val from = currentUrl()
         val before = seen.value.tick
-        val id = press(group, entry)
+        val id = press(group, entry, banner)
         val answer = waitFor(ANSWER_MS) { outcome.value.takeIf { it.id == id } }
-        val gone = waitFor(0L) { seen.value.takeIf { it.tick > before && clean(it.url) != from } }
+        fun moved() = seen.value.takeIf { it.tick > before && !BuilderDirMenus.sameValues(it.url, from) }
+        val gone = waitFor(0L) { moved() }
         val changed = when {
             gone != null -> gone
             answer == null || answer.state != "pressed" -> null
-            else -> waitFor(CHANGE_MS) { seen.value.takeIf { it.tick > before && clean(it.url) != from } }
+            else -> waitFor(CHANGE_MS) { moved() }
         }
         return when {
-            changed != null -> "learned" to changed.url.substringBefore('#')
-            stopLearning -> "stopped" to null
-            answer == null || answer.state != "pressed" -> "missing" to null
-            else -> "nochange" to null
+            changed != null -> {
+                pause(SETTLE_MS)
+                // the address may still move a little (the site settling): the latest one on the same page
+                val url = seen.value.url.takeIf { BuilderDirMenus.samePage(it, changed.url) } ?: changed.url
+                PressResult("learned", url.substringBefore('#'), countCards(itemSelector))
+            }
+            stopLearning -> PressResult("stopped", null)
+            answer == null || answer.state != "pressed" -> PressResult("missing", null)
+            again && !BuilderDirMenus.sameValues(from, plain) -> {
+                AppLog.add('D', "lab", "learn menus: \"${entry.text}\" changed nothing on $from: pressed again from the plain address")
+                if (!loadPage(base)) return PressResult(if (stopLearning) "stopped" else "failed", null)
+                pressOnce(group, entry, plain, base, itemSelector, banner, again = false)
+            }
+            else -> PressResult("nochange", null)
         }
+    }
+
+    /** KMK (r110): learn.js `count`'s answer ("learn: count #<id> <n>") */
+    private val countAnswer = MutableStateFlow(0L to -1)
+
+    /**
+     * KMK (r110): how many cards ([itemSelector]) the page shows now; looked at again after 1.5 s when none (a list
+     * still loading). -1 = not known (no selector, no answer)
+     */
+    private suspend fun countCards(itemSelector: String): Int {
+        if (itemSelector.isBlank()) return -1
+        var n = -1
+        for (attempt in 0 until 2) {
+            if (attempt > 0) pause(COUNT_AGAIN_MS)
+            if (stopLearning) return n
+            val id = ++pressId
+            val request = JsonObject(mapOf("id" to JsonPrimitive(id), "selector" to JsonPrimitive(itemSelector)))
+            inPage(
+                "(function(){var r=$request;function go(k){if(window.__labLearn&&window.__labLearn.count){window.__labLearn.count(r);}" +
+                    "else if(k<30){setTimeout(function(){go(k+1);},100);}}go(0);})();",
+            )
+            n = waitFor(COUNT_MS) { countAnswer.value.takeIf { it.first == id } }?.second ?: -1
+            if (n != 0) return n
+        }
+        return n
     }
 
     /** r109: learn.js `items`'s answer ("learn: items #<id> <json>"), by the request's id */
@@ -3488,6 +3936,13 @@ internal class BuilderExtrasModel {
             im.groupValues[1].toLongOrNull()?.let { itemsAnswer.value = ItemsAnswer(it, im.groupValues[2]) }
             return
         }
+        // KMK (r110): learn.js `count`'s answer (the cards a learned press's page shows)
+        LEARN_COUNT.find(line)?.let { cm ->
+            val cid = cm.groupValues[1].toLongOrNull()
+            val n = cm.groupValues[2].toIntOrNull()
+            if (cid != null && n != null) countAnswer.value = cid to n
+            return
+        }
         val m = LEARN_OUTCOME.find(line) ?: return
         val id = m.groupValues[2].toLongOrNull() ?: return
         outcome.value = PressOutcome(id, m.groupValues[1])
@@ -3504,6 +3959,8 @@ internal class BuilderExtrasModel {
         if (learnJob?.isActive == true) {
             stopLearning = true
             AppLog.add('D', "lab", "learn: stop asked")
+            // KMK (r110) fix: at once on the page: a press waiting for its menu to open is cancelled (no outline/press)
+            scope.launch { runCatching { inPage("window.__labLearn&&window.__labLearn.banner&&window.__labLearn.banner(null);") } }
         }
     }
 
@@ -3839,11 +4296,13 @@ internal class BuilderExtrasModel {
      * Presses [entry] through learn.js, waiting up to 5 s for learn.js to be injected after a load; returns the press
      * id learn.js reports the outcome under ([onLearnLog])
      */
-    private suspend fun press(group: LearnGroup, entry: LearnEntry): Long {
+    private suspend fun press(group: LearnGroup, entry: LearnEntry, banner: String? = null): Long {
         val id = ++pressId
         val request = JsonObject(
             mapOf(
                 "id" to JsonPrimitive(id),
+                // KMK (r110): "Learn the menus" shows it at the page's top and outlines what it presses
+                "banner" to (banner?.let { JsonPrimitive(it) } ?: JsonNull),
                 "opener" to (group.opener?.let { JsonPrimitive(it) } ?: JsonNull),
                 // KMK (r109): the menu's button found by its label ("Sort:") when [opener] finds nothing
                 "label" to JsonPrimitive(group.openerLabel),
@@ -4099,6 +4558,14 @@ internal class BuilderExtrasModel {
             BuilderExtrasLogic.repairSiteDefault(f)?.also { r ->
                 AppLog.add('I', "lab", "extras filter \"${f.name}\": \"${BuilderExtrasLogic.SITE_DEFAULT}\" → \"${r.options.firstOrNull()?.label}\"")
             } ?: f
+        }.let { all ->
+            // KMK (r110) repair: a directory's menus (Height / Cup / Age picked on its page) saved as top-level filters
+            // are dropped: they belong to that collection only
+            val (kept, dropped) = BuilderExtrasLogic.dropDirectoryMenus(all, dirMenuLabels(mutable.value.menuGroups))
+            if (dropped.isNotEmpty()) {
+                AppLog.add('I', "lab", "extras filters ${dropped.joinToString(", ") { "\"${it.name}\" (${it.param})" }}: a directory's own menus, dropped from the top-level filters")
+            }
+            kept
         }
         val custom = o.arr("custom")?.mapNotNull { e ->
             val c = e as? JsonObject ?: return@mapNotNull null
@@ -4445,10 +4912,18 @@ internal class BuilderExtrasModel {
         const val WAIT_STEP_MS = 200L
 
         /** r102 fix: learn.js's outcome lines ("learn: pressed #12 …") */
-        val LEARN_OUTCOME = Regex("^learn: (pressed|missing|error) #([0-9]+)")
+        val LEARN_OUTCOME = Regex("^learn: (pressed|missing|error|stopped) #([0-9]+)") // KMK (r110) fix: stopped
 
         /** KMK (r109): learn.js `items`'s answer ("learn: items #12 <json>") and how long it may take (3 ways to open) */
         val LEARN_ITEMS = Regex("^learn: items #([0-9]+) (.*)$")
         const val ITEMS_MS = 12_000L
+
+        /** KMK (r110): learn.js `count`'s answer ("learn: count #12 38"), how long to wait, the second look's pause */
+        val LEARN_COUNT = Regex("^learn: count #([0-9]+) (-?[0-9]+)")
+        const val COUNT_MS = 4_000L
+        const val COUNT_AGAIN_MS = 1_500L
+
+        /** KMK (r110): "Learn the menus" stops only when the directory page failed to load this many times in a row */
+        const val LOAD_FAILS = 3
     }
 }

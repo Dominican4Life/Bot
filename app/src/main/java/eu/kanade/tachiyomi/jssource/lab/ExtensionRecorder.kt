@@ -35,6 +35,7 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
@@ -45,7 +46,6 @@ import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -83,6 +83,16 @@ import java.util.concurrent.TimeoutException
 internal object ExtensionRecorder {
 
     const val STEP_TIMEOUT_MS = 20_000L
+
+    /**
+     * r110: a step past [STEP_TIMEOUT_MS] that still has one of its own requests on its way (started, not answered)
+     * is given more time, up to this much in all: a slow site answered the episode list in 22 s, so the recorded reply
+     * came after the limit and the step was lost ("no answer in 20 s")
+     */
+    const val STEP_MAX_MS = 60_000L
+
+    /** r110: after its last request answered, how long a step past its base limit may still take to return */
+    private const val STEP_SETTLE_MS = 2_000L
     const val BODY_EXCERPT_BYTES = 64 * 1024
 
     /**
@@ -210,6 +220,63 @@ internal object ExtensionRecorder {
     /** Step bodies run here, so a source that blocks past the time limit is left behind instead of holding the step */
     private val stepScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    /** Gives a step past its limit a moment to stop before the next one starts, so its requests stay its own */
+    private suspend fun stopLate(deferred: Deferred<*>, sourceName: String, id: String) {
+        deferred.cancel()
+        if (withTimeoutOrNull(CANCEL_GRACE_MS) { deferred.join() } == null) {
+            AppLog.add('W', "lab", "Recording $sourceName: $id didn't stop ${CANCEL_GRACE_MS / 1000} s after its time limit; its later requests are dropped")
+        }
+    }
+
+    /** r110: a step that gave no answer within its limit (the base one, or the extended one) */
+    private class StepTimeout(message: String) : Exception(message)
+
+    /**
+     * r110: the step [number] gave no answer in [STEP_TIMEOUT_MS]. While one of its own requests is still on its way
+     * (or one answered less than [STEP_SETTLE_MS] ago, so the extension may still be reading it), it is waited for,
+     * up to [STEP_MAX_MS] from [started]; the extension is logged once. Throws [StepTimeout] when the step still
+     * gives no answer; the caller then cancels it as before.
+     */
+    private suspend fun awaitExtended(
+        deferred: Deferred<List<Map<String, String>>>,
+        capture: Capture,
+        number: Int,
+        started: Long,
+        sourceName: String,
+        id: String,
+    ): List<Map<String, String>> {
+        var logged = false
+        while (true) {
+            val elapsed = System.currentTimeMillis() - started
+            val waiting = capture.inFlight(number)
+            val settling = System.currentTimeMillis() - capture.lastActivity(number) < STEP_SETTLE_MS
+            if (elapsed >= STEP_MAX_MS || (waiting == 0 && !settling)) break
+            if (!logged) {
+                logged = true
+                AppLog.add(
+                    'I',
+                    "lab",
+                    "Recording $sourceName: $id passed ${STEP_TIMEOUT_MS / 1000} s with " +
+                        (if (waiting > 0) "$waiting request${if (waiting == 1) "" else "s"} still on the way" else "a reply just in") +
+                        "; waiting up to ${STEP_MAX_MS / 1000} s in all",
+                )
+            }
+            val slice = minOf(500L, STEP_MAX_MS - elapsed).coerceAtLeast(1L)
+            withTimeoutOrNull(slice) { deferred.await() }?.let { items ->
+                AppLog.add('I', "lab", "Recording $sourceName: $id answered after ${(System.currentTimeMillis() - started) / 1000} s (extended limit)")
+                return items
+            }
+        }
+        val elapsed = System.currentTimeMillis() - started
+        throw StepTimeout(
+            if (logged) {
+                "no answer in ${elapsed / 1000} s (the limit was extended past ${STEP_TIMEOUT_MS / 1000} s while a request was on its way)"
+            } else {
+                "no answer in ${STEP_TIMEOUT_MS / 1000} s"
+            },
+        )
+    }
+
     /** The loaded source object of [row], straight from the extension (never a JS source that took its id) */
     suspend fun findSource(row: ApkImport.ExtensionSourceRow): Any? {
         return if (row.anime) {
@@ -293,14 +360,15 @@ internal object ExtensionRecorder {
                 var error: String? = null
                 val deferred = stepScope.async(capture.stepContext(number)) { block() }
                 try {
-                    items = withTimeout(STEP_TIMEOUT_MS) { deferred.await() }
+                    items = withTimeoutOrNull(STEP_TIMEOUT_MS) { deferred.await() }
+                        ?: awaitExtended(deferred, capture, number, started, row.sourceName, id)
+                } catch (e: StepTimeout) {
+                    error = e.message
+                    stopLate(deferred, row.sourceName, id)
                 } catch (e: TimeoutCancellationException) {
+                    // r110: ours return null, so this is the extension's own timeout: a timeout of the step as before
                     error = "no answer in ${STEP_TIMEOUT_MS / 1000} s"
-                    // Give the step a moment to stop before the next one starts, so its requests stay its own
-                    deferred.cancel()
-                    if (withTimeoutOrNull(CANCEL_GRACE_MS) { deferred.join() } == null) {
-                        AppLog.add('W', "lab", "Recording ${row.sourceName}: $id didn't stop ${CANCEL_GRACE_MS / 1000} s after its time limit; its later requests are dropped")
-                    }
+                    stopLate(deferred, row.sourceName, id)
                 } catch (e: CancellationException) {
                     deferred.cancel()
                     capture.end(number)
@@ -982,6 +1050,7 @@ internal object ExtensionRecorder {
                 fallbackRequests.clear()
                 fallbackRecorded.clear()
                 fallbackBytes.clear()
+                activity.clear()
             }
         }
 
@@ -1009,6 +1078,19 @@ internal object ExtensionRecorder {
         private val offThread = HashMap<Int, Int>()
 
         fun offThreadCount(number: Int): Int = synchronized(lock) { offThread[number] ?: 0 }
+
+        /** r110: when a request of step [number] last started or ended (not those counted by elimination) */
+        private val activity = HashMap<Int, Long>()
+
+        fun lastActivity(number: Int): Long = synchronized(lock) { activity[number] ?: 0L }
+
+        /**
+         * r110: step [number]'s own requests started and not answered yet (those counted by elimination left out, so
+         * the app's own traffic can't hold a step open)
+         */
+        fun inFlight(number: Int): Int = synchronized(lock) {
+            startedIn.entries.count { it.value == number && it.key !in fallbackRequests }
+        }
 
         /** r104: requests recorded for the step only because it was running (see [stepFor]) */
         fun fallbackCount(number: Int): Int = synchronized(lock) { fallbackRecorded[number] ?: 0 }
@@ -1094,6 +1176,7 @@ internal object ExtensionRecorder {
                 val (list, head) = synchronized(lock) {
                     number = startedIn.remove(request)
                     fallback = fallbackRequests.remove(request)
+                    if (!fallback) number?.let { activity[it] = System.currentTimeMillis() }
                     val bodyHead = pending.remove(request)
                     val sink = number?.let { sinks[it] }
                     if (sink == null || !hasRoom(number!!, sink, fallback)) null to null else sink to bodyHead
@@ -1159,7 +1242,7 @@ internal object ExtensionRecorder {
                 val attribution = stepFor(tag, request) ?: return@guard
                 synchronized(lock) {
                     startedIn[request] = attribution.number
-                    if (attribution.fallback) fallbackRequests.add(request)
+                    if (attribution.fallback) fallbackRequests.add(request) else activity[attribution.number] = System.currentTimeMillis()
                 }
             }
         }

@@ -207,8 +207,8 @@ internal fun ConvertAgainDialog(
                 if (state.title.isNotBlank()) Text(state.title, style = MaterialTheme.typography.titleSmall)
                 if (state.running) {
                     Text(
-                        "The extension runs again with your connection (${ExtensionRecorder.STEP_TIMEOUT_MS / 1000} s per step at " +
-                            "most); the result is saved as a new version of this source, same key and id, and Test Run opens.",
+                        "The extension runs again with your connection (${ExtensionRecorder.STEP_TIMEOUT_MS / 1000} s per step, up to " +
+                            "${ExtensionRecorder.STEP_MAX_MS / 1000} s while a reply is on its way); the result is saved as a new version of this source, same key and id, and Test Run opens.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 6.dp),

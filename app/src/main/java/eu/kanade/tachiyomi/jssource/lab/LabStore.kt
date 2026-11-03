@@ -127,6 +127,8 @@ internal object LabStore {
         run?.steps?.firstOrNull { it.status == StepStatus.Red }?.let { step ->
             return "${step.name.lowercase()} step failed · ${step.evidence}"
         }
+        // KMK (r110): a source failing because of today's errors says so (the lint line used to stand in for it)
+        if (health.state == HealthState.Failing && health.note != null) return health.note
         val findings = lint?.findings.orEmpty().filter { !it.ignored }
         if (findings.isNotEmpty()) {
             val head = "${findings.size} lint ${if (findings.size == 1) "finding" else "findings"}"

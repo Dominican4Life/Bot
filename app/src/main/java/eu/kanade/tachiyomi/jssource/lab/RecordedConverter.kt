@@ -1242,13 +1242,19 @@ internal object RecordedConverter {
                     step,
                     returnFor(method),
                     diagnosis = why + listOf(
-                        "cards \"${mapped.item}\", " + mapped.fields.entries.joinToString(", ") { (f, p) -> "${jsField(kind, f)} from \"${p.css.ifBlank { "the item" }}\" ${p.how}${if (p.transform.isNotEmpty()) " (${p.transform})" else ""}" },
+                        "cards \"${mapped.item}\", " + mapped.fields.entries.joinToString(", ") { (f, p) -> "${jsField(kind, f)} from \"${p.css.ifBlank { "the item" }}\" ${p.how}${if (p.transform.isNotEmpty()) " (${p.transform})" else ""}" } +
+                            (if (!mapped.urlFix.isNone) ", the address with ${mapped.urlFix.words()}" else ""),
                     ) + outputDiff(output, step.items, kind),
                 )
             }
             val fetch = "await get($address)"
             val spec = mapped.fields.entries.joinToString(", ") { (f, p) -> "${jsField(kind, f)}: [${jsStr(p.css)}, ${jsStr(p.how)}, ${jsStr(p.transform)}]" }
             val post = ArrayList<String>()
+            // r110: the fixed part the extension puts around the page's addresses (see UrlFix)
+            mapped.anchorField?.takeIf { !mapped.urlFix.isNone }?.let { f ->
+                val js = jsField(kind, f)
+                post.add("e.$js = ${mapped.urlFix.js("e.$js", ::jsStr)};")
+            }
             if (kind == Kind.Chapters && mapped.numberFromTitle) post.add("e.number = numberOf(e.title);")
             if (kind == Kind.Pages) post.add("e.index = out.length;")
             val requiredCheck = required(kind).joinToString(" && ") { "e.${jsField(kind, it)}" }
@@ -1278,7 +1284,8 @@ internal object RecordedConverter {
             body.add("return out;")
             how = "HTML of ${shortUrl(request.url)}: items \"${mapped.item}\" (${mapped.matched} of ${samples.size} returned items found), " +
                 mapped.fields.entries.joinToString(", ") { (f, p) -> "${jsField(kind, f)} from \"${p.css.ifBlank { "the item" }}\" ${p.how}" } +
-                (if (mapped.numberFromTitle) ", number from the title" else "")
+                (if (mapped.numberFromTitle) ", number from the title" else "") +
+                (if (!mapped.urlFix.isNone) ", each ${if (kind == Kind.Pages) "picture" else "address"} with ${mapped.urlFix.words()} (as the extension returns them)" else "")
         }
 
         val lines = ArrayList<String>()
@@ -1357,7 +1364,9 @@ internal object RecordedConverter {
         val text = htmlUnescape(body)
         return samples.count { s ->
             val target = s[key] ?: return@count false
-            target in body || target in text || norm(target) in norm(text) || pathOf(target).let { it.length >= 4 && it in body }
+            target in body || target in text || norm(target) in norm(text) || pathOf(target).let { it.length >= 4 && it in body } ||
+                // r110: an address the extension returns with a query (or #part) the page's link lacks
+                (key != "title" && pathOf(target).substringBefore('#').substringBefore('?').trimEnd('/').let { it.length >= 4 && it in body })
         }
     }
 
@@ -1960,7 +1969,16 @@ internal object RecordedConverter {
 
     private class HtmlPick(val css: String, val how: String, val transform: String)
 
-    private class HtmlList(val item: String, val fields: Map<String, HtmlPick>, val matched: Int, val numberFromTitle: Boolean)
+    /** r110: [urlFix] = what the address field needs after its pick to be the returned address ([UrlFix]) */
+    private class HtmlList(
+        val item: String,
+        val fields: Map<String, HtmlPick>,
+        val matched: Int,
+        val numberFromTitle: Boolean,
+        val urlFix: UrlFix = UrlFix.NONE,
+    ) {
+        val anchorField: String? get() = fields.keys.firstOrNull { it == "url" || it == "imageUrl" }
+    }
 
     private val URL_ATTRS = listOf("href", "src", "data-src", "data-lazy-src", "data-original", "data-srcset", "srcset", "data-url", "data-href", "content", "data-bg", "poster", "data-image")
     private val TEXT_ATTRS = listOf("title", "alt", "data-title", "aria-label", "data-jname", "data-name", "content")
@@ -2039,25 +2057,66 @@ internal object RecordedConverter {
         val anchorField = if (kind == Kind.Pages) "imageUrl" else "url"
         val what = if (kind == Kind.Pages) "pictures" else "addresses"
         val found = ArrayList<Triple<Map<String, String>, Element, Pair<String, String>>>()   // item, element, (attr, transform)
-        val combos = HashMap<String, Int>()
+        var combos = HashMap<String, Int>()
         val index = urlIndex(doc)
-        val perItem: List<List<Triple<Element, String, String>>> = samples.map { s ->
+        var perItem: List<List<Triple<Element, String, String>>> = samples.map { s ->
             val target = s[anchorField]
             if (target == null) emptyList() else index[target].orEmpty()
         }
-        val located = perItem.count { it.isNotEmpty() }
+        var located = perItem.count { it.isNotEmpty() }
+        perItem.forEach { list -> list.map { "${it.first.tagName()}|${it.second}|${it.third}" }.distinct().forEach { combos[it] = (combos[it] ?: 0) + 1 } }
+        // r110: when fewer than 3 in 5 returned addresses are on the page as they are, the page's links are paired with
+        // them by path (query, fragment and slashes aside) and the fix most of them share is learned ([UrlFix]): an
+        // extension that appends the same `?s=…` to every link it returns, or drops the page link's own query
+        var fixes: List<UrlFix> = emptyList()
+        var fixPerItem: List<List<UrlFix>> = perItem.map { list -> list.map { UrlFix.NONE } }
+        val exactBest = combos.values.maxOrNull() ?: 0
+        if (exactBest * 5 < samples.size * 3) {
+            val byKey = HashMap<String, MutableList<Pair<String, Triple<Element, String, String>>>>()
+            index.forEach { (form, hits) -> hits.forEach { h -> byKey.getOrPut(UrlFix.key(form)) { ArrayList() }.add(form to h) } }
+            val loose = samples.map { s ->
+                val target = s[anchorField] ?: return@map emptyList<Pair<Triple<Element, String, String>, UrlFix>>()
+                byKey[UrlFix.key(target)].orEmpty().mapNotNull { (form, h) -> UrlFix.learn(form, target)?.let { h to it } }
+            }
+            val looseFixes = loose.flatten().map { it.second }.filter { !it.isNone }.distinct()
+            fun looseKey(h: Triple<Element, String, String>, f: UrlFix): String =
+                "${h.first.tagName()}|${h.second}|${h.third}" + (if (f.isNone) "" else "|${looseFixes.indexOf(f)}")
+            val looseCombos = HashMap<String, Int>()
+            loose.forEach { list -> list.map { (h, f) -> looseKey(h, f) }.distinct().forEach { looseCombos[it] = (looseCombos[it] ?: 0) + 1 } }
+            if ((looseCombos.values.maxOrNull() ?: 0) > exactBest) {
+                combos = looseCombos
+                fixes = looseFixes
+                perItem = loose.map { list -> list.map { it.first } }
+                fixPerItem = loose.map { list -> list.map { it.second } }
+                located = loose.count { it.isNotEmpty() }
+            }
+        }
         if (located < samples.size) {
             val missing = samples.indices.first { perItem[it].isEmpty() }
-            why.add("$located of ${samples.size} returned $what are a link or attribute of the page (as they are, absolute or as a path); not found: ${shortUrl(samples[missing][anchorField].orEmpty())}")
+            why.add(
+                "$located of ${samples.size} returned $what are a link or attribute of the page (as they are, absolute or as a path" +
+                    (if (fixes.isNotEmpty()) ", or with a fixed part around the path" else "") +
+                    "); not found: ${shortUrl(samples[missing][anchorField].orEmpty())}",
+            )
         }
-        perItem.forEach { list -> list.map { "${it.first.tagName()}|${it.second}|${it.third}" }.distinct().forEach { combos[it] = (combos[it] ?: 0) + 1 } }
         val combo = combos.maxByOrNull { it.value }?.key ?: run {
-            why.add("none of the returned $what is on the page (first: ${shortUrl(samples.firstOrNull()?.get(anchorField).orEmpty())}): the extension builds them in its own code")
+            val first = samples.firstOrNull()?.get(anchorField).orEmpty()
+            // r110: say what the page has at that path, so a near miss (another query, another host) shows
+            val near = index.keys.firstOrNull { UrlFix.key(it) == UrlFix.key(first) && UrlFix.key(first).isNotEmpty() }
+            why.add(
+                "none of the returned $what is on the page, not even by its path without the query (first: ${shortUrl(first)}" +
+                    (near?.let { "; the page has ${shortUrl(it)}" } ?: "") + "): the extension builds them in its own code",
+            )
             return null
         }
-        val (tag, attr, transform) = combo.split('|').let { Triple(it[0], it[1], it.getOrElse(2) { "" }) }
-        val matching: List<List<Element>> = perItem.map { list ->
-            list.filter { (el, a, t) -> el.tagName() == tag && a == attr && t == transform }.map { it.first }
+        val comboParts = combo.split('|')
+        val (tag, attr, transform) = Triple(comboParts[0], comboParts[1], comboParts.getOrElse(2) { "" })
+        val urlFix = comboParts.getOrNull(3)?.toIntOrNull()?.let { fixes.getOrNull(it) } ?: UrlFix.NONE
+        val matching: List<List<Element>> = perItem.mapIndexed { i, list ->
+            list.filterIndexed { j, (el, a, t) -> el.tagName() == tag && a == attr && t == transform && fixPerItem[i][j] == urlFix }.map { it.first }
+        }
+        if (!urlFix.isNone) {
+            why.add("the page's ${if (kind == Kind.Pages) "pictures" else "links"} (@$attr of <$tag>) give the returned $what with ${urlFix.words()} (${matching.count { it.isNotEmpty() }} of ${samples.size})")
         }
         // r109: the place holding the most items' addresses (ties: the one met first in the page). Places are told
         // apart by tags and class words first, then by tags only (a list whose rows alternate `odd` / `even`), and
@@ -2121,7 +2180,7 @@ internal object RecordedConverter {
         }
         if (depths.isEmpty()) depths.add(0)
         for (depth in depths) {
-            buildHtmlList(doc, found, depth, kind, anchorField, attr, transform, pageUrl, why)?.let { return it }
+            buildHtmlList(doc, found, depth, kind, anchorField, attr, transform, pageUrl, why, urlFix)?.let { return it }
         }
         return null
     }
@@ -2137,6 +2196,7 @@ internal object RecordedConverter {
         transform: String,
         pageUrl: String,
         why: MutableList<String>,
+        urlFix: UrlFix = UrlFix.NONE,
     ): HtmlList? {
         val cards = found.map { ancestor(it.second, depth) ?: it.second }
         val item = commonSelector(doc, cards) ?: run {
@@ -2149,7 +2209,13 @@ internal object RecordedConverter {
             val el = if (css.isEmpty()) card else card.selectFirst(css)
             val i = cards.indexOfFirst { it === card }
             val target = found.getOrNull(i)?.first?.get(anchorField)
-            el != null && target != null && urlTransform(attr, el.attr(attr), pageUrl, target) == transform
+            el != null && target != null && (
+                if (urlFix.isNone) {
+                    urlTransform(attr, el.attr(attr), pageUrl, target) == transform
+                } else {
+                    shapeValue(el.attr(attr), transform, pageUrl)?.let { urlFix.apply(it) } == target
+                }
+                )
         } ?: run {
             why.add("cards \"$item\": no selector inside them reads the ${if (kind == Kind.Pages) "picture" else "address"} the same way in each")
             return null
@@ -2170,7 +2236,7 @@ internal object RecordedConverter {
         val numberFromTitle = kind == Kind.Chapters && "name" in fields &&
             found.any { it.first["number"] != null } &&
             found.all { (s, _, _) -> s["number"]?.toDoubleOrNull()?.let { numberIn(s["name"]) == it } ?: true }
-        return HtmlList(item, fields, found.size, numberFromTitle)
+        return HtmlList(item, fields, found.size, numberFromTitle, urlFix)
     }
 
     /**
@@ -2185,7 +2251,7 @@ internal object RecordedConverter {
         for (card in cards) {
             val e = HashMap<String, String>()
             for ((f, p) in mapped.fields) {
-                pickValue(card, p, pageUrl)?.let { e[f] = it }
+                pickValue(card, p, pageUrl)?.let { e[f] = if (f == mapped.anchorField && it.isNotEmpty()) mapped.urlFix.apply(it) else it }
             }
             if (required(kind).all { !e[it].isNullOrEmpty() }) out.add(e)
         }
@@ -2594,7 +2660,19 @@ internal object RecordedConverter {
         val step = rec.step("videos") ?: return todoPart(method, "this step was not recorded", null, returnFor(method))
         val videos = step.items.filter { !it["url"].isNullOrBlank() }
         if (videos.isEmpty()) {
-            return todoPart(method, step.error?.let { "the extension failed: $it" } ?: "the extension returned no video", step, returnFor(method))
+            // r110: say it plainly with the step's time and requests (a player embed on another host often answers
+            // after the step's limit, or only in a browser), so the owner knows to record again or pick the player
+            val requests = step.requests.filter { !it.image }
+            val asked = if (requests.isEmpty()) {
+                "no request was recorded"
+            } else {
+                "${requests.size} request${if (requests.size == 1) "" else "s"}: " +
+                    requests.take(4).joinToString("; ") { r -> "${r.method} ${shortUrl(r.url)} ${r.status ?: r.error ?: "no answer"}" } +
+                    (if (requests.size > 4) "; …" else "")
+            }
+            val reason = (step.error?.let { "the extension failed: $it" } ?: "the extension returned no videos in the time limit") +
+                " (${step.ms / 1000} s, $asked). Record again (a player can be slow), or pick the player's video by hand"
+            return todoPart(method, reason, step, returnFor(method))
         }
         val plan = planFor(rec, step)
         val first = videos.first()
@@ -3250,6 +3328,115 @@ internal object RecordedConverter {
             val head = if (n < radix) "" else baseDigit(n / radix, radix)
             val d = n % radix
             return head + if (d > 35) (d + 29).toChar().toString() else d.toString(36)
+        }
+    }
+}
+
+// ---------- r110: returned addresses that differ from the page's links by a fixed part ----------
+
+/**
+ * r110: what turns an address read from the page (after its `shape` transform) into the one the extension returned,
+ * when the two differ only around the path: the page link's query and / or fragment dropped, a trailing slash
+ * dropped, a leading slash dropped, then a constant [suffix] added. A site's extension appended the same `?s=…` to
+ * every link it returned (`/anime/abc` on the page, `/anime/abc?s=srt-d` returned), so no returned address was on
+ * the page and every list stayed TODO.
+ *
+ * Kept free of Jsoup / OkHttp so it can be tested on its own.
+ */
+internal data class UrlFix(
+    val dropFragment: Boolean = false,
+    val dropQuery: Boolean = false,
+    val dropSlash: Boolean = false,
+    val dropLead: Boolean = false,
+    val suffix: String = "",
+) {
+    val isNone: Boolean get() = this == NONE
+
+    /** The fix applied to [value], as the written JS does it */
+    fun apply(value: String): String {
+        var x = value.trim()
+        if (dropQuery) x = x.substringBefore('#').substringBefore('?') else if (dropFragment) x = x.substringBefore('#')
+        if (dropSlash) x.trimEnd('/').let { if (it.isNotEmpty()) x = it }
+        if (dropLead) x = x.removePrefix("/")
+        return x + suffix
+    }
+
+    /** A JS expression giving the fixed value of [expr] (a non-empty string expression) */
+    fun js(expr: String, str: (String) -> String): String {
+        var x = expr
+        if (dropQuery) x = "$x.replace(/[?#].*$/, \"\")" else if (dropFragment) x = "$x.replace(/#.*$/, \"\")"
+        if (dropSlash) x = "($x.replace(/\\/+$/, \"\") || $x)"
+        if (dropLead) x = "$x.replace(/^\\//, \"\")"
+        if (suffix.isNotEmpty()) x = "$x + ${str(suffix)}"
+        return x
+    }
+
+    /** In words, for the code's comment and the TODO's diagnosis */
+    fun words(): String = buildList {
+        if (dropQuery) add("its query dropped") else if (dropFragment) add("its #part dropped")
+        if (dropSlash) add("the trailing slash dropped")
+        if (dropLead) add("the leading slash dropped")
+        if (suffix.isNotEmpty()) add("\"$suffix\" added")
+    }.ifEmpty { listOf("as it is") }.joinToString(", ")
+
+    companion object {
+        val NONE = UrlFix()
+
+        /** The fixes tried, simplest first (the suffix is learned per pair) */
+        private val TRIES: List<UrlFix> = buildList {
+            for (lead in listOf(false, true)) {
+                add(UrlFix(dropLead = lead))
+                add(UrlFix(dropFragment = true, dropLead = lead))
+                add(UrlFix(dropQuery = true, dropLead = lead))
+                add(UrlFix(dropSlash = true, dropLead = lead))
+                add(UrlFix(dropQuery = true, dropSlash = true, dropLead = lead))
+            }
+        }
+
+        private val ORIGIN = Regex("""^[a-zA-Z][a-zA-Z0-9+.-]*://[^/]+""")
+
+        /**
+         * The address without scheme, host, query, fragment and leading / trailing slashes: a page link and a
+         * returned address can only be paired by a fix when these are equal (so a suffix never holds an item's own
+         * part, such as the rest of a path)
+         */
+        fun key(url: String): String = url.trim().replace(ORIGIN, "").substringBefore('#').substringBefore('?').trim('/')
+
+        /**
+         * The fix that turns [shaped] (a page link after its transform) into [target], or null. The value must hold
+         * the same path ([key]); the suffix must start like an address part (`?`, `&`, `#`, `/`, `;`, `.`) and stay
+         * short. [NONE] when they are already equal.
+         */
+        fun learn(shaped: String, target: String): UrlFix? {
+            val s = shaped.trim()
+            val t = target.trim()
+            if (s.isEmpty() || t.isEmpty()) return null
+            if (s == t) return NONE
+            if (key(s) != key(t)) return null
+            // An absolute address and a path don't pair here (the shape's "abs" / "path" transforms do that)
+            if (ORIGIN.containsMatchIn(s) != ORIGIN.containsMatchIn(t)) return null
+            for (f in TRIES) {
+                val x = f.apply(s)
+                if (x.isEmpty() || !t.startsWith(x)) continue
+                val rest = t.substring(x.length)
+                if (rest.length > 80) continue
+                if (rest.isNotEmpty() && rest[0] !in "?&#/;.") continue
+                val fix = f.copy(suffix = rest)
+                if (fix.apply(s) == t) return fix
+            }
+            return null
+        }
+
+        /**
+         * The fix most pairs share, with how many pairs it fits; [pairs] are (page link, returned address) per
+         * item (several page links per item: any of them may fit)
+         */
+        fun common(pairs: List<List<Pair<String, String>>>): Pair<UrlFix, Int>? {
+            val counts = LinkedHashMap<UrlFix, Int>()
+            pairs.forEach { options ->
+                options.mapNotNull { (s, t) -> learn(s, t) }.distinct().forEach { counts[it] = (counts[it] ?: 0) + 1 }
+            }
+            return counts.entries.maxByOrNull { it.value }?.let { it.key to it.value }
         }
     }
 }
