@@ -879,6 +879,12 @@ Two commits (the first failed CI: `openers += opener` on a `MutableSet<Element>`
 - **Browse drop-downs**: picking a sort or menu option closes its list (`CollectionFilterField` `expanded = null`; `FilterSortMenu` calls `onDismiss` after `onPick`).
 - **Template generic-list v13 — TAG_BLOCK** (`TagBlock.kt`, `Derive.kt`, `Generator.kt` fallback, read back in `BuilderScreenModel`): sources learned only the rows on the sample title, so rows it lacked (e.g. Genres) were never read. `TAG_BLOCK` describes the detail block; `getDetails` reads its unlisted rows as tags (long rows → description, > 120 chars left out, logged once per label). Without `TAG_BLOCK` (older sources after "Update template") the block is derived from the tag groups — matched on any group's label, not just the first.
 
+## Changes in r113 (3 November 2026)
+
+- **Stale Browse filters after a save**: Browse keeps each source's Filter tab (with its filter objects) until the app closes, so after removing a filter in the builder the sheet still showed the old code's filters. `JsSourceManager.stampOf(id)` gives the JS source's last save time; manga Browse keeps Filter tabs through `BrowseTabCache.keepFilterTab(key, tab, stamp)` / `keptFilterTab(key, stamp)` (a tab from another save is dropped); anime keeps `keptStamps` beside `keptFilterTabs` and forgets the kept tab and lists when the stamp changed. `AnimeSourceScreenModel.source` is read each time, and an open anime source screen switches to the new filters (from the new source in `animeSourcesFlow`) when its source is saved. Don't cache a source's `FilterList` across saves without a stamp.
+- **Lint `filter-value-is-label`** (rules.md, still v15): `unless` skips `var TAG_BLOCK / TAG_GROUPS / SETTINGS / SUGGESTION_GROUPS` lines, `shape =` lines and values starting with a CSS combinator (`~ td`, `+ *`). The 5 findings on a v13 source were all template code or the quality setting. regex-in-code stops at 5 findings, so a report of exactly 5 may hide more.
+- **Directory panel** (`CollectionFilterField`): "N menus set", Reset and Faces / List sit at the right end of the sort / menu chips' line (the chips wrap in a `FlowRow` with weight 1); no row of their own.
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
