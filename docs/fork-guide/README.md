@@ -869,6 +869,16 @@ Two commits (the first failed CI: `openers += opener` on a `MutableSet<Element>`
 
 - **Smooth live graphs** (`LiveGraph.kt`): band edges and the overlay are monotone cubic curves (Fritsch–Carlson tangents, so no overshoot below 0); bands extend two steps past the left edge. `GraphMotion` replaces the per-window 0 → 1 slide: each window adds the steps it advanced to a pending shift (leftover carried, capped at 2, reset after a gap > 3 steps or another resource/window), the shift drains at one step per `stepMs` (1.5× when behind), and the shown top of the scale eases to the window's (180 ms time constant); paths are built at the window's top and stretched in the draw (`scale` around the plot bottom), and `yOf` no longer caps at the top (the clip does). The frame loop stops when settled. Still no per-frame allocation.
 
+## Changes in r112 (3 November 2026)
+
+- **Do all N** (`BuilderExtras.doAllUnder/runDoAll/stopDoAll`, `DoAllRun/DoAllRow`, pane "Do all" box): one run per group card learns and makes every directory under it in turn (wait ≤ 60 s for its scan → learn menus → read/collect → make). One shared job, so other Learn/Read/Pick buttons are blocked meanwhile; closing the group card stops it, closing the builder cancels it. Rules: the run's Stop never saves a half-read directory (`readOne/collectOne(inDoAll)` skip saving when `doAllStop`, also checked before the collect step); a directory's own Stop ends only that directory (`doAllParent` keeps `stopRead` from raising the parent flag); menus not reached after a load failure are marked "stopped · not reached" and the row shows "needs". Waiting picks/group mode are cancelled at start; stale "stopped" rows from an earlier run are dropped so progress reaches 100 %.
+- **Folding**: finished cards fold to a one-line ✓ summary (tap to open); a card never folds while a do-all row needs you or a menu failed/stopped.
+- **Parts**: `finishCollection` reads the card's current ticks (unticking during a read sticks) and takes `replaces`; `reapplyParts` matches by key + type so it never asks Replace / Keep both.
+- **What's left** (`BuilderChrome.BuilderWhatsLeft`, shown in `BuilderScreen`): lists missing steps and unmade menu cards by name, with jumps.
+- **Counts**: learn.js v4 adds " next" when a next page exists (same test as `BuilderListReader.nextPage`); rows show "24+ (page 1)" — 24 is the page size, not a bug.
+- **Browse drop-downs**: picking a sort or menu option closes its list (`CollectionFilterField` `expanded = null`; `FilterSortMenu` calls `onDismiss` after `onPick`).
+- **Template generic-list v13 — TAG_BLOCK** (`TagBlock.kt`, `Derive.kt`, `Generator.kt` fallback, read back in `BuilderScreenModel`): sources learned only the rows on the sample title, so rows it lacked (e.g. Genres) were never read. `TAG_BLOCK` describes the detail block; `getDetails` reads its unlisted rows as tags (long rows → description, > 120 chars left out, logged once per label). Without `TAG_BLOCK` (older sources after "Update template") the block is derived from the tag groups — matched on any group's label, not just the first.
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
