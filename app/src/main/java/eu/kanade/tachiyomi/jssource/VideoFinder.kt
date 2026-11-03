@@ -5,6 +5,7 @@ import android.content.Context
 import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
+import android.webkit.CookieManager
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -86,6 +87,31 @@ internal object VideoFinder {
             "tookMs" to tookMs,
         )
     }
+
+    /**
+     * KMK (r115): one request a traced find saw (Source Lab's "Why won't it play"): its address, what it is
+     * (`page` a player page / frame, `stream` a playlist or file, `key` an HLS key, `segment` a piece, `license` a
+     * DRM licence call), the status the WebView reported (only errors are reported: null = no error seen) and the
+     * request headers the WebView sent, with the cookie the browser holds for the address. Only filled when a
+     * caller passes `trace` to [find]; the find itself works as before.
+     */
+    data class Caught(
+        val url: String,
+        val kind: String,
+        val status: Int?,
+        val headers: Map<String, String>,
+        val mainFrame: Boolean,
+        val passUrl: String,
+        val atMs: Long,
+    )
+
+    // KMK (r115): a traced find keeps at most this many requests (pieces of a stream: the first few only)
+    private const val MAX_TRACED = 300
+    private const val MAX_TRACED_SEGMENTS = 6
+
+    // KMK (r115): an HLS key and a DRM licence call, by address (no braces: ICU)
+    private val KEY_URL = Regex("""\.key$|(?:^|/)key\.bin$|/keys?/|encryption[._-]?key|/hls[._-]?key""", RegexOption.IGNORE_CASE)
+    private val LICENSE_URL = Regex("""license|widevine|playready|fairplay|/drm/""", RegexOption.IGNORE_CASE)
 
     // ---------- r103: what a find caught, kept per (page, frame, referer) ----------
     private const val MEMO_TTL_MS = 10 * 60 * 1000L
@@ -214,7 +240,53 @@ internal object VideoFinder {
     )
 
     /** What every WebView of one find asked for (shouldInterceptRequest runs off the main thread) */
-    private class Capture {
+    private class Capture(
+        // KMK (r115): the caller's trace list (null = not traced)
+        val trace: MutableList<Caught>? = null,
+    ) {
+        private val tracedSegments = AtomicInteger(0)
+
+        /** KMK (r115): notes one request of a traced find (any thread); not a player page / stream / key: skipped */
+        fun traceRequest(url: String, sent: Map<String, String>?, mainFrame: Boolean, passUrl: String) {
+            val list = trace ?: return
+            if (!url.startsWith("http://") && !url.startsWith("https://")) return
+            if (AD.containsMatchIn(url)) return
+            val path = url.toHttpUrlOrNull()?.encodedPath ?: return
+            val accept = sent?.entries?.firstOrNull { it.key.equals("Accept", ignoreCase = true) }?.value.orEmpty()
+            val kind = when {
+                mainFrame -> "page"
+                LICENSE_URL.containsMatchIn(url) && !NOT_MEDIA.containsMatchIn(path) -> "license"
+                KEY_URL.containsMatchIn(path) -> "key"
+                else -> when (classify(url)) {
+                    Kind.HLS, Kind.DASH, Kind.FILE -> "stream"
+                    Kind.SEGMENT -> "segment"
+                    null -> if (accept.contains("text/html", ignoreCase = true)) "page" else return
+                }
+            }
+            if (kind == "segment" && tracedSegments.incrementAndGet() > MAX_TRACED_SEGMENTS) return
+            val headers = LinkedHashMap<String, String>()
+            sent?.forEach { (name, value) -> headers[name] = value }
+            if (headers.keys.none { it.equals("Cookie", ignoreCase = true) }) {
+                runCatching { CookieManager.getInstance().getCookie(url) }.getOrNull()
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { headers["Cookie"] = it }
+            }
+            synchronized(list) {
+                if (list.size >= MAX_TRACED) return
+                list.add(Caught(url.substringBefore('#'), kind, null, headers, mainFrame, passUrl, System.currentTimeMillis()))
+            }
+        }
+
+        /** KMK (r115): the error status the WebView reported for [url] (its latest traced request) */
+        fun traceStatus(url: String, status: Int) {
+            val list = trace ?: return
+            val clean = url.substringBefore('#')
+            synchronized(list) {
+                val at = list.indexOfLast { it.url == clean }
+                if (at >= 0) list[at] = list[at].copy(status = status)
+            }
+        }
+
         val hits: MutableList<Hit> = Collections.synchronizedList(ArrayList())
         val segments = AtomicInteger(0)
         val requests = AtomicInteger(0)
@@ -344,6 +416,9 @@ internal object VideoFinder {
         sourceKey: String? = null,
         // r103 fix pass: true for the Source Lab / builder tests: always a real find (and its result isn't kept)
         fresh: Boolean = false,
+        // KMK (r115): when given, every player page / stream / key / piece request is added to it ([Caught]); a
+        // traced find never reuses a kept result (it has to see the requests)
+        trace: MutableList<Caught>? = null,
     ): Result {
         val started = System.currentTimeMillis()
         val steps = ArrayList<String>()
@@ -371,7 +446,7 @@ internal object VideoFinder {
 
         // r103: the same page (and frame, Referer) of the same source found less than 10 minutes ago
         val memoKey = sourceKey.orEmpty() + "\n" + url + "\n" + frameSelector.orEmpty() + "\n" + pageReferer.orEmpty()
-        val kept = if (fresh) {
+        val kept = if (fresh || trace != null) {
             null
         } else {
             synchronized(memo) {
@@ -392,7 +467,7 @@ internal object VideoFinder {
         }
 
         val userAgent = Injekt.get<NetworkHelper>().defaultUserAgentProvider()
-        val capture = Capture()
+        val capture = Capture(trace)
         val pageHost = url.toHttpUrlOrNull()?.host.orEmpty()
 
         val result = withContext(Dispatchers.Main) {
@@ -904,6 +979,7 @@ internal object VideoFinder {
                     val requested = request.url?.toString() ?: return null
                     val sentReferer = request.requestHeaders?.entries
                         ?.firstOrNull { it.key.equals("Referer", ignoreCase = true) }?.value
+                    capture.traceRequest(requested, request.requestHeaders, request.isForMainFrame, url) // KMK (r115)
                     capture.record(requested, sentReferer, url, framePass)
                     return null
                 }
@@ -941,6 +1017,10 @@ internal object VideoFinder {
                     errorResponse: WebResourceResponse?,
                 ) {
                     if (request?.isForMainFrame == true) httpStatus = errorResponse?.statusCode
+                    // KMK (r115): a traced find notes every request's error status
+                    val failed = request?.url?.toString()
+                    val code = errorResponse?.statusCode
+                    if (failed != null && code != null) capture.traceStatus(failed, code)
                 }
             }
             // A size, so the page lays out and a synthetic tap has somewhere to land

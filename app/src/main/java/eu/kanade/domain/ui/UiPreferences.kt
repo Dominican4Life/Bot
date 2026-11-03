@@ -6,6 +6,7 @@ import eu.kanade.domain.ui.model.AppTheme
 import eu.kanade.domain.ui.model.PanoramaStyle
 import eu.kanade.domain.ui.model.TabletUiMode
 import eu.kanade.domain.ui.model.ThemeMode
+import eu.kanade.domain.ui.model.WideCoverStyle
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.preference.getEnum
 import java.time.format.DateTimeFormatter
@@ -87,6 +88,12 @@ class UiPreferences(
     fun usePanoramaCoverMangaInfo() = preferenceStore.getBoolean("use_panorama_cover_manga_info", false)
 
     fun topAlignCover() = preferenceStore.getBoolean("top_align_cover", false)
+
+    // KMK (r115): Settings › Appearance › Wide covers. With "Same everywhere" on, a change of any wide-cover pref
+    // (Appearance or a view menu) is copied to all of them by WideCoverSync; [wideCoverStyle] is that shared look.
+    fun wideCoverSameEverywhere() = preferenceStore.getBoolean("pref_wide_cover_same_everywhere", true)
+
+    fun wideCoverStyle() = preferenceStore.getEnum("pref_wide_cover_style", WideCoverStyle.FILL)
     // KMK <--
 
     fun recommendsInOverflow() = preferenceStore.getBoolean("recommends_in_overflow", false)

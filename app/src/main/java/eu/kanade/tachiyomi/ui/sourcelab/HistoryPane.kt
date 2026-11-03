@@ -3,6 +3,8 @@ package eu.kanade.tachiyomi.ui.sourcelab
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -18,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -459,6 +462,45 @@ private fun CompareView(
         style = MaterialTheme.typography.titleMedium,
         fontWeight = FontWeight.SemiBold,
     )
+    // KMK (r115, mock M3History): the quick comparisons as one segmented row (the full list stays in Compare with…)
+    val first = versions.lastOrNull()?.n
+    val quick = buildList<Pair<String, Int?>> {
+        add("vs previous" to null)
+        if (n != EDITOR_VERSION) add("vs now" to EDITOR_VERSION)
+        if (first != null && first != n) add("vs v$first" to first)
+    }
+    if (quick.size > 1) {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(22.dp))
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(22.dp))
+                .padding(3.dp),
+        ) {
+            quick.forEach { (label, against) ->
+                val on = when (against) {
+                    // "the one before" (or still reading); v1 lights its own chip even when it is the one before
+                    null -> state.compareWith != EDITOR_VERSION && (first == null || first == n || state.compareWith != first)
+                    else -> state.compareWith == against
+                }
+                // at least 44 dp tall (a phone's touch target)
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .heightIn(min = 44.dp)
+                        .clip(RoundedCornerShape(19.dp))
+                        .background(if (on) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
+                        .clickable { onCompareWith(against) }
+                        .padding(horizontal = 14.dp),
+                ) {
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (on) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
     if (state.diffReady) {
         val added = state.diff.count { it.kind == '+' }
         val removed = state.diff.count { it.kind == '-' }
@@ -486,12 +528,34 @@ private fun CompareView(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        if (added > 0 || removed > 0) DiffLines(diff = LabDiff.compact(state.diff))
+        // KMK (r115, mock M3History): only the changed lines, with one line around each change
+        if (added > 0 || removed > 0) DiffLines(diff = LabDiff.compact(state.diff, context = 1))
+    }
+    // KMK (r115, mock M3History): going back to an older version in its own card, saying that nothing is lost
+    if (n != EDITOR_VERSION && n != current) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Go back to v$n", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "v$n's code becomes the source's code; every version stays in the list.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Button(onClick = { onOpen(n) }) { Text("Open v$n") }
+            }
+        }
     }
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        if (n != EDITOR_VERSION && n != current) {
-            Button(onClick = { onOpen(n) }) { Text("Open v$n") }
-        }
         Box {
             OutlinedButton(onClick = { pick = true }) { Text("Compare with…") }
             DropdownMenu(expanded = pick, onDismissRequest = { pick = false }) {

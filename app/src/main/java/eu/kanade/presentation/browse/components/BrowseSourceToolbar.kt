@@ -40,6 +40,7 @@ import androidx.compose.ui.window.PopupProperties
 import androidx.core.graphics.drawable.toBitmap
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.domain.ui.model.PanoramaStyle
+import eu.kanade.domain.ui.model.WideCoverStyle
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarActions
 import eu.kanade.presentation.components.AppBarTitle
@@ -47,6 +48,8 @@ import eu.kanade.presentation.components.DropdownMenu
 import eu.kanade.presentation.components.PanoramaIcons
 import eu.kanade.presentation.components.RadioMenuItem
 import eu.kanade.presentation.components.SearchToolbar
+import eu.kanade.presentation.more.settings.WideCoverPlace
+import eu.kanade.presentation.more.settings.WideCoverSync
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.animeextension.AnimeExtensionManager
 import eu.kanade.tachiyomi.extension.ExtensionManager
@@ -313,7 +316,8 @@ internal fun PanoramaStyleSection(
                 FilledTonalIconToggleButton(
                     checked = displayMode == LibraryDisplayMode.ComfortableGridPanorama && style == value,
                     onCheckedChange = {
-                        stylePref.set(value)
+                        // KMK (r115): through WideCoverSync, so "Same everywhere" copies it to the other places
+                        WideCoverSync.pick(WideCoverPlace.BROWSE, WideCoverStyle.of(value))
                         onDisplayModeChange(LibraryDisplayMode.ComfortableGridPanorama)
                     },
                 ) {

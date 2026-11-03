@@ -65,6 +65,10 @@ internal data class PickInfo(
  * r102: Tags in a labelled row (Cast, Maker, Release date…) are a group: checked for values, plain text rows are
  * fine (they go to the description). A Video frame from an ad network ([AD_HOSTS], the list VideoFinder uses) is a
  * Warn ("This frame is an ad (host), not the player").
+ *
+ * KMK (r115, Helper 2): the verdicts stay as they are and feed one checklist: [row] combines a verdict with the pick
+ * run again on the raw page and on up to 3 titles ([Recheck], BuilderRecheck) into one mark (✓ ! ✕ ○), one line and at
+ * most one [Fix].
  */
 internal object PickCheck {
     enum class Level { Ok, Warn, Info }
@@ -340,8 +344,9 @@ internal object PickCheck {
                     add(false, "", "in the site's menu")
                     level = Level.Warn
                     title = "This looks like the site's menu, not this title's tags — keep it?"
-                    warnBody = youTapped + "It sits in the site's menus (navigation, a sidebar…). Keep mine keeps the group; " +
-                        "Not this removes it."
+                    // KMK (r115): one answer per pick: Tap again (removes this group, Tags stays armed), ✕ keeps it
+                    warnBody = youTapped + "It sits in the site's menus (navigation, a sidebar…). Tap again removes this " +
+                        "group so you can tap the title's own tags; ✕ keeps it."
                 }
             }
             // r104: a card of a "You may like" / "Related" section
@@ -388,6 +393,79 @@ internal object PickCheck {
         }
         val samples = if (label in SAMPLED) pick.samples.filter { it.isNotBlank() }.take(3) else emptyList()
         return Result(label = label, level = finalLevel, title = finalTitle, body = body, checks = checks, samples = samples)
+    }
+
+    // ---------- KMK (r115, mockup EHelper2): Helper 2, one checklist ----------
+
+    /** A checklist row's answer: ✓ works, ! works with a catch, ✕ the source would get nothing, ○ not picked / skipped */
+    enum class Mark { Ok, Warn, Fail, Skip }
+
+    /** What a one-tap fix does (only actions the builder already has) */
+    enum class FixKind {
+        /** read another picture attribute ([Fix.value]: the attribute) */
+        UseAttr,
+
+        /** Tags: "Split into rows" on the group at [Fix.value] (its index) */
+        SplitRows,
+
+        /** open Page source on the page (Raw / Rendered side by side) */
+        PageSource,
+
+        /** arm the label again (the old "Not this" + tap) */
+        TapAgain,
+    }
+
+    data class Fix(val kind: FixKind, val text: String, val value: String = "")
+
+    /**
+     * One pick run again away from the page it was tapped on: on the RAW page (what the app's client gets, [raw] matches
+     * there; -1 = not tested) against what the page showed ([shown], the tap's count), and on up to 3 titles
+     * ([found] of [tested] [what]). [note] is one short line, [fix] a one-tap fix when the builder has one.
+     */
+    data class Recheck(
+        val label: String,
+        val tested: Int,
+        val found: Int,
+        val raw: Int = -1,
+        val shown: Int = -1,
+        val what: String = "titles",
+        val note: String = "",
+        val fix: Fix? = null,
+    )
+
+    data class Row(val label: String, val mark: Mark, val line: String, val fix: Fix?)
+
+    /**
+     * The checklist's row for [label]: the tap's own verdict ([verdict], PickCheck as before) and the re-run
+     * ([recheck], null = not run yet) give one mark and one line, and at most one action.
+     */
+    fun row(label: String, picked: Boolean, optional: Boolean, verdict: Result?, recheck: Recheck?): Row {
+        if (!picked) {
+            return Row(label, Mark.Skip, if (optional) "optional · not picked" else "not picked yet", Fix(FixKind.TapAgain, "Tap it"))
+        }
+        val r = recheck
+        val tail = r?.note?.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()
+        if (r != null && r.raw == 0 && r.shown > 0) {
+            return Row(label, Mark.Fail, "only in Rendered: the source would get nothing$tail", r.fix ?: Fix(FixKind.PageSource, "Page source"))
+        }
+        if (r != null && r.tested > 0 && r.found == 0) {
+            return Row(label, Mark.Fail, "not found on the ${r.tested} ${r.what} tested$tail", r.fix ?: Fix(FixKind.TapAgain, "Tap again"))
+        }
+        if (r != null && r.found < r.tested) {
+            return Row(label, Mark.Warn, "${r.found} of ${r.tested} ${r.what}$tail", r.fix)
+        }
+        if (verdict != null && verdict.level != Level.Ok) {
+            return Row(label, Mark.Warn, verdict.title, r?.fix ?: Fix(FixKind.TapAgain, "Tap again"))
+        }
+        if (r?.fix != null) return Row(label, Mark.Warn, r.note.ifBlank { r.fix.text }, r.fix)
+        val parts = ArrayList<String>()
+        if (r != null) {
+            if (r.tested > 1) parts.add("${r.found} of ${r.tested} ${r.what}")
+            if (r.raw >= 0) parts.add(if (r.shown <= 0 || r.raw * 5 >= r.shown * 4) "same in Raw" else "${r.raw} in Raw, ${r.shown} shown")
+            if (r.note.isNotBlank()) parts.add(r.note)
+        }
+        val line = parts.joinToString(" · ").ifBlank { verdict?.checks?.firstOrNull { it.ok }?.text ?: "picked" }
+        return Row(label, Mark.Ok, line, null)
     }
 
     private val SAMPLED = setOf("item", "title", "chapter", "date", "number", "tags")

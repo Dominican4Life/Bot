@@ -16,6 +16,7 @@ import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.data.backup.create.BackupOptions
 import eu.kanade.tachiyomi.data.sync.SyncDataJob
 import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.flow.update
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.sy.SYMR
@@ -53,13 +54,13 @@ class SyncSettingsSelector : Screen() {
             ) {
                 item {
                     SectionCard(MR.strings.label_library) {
-                        Options(BackupOptions.libraryOptions, state, model)
+                        Options(syncLibraryOptions, state, model)
                     }
                 }
 
                 item {
                     SectionCard(MR.strings.label_settings) {
-                        Options(BackupOptions.settingsOptions, state, model)
+                        Options(syncSettingsOptions, state, model)
                     }
                 }
             }
@@ -147,3 +148,8 @@ private class SyncSettingsSelectorModel(
         }
     }
 }
+
+// KMK (r115): parts only backups have (Source Lab files, JS storage, custom covers) are left out: sync settings
+// don't keep them
+private val syncLibraryOptions = BackupOptions.libraryOptions.filterNot { it.backupOnly }.toImmutableList()
+private val syncSettingsOptions = BackupOptions.settingsOptions.filterNot { it.backupOnly }.toImmutableList()

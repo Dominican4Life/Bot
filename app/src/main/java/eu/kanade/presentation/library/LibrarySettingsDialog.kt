@@ -36,10 +36,13 @@ import androidx.compose.ui.util.fastForEach
 import dev.icerock.moko.resources.StringResource
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.domain.ui.model.PanoramaStyle
+import eu.kanade.domain.ui.model.WideCoverStyle
 import eu.kanade.presentation.category.visualName
 import eu.kanade.presentation.components.PanoramaIcons
 import eu.kanade.presentation.components.TabbedDialog
 import eu.kanade.presentation.components.TabbedDialogPaddings
+import eu.kanade.presentation.more.settings.WideCoverPlace
+import eu.kanade.presentation.more.settings.WideCoverSync
 import eu.kanade.presentation.more.settings.widget.TriStateListDialog
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.ui.library.LibrarySettingsScreenModel
@@ -350,7 +353,8 @@ private fun ColumnScope.DisplayPage(
             FilterChip(
                 selected = displayMode == LibraryDisplayMode.ComfortableGridPanorama && panoramaStyle == style,
                 onClick = {
-                    panoramaStylePref.set(style)
+                    // KMK (r115): through WideCoverSync, so "Same everywhere" copies it to the other places
+                    WideCoverSync.pick(WideCoverPlace.LIBRARY, WideCoverStyle.of(style))
                     screenModel.setDisplayMode(LibraryDisplayMode.ComfortableGridPanorama)
                 },
                 label = { Text(stringResource(titleRes)) },

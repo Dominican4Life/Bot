@@ -6,6 +6,7 @@ import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.data.backup.AnimeBackupHelper
 import eu.kanade.tachiyomi.data.backup.BackupFileValidator
+import eu.kanade.tachiyomi.data.backup.BackupFiles
 import eu.kanade.tachiyomi.data.backup.CategoryChoice
 import eu.kanade.tachiyomi.data.backup.create.creators.CategoriesBackupCreator
 import eu.kanade.tachiyomi.data.backup.create.creators.ExtensionStoresBackupCreator
@@ -103,8 +104,10 @@ class BackupCreator(
             // SY -->
             val mergedManga = getMergedManga.await()
             // SY <--
+            // KMK (r115): kept, the titles' custom covers are taken from this list (manga ids are needed)
+            val allManga = getFavorites.await() + nonFavoriteManga /* SY --> */ + mergedManga /* SY <-- */
             val backupManga =
-                backupMangas(getFavorites.await() + nonFavoriteManga /* SY --> */ + mergedManga /* SY <-- */, options)
+                backupMangas(allManga, options)
                     // KMK -->
                     .let { list ->
                         // Only library titles in the chosen categories (titles read outside the library stay)
@@ -116,6 +119,22 @@ class BackupCreator(
                         }
                     }
             // KMK <--
+
+            // KMK (r115): anime follow the Chapters & episodes / History / Tracking ticks, and "All read & watched"
+            // brings anime watched outside the library
+            val backupAnime = if (options.libraryEntries) {
+                AnimeBackupHelper().createAnime(
+                    episodes = options.chapters,
+                    history = options.history,
+                    tracking = options.tracking,
+                    watched = options.readEntries,
+                ).filter {
+                    CategoryChoice.keepAnime(options.categoryKeys, it.categories)
+                }
+            } else {
+                emptyList()
+            }
+            val backupFiles = BackupFiles(context)
 
             val backup = Backup(
                 backupManga = backupManga,
@@ -131,13 +150,7 @@ class BackupCreator(
 
                 // KMK -->
                 backupFeeds = backupFeeds(options),
-                backupAnime = if (options.libraryEntries) {
-                    AnimeBackupHelper().createAnime().filter {
-                        CategoryChoice.keepAnime(options.categoryKeys, it.categories)
-                    }
-                } else {
-                    emptyList()
-                },
+                backupAnime = backupAnime,
                 backupJsSources = if (options.jsSources) backupJsSources() else emptyList(),
                 backupAnimeExtensionStores = if (options.extensionStores) {
                     AnimeBackupHelper().createStores()
@@ -164,6 +177,26 @@ class BackupCreator(
                     emptyList()
                 },
                 // KMK <--
+                // KMK (r115): Source Lab files, JS source storage and custom covers (proto 900–902)
+                backupSourceLabFiles = if (options.sourceLabFiles) {
+                    backupFiles.createSourceLabFiles()
+                } else {
+                    emptyList()
+                },
+                backupJsStorageFiles = if (options.jsStorage && options.jsSources) {
+                    backupFiles.createJsStorageFiles()
+                } else {
+                    emptyList()
+                },
+                backupCustomCovers = if (options.customCovers && options.libraryEntries) {
+                    backupFiles.createCustomCovers(
+                        manga = allManga,
+                        keep = backupManga.map { it.source to it.url }.toSet(),
+                        anime = backupAnime,
+                    )
+                } else {
+                    emptyList()
+                },
             )
 
             val byteArray = parser.encodeToByteArray(Backup.serializer(), backup)

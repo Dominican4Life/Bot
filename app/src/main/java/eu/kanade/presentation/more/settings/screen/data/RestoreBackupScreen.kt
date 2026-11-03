@@ -197,6 +197,8 @@ class RestoreBackupScreen(
                 if (contents.mangaHere > 0) "${formatCount(contents.mangaHere)} already here" else null,
                 if (contents.anime > 0) "${formatCount(contents.anime)} anime" else null,
                 if (contents.animeHere > 0) "${formatCount(contents.animeHere)} already here" else null,
+                // KMK (r115): anime watched outside the library ("All read & watched")
+                if (contents.animeWatched > 0) "${formatCount(contents.animeWatched)} watched only" else null,
             ).joinToString(" · "),
             present = contents.manga + contents.anime > 0,
             checked = library,
@@ -270,6 +272,32 @@ class RestoreBackupScreen(
             present = contents.jsSources > 0,
             checked = options.jsSources,
             onCheckedChange = { toggle({ o, on -> o.copy(jsSources = on) }, it) },
+        )
+        // KMK (r115): the file parts (proto 900–902); older backups show "not in this backup"
+        PartRow(
+            title = "Source Lab files",
+            detail = "${formatCount(contents.sourceLabFiles)} files · " +
+                "${formatCount(contents.sourceLabSources)} sources",
+            present = contents.sourceLabFiles > 0,
+            checked = options.sourceLabFiles,
+            onCheckedChange = { toggle({ o, on -> o.copy(sourceLabFiles = on) }, it) },
+        )
+        PartRow(
+            title = "JS source storage",
+            detail = "${formatCount(contents.jsStorageFiles)} files · may hold logins",
+            present = contents.jsStorageFiles > 0,
+            checked = options.jsStorage,
+            onCheckedChange = { toggle({ o, on -> o.copy(jsStorage = on) }, it) },
+        )
+        PartRow(
+            title = "Custom covers",
+            detail = listOfNotNull(
+                if (contents.mangaCovers > 0) "${formatCount(contents.mangaCovers)} manga" else null,
+                if (contents.animeCovers > 0) "${formatCount(contents.animeCovers)} anime" else null,
+            ).joinToString(" · ") + if (library) "" else " · needs Library",
+            present = contents.mangaCovers + contents.animeCovers > 0,
+            checked = options.customCovers && library,
+            onCheckedChange = { toggle({ o, on -> o.copy(customCovers = on) }, it) },
         )
     }
 
@@ -424,6 +452,10 @@ private class RestoreBackupScreenModel(
                         sourceSettings = it.options.sourceSettings && contents.sourceSettings > 0,
                         savedSearchesFeeds = it.options.savedSearchesFeeds && contents.searchesFeeds > 0,
                         jsSources = it.options.jsSources && contents.jsSources > 0,
+                        // KMK (r115)
+                        sourceLabFiles = it.options.sourceLabFiles && contents.sourceLabFiles > 0,
+                        jsStorage = it.options.jsStorage && contents.jsStorageFiles > 0,
+                        customCovers = it.options.customCovers && contents.mangaCovers + contents.animeCovers > 0,
                     )
                 }
                 it.copy(
@@ -476,6 +508,9 @@ private class RestoreBackupScreenModel(
                 sourceSettings = false,
                 savedSearchesFeeds = false,
                 jsSources = false,
+                // KMK (r115): not per title either (custom covers are, they stay)
+                sourceLabFiles = false,
+                jsStorage = false,
             )
         } else {
             state.options
@@ -591,6 +626,16 @@ private data class BackupContents(
     val extensionRepos: Int,
     val searchesFeeds: Int,
     val jsSources: Int,
+    // KMK (r115) -->
+    /** Anime outside the library that come with their watch history (part of [anime]) */
+    val animeWatched: Int = 0,
+    val sourceLabFiles: Int = 0,
+    /** JS source keys the Source Lab files belong to */
+    val sourceLabSources: Int = 0,
+    val jsStorageFiles: Int = 0,
+    val mangaCovers: Int = 0,
+    val animeCovers: Int = 0,
+    // KMK (r115) <--
 )
 
 private val MADE_ON_REGEX = Regex("""(\d{4}-\d{2}-\d{2})""")
@@ -619,7 +664,10 @@ private suspend fun readBackupContents(context: Context, uri: Uri, backup: Backu
 
     val nameOrigin = backupOriginOf(fileName)
     val fromThisApp = nameOrigin.kind == BackupOriginKind.ThisApp ||
-        backup.backupJsSources.isNotEmpty() || backup.backupCustomButtons.isNotEmpty()
+        backup.backupJsSources.isNotEmpty() || backup.backupCustomButtons.isNotEmpty() ||
+        // KMK (r115): parts only this app writes
+        backup.backupSourceLabFiles.isNotEmpty() || backup.backupJsStorageFiles.isNotEmpty() ||
+        backup.backupCustomCovers.isNotEmpty()
     val origin = if (fromThisApp) BackupOrigin("THIS APP", BackupOriginKind.ThisApp) else nameOrigin
 
     val favorites = runCatching { Injekt.get<GetFavorites>().await() }.getOrDefault(emptyList())
@@ -672,5 +720,15 @@ private suspend fun readBackupContents(context: Context, uri: Uri, backup: Backu
         extensionRepos = backup.backupExtensionStores.size + backup.backupAnimeExtensionStores.size,
         searchesFeeds = backup.backupSavedSearches.size + backup.backupFeeds.size,
         jsSources = backup.backupJsSources.size,
+        // KMK (r115)
+        animeWatched = backup.backupAnime.count { !it.favorite },
+        sourceLabFiles = backup.backupSourceLabFiles.size,
+        sourceLabSources = backup.backupSourceLabFiles
+            .mapNotNull { file -> file.path.split('/').takeIf { it.size > 2 && it[0] == "js_sources" }?.get(1) }
+            .distinct()
+            .size,
+        jsStorageFiles = backup.backupJsStorageFiles.size,
+        mangaCovers = backup.backupCustomCovers.count { !it.anime },
+        animeCovers = backup.backupCustomCovers.count { it.anime },
     )
 }

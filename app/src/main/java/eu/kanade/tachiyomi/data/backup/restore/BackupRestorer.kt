@@ -76,6 +76,10 @@ class BackupRestorer(
     // KMK <--
     private val errors = mutableListOf<Pair<Date, String>>()
 
+    // KMK (r115): JS sources whose backup copy was written here (this device had none or an older one); their Source
+    // Lab files and storage from the backup replace this device's
+    private val restoredJsKeys = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+
     /**
      * Mapping of source ID to source name from backup data
      */
@@ -175,6 +179,13 @@ class BackupRestorer(
             restoreAmount += 1
         }
         // KMK <--
+        // KMK (r115): files after everything else (empty in older backups)
+        val restoreLabFiles = options.sourceLabFiles && backup.backupSourceLabFiles.isNotEmpty()
+        val restoreJsStorage = options.jsStorage && backup.backupJsStorageFiles.isNotEmpty()
+        val restoreCovers = options.customCovers && options.libraryEntries && backup.backupCustomCovers.isNotEmpty()
+        if (restoreLabFiles) restoreAmount += 1
+        if (restoreJsStorage) restoreAmount += 1
+        if (restoreCovers) restoreAmount += 1
 
         coroutineScope {
             if (options.categories) {
@@ -238,6 +249,39 @@ class BackupRestorer(
             // KMK <--
 
             // TODO: optionally trigger online library + tracker update
+        }
+
+        // KMK (r115): once the JS sources and titles are in (the parts above run side by side): Source Lab files and
+        // storage of the JS sources here, then custom covers of the titles here (by source + url)
+        val files = eu.kanade.tachiyomi.data.backup.BackupFiles(context)
+        if (restoreLabFiles) {
+            restoreFilesStep("Source Lab files") {
+                files.restoreSourceLabFiles(backup.backupSourceLabFiles, restoredJsKeys.toSet())
+            }
+        }
+        if (restoreJsStorage) {
+            restoreFilesStep("JS source storage") {
+                files.restoreJsStorageFiles(backup.backupJsStorageFiles, restoredJsKeys.toSet())
+            }
+        }
+        if (restoreCovers) {
+            restoreFilesStep("Custom covers") { files.restoreCustomCovers(backup.backupCustomCovers) }
+        }
+    }
+
+    /** KMK (r115): one file part of the restore, with its time in Logs and a progress step */
+    private suspend fun restoreFilesStep(name: String, block: suspend () -> Pair<Int, Int>) {
+        val started = System.currentTimeMillis()
+        try {
+            block()
+        } catch (e: Exception) {
+            errors.add(Date() to "$name: ${e.message}")
+        }
+        timing(name, started)
+        restoreProgress += 1
+        with(notifier) {
+            showRestoreProgress(name, restoreProgress, restoreAmount, isSync)
+                .show(Notifications.ID_RESTORE_PROGRESS)
         }
     }
 
@@ -475,7 +519,7 @@ class BackupRestorer(
         sources.forEach { source ->
             ensureActive()
             try {
-                manager.restoreSource(source.info, source.code) { editor ->
+                val restored = manager.restoreSource(source.info, source.code) { editor ->
                     source.settings.forEach { pref ->
                         when (val value = pref.value) {
                             is IntPreferenceValue -> editor.putInt(pref.key, value.value)
@@ -486,6 +530,15 @@ class BackupRestorer(
                             is StringSetPreferenceValue -> editor.putStringSet(pref.key, value.value)
                         }
                     }
+                }
+                // KMK (r115): its Source Lab files and storage from the backup replace this device's
+                if (restored) {
+                    runCatching {
+                        eu.kanade.tachiyomi.jssource.jsJson.decodeFromString(
+                            eu.kanade.tachiyomi.jssource.JsSourceInfo.serializer(),
+                            source.info,
+                        ).key
+                    }.getOrNull()?.let { restoredJsKeys.add(it) }
                 }
             } catch (e: Exception) {
                 errors.add(Date() to "JS source: ${e.message}")

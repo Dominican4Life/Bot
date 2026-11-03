@@ -9,6 +9,7 @@ import eu.kanade.tachiyomi.data.anime.AnimeExtraPrefs
 import eu.kanade.tachiyomi.data.anime.AnimePrefs
 import eu.kanade.tachiyomi.data.anime.AnimeRepository
 import eu.kanade.tachiyomi.data.anime.Episode
+import eu.kanade.tachiyomi.data.anime.toGenreList
 import eu.kanade.tachiyomi.data.anime.track.AnimeTrack
 import eu.kanade.tachiyomi.data.anime.track.AnimeTrackRepository
 import eu.kanade.tachiyomi.data.anime.track.AnimeTracking
@@ -39,19 +40,96 @@ class AnimeBackupHelper(
     private val trackRepository: AnimeTrackRepository = Injekt.get(),
 ) {
 
-    // KMK: the library plus the seasons of its anime (favorite or not), each once
-    suspend fun createAnime(): List<BackupAnime> = createAnime(
-        (repository.getFavoritesRaw() + repository.getSeasonsOfFavoritesRaw()).distinctBy { it.id },
-        includeHistory = true,
-    )
+    /**
+     * KMK: the library plus the seasons of its anime (favorite or not), each once. KMK (r115): the backup's
+     * "Chapters & episodes", "History" and "Tracking" ticks apply to anime too ([episodes], [history], [tracking]),
+     * and with "All read & watched" ([watched]) anime outside the library that have watch history come along
+     * (like manga read outside the library), with their episodes and history.
+     */
+    suspend fun createAnime(
+        episodes: Boolean = true,
+        history: Boolean = true,
+        tracking: Boolean = true,
+        watched: Boolean = false,
+    ): List<BackupAnime> {
+        val library = (repository.getFavoritesRaw() + repository.getSeasonsOfFavoritesRaw()).distinctBy { it.id }
+        val ids = library.map { it.id }.toSet()
+        val outside = if (watched) watchedOutsideLibrary().filter { it.id !in ids } else emptyList()
+        return createAnime(
+            library + outside,
+            includeHistory = history,
+            includeEpisodes = episodes,
+            includeTracking = tracking,
+        )
+    }
 
-    /** KMK: [animes] with their episodes, and their watch history when [includeHistory] (device sync picks these) */
-    suspend fun createAnime(animes: List<Anime>, includeHistory: Boolean): List<BackupAnime> {
+    /**
+     * KMK (r115): anime not in the library with at least one episode in the watch history, as the sources gave them
+     * (no Edit info, like [AnimeRepository.getFavoritesRaw]); seasons of library anime are left to the library part
+     */
+    private fun watchedOutsideLibrary(): List<Anime> = runCatching {
+        val ids = Injekt.get<SqlDriver>().executeQuery(
+            identifier = null,
+            sql = "SELECT DISTINCT e.anime_id FROM anime_history h JOIN episodes e ON h.episode_id = e._id " +
+                "JOIN animes a ON a._id = e.anime_id WHERE a.favorite = 0",
+            mapper = { cursor ->
+                val found = mutableListOf<Long>()
+                while (cursor.next().value) {
+                    cursor.getLong(0)?.let { found.add(it) }
+                }
+                QueryResult.Value(found.toList())
+            },
+            parameters = 0,
+        ).value
+        ids.mapNotNull { id ->
+            database.animesQueries.getById(id) {
+                    rowId, source, url, artist, author, description, genre, title, status, thumbnailUrl,
+                    backgroundUrl, favorite, initialized, dateAdded, lastUpdate, fetchType, episodeFlags, parentId,
+                    seasonFlags, seasonNumber, seasonSourceOrder,
+                ->
+                Anime(
+                    id = rowId,
+                    source = source,
+                    url = url,
+                    title = title,
+                    artist = artist,
+                    author = author,
+                    description = description,
+                    genre = genre.toGenreList(),
+                    status = status,
+                    thumbnailUrl = thumbnailUrl,
+                    backgroundUrl = backgroundUrl,
+                    favorite = favorite,
+                    initialized = initialized,
+                    dateAdded = dateAdded,
+                    lastUpdate = lastUpdate,
+                    fetchType = FetchType.entries.getOrElse(fetchType.toInt()) { FetchType.Episodes },
+                    episodeFlags = episodeFlags,
+                    parentId = parentId,
+                    seasonFlags = seasonFlags,
+                    seasonNumber = seasonNumber,
+                    seasonSourceOrder = seasonSourceOrder,
+                )
+            }.executeAsOneOrNull()
+        }
+    }.getOrDefault(emptyList())
+
+    /**
+     * KMK: [animes] with their episodes, and their watch history when [includeHistory] (device sync picks these).
+     * KMK (r115): without [includeEpisodes] the episodes are left out (history still names its episodes by url), and
+     * without [includeTracking] the tracker entries.
+     */
+    suspend fun createAnime(
+        animes: List<Anime>,
+        includeHistory: Boolean,
+        includeEpisodes: Boolean = true,
+        includeTracking: Boolean = true,
+    ): List<BackupAnime> {
         val history = if (includeHistory) repository.getAllHistory() else emptyMap()
         // KMK (r86): watched milliseconds per episode (Stats), with the history
         val timeWatch = if (includeHistory) timeWatched() else emptyMap()
         val categoryNames = repository.getCategories().associate { it.id to it.name }
-        val tracks = trackRepository.getAll().groupBy { it.animeId }
+        val tracks = if (includeTracking) trackRepository.getAll().groupBy { it.animeId } else emptyMap()
         val customInfo = database.anime_custom_infoQueries
             .getAll { animeId, title, author, artist, description, genre, status, thumbnailUrl ->
                 animeId to BackupAnimeCustomInfo(
@@ -90,7 +168,7 @@ class AnimeBackupHelper(
                 initialized = anime.initialized,
                 fetchType = anime.fetchType.ordinal,
                 episodeFlags = anime.episodeFlags,
-                episodes = episodes.map { ep ->
+                episodes = episodes.filter { includeEpisodes }.map { ep ->
                     BackupEpisode(
                         url = ep.url,
                         name = ep.name,
@@ -249,6 +327,15 @@ class AnimeBackupHelper(
             },
             history = backup.history.associate { it.episodeUrl to it.lastSeen },
         )
+        // KMK (r115): a backup made without episodes still has history by episode url: it goes onto the episodes here
+        if (backup.episodes.isEmpty() && backup.history.isNotEmpty()) {
+            runCatching {
+                val here = repository.getEpisodes(anime.id).associate { it.url to it.id }
+                backup.history.forEach { entry ->
+                    here[entry.episodeUrl]?.let { repository.upsertHistory(it, entry.lastSeen) }
+                }
+            }
+        }
         // KMK (r86): a failure here must not cost the anime its tracks, notes and Edit info
         runCatching { restoreTimeWatch(anime.id, backup.history) }
         restoreExtras(anime.id, backup)

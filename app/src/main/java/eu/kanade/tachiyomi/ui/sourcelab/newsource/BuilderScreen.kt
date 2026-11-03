@@ -47,6 +47,7 @@ import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
@@ -94,6 +95,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.navigator.LocalNavigator
+import cafe.adriel.voyager.navigator.Navigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.util.Screen
 import eu.kanade.presentation.util.isTabletUi
@@ -101,6 +103,7 @@ import eu.kanade.tachiyomi.jssource.lab.Derive
 import eu.kanade.tachiyomi.jssource.lab.LabFlowScreen
 import eu.kanade.tachiyomi.jssource.lab.PickCheck
 import eu.kanade.tachiyomi.network.NetworkHelper
+import eu.kanade.tachiyomi.ui.sourcelab.pagesource.PageSourceScreen
 import eu.kanade.tachiyomi.util.system.AppLog
 import eu.kanade.tachiyomi.util.system.copyToClipboard
 import eu.kanade.tachiyomi.util.system.setDefaultSettings
@@ -164,6 +167,8 @@ internal class BuilderScreen(
      * code editor's Lint "Learn the codes" opens the builder on "filters"
      */
     private val startTab: String? = null,
+    /** KMK (r115): the Site check's note for this site (its plan), shown once over the page; null = none */
+    private val siteNote: String? = null,
 ) : Screen(), LabFlowScreen {
 
     /**
@@ -221,7 +226,7 @@ internal class BuilderScreen(
     @Composable
     override fun Content() {
         val navigator = LocalNavigator.currentOrThrow
-        val model = rememberScreenModel { BuilderScreenModel(startUrl, anime, editKey) }
+        val model = rememberScreenModel { BuilderScreenModel(startUrl, anime, editKey, siteNote) }
         val state by model.state.collectAsState()
         val extrasState by model.extras.state.collectAsState()
         val tablet = isTabletUi()
@@ -710,6 +715,17 @@ internal class BuilderScreen(
     }
 
     /**
+     * KMK (r115): Page source on the page shown; the list's Item selector goes along (its "only in Rendered" banner)
+     * once a list label was picked (Derive's placeholder `article` is not sent)
+     */
+    private fun openPageSource(navigator: Navigator, state: BuilderScreenModel.State) {
+        val url = state.pageUrl ?: state.loadUrl ?: return
+        val listPicked = state.pick("item") != null || state.pick("title") != null || state.fromCodeOnly("item")
+        val item = state.selection?.derived?.get("itemSelector")?.takeIf { listPicked && it.isNotBlank() }
+        navigator.push(PageSourceScreen(url = url, sourceKey = state.editKey, itemSelector = item))
+    }
+
+    /**
      * r106: what the address bar's Enter / Go loads: an address as typed (the model adds https://); words (no dot, or
      * spaces) search the site: its recorded search (Lists & filters), the edited source's own, Derive's guess, else
      * `/search?q=`. Before any page is open, the text is loaded as is.
@@ -848,6 +864,7 @@ internal class BuilderScreen(
     @Composable
     private fun MoreMenu(state: BuilderScreenModel.State, model: BuilderScreenModel, onLeave: () -> Unit, onUndo: (() -> Unit)?) {
         var open by remember { mutableStateOf(false) }
+        val navigator = LocalNavigator.currentOrThrow
         Box {
             IconButton(onClick = { open = true }) { Icon(Icons.Outlined.MoreVert, contentDescription = "More") }
             DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
@@ -885,6 +902,26 @@ internal class BuilderScreen(
                 MenuHead("Format")
                 MenuChoice("JS", !state.json) { model.setJson(false) }
                 MenuChoice("JSON", state.json) { model.setJson(true) }
+                HorizontalDivider()
+                // KMK (r115, mockup XSource): what the source receives (Raw) next to what you see (Rendered)
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text("Page source")
+                            Text(
+                                "Raw, Rendered and the page's requests",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    },
+                    leadingIcon = { Icon(Icons.Outlined.Code, contentDescription = null) },
+                    enabled = (state.pageUrl ?: state.loadUrl) != null,
+                    onClick = {
+                        open = false
+                        openPageSource(navigator, state)
+                    },
+                )
                 HorizontalDivider()
                 if (state.step != BuilderScreenModel.Step.ListPage) {
                     DropdownMenuItem(
@@ -1270,6 +1307,7 @@ internal class BuilderScreen(
                 "Tap a label to arm it, then tap that thing on the page. Each pick is checked on every card."
             },
         )
+        ChecklistHead(state, model) // KMK (r115)
         BuilderSectionHead("List page")
         BuilderCard {
             BuilderScreenModel.Step.ListPage.labels.forEach { label -> LabelLine(state, model, label) }
@@ -1319,27 +1357,31 @@ internal class BuilderScreen(
     /**
      * One label's row: ● armed, ✓ / ! / i by the helper's verdict, ✓ picked (or from the code), – not needed, ○ not
      * picked; the selector chip and count when picked, else what to do; ✕ removes the pick.
+     *
+     * KMK (r115, Helper 2): the row is the checklist's: its mark (✓ ! ✕ ○) and one line come from [PickCheck.row]
+     * (the tap's verdict + the re-run on the raw page and 3 titles), and its one action shows at the end.
      */
     @Composable
     private fun LabelLine(state: BuilderScreenModel.State, model: BuilderScreenModel, label: String) {
         val colors = MaterialTheme.colorScheme
         val helper = helperColors()
+        val navigator = LocalNavigator.currentOrThrow
         val pick = state.pick(label)
         // r98: with a tap waiting, the rows take it; r102/r103: otherwise a row arms its label ("Tapping for…")
         val choosable = state.pending != null
         val armedHere = state.armed == label
-        val check = if (pick != null) state.checks[label] else null
         val notNeeded = state.singleEpisode && label == "chapter"
+        val row = if (pick != null && state.helper) model.checklistRow(state, label) else null
         val mark = when {
             armedHere -> "●"
-            check != null -> glyph(check.level)
+            row != null -> checklistGlyph(row.mark)
             pick != null || state.done(label) -> "✓"
             notNeeded -> "–"
             else -> "○"
         }
         val markColor = when {
             armedHere -> colors.primary
-            check != null -> helper.of(check.level)
+            row != null -> checklistColor(row.mark, helper)
             pick != null || state.done(label) -> helper.ok
             else -> colors.outline
         }
@@ -1354,6 +1396,7 @@ internal class BuilderScreen(
             else -> "tap to arm"
         }
         val remove: (() -> Unit)? = if (pick != null) ({ model.removePick(label) }) else null
+        val fix = if (row != null && !choosable && !armedHere && row.mark != PickCheck.Mark.Ok) row.fix else null
         BuilderLabelRow(
             glyph = mark,
             glyphColor = markColor,
@@ -1364,7 +1407,69 @@ internal class BuilderScreen(
             highlighted = choosable || armedHere,
             onClick = { if (choosable) model.label(label) else model.arm(if (armedHere) null else label) },
             onRemove = remove,
+            subtitle = row?.line,
+            trailing = if (fix != null) {
+                { BuilderLinkButton(fix.text, { runFix(navigator, state, model, label, fix) }) }
+            } else {
+                null
+            },
         )
+    }
+
+    /** KMK (r115): a checklist row's action; Page source is opened here (the screen owns the navigator) */
+    private fun runFix(navigator: Navigator, state: BuilderScreenModel.State, model: BuilderScreenModel, label: String, fix: PickCheck.Fix) {
+        if (fix.kind == PickCheck.FixKind.PageSource) {
+            val raw = state.raws[label]?.pageUrl?.takeIf { it.isNotBlank() }
+            if (raw != null) {
+                val listPicked = state.pick("item") != null || state.pick("title") != null
+                val item = state.selection?.derived?.get("itemSelector")?.takeIf { listPicked && it.isNotBlank() }
+                navigator.push(PageSourceScreen(url = raw, sourceKey = state.editKey, itemSelector = item))
+            } else {
+                openPageSource(navigator, state)
+            }
+        } else {
+            model.applyFix(label, fix)
+        }
+    }
+
+    private fun checklistGlyph(mark: PickCheck.Mark): String = when (mark) {
+        PickCheck.Mark.Ok -> "\u2713"
+        PickCheck.Mark.Warn -> "!"
+        PickCheck.Mark.Fail -> "\u2715"
+        PickCheck.Mark.Skip -> "\u25CB"
+    }
+
+    private fun checklistColor(mark: PickCheck.Mark, colors: HelperColors): Color = when (mark) {
+        PickCheck.Mark.Ok -> colors.ok
+        PickCheck.Mark.Warn -> colors.warn
+        PickCheck.Mark.Fail -> colors.fail
+        PickCheck.Mark.Skip -> colors.info
+    }
+
+    /**
+     * KMK (r115, mockup EHelper2): the checklist's head: what every pick is tested on, the re-run's state and "Check
+     * again" (pages already read are reused, so it costs no request unless a new title is picked)
+     */
+    @Composable
+    private fun ChecklistHead(state: BuilderScreenModel.State, model: BuilderScreenModel) {
+        if (!state.helper || (state.picks.isEmpty() && state.tagGroups.isEmpty())) return
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Checklist", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                BuilderMuted(
+                    when {
+                        state.recheckBusy -> "Testing every pick on the raw page and on 3 titles…"
+                        state.recheckNote != null -> "Tested on ${state.recheckNote}, in what the source really receives"
+                        else -> "Every pick is tested on 3 titles and in what the source really receives"
+                    },
+                )
+            }
+            if (state.recheckBusy) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+            } else {
+                BuilderLinkButton("Check again", model::rerunNow)
+            }
+        }
     }
 
     /**
@@ -1383,6 +1488,7 @@ internal class BuilderScreen(
                 "All optional. Tap a label, then tap that part of the title page."
             },
         )
+        ChecklistHead(state, model) // KMK (r115)
         BuilderCard {
             listOf("bigCover", "description", "author", "status", if (state.anime) "video" else "image")
                 .forEach { label -> LabelLine(state, model, label) }
@@ -1390,14 +1496,21 @@ internal class BuilderScreen(
         BuilderCard {
             val tags = state.tagGroups
             val tagsArmed = state.armed == "tags"
+            // KMK (r115, Helper 2): the Tags row is the checklist's too (every row on 3 titles, Split into rows)
+            val navigator = LocalNavigator.currentOrThrow
+            val tagsRow = if (state.helper && tags.isNotEmpty()) model.checklistRow(state, "tags") else null
+            val tagsFix = if (tagsRow != null && !tagsArmed && state.pending == null && tagsRow.mark != PickCheck.Mark.Ok) tagsRow.fix else null
+            val helper = helperColors()
             BuilderLabelRow(
                 glyph = when {
                     tagsArmed -> "●"
+                    tagsRow != null -> checklistGlyph(tagsRow.mark)
                     tags.isNotEmpty() -> "✓"
                     else -> "○"
                 },
                 glyphColor = when {
                     tagsArmed -> colors.primary
+                    tagsRow != null -> checklistColor(tagsRow.mark, helper)
                     tags.isNotEmpty() -> ok
                     else -> colors.outline
                 },
@@ -1411,9 +1524,16 @@ internal class BuilderScreen(
                 subtitle = if (tags.isEmpty()) {
                     "Tap the details: one group per row"
                 } else {
-                    "${tags.size} ${if (tags.size == 1) "row" else "rows"}: " + tags.joinToString(", ") { it.name }
+                    "${tags.size} ${if (tags.size == 1) "row" else "rows"}: " + tags.joinToString(", ") { it.name } +
+                        (tagsRow?.takeIf { it.mark != PickCheck.Mark.Ok }?.let { "\n" + it.line } ?: "")
                 },
-                trailing = { BuilderLinkButton("Open ›", { onOpen("tags") }) },
+                trailing = {
+                    if (tagsFix != null) {
+                        BuilderLinkButton(tagsFix.text, { runFix(navigator, state, model, "tags", tagsFix) })
+                    } else {
+                        BuilderLinkButton("Open ›", { onOpen("tags") })
+                    }
+                },
             )
             val groups = state.suggestionGroups
             val suggestionsArmed = state.armed == "suggestions"
@@ -1701,7 +1821,8 @@ internal class BuilderScreen(
      * r100: the tap helper's card for the label just given (mockups `scratchpad/r100-helper/`): a badge (✓ green,
      * ! amber, i blue), the verdict and one sentence, the checks as chips, the suggestion when the page found one,
      * a few sample texts, and the buttons: Warn → Use suggestion / Keep mine; Ok → OK, next / Not this; a Video →
-     * Test it now / OK; Up / Down move the pick and label it again.
+     * Test it now / OK; Up / Down move the pick and label it again. KMK (r115): one primary action ([HelperActions])
+     * and ✕ (keep).
      */
     @Composable
     private fun HelperCard(state: BuilderScreenModel.State, model: BuilderScreenModel, wide: Boolean, modifier: Modifier) {
@@ -1822,28 +1943,35 @@ internal class BuilderScreen(
                         )
                     }
                 }
+                // KMK (r115): ✕ keeps the pick as it is (the old "Keep mine" / "OK")
+                IconButton(onClick = model::dismissHelper, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Outlined.Close, contentDescription = "Keep it and close", modifier = Modifier.size(18.dp))
+                }
             }
         }
     }
 
-    /** The card's two main buttons, by verdict and label */
+    /**
+     * KMK (r115, Helper 2): one primary action per verdict (was Use suggestion / Keep mine, Not this / Keep mine, OK,
+     * next / Not this stacked): a Warn with a suggestion uses it, a Warn without one taps again (the pick goes and the
+     * label stays armed), a Video tests, a lone chapter link says it's the only episode, an Ok goes on. ✕ on the card
+     * keeps the pick; Remove is the label row's ✕.
+     */
     @Composable
     private fun HelperActions(state: BuilderScreenModel.State, model: BuilderScreenModel, label: String, result: PickCheck.Result) {
         when {
             result.level == PickCheck.Level.Warn && state.suggestion != null -> {
-                Button(onClick = model::useSuggestion) { Text("Use suggestion") }
-                Spacer(Modifier.width(10.dp))
-                OutlinedButton(onClick = model::dismissHelper) { Text("Keep mine") }
+                Button(onClick = model::useSuggestion) { Text("Use the dashed one") }
             }
             result.level == PickCheck.Level.Warn -> {
-                Button(onClick = model::rejectHelperPick) { Text("Not this") }
-                Spacer(Modifier.width(10.dp))
-                OutlinedButton(onClick = model::dismissHelper) { Text("Keep mine") }
+                Button(onClick = { model.applyFix(label, PickCheck.Fix(PickCheck.FixKind.TapAgain, "Tap again")) }) {
+                    Icon(Icons.Outlined.TouchApp, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Tap again")
+                }
             }
             label == "video" -> {
                 Button(onClick = model::testVideo, enabled = state.videoTest?.running != true) { Text("Test it now") }
-                Spacer(Modifier.width(10.dp))
-                OutlinedButton(onClick = model::dismissHelper) { Text("OK") }
             }
             label == "chapter" && result.level == PickCheck.Level.Info -> {
                 Button(
@@ -1852,8 +1980,6 @@ internal class BuilderScreen(
                         model.dismissHelper()
                     },
                 ) { Text("It's the only episode") }
-                Spacer(Modifier.width(10.dp))
-                OutlinedButton(onClick = model::dismissHelper) { Text("OK") }
             }
             else -> {
                 val next = model.nextUnpicked(state)
@@ -1868,8 +1994,6 @@ internal class BuilderScreen(
                         },
                     )
                 }
-                Spacer(Modifier.width(10.dp))
-                OutlinedButton(onClick = model::rejectHelperPick) { Text("Not this") }
             }
         }
     }
@@ -1889,7 +2013,7 @@ internal class BuilderScreen(
         }
     }
 
-    private class HelperColors(val ok: Color, val warn: Color, val info: Color) {
+    private class HelperColors(val ok: Color, val warn: Color, val info: Color, val fail: Color = Color(0xFFE5484D)) {
         fun of(level: PickCheck.Level): Color = when (level) {
             PickCheck.Level.Ok -> ok
             PickCheck.Level.Warn -> warn

@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -24,6 +25,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -31,10 +33,12 @@ import androidx.compose.material.icons.outlined.BugReport
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material.icons.outlined.TouchApp
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -43,6 +47,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -50,6 +55,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -59,11 +66,15 @@ import coil3.compose.AsyncImage
 import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
 import eu.kanade.tachiyomi.jssource.JsSourceManager
 import eu.kanade.tachiyomi.jssource.lab.ExplainEntry
+import eu.kanade.tachiyomi.jssource.lab.StepId
 import eu.kanade.tachiyomi.jssource.lab.StepStatus
 import eu.kanade.tachiyomi.jssource.lab.TestItem
 import eu.kanade.tachiyomi.jssource.lab.TestRun
 import eu.kanade.tachiyomi.jssource.lab.TestRuns
 import eu.kanade.tachiyomi.jssource.lab.TestStep
+import eu.kanade.tachiyomi.jssource.lab.videodoctor.DecryptSnippet
+import eu.kanade.tachiyomi.jssource.lab.videodoctor.VideoDiagnosis
+import eu.kanade.tachiyomi.jssource.lab.videodoctor.VideoFix
 import eu.kanade.tachiyomi.ui.anime.source.AnimeSourceScreen
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreen
 import eu.kanade.tachiyomi.ui.codeeditor.SourceEditorScreenModel
@@ -105,6 +116,43 @@ internal fun TestPane(
     val steps = if (state.running || state.runSteps.isNotEmpty()) state.runSteps else state.lastRun?.steps.orEmpty()
     val run = state.lastRun
     var selectedKey by rememberSaveable(state.key) { mutableStateOf<String?>(null) }
+    // KMK (r115): "Why won't it play": the fix waiting for the owner's OK (never written silently)
+    var fixAsk by remember { mutableStateOf<Pair<VideoFix, VideoDiagnosis>?>(null) }
+    val clipboard = LocalClipboardManager.current
+    val doctor: @Composable (TestStep) -> Unit = { step ->
+        if (step.id == StepId.VIDEO) {
+            VideoDoctorBlock(
+                step = step,
+                state = state,
+                onCheck = { model.checkWhyNoPlay(editor) },
+                onFix = { fix, diagnosis -> fixAsk = fix to diagnosis },
+                onTryPlay = { url, headers ->
+                    // No player path here plays a bare address with headers (the player needs a library episode),
+                    // so the address and its headers go to the clipboard for an outside player
+                    clipboard.setText(AnnotatedString(tryPlayText(url, headers)))
+                    model.say("The video address and its headers are copied: paste them into a player that takes headers.")
+                },
+            )
+        }
+    }
+    fixAsk?.let { (fix, diagnosis) ->
+        val snippet = videoFixSnippet(fix, diagnosis)
+        val canInsert = !editorState.json && state.explain.any { it.id == VIDEO_PART && it.lines != null }
+        VideoFixDialog(
+            snippet = snippet,
+            canInsert = canInsert,
+            onCopy = {
+                clipboard.setText(AnnotatedString(snippet))
+                model.say("Copied. Paste it into $VIDEO_PART, then Save.")
+                fixAsk = null
+            },
+            onInsert = {
+                model.insertIntoPart(editor, VIDEO_PART, snippet)
+                fixAsk = null
+            },
+            onDismiss = { fixAsk = null },
+        )
+    }
     val selected = steps.firstOrNull { stepKey(it) == selectedKey }
         ?: steps.firstOrNull { it.status == StepStatus.Red }
         ?: steps.firstOrNull()
@@ -141,18 +189,15 @@ internal fun TestPane(
     BoxWithConstraints(modifier = modifier) {
         val wide = maxWidth >= 720.dp
         val consoleHeight = maxHeight * 0.4f
-        // KMK (r106): a phone opens a tapped step as its own page (back arrow / Back returns to the list)
+        // KMK (r106): a phone opens a tapped step as its own page. KMK (r115): as a bottom sheet over the full-width
+        // step list (swipe down / Back closes it)
         val page = if (wide) null else steps.firstOrNull { stepKey(it) == selectedKey }
-        BackHandler(enabled = page != null) { selectedKey = null }
         if (page != null) {
-            Column(modifier = Modifier.fillMaxSize()) {
+            ModalBottomSheet(onDismissRequest = { selectedKey = null }) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth().padding(end = 12.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                 ) {
-                    IconButton(onClick = { selectedKey = null }) {
-                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back to the steps")
-                    }
                     Box(
                         modifier = Modifier
                             .size(10.dp)
@@ -178,15 +223,15 @@ internal fun TestPane(
                 Column(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier
-                        .weight(1f)
                         .fillMaxWidth()
                         .verticalScroll(rememberScrollState())
-                        .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                        .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp),
                 ) {
                     StepDetail(step = page, parts = state.explain, onGoToLine = onGoToLine, onShowPart = showPart, showTitle = false)
+                    doctor(page)
                 }
             }
-        } else {
+        }
         Column(modifier = Modifier.fillMaxSize()) {
             TestBar(
                 wide = wide,
@@ -253,6 +298,7 @@ internal fun TestPane(
                                 )
                             } else {
                                 StepDetail(step = selected, parts = state.explain, onGoToLine = onGoToLine, onShowPart = showPart)
+                                doctor(selected)
                             }
                         }
                     }
@@ -280,7 +326,6 @@ internal fun TestPane(
                 onRevealLine = onGoToLine,
                 maxListHeight = consoleHeight,
             )
-        }
         }
     }
 }
@@ -436,13 +481,10 @@ private fun StepDetail(
             if (part != null) TextButton(onClick = { onShowPart(part) }) { Text("Show ${part.title}") }
         }
     }
+    StepChecks(step)
     if (step.items.isNotEmpty()) CameBack(step)
     if (step.requests.isNotEmpty()) {
-        Text(
-            "REQUESTS",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        LabCaption("Requests")
         Column {
             step.requests.take(20).forEach { r ->
                 val failed = r.status == null || r.status >= 400
@@ -487,27 +529,78 @@ private fun StepDetail(
     }
 }
 
+/**
+ * KMK (r115, mock M3Test): "Against the previous run" lists only what changed: a step whose result or count moved
+ * ("Filters · 9 → 8"), a new step, a step the previous run had and this one hasn't. Nothing changed says so in one line.
+ */
 @Composable
 private fun PreviousRunCard(previous: TestRun, run: TestRun) {
-    val diffs = TestRuns.compare(previous, run)
+    val changed = TestRuns.compare(previous, run).filter { it.changed }
+    val gone = previous.steps.filter { old -> run.steps.none { it.id == old.id } }
     LabCard(title = "Against the previous run · ${SourceLabScreenModel.agoText(previous.startedAt)}") {
-        diffs.forEach { d ->
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
-                Text(d.name, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                Text(
-                    text = if (d.was == null) {
-                        "new → ${d.now.status.name.lowercase()} ${d.now.count}"
-                    } else {
-                        "${d.was.status.name.lowercase()} ${d.was.count} → ${d.now.status.name.lowercase()} ${d.now.count}"
-                    },
-                    style = MaterialTheme.typography.labelSmall,
-                    fontFamily = FontFamily.Monospace,
-                    color = if (d.changed) d.now.status.strip().tint() else MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
+        if (changed.isEmpty() && gone.isEmpty()) {
+            Text(
+                "Nothing changed: every step came back as before.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
+        changed.forEach { d ->
+            val was = d.was
+            DiffRow(
+                name = d.name,
+                text = when {
+                    was == null -> "new · ${d.now.count}"
+                    was.status != d.now.status -> "${statusWord(was.status)} → ${statusWord(d.now.status)} · ${was.count} → ${d.now.count}"
+                    else -> "${was.count} → ${d.now.count}"
+                },
+                color = d.now.status.strip().tint(),
+            )
+        }
+        gone.forEach { old ->
+            DiffRow(name = old.name, text = "not run this time", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun DiffRow(name: String, text: String, color: androidx.compose.ui.graphics.Color) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 3.dp)) {
+        Text(name, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        Text(
+            text,
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = FontFamily.Monospace,
+            color = color,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(start = 8.dp),
+        )
+    }
+}
+
+private fun statusWord(status: StepStatus): String = when (status) {
+    StepStatus.Green -> "passed"
+    StepStatus.Amber -> "warned"
+    StepStatus.Red -> "failed"
+    StepStatus.Skipped -> "skipped"
+    StepStatus.Running -> "running"
+}
+
+/** KMK (r115, mock M3Test): a list step's checks as chips: "covers 12/12", "all with a link" / "3 without a link" */
+@Composable
+private fun StepChecks(step: TestStep) {
+    val entries = step.items.filter { it.kind == "entry" }
+    if (entries.isEmpty()) return
+    val covers = entries.count { !it.imageUrl.isNullOrBlank() }
+    val noLink = entries.count { it.url.isBlank() }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        LabChip("covers $covers/${entries.size}", if (covers == entries.size) StripColor.Green else StripColor.Amber)
+        LabChip(
+            if (noLink == 0) "all with a link" else "$noLink without a link",
+            if (noLink == 0) StripColor.Green else StripColor.Red,
+        )
+        if (step.count > entries.size) LabChip("showing ${entries.size} of ${step.count}")
     }
 }
 
@@ -648,3 +741,127 @@ private fun inBrowse(anime: Boolean, id: Long): Boolean = runCatching {
     if (anime) Injekt.get<AnimeSourceManager>().get(id) != null else Injekt.get<SourceManager>().get(id) != null
 }.getOrDefault(true)
 
+// KMK --> (r115) "Why won't it play" (W7's VideoDoctor and VideoDoctorPanel) in the Video step
+
+/** The source part the fixes go into */
+private const val VIDEO_PART = "getVideoList"
+
+/**
+ * Under the Video step's detail: W7's panel at once when the step failed or warned (or a check ran / is running);
+ * a passing step shows only a small "Check why it won't play" (it opens the panel and starts the check).
+ */
+@Composable
+private fun VideoDoctorBlock(
+    step: TestStep,
+    state: SourceLabScreenModel.State,
+    onCheck: () -> Unit,
+    onFix: (VideoFix, VideoDiagnosis) -> Unit,
+    onTryPlay: (String, Map<String, String>) -> Unit,
+) {
+    var opened by rememberSaveable(state.key) { mutableStateOf(false) }
+    val diagnosis = state.key?.let { state.diagnoses[it] }
+    val running = state.doctorKey != null && state.doctorKey == state.key
+    val bad = step.status == StepStatus.Red || step.status == StepStatus.Amber
+    if (bad || opened || diagnosis != null || running) {
+        VideoDoctorPanel(
+            diagnosis = diagnosis,
+            running = running,
+            onCheck = onCheck,
+            onFix = { fix -> diagnosis?.let { onFix(fix, it) } },
+            onTryPlay = onTryPlay,
+            progress = if (running) state.doctorProgress else null,
+        )
+    } else {
+        TextButton(
+            onClick = {
+                opened = true
+                onCheck()
+            },
+        ) { Text("Check why it won't play") }
+    }
+}
+
+/** The fix's JS, shown before anything is written ("Add this to the source's video part") */
+internal fun videoFixSnippet(fix: VideoFix, diagnosis: VideoDiagnosis): String = when (fix) {
+    is VideoFix.DecryptWithKey -> DecryptSnippet.HELPER.trim() + "\n\n" +
+        "// the page's text in html (e.g. var html = (await fetch(url)).text), then:\n" +
+        DecryptSnippet.forFix(fix, "html") + "\n" +
+        "// use url as the video's address"
+    is VideoFix.AddHeaders -> {
+        val pairs = fix.headers.entries.joinToString(", ") { (k, v) -> DecryptSnippet.jsString(k) + ": " + DecryptSnippet.jsString(v) }
+        "// the headers the player needs, on every video this part returns (videos = the list it returns)\n" +
+            "videos = videos.map(function (v) {\n" +
+            "  v.headers = Object.assign({}, v.headers || {}, { $pairs });\n" +
+            "  return v;\n" +
+            "});"
+    }
+    VideoFix.UseHiddenBrowser -> "// the hidden browser plays the episode page and catches the stream" +
+        (diagnosis.playerPage?.let { "\n// (the check found it on " + it + ")" }.orEmpty()) + "\n" +
+        "// url = the episode address this part gets\n" +
+        "var found = await host.findVideo(url);\n" +
+        "return found.videos;"
+}
+
+/** "Try play": the address, then one "Name: value" line per header */
+private fun tryPlayText(url: String, headers: Map<String, String>): String =
+    (listOf(url) + headers.map { (k, v) -> "$k: $v" }).joinToString("\n")
+
+@Composable
+private fun VideoFixDialog(
+    snippet: String,
+    canInsert: Boolean,
+    onCopy: () -> Unit,
+    onInsert: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add this to the source's video part") },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+            ) {
+                Text(
+                    if (canInsert) {
+                        "Insert puts these lines at the end of $VIDEO_PART in the editor; move them where the video's " +
+                            "address is read. Nothing is saved until you tap Save."
+                    } else {
+                        "Copy these lines into $VIDEO_PART where the video's address is read, then Save."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLowest,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    SelectionContainer {
+                        Text(
+                            snippet,
+                            fontFamily = FontFamily.Monospace,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.horizontalScroll(rememberScrollState()).padding(10.dp),
+                            softWrap = false,
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            if (canInsert) {
+                TextButton(onClick = onInsert) { Text("Insert at the end of $VIDEO_PART") }
+            } else {
+                TextButton(onClick = onCopy) { Text("Copy") }
+            }
+        },
+        dismissButton = {
+            Row {
+                if (canInsert) TextButton(onClick = onCopy) { Text("Copy") }
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+            }
+        },
+    )
+}
+// KMK <--

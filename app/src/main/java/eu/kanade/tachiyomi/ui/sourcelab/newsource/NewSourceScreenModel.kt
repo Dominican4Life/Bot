@@ -24,6 +24,7 @@ import eu.kanade.tachiyomi.jssource.lab.LabTemplate
 import eu.kanade.tachiyomi.jssource.lab.RecordedConverter
 import eu.kanade.tachiyomi.jssource.lab.StepStatus
 import eu.kanade.tachiyomi.jssource.lab.Templates
+import eu.kanade.tachiyomi.jssource.lab.sitecheck.SiteCheck
 import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -44,7 +45,8 @@ import uy.kohesive.injekt.api.get
  */
 internal class NewSourceScreenModel(kindHint: Boolean?) : StateScreenModel<NewSourceScreenModel.State>(State(kindHint = kindHint)) {
 
-    enum class Phase { Entry, Detecting, Detected }
+    /** KMK (r115): + Checking / Checked, the Site check (Detected stays: the engine's markers, opened from the plan) */
+    enum class Phase { Entry, Detecting, Detected, Checking, Checked }
 
     /** Which picker is open over the entry screen */
     enum class Picker { None, Template, Duplicate, Extension }
@@ -72,6 +74,9 @@ internal class NewSourceScreenModel(kindHint: Boolean?) : StateScreenModel<NewSo
         val error: String? = null,
         val botCheckUrl: String? = null,                              // a detection step hit a bot check
         val delivered: Boolean = false,                               // the hand-off happened: the screen pops
+        // KMK (r115): the Site check as it runs and its plan; Record and convert straight after the APK is read
+        val siteCheck: SiteCheck.Result? = null,
+        val recordFirst: Boolean = false,
     ) {
         val requests: Int get() = steps.count { it.url != null && it.status != StepStatus.Skipped && it.status != StepStatus.Running }
         val best: EngineGuess? get() = result?.best
@@ -81,6 +86,7 @@ internal class NewSourceScreenModel(kindHint: Boolean?) : StateScreenModel<NewSo
     private val context: Context get() = Injekt.get<Application>()
     private var detection: Job? = null
     private var record: Job? = null
+    private var check: Job? = null
 
     init {
         screenModelScope.launchIO {
@@ -118,6 +124,7 @@ internal class NewSourceScreenModel(kindHint: Boolean?) : StateScreenModel<NewSo
         mutableState.update {
             it.copy(
                 picker = Picker.None,
+                recordFirst = false,
                 extensionImport = null,
                 extensionRow = null,
                 recordSteps = null,
@@ -161,7 +168,73 @@ internal class NewSourceScreenModel(kindHint: Boolean?) : StateScreenModel<NewSo
 
     fun backToEntry() {
         detection?.cancel()
-        mutableState.update { it.copy(phase = Phase.Entry, steps = emptyList(), result = null, botCheckUrl = null) }
+        check?.cancel()
+        mutableState.update { it.copy(phase = Phase.Entry, steps = emptyList(), result = null, botCheckUrl = null, siteCheck = null) }
+    }
+
+    /** KMK (r115): the bar's arrow / system Back: the engine's markers go back to the Site check, the rest to the entry */
+    fun back() {
+        val s = state.value
+        if (s.phase == Phase.Detected && s.siteCheck != null) {
+            mutableState.update { it.copy(phase = Phase.Checked) }
+        } else {
+            backToEntry()
+        }
+    }
+
+    // ---------- KMK (r115): the Site check ----------
+
+    /**
+     * "Check the site" ([SiteCheck]): the app's client and the hidden browser on the address, raw vs rendered, the
+     * site's data requests, the next page, embedded data, a known engine; then the plan. The engine's result is kept
+     * as [State.result] so "Write the source" ([writeDetected]) and the markers ([showDetection]) work as before.
+     */
+    fun checkSite() {
+        val url = state.value.url.trim()
+        if (url.isBlank()) {
+            mutableState.update { it.copy(error = "Paste the site's address first") }
+            return
+        }
+        check?.cancel()
+        detection?.cancel()
+        mutableState.update {
+            it.copy(phase = Phase.Checking, siteCheck = null, result = null, steps = emptyList(), error = null, botCheckUrl = null)
+        }
+        check = screenModelScope.launchIO {
+            try {
+                val result = SiteCheck.run(context, url, state.value.kindHint, state.value.fingerprints) { partial ->
+                    mutableState.update { it.copy(siteCheck = partial) }
+                }
+                mutableState.update {
+                    it.copy(
+                        phase = Phase.Checked,
+                        siteCheck = result,
+                        result = result.detection,
+                        steps = result.detection?.steps.orEmpty(),
+                        botCheckUrl = if (result.botCheck) result.url else null,
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                AppLog.add('E', "lab", "Site check of $url failed: ${e.message}")
+                mutableState.update { it.copy(phase = Phase.Entry, siteCheck = null, error = "Site check failed: ${e.message ?: e.toString()}") }
+            }
+        }
+    }
+
+    /** The bot-check card's Later / Open in WebView: the card goes, the Site check's result stays */
+    fun dismissBotCheck() = mutableState.update { it.copy(botCheckUrl = null) }
+
+    /** The engine's markers and "What the Lab will write" (the old Detected page) from the Site check */
+    fun showDetection() {
+        if (state.value.result != null) mutableState.update { it.copy(phase = Phase.Detected) }
+    }
+
+    /** "Record and convert": the extension picker, then the recording starts as soon as the APK is read */
+    fun openRecord() {
+        openPicker(Picker.Extension)
+        mutableState.update { it.copy(recordFirst = true) }
     }
 
     /** "Write the source": the best engine's template filled with what detection found */
@@ -260,6 +333,8 @@ internal class NewSourceScreenModel(kindHint: Boolean?) : StateScreenModel<NewSo
             try {
                 val result = withIOContext { ApkImport.import(context, row) }
                 mutableState.update { it.copy(busy = null, extensionImport = result) }
+                // KMK (r115): the Record and convert tile goes straight on to the recording
+                if (state.value.recordFirst) startRecording()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -347,6 +422,7 @@ internal class NewSourceScreenModel(kindHint: Boolean?) : StateScreenModel<NewSo
 
     override fun onDispose() {
         detection?.cancel()
+        check?.cancel()
         record?.cancel()
         super.onDispose()
     }

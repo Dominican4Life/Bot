@@ -28,5 +28,13 @@ data class Backup(
     @ProtoNumber(704) var backupCustomButtons: List<BackupCustomButton> = emptyList(),
     // Sources made in the Code editor
     @ProtoNumber(710) var backupJsSources: List<BackupJsSource> = emptyList(),
+    // KMK (r115): files kept as (path under filesDir, bytes). New numbers start at 900 so they never meet another
+    // app's fields; empty in older backups, and other apps skip numbers they don't know.
+    // Source Lab files: each JS source's history/, testruns/, lint.json, health.json, explain.json, and sourcelab/
+    @ProtoNumber(900) var backupSourceLabFiles: List<BackupFile> = emptyList(),
+    // JS source storage (js_storage/<key>/): only with its option ticked (may hold logins)
+    @ProtoNumber(901) var backupJsStorageFiles: List<BackupFile> = emptyList(),
+    // Custom covers of manga (CoverCache) and anime (anime_covers/), matched by source + url on restore
+    @ProtoNumber(902) var backupCustomCovers: List<BackupCustomCover> = emptyList(),
     // KMK <--
 )

@@ -22,6 +22,7 @@ import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.Dashboard
+import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.FileUpload
@@ -64,12 +65,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.util.Screen
-import eu.kanade.presentation.util.isTabletUi
 import eu.kanade.tachiyomi.diagnostics.DiagTab
 import eu.kanade.tachiyomi.jssource.lab.GeneratedSource
 import eu.kanade.tachiyomi.jssource.lab.History
@@ -96,6 +97,11 @@ import tachiyomi.presentation.core.components.material.Scaffold
  * …", the "k of n passing" badge, Test, Save, ⋮). The tablet rail is labelled (home: Sources, New, Rules, Templates;
  * a source: ‹ Sources, its tabs with Lint's count, Logs). Code = Parts outline · code · Test Run panel; Explain keeps
  * the code beside it; Test / Lint / History / Report fill the width and "Go to line" opens the Code tab.
+ *
+ * KMK (r115): from 600 dp of screen width (the same test as More) one rail (LabRail): the Lab's places on top, the
+ * open source's name and tabs under a divider, Logs at the bottom. A phone (< 600 dp) gets a bottom bar instead
+ * (LabBottomBar: the places, or the open source's tabs), a back arrow to Sources in the source's top bar, Logs in ⋮,
+ * and single-column panes (Code: Parts chips · code · the finding bar).
  */
 internal class SourceLabScreen(
     private val sourceKey: String? = null,
@@ -104,13 +110,23 @@ internal class SourceLabScreen(
 
     @Composable
     override fun Content() {
+        // KMK (r115): every width; under 600 dp the phone layout (bottom bar, single column)
+        LabContent()
+    }
+
+    @Composable
+    private fun LabContent() {
         val navigator = LocalNavigator.currentOrThrow
         val model = rememberScreenModel { SourceLabScreenModel(sourceKey, initialTab) }
         val editor = rememberScreenModel(tag = "editor") { SourceEditorScreenModel(sourceKey) }
         val state by model.state.collectAsState()
         val editorState by editor.state.collectAsState()
         val snackbar = remember { SnackbarHostState() }
-        val tablet = isTabletUi()
+        // KMK (r115): the Lab always has the rail now (it only opens at ≥ 600 dp); [tablet] only says whether the
+        // top bars have room for their labelled buttons and the search field (≥ 840 dp), else their icon forms
+        val tablet = LocalConfiguration.current.screenWidthDp >= LAB_ROOMY_BAR_DP
+        // KMK (r115): the phone layout (owner: "as best as possible" on phones): bottom bar, no rail
+        val phone = LocalConfiguration.current.screenWidthDp < LAB_MIN_WIDTH_DP
         var findOpen by remember { mutableStateOf(false) }
         var query by rememberSaveable { mutableStateOf(model.lastQuery()) }
         var railDest by rememberSaveable { mutableStateOf(RailDest.Sources) }
@@ -368,9 +384,9 @@ internal class SourceLabScreen(
 
         Scaffold(
             snackbarHost = { SnackbarHost(snackbar) },
-            // KMK (r106): the phone's rail is a bottom navigation bar (its "New" replaces the New source button)
+            // KMK (r115): a phone's bottom bar: the Lab's places, or the open source's tabs (back arrow: Sources)
             bottomBar = {
-                if (!tablet) {
+                if (phone) {
                     LabBottomBar(
                         sourceOpen = state.key != null && railDest == RailDest.Sources,
                         tab = state.tab,
@@ -381,27 +397,33 @@ internal class SourceLabScreen(
                         onRules = openRules,
                         onTemplates = { railDest = RailDest.Templates },
                         onTab = model::setTab,
-                        onLogs = openLogs,
                     )
                 }
             },
         ) { padding ->
             Row(modifier = Modifier.fillMaxSize().padding(padding)) {
-                if (tablet) {
-                    LabRail(
-                        sourceOpen = state.key != null && railDest == RailDest.Sources,
-                        tab = state.tab,
-                        dest = railDest,
-                        lintCount = lintCount,
-                        onSources = goHome,
-                        onNewSource = newSource,
-                        onRules = openRules,
-                        onTemplates = { railDest = RailDest.Templates },
-                        onTab = model::setTab,
-                        onLogs = openLogs,
-                    )
-                    VerticalDivider()
-                }
+                // KMK (r115): one rail: the Lab's places, then (a source open) its name and tabs; a tab from New /
+                // Rules / Templates goes back to the open source on that tab
+                if (!phone) LabRail(
+                    sourceName = if (state.key != null) {
+                        editorState.name.ifBlank { state.source?.name.orEmpty() }.ifBlank { "Source" }
+                    } else {
+                        null
+                    },
+                    tab = state.tab,
+                    dest = railDest,
+                    lintCount = lintCount,
+                    onSources = goHome,
+                    onNewSource = newSource,
+                    onRules = openRules,
+                    onTemplates = { railDest = RailDest.Templates },
+                    onTab = { t ->
+                        railDest = RailDest.Sources
+                        model.setTab(t)
+                    },
+                    onLogs = openLogs,
+                )
+                if (!phone) VerticalDivider()
                 Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
                     // KMK (r106): one top bar per place (Templates, Home, a source); the status strip is gone
                     // KMK (r110): New and Rules draw their own LabTopBar (their subtitles come from their state); no
@@ -417,6 +439,9 @@ internal class SourceLabScreen(
                             title = "Source Lab",
                             subtitle = buildString {
                                 append("${state.sources.size} ${if (state.sources.size == 1) "source" else "sources"}")
+                                // KMK (r115, mock M3Home): how many sources need you (failing or never tested)
+                                val needs = needsYouCount(state.sources)
+                                if (needs > 0) append(" · $needs ${if (needs == 1) "needs" else "need"} you")
                                 state.rules?.let { append(" · rules v${it.version}") }
                                 append(" · last re-test ${state.retestLast}")
                             },
@@ -508,8 +533,9 @@ internal class SourceLabScreen(
                                 if (state.tab == LabTab.Lint) state.rules?.let { append(" · rules v${it.version}") }
                                 if (!editorState.saved) append(" · not saved yet") else if (editorState.dirty) append(" · not saved")
                             },
-                            // The rail's / bottom bar's Sources (and the system Back) go home; no arrow here
-                            onBack = null,
+                            // The rail's Sources (and the system Back) go home. KMK (r115): a phone's bottom bar
+                            // holds the source's tabs, so its way back to Sources is this arrow
+                            onBack = if (phone) goHome else null,
                             badge = runBadge(state.running, state.lastRun),
                             badgeInline = !tablet,
                         ) {
@@ -532,7 +558,8 @@ internal class SourceLabScreen(
                                 }
                             }
                             // KMK (r106): the phone's Test is an icon
-                            if (!tablet && railDest == RailDest.Sources) {
+                            // KMK (r115): a phone's top bar stays compact (name, pill, Save, ⋮): Test is in the Test tab
+                            if (!tablet && !phone && railDest == RailDest.Sources) {
                                 if (state.running) {
                                     IconButton(onClick = model::cancelTest) {
                                         Icon(Icons.Outlined.Stop, contentDescription = "Stop the test")
@@ -548,6 +575,7 @@ internal class SourceLabScreen(
                                 editorState = editorState,
                                 onSave = { inPlace -> editor.save(inPlace) },
                                 compact = !tablet,
+                                iconOnly = phone,
                             )
                             Box {
                                 IconButton(onClick = { showMenu = true }) {
@@ -587,6 +615,16 @@ internal class SourceLabScreen(
                                         MenuItem("Convert again", Icons.Outlined.Refresh) {
                                             showMenu = false
                                             convertAgainNow()
+                                        }
+                                    }
+                                    // KMK (r115): the page's Raw / Rendered / Requests, for this source's site
+                                    MenuItem("Page source", Icons.Outlined.Code) {
+                                        showMenu = false
+                                        val s = editor.state.value
+                                        val site = state.source?.lab?.siteUrl?.trim()?.takeIf { it.startsWith("http") }
+                                            ?: s.baseUrl.trim().takeIf { it.startsWith("http") }
+                                        if (site != null) {
+                                            navigator.push(eu.kanade.tachiyomi.ui.sourcelab.pagesource.PageSourceScreen(site, s.key))
                                         }
                                     }
                                     // KMK (r102): Duplicate removed from the menu (the owner's request)
@@ -658,33 +696,70 @@ internal class SourceLabScreen(
                                 modifier = Modifier.fillMaxSize(),
                             )
                         }
-                        tablet -> BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                        // KMK (r115): the rail's layout on every width (the phone branch with the Parts chips and the
+                        // Test Run drawer is gone with the phone layout)
+                        else -> BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                             val room = maxWidth
                             when (state.tab) {
-                                // KMK (r106, mock ECode): Parts outline · code · Test Run panel (each side column only
+                                // KMK (r106, mock ECode; r115 M3Code): Parts card (+ Last test) · code (+ the lint
+                                // finding of the part shown, with its fix) · Test Run panel (each side column only
                                 // when the room allows: the code keeps at least ~400 dp)
-                                LabTab.Code -> Row(modifier = Modifier.fillMaxSize()) {
-                                    if (room >= 760.dp) {
-                                        PartsOutline(
+                                // KMK (r115): a phone: Parts chips · code · the finding bar, one column
+                                LabTab.Code -> if (phone) {
+                                    Column(modifier = Modifier.fillMaxSize()) {
+                                        PartsChipRow(
                                             parts = state.explain,
                                             statuses = partStatuses,
                                             selected = state.selectedPart,
                                             onPart = model::showPart,
-                                            modifier = Modifier.width(190.dp).fillMaxHeight(),
+                                            modifier = Modifier.padding(vertical = 4.dp),
                                         )
-                                        VerticalDivider()
+                                        CodeTab(
+                                            model = editor,
+                                            state = editorState,
+                                            findOpen = findOpen,
+                                            onFindOpenChange = { findOpen = it },
+                                            highlight = state.highlight,
+                                            revealLine = state.revealLine,
+                                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                                            errorLine = lastError.line,
+                                            errorCount = lastError.count,
+                                        )
+                                        CodeFindingBar(
+                                            state = state,
+                                            findings = lintFindings,
+                                            onApply = { f -> model.applyFix(editor, f) },
+                                            onGoToLine = goToLine,
+                                        )
                                     }
-                                    CodeTab(
-                                        model = editor,
-                                        state = editorState,
-                                        findOpen = findOpen,
-                                        onFindOpenChange = { findOpen = it },
-                                        highlight = state.highlight,
-                                        revealLine = state.revealLine,
-                                        modifier = Modifier.weight(1f).fillMaxHeight(),
-                                        errorLine = lastError.line,
-                                        errorCount = lastError.count,
-                                    )
+                                } else Row(modifier = Modifier.fillMaxSize()) {
+                                    if (room >= 760.dp) {
+                                        PartsColumn(
+                                            state = state,
+                                            statuses = partStatuses,
+                                            onPart = model::showPart,
+                                            modifier = Modifier.width(210.dp).fillMaxHeight(),
+                                        )
+                                    }
+                                    Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                                        CodeTab(
+                                            model = editor,
+                                            state = editorState,
+                                            findOpen = findOpen,
+                                            onFindOpenChange = { findOpen = it },
+                                            highlight = state.highlight,
+                                            revealLine = state.revealLine,
+                                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                                            errorLine = lastError.line,
+                                            errorCount = lastError.count,
+                                        )
+                                        CodeFindingBar(
+                                            state = state,
+                                            findings = lintFindings,
+                                            onApply = { f -> model.applyFix(editor, f) },
+                                            onGoToLine = goToLine,
+                                        )
+                                    }
                                     if (room >= 980.dp) {
                                         VerticalDivider()
                                         TestRunSide(
@@ -699,25 +774,37 @@ internal class SourceLabScreen(
                                     }
                                 }
                                 // r101: Explain keeps the code beside it (a tapped part lights up its lines there);
-                                // the code gets the room minus 380 dp, 360–700 dp
-                                LabTab.Explain -> Row(modifier = Modifier.fillMaxSize()) {
-                                    CodeTab(
-                                        model = editor,
-                                        state = editorState,
-                                        findOpen = findOpen,
-                                        onFindOpenChange = { findOpen = it },
-                                        highlight = state.highlight,
-                                        revealLine = state.revealLine,
-                                        modifier = Modifier.width(maxOf(360.dp, minOf(700.dp, room - 380.dp))).fillMaxHeight(),
-                                        errorLine = lastError.line,
-                                        errorCount = lastError.count,
-                                    )
-                                    VerticalDivider()
+                                // the code gets the room minus 380 dp, 360–700 dp. KMK (r115): under 760 dp of room
+                                // Explain is alone and a tapped part opens the Code tab
+                                LabTab.Explain -> if (room >= 760.dp) {
+                                    Row(modifier = Modifier.fillMaxSize()) {
+                                        CodeTab(
+                                            model = editor,
+                                            state = editorState,
+                                            findOpen = findOpen,
+                                            onFindOpenChange = { findOpen = it },
+                                            highlight = state.highlight,
+                                            revealLine = state.revealLine,
+                                            modifier = Modifier.width(maxOf(360.dp, minOf(700.dp, room - 380.dp))).fillMaxHeight(),
+                                            errorLine = lastError.line,
+                                            errorCount = lastError.count,
+                                        )
+                                        VerticalDivider()
+                                        ExplainPane(
+                                            state = state,
+                                            model = model,
+                                            editorState = editorState,
+                                            codeBeside = true,
+                                            modifier = Modifier.weight(1f).fillMaxHeight(),
+                                        )
+                                    }
+                                } else {
                                     ExplainPane(
                                         state = state,
                                         model = model,
                                         editorState = editorState,
-                                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                                        codeBeside = false,
+                                        modifier = Modifier.fillMaxSize(),
                                     )
                                 }
                                 else -> SourcePane(
@@ -734,60 +821,7 @@ internal class SourceLabScreen(
                                     onGoToLine = goToLine,
                                     onUpdateTemplate = { confirmTemplateUpdate = true },
                                     onFixAll = { confirmFixAll = true },
-                                    fixAllInBar = true,
-                                    modifier = Modifier.fillMaxSize(),
-                                )
-                            }
-                        }
-                        // KMK (r106): the phone (tabs in the bottom bar): Code = Parts chips · code · Test Run drawer
-                        else -> BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                            val drawerHeight = maxHeight * 0.6f
-                            if (state.tab == LabTab.Code) {
-                                Column(modifier = Modifier.fillMaxSize()) {
-                                    PartsChipRow(
-                                        parts = state.explain,
-                                        statuses = partStatuses,
-                                        selected = state.selectedPart,
-                                        onPart = model::showPart,
-                                        modifier = Modifier.padding(vertical = 4.dp),
-                                    )
-                                    CodeTab(
-                                        model = editor,
-                                        state = editorState,
-                                        findOpen = findOpen,
-                                        onFindOpenChange = { findOpen = it },
-                                        highlight = state.highlight,
-                                        revealLine = state.revealLine,
-                                        modifier = Modifier.weight(1f).fillMaxWidth(),
-                                        errorLine = lastError.line,
-                                        errorCount = lastError.count,
-                                    )
-                                    TestRunDrawer(
-                                        state = state,
-                                        model = model,
-                                        editor = editor,
-                                        editorState = editorState,
-                                        query = query,
-                                        onGoToLine = goToLine,
-                                        openHeight = drawerHeight,
-                                    )
-                                }
-                            } else {
-                                SourcePane(
-                                    tab = state.tab,
-                                    state = state,
-                                    model = model,
-                                    editor = editor,
-                                    editorState = editorState,
-                                    query = query,
-                                    onQuery = { query = it },
-                                    askBeforeReplacing = actions.askBeforeReplacing,
-                                    onEditByTapping = editByTapping,
-                                    onLearnCodes = learnCodes,
-                                    onGoToLine = goToLine,
-                                    onUpdateTemplate = { confirmTemplateUpdate = true },
-                                    onFixAll = { confirmFixAll = true },
-                                    fixAllInBar = false,
+                                    fixAllInBar = tablet,
                                     modifier = Modifier.fillMaxSize(),
                                 )
                             }
@@ -825,7 +859,13 @@ private fun SourcePane(
     modifier: Modifier,
 ) {
     when (tab) {
-        LabTab.Code, LabTab.Explain -> ExplainPane(state = state, model = model, editorState = editorState, modifier = modifier)
+        LabTab.Code, LabTab.Explain -> ExplainPane(
+            state = state,
+            model = model,
+            editorState = editorState,
+            codeBeside = false,
+            modifier = modifier,
+        )
         LabTab.Test -> TestPane(
             state = state,
             model = model,
@@ -876,6 +916,8 @@ private fun SaveSplitButton(
     onSave: (inPlace: Boolean) -> Unit,
     // KMK (r106): the phone's top bar: the save icon alone (its description and ▾ name the version)
     compact: Boolean = false,
+    // KMK (r115): the phone's compact top bar: one Save icon; with a version open it opens the two choices
+    iconOnly: Boolean = false,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf<String?>(null) }
@@ -884,6 +926,12 @@ private fun SaveSplitButton(
     val next = maxOf(history.lastN, history.versions.lastOrNull()?.n ?: 0) + 1
     val enabled = editorState.running == null
     if (!editorState.saved || current == 0 || History.updateBlockedReason(history) != null) {
+        if (iconOnly) {
+            IconButton(onClick = { onSave(false) }, enabled = enabled) {
+                Icon(Icons.Outlined.Save, contentDescription = "Save")
+            }
+            return
+        }
         FilledTonalButton(
             onClick = { onSave(false) },
             enabled = enabled,
@@ -895,7 +943,31 @@ private fun SaveSplitButton(
         return
     }
     val question = History.overwriteConfirm(history)
-    Box {
+    if (iconOnly) {
+        Box {
+            IconButton(onClick = { menuOpen = true }, enabled = enabled) {
+                Icon(Icons.Outlined.Save, contentDescription = "Save")
+            }
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                DropdownMenuItem(
+                    text = { Text("Save to v$current") },
+                    leadingIcon = { Icon(Icons.Outlined.Save, contentDescription = null) },
+                    onClick = {
+                        menuOpen = false
+                        if (question != null) confirm = question else onSave(true)
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("Save as new version (v$next)") },
+                    leadingIcon = { Icon(Icons.Outlined.Add, contentDescription = null) },
+                    onClick = {
+                        menuOpen = false
+                        onSave(false)
+                    },
+                )
+            }
+        }
+    } else Box {
         Row(verticalAlignment = Alignment.CenterVertically) {
             FilledTonalButton(
                 onClick = { if (question != null) confirm = question else onSave(true) },

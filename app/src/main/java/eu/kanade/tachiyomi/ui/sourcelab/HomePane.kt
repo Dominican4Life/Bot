@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -21,7 +22,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Explore
@@ -35,6 +38,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -86,6 +90,9 @@ import uy.kohesive.injekt.api.get
  * tile, name, where it came from, kind · format, version, last test, status badge, lint count and ⋮ (open it on a
  * tab). [query] is the top bar's "Find a source". A wide pane draws the rows as a table with a header; a narrow one
  * (phone, portrait tablet) as two-line rows. The Rules / Re-test cards moved to the top bar, the rail and ⋮.
+ * KMK (r115, mock M3Home): no totals tiles or table header any more: counted chips (status chips in their colour),
+ * one row per source with a status dot, the reason in one line and a Fix / Test button, and "Needs you" (failing,
+ * old template, never tested) beside the list from 840 dp, else above it.
  */
 @Composable
 internal fun HomePane(
@@ -116,82 +123,110 @@ internal fun HomePane(
         }
     }
     val chipsScroll = rememberScrollState()
+    // KMK (r115, mock M3Home): the totals tiles gave way to counted chips and the "Needs you" card (beside the list
+    // from 840 dp, else above it); each row says how the source is doing and why, with the button that helps
+    val hasNeeds = state.sources.any { needsYou(it) } || templates.isNotEmpty()
+    val needsCard: @Composable () -> Unit = {
+        NeedsYouCard(sources = state.sources, stale = templates, onOpen = onOpen, onTemplates = onTemplates)
+    }
     BoxWithConstraints(modifier = modifier) {
         val wide = maxWidth >= 840.dp
-        val grid = maxWidth < 600.dp
-        LazyColumn(
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 96.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = Modifier.fillMaxSize(),
-        ) {
-            item(key = "totals") { Totals(state.sources, retest = state.retestProgress, grid = grid) }
-            item(key = "chips") {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.horizontalScroll(chipsScroll),
-                ) {
-                    HomeFilter.entries.forEach { f ->
-                        val count = if (f == HomeFilter.All) state.sources.size else state.sources.count { f.matches(it) }
-                        FilterChip(
-                            selected = filter == f,
-                            onClick = { filter = f },
-                            label = { Text(if (f == HomeFilter.All) f.label else "${f.label} $count") },
+        val rowWide = maxWidth >= 600.dp
+        Row(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(
+                contentPadding = PaddingValues(start = 16.dp, end = if (wide) 8.dp else 16.dp, top = 14.dp, bottom = 96.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.weight(1f).fillMaxHeight(),
+            ) {
+                item(key = "chips") {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.horizontalScroll(chipsScroll),
+                    ) {
+                        HomeFilter.entries.forEach { f ->
+                            val count = if (f == HomeFilter.All) state.sources.size else state.sources.count { f.matches(it) }
+                            // the status chips only when they have something
+                            if (f.status != null && count == 0 && filter != f) return@forEach
+                            FilterChip(
+                                selected = filter == f,
+                                onClick = { filter = f },
+                                label = {
+                                    Text(
+                                        "${f.label} $count",
+                                        color = if (filter != f && f.status != null) f.status.tint() else Color.Unspecified,
+                                    )
+                                },
+                            )
+                        }
+                    }
+                }
+                state.retestProgress?.let { progress ->
+                    item(key = "retest") {
+                        Text(
+                            "Re-testing · $progress",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
                         )
                     }
                 }
-            }
-            if (templates.isNotEmpty()) {
-                item(key = "stale") {
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.secondaryContainer,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(start = 14.dp, end = 4.dp),
+                if (!wide && hasNeeds) item(key = "needs") { needsCard() }
+                if (state.sources.isEmpty()) {
+                    item(key = "empty") {
+                        Text(
+                            "No sources yet. New source pastes a site's address and writes one; Import brings a .js or .json file.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                } else if (shown.isEmpty()) {
+                    item(key = "none") {
+                        Text(
+                            "No source matches.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                if (shown.isNotEmpty()) {
+                    item(key = "table") {
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainer,
+                            modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Text(
-                                "${templates.size} ${if (templates.size == 1) "source was" else "sources were"} written with an older template",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                modifier = Modifier.weight(1f),
-                            )
-                            TextButton(onClick = onTemplates) { Text("Templates") }
+                            Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                                shown.forEachIndexed { index, source ->
+                                    if (index > 0) {
+                                        HorizontalDivider(
+                                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                                            modifier = Modifier.padding(horizontal = 14.dp),
+                                        )
+                                    }
+                                    SourceRow(source = source, wide = rowWide, onOpen = onOpen)
+                                }
+                            }
                         }
                     }
                 }
             }
-            if (state.sources.isEmpty()) {
-                item(key = "empty") {
-                    Text(
-                        "No sources yet. New source pastes a site's address and writes one; Import brings a .js or .json file.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            } else if (shown.isEmpty()) {
-                item(key = "none") {
-                    Text(
-                        "No source matches.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            if (shown.isNotEmpty()) {
-                item(key = "table") {
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.surfaceContainer,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Column {
-                            if (wide) TableHeader()
-                            shown.forEachIndexed { index, source ->
-                                if (index > 0 || wide) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                                SourceRow(source = source, wide = wide, onOpen = onOpen)
-                            }
+            if (wide) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier
+                        .width(300.dp)
+                        .fillMaxHeight()
+                        .verticalScroll(rememberScrollState())
+                        .padding(start = 6.dp, end = 16.dp, top = 14.dp, bottom = 16.dp),
+                ) {
+                    if (hasNeeds) {
+                        needsCard()
+                    } else if (state.sources.isNotEmpty()) {
+                        LabCaptionCard(caption = "Needs you") {
+                            Text(
+                                "Nothing: every source passed its last test.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                     }
                 }
@@ -200,12 +235,113 @@ internal fun HomePane(
     }
 }
 
+/** KMK (r115): a source that needs you: failing, or never tested */
+internal fun needsYou(s: LabSource): Boolean = s.health.state == HealthState.Failing || s.health.state == HealthState.Unknown
+
+/** KMK (r115): how many sources need you (the Home top bar's "· N need you") */
+internal fun needsYouCount(sources: List<LabSource>): Int = sources.count { needsYou(it) }
+
+/**
+ * KMK (r115, mock M3Home): "Needs you": failing sources (Open: the Test tab), sources on an older template (Update:
+ * Templates), never-tested sources (Test: the Test tab). Eight rows at most, then "and N more".
+ */
+@Composable
+private fun NeedsYouCard(
+    sources: List<LabSource>,
+    stale: List<Pair<LabSource, LabTemplate>>,
+    onOpen: (String, LabTab) -> Unit,
+    onTemplates: () -> Unit,
+) {
+    val failing = sources.filter { it.health.state == HealthState.Failing }
+    val untested = sources.filter { it.health.state == HealthState.Unknown }
+    val rows = buildList {
+        failing.forEach { s ->
+            add(
+                Need(
+                    color = StripColor.Red,
+                    title = "${s.name.ifBlank { "Untitled" }} is failing",
+                    note = s.health.note ?: "the last test failed",
+                    action = "Open",
+                    onAction = { onOpen(s.key, LabTab.Test) },
+                ),
+            )
+        }
+        if (stale.isNotEmpty()) {
+            val n = stale.size
+            val first = stale.first()
+            add(
+                Need(
+                    color = StripColor.Amber,
+                    title = "$n ${if (n == 1) "source" else "sources"} on an old template",
+                    note = "${first.second.name} v${first.first.lab?.templateVersion ?: "?"} → v${first.second.version}" +
+                        if (stale.map { it.second.id }.distinct().size > 1) " and others" else "",
+                    action = "Update",
+                    onAction = onTemplates,
+                ),
+            )
+        }
+        untested.forEach { s ->
+            add(
+                Need(
+                    color = StripColor.Neutral,
+                    title = "${s.name.ifBlank { "Untitled" }} not tested",
+                    note = originOf(s),
+                    action = "Test",
+                    onAction = { onOpen(s.key, LabTab.Test) },
+                ),
+            )
+        }
+    }
+    LabCaptionCard(caption = "Needs you") {
+        rows.take(8).forEachIndexed { index, need ->
+            if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+            NeedsRow(need.color, need.title, need.note, need.action, need.onAction)
+        }
+        if (rows.size > 8) {
+            Text(
+                "and ${rows.size - 8} more",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+    }
+}
+
+/** KMK (r115): one "Needs you" row */
+private class Need(val color: StripColor, val title: String, val note: String, val action: String, val onAction: () -> Unit)
+
+@Composable
+private fun NeedsRow(color: StripColor, title: String, note: String, action: String, onAction: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+    ) {
+        Box(modifier = Modifier.size(9.dp).clip(CircleShape).background(color.tint()))
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(
+                note,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        TextButton(onClick = onAction) { Text(action) }
+    }
+}
+
 /** Home's filter chips */
-internal enum class HomeFilter(val label: String) {
+internal enum class HomeFilter(val label: String, val status: StripColor? = null) {
     All("All"),
-    Failing("Failing"),
     Anime("Anime"),
     Manga("Manga"),
+    // KMK (r115, mock M3Home): the status chips in their colour (shown when they count something)
+    Failing("Failing", StripColor.Red),
+    Warnings("Warnings", StripColor.Amber),
+    NotTested("Not tested", StripColor.Neutral),
     Tapping("Made by tapping"),
     Converted("Converted"),
     ;
@@ -213,6 +349,8 @@ internal enum class HomeFilter(val label: String) {
     fun matches(s: LabSource): Boolean = when (this) {
         All -> true
         Failing -> s.health.state == HealthState.Failing
+        Warnings -> s.health.state == HealthState.Attention
+        NotTested -> s.health.state == HealthState.Unknown
         Anime -> s.anime
         Manga -> !s.anime
         Tapping -> madeByTapping(s)
@@ -220,221 +358,87 @@ internal enum class HomeFilter(val label: String) {
     }
 }
 
+/**
+ * KMK (r115, mock M3Home): one source: its icon, name and "kind · format · vN", then how it is doing (dot + word in
+ * its colour) and why in one line ("10 of 10 · 14 min ago", the failure, "made by tapping · never tested"), the
+ * button that helps (Failing: Fix → Test tab; Not tested: Test → Test tab) and ⋮. [wide]: the status sits in its own
+ * 230 dp column; else under the name.
+ */
 @Composable
-private fun Totals(sources: List<LabSource>, retest: String?, grid: Boolean) {
-    val good = sources.count { it.health.state == HealthState.Good }
-    val attention = sources.count { it.health.state == HealthState.Attention }
-    val failing = sources.count { it.health.state == HealthState.Failing }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        // KMK (r106): a phone gets the four totals as a 2×2 grid
-        if (grid) {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                TotalTile(sources.size.toString(), "sources", null, Modifier.weight(1f))
-                TotalTile(good.toString(), "passing", StripColor.Green, Modifier.weight(1f))
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                TotalTile(attention.toString(), "passing with warnings", StripColor.Amber, Modifier.weight(1f))
-                TotalTile(failing.toString(), "failing", StripColor.Red, Modifier.weight(1f))
-            }
-        } else {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                TotalTile(sources.size.toString(), "sources", null, Modifier.weight(1f))
-                TotalTile(good.toString(), "passing", StripColor.Green, Modifier.weight(1f))
-                TotalTile(attention.toString(), "passing with warnings", StripColor.Amber, Modifier.weight(1f))
-                TotalTile(failing.toString(), "failing", StripColor.Red, Modifier.weight(1f))
-            }
-        }
-        if (retest != null) {
-            Text(
-                "Re-testing · $retest",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary,
-            )
-        }
+private fun SourceRow(source: LabSource, wide: Boolean, onOpen: (String, LabTab) -> Unit) {
+    val lint = source.lastLint?.findings?.count { !it.ignored } ?: 0
+    val run = source.lastRun
+    val kind = "${if (source.anime) "Anime" else if (source.hasVideos) "Manga + videos" else "Manga"} · ${if (source.json) "JSON" else "JS"}" +
+        if (source.version > 0) " · v${source.version}" else ""
+    val (word, color) = when (source.health.state) {
+        HealthState.Good -> "Healthy" to StripColor.Green
+        HealthState.Attention -> "Warnings" to StripColor.Amber
+        HealthState.Failing -> "Failing" to StripColor.Red
+        HealthState.Unknown -> "Not tested" to StripColor.Neutral
     }
-}
-
-@Composable
-private fun TotalTile(number: String, label: String, color: StripColor?, modifier: Modifier) {
-    Surface(
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        modifier = modifier,
-    ) {
-        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+    val why = when (source.health.state) {
+        HealthState.Unknown -> originOf(source) + " · never tested"
+        HealthState.Failing, HealthState.Attention -> source.health.note
+            ?: run?.let { "${it.passed} of ${it.counted} · ${SourceLabScreenModel.agoText(it.startedAt)}" }
+            ?: "see the last test"
+        HealthState.Good -> run?.let { "${it.passed} of ${it.counted} · ${SourceLabScreenModel.agoText(it.startedAt)}" }
+            ?: "passing"
+    } + if (lint > 0) " · lint $lint" else ""
+    val action = when (source.health.state) {
+        HealthState.Failing -> "Fix"
+        HealthState.Unknown -> "Test"
+        else -> null
+    }
+    val status: @Composable (Modifier) -> Unit = { m ->
+        Column(modifier = m) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(color.tint()))
+                Spacer(Modifier.width(7.dp))
+                Text(word, style = MaterialTheme.typography.labelLarge, color = color.tint(), maxLines = 1)
+            }
             Text(
-                number,
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = color?.tint() ?: MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-            )
-            Text(
-                label,
+                why,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
     }
-}
-
-// The table's fixed columns (mock: Kind 110, Version 90, Last test 150, Status 120, Lint 70, ⋮ 44)
-private val COL_KIND = 110.dp
-private val COL_VERSION = 80.dp
-private val COL_TEST = 130.dp
-private val COL_STATUS = 130.dp
-private val COL_LINT = 56.dp
-private val COL_MENU = 44.dp
-
-@Composable
-private fun TableHeader() {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .height(40.dp)
-            .padding(horizontal = 16.dp),
+            .clickable { onOpen(source.key, LabTab.Code) }
+            .padding(start = 14.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
     ) {
-        HeaderCell("Source", Modifier.weight(1f))
-        HeaderCell("Kind", Modifier.width(COL_KIND))
-        HeaderCell("Version", Modifier.width(COL_VERSION))
-        HeaderCell("Last test", Modifier.width(COL_TEST))
-        HeaderCell("Status", Modifier.width(COL_STATUS))
-        HeaderCell("Lint", Modifier.width(COL_LINT))
-        Spacer(Modifier.width(COL_MENU))
-    }
-}
-
-@Composable
-private fun HeaderCell(text: String, modifier: Modifier) {
-    Text(
-        text,
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        maxLines = 1,
-        modifier = modifier,
-    )
-}
-
-@Composable
-private fun SourceRow(source: LabSource, wide: Boolean, onOpen: (String, LabTab) -> Unit) {
-    val (badgeText, badgeColor) = healthBadge(source.health.state)
-    val lint = source.lastLint?.findings?.count { !it.ignored }
-    val lastTest = source.lastRun?.let { SourceLabScreenModel.agoText(it.startedAt) } ?: "never"
-    val kind = "${if (source.anime) "Anime" else if (source.hasVideos) "Manga + videos" else "Manga"} · ${if (source.json) "JSON" else "JS"}"
-    val version = if (source.version > 0) "v${source.version}" else "–"
-    if (wide) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { onOpen(source.key, LabTab.Code) }
-                .height(58.dp)
-                .padding(start = 16.dp, end = 4.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                LetterTile(source.name, source.key)
-                NameAndOrigin(source, Modifier.padding(start = 12.dp))
-            }
-            Cell(kind, Modifier.width(COL_KIND))
-            Cell(version, Modifier.width(COL_VERSION), mono = true)
-            Cell(lastTest, Modifier.width(COL_TEST))
-            Box(modifier = Modifier.width(COL_STATUS)) { StatusBadge(badgeText, badgeColor) }
-            Cell(lint?.toString() ?: "–", Modifier.width(COL_LINT), mono = true)
-            Box(modifier = Modifier.width(COL_MENU)) { RowMenu(source, onOpen) }
+        LetterTile(source.name, source.key)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                source.name.ifBlank { "Untitled" },
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                kind,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (!wide) status(Modifier.padding(top = 4.dp))
         }
-    } else {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { onOpen(source.key, LabTab.Code) }
-                .padding(start = 12.dp, end = 0.dp, top = 10.dp, bottom = 10.dp),
-        ) {
-            LetterTile(source.name, source.key)
-            Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        source.name.ifBlank { "Untitled" },
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    StatusBadge(badgeText, badgeColor)
-                }
-                Text(
-                    originOf(source),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    "$kind · $version · tested $lastTest" + (lint?.takeIf { it > 0 }?.let { " · lint $it" }.orEmpty()),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                source.health.note?.let { note ->
-                    Text(
-                        note,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = when (source.health.state) {
-                            HealthState.Failing -> StripColor.Red.tint()
-                            HealthState.Attention -> StripColor.Amber.tint()
-                            else -> MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-            RowMenu(source, onOpen)
+        if (wide) status(Modifier.width(230.dp))
+        if (action != null) {
+            OutlinedButton(
+                onClick = { onOpen(source.key, LabTab.Test) },
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+            ) { Text(action) }
         }
+        RowMenu(source, onOpen)
     }
-}
-
-@Composable
-private fun NameAndOrigin(source: LabSource, modifier: Modifier) {
-    Column(modifier = modifier) {
-        Text(
-            source.name.ifBlank { "Untitled" },
-            style = MaterialTheme.typography.bodyLarge,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Text(
-            source.health.note?.takeIf { source.health.state == HealthState.Failing } ?: originOf(source),
-            style = MaterialTheme.typography.bodySmall,
-            color = if (source.health.state == HealthState.Failing && source.health.note != null) {
-                StripColor.Red.tint()
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            },
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
-
-@Composable
-private fun Cell(text: String, modifier: Modifier, mono: Boolean = false) {
-    Text(
-        text,
-        style = MaterialTheme.typography.bodySmall,
-        fontFamily = if (mono) FontFamily.Monospace else null,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        modifier = modifier,
-    )
 }
 
 /** ⋮ on a row: opens the source on one of its tabs */
@@ -573,7 +577,7 @@ private fun LetterTile(name: String, key: String) {
             bitmap = loaded,
             contentDescription = null,
             modifier = Modifier
-                .size(36.dp)
+                .size(38.dp)
                 .clip(RoundedCornerShape(10.dp)),
         )
         return
@@ -582,7 +586,7 @@ private fun LetterTile(name: String, key: String) {
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .size(36.dp)
+            .size(38.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(color.copy(alpha = 0.22f)),
     ) {

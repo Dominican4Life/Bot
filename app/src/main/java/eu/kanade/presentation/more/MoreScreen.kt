@@ -7,9 +7,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Badge
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -31,6 +32,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -54,9 +56,10 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
 /**
- * KMK (r114): More, revamped. Under the logo: two switch cards (Downloaded only, Incognito), then a "Your library"
- * card and an "App" card (side by side on wide screens). Every row has a live icon that plays its move once on tap.
- * What each row opens is unchanged.
+ * KMK (r114): More, revamped. Every row has a live icon that plays its move once on tap. What each row opens is
+ * unchanged.
+ * KMK (r115): C3 "soft groups" under the logo: (1) Downloaded only + Incognito switch rows, (2) Your library,
+ * (3) App — rounded groups with thin lines between rows. ≥ 600 dp the page fills the width (see [MoreList]).
  */
 @Composable
 fun MoreScreen(
@@ -150,61 +153,106 @@ fun MoreScreen(
     val queueSummary = listOfNotNull(mangaSummary, animeSummary).joinToString(" • ").ifEmpty { null }
     val downloading = downloadQueueState is DownloadQueueState.Downloading
 
-    val libraryCard: @Composable (Modifier) -> Unit = { cardModifier ->
-        MoreCard(heading = "Your library", modifier = cardModifier) {
-            // SY -->
-            if (!showNavUpdates) {
+    // KMK (r115): Source Lab is tablet-only now, so its row shows only on screens at least 600 dp wide
+    // KMK (r115): Source Lab works on phones too (its own phone layout)
+    val showSourceLab = true
+
+    // KMK (r115): each group is a list of rows; MoreGroup puts the thin lines between them, so a row that is left out
+    // (Recent updates / History in the nav, Batch add off, Source Lab on a phone) never leaves a double line
+    val switchRows: List<@Composable (Boolean) -> Unit> = buildList<@Composable (Boolean) -> Unit> {
+        row { tall ->
+            MoreSwitchRow(
+                icon = downloadedOnlyIcon,
+                title = stringResource(MR.strings.label_downloaded_only),
+                subtitle = stringResource(MR.strings.downloaded_only_summary),
+                checked = downloadedOnly,
+                onCheckedChange = onDownloadedOnlyChange,
+                tall = tall,
+            )
+        }
+        row { tall ->
+            MoreSwitchRow(
+                icon = incognitoIcon,
+                title = stringResource(MR.strings.pref_incognito_mode),
+                subtitle = stringResource(MR.strings.pref_incognito_mode_summary),
+                checked = incognitoMode,
+                onCheckedChange = onIncognitoModeChange,
+                tall = tall,
+            )
+        }
+    }
+
+    val libraryRows: List<@Composable (Boolean) -> Unit> = buildList<@Composable (Boolean) -> Unit> {
+        // SY -->
+        if (!showNavUpdates) {
+            row { tall ->
                 MoreRow(
                     kind = LiveIconKind.Updates,
                     play = plays[LiveIconKind.Updates] ?: 0,
                     title = stringResource(MR.strings.label_recent_updates),
                     onClick = { tap(LiveIconKind.Updates, onClickUpdates) },
+                    tall = tall,
                 )
             }
-            if (!showNavHistory) {
+        }
+        if (!showNavHistory) {
+            row { tall ->
                 MoreRow(
                     kind = LiveIconKind.History,
                     play = plays[LiveIconKind.History] ?: 0,
                     title = stringResource(MR.strings.label_recent_manga),
                     onClick = { tap(LiveIconKind.History, onClickHistory) },
+                    tall = tall,
                 )
             }
-            // SY <--
+        }
+        // SY <--
+        row { tall ->
             MoreRow(
                 kind = LiveIconKind.Queue,
                 play = plays[LiveIconKind.Queue] ?: 0,
                 title = stringResource(MR.strings.label_download_queue),
                 subtitle = queueSummary,
                 onClick = { tap(LiveIconKind.Queue, onClickDownloadQueue) },
+                tall = tall,
                 trailing = if (downloading) {
-                    { LinearProgressIndicator(modifier = Modifier.width(64.dp)) }
+                    { LinearProgressIndicator(modifier = Modifier.width(if (tall) 90.dp else 56.dp)) }
                 } else {
                     null
                 },
             )
+        }
+        row { tall ->
             MoreRow(
                 kind = LiveIconKind.Categories,
                 play = plays[LiveIconKind.Categories] ?: 0,
                 title = stringResource(MR.strings.categories),
                 onClick = { tap(LiveIconKind.Categories, onClickCategories) },
+                tall = tall,
                 trailing = if (categoryCount > 0) {
                     { TrailingText(categoryCount.toString()) }
                 } else {
                     null
                 },
             )
+        }
+        row { tall ->
             MoreRow(
                 kind = LiveIconKind.Statistics,
                 play = plays[LiveIconKind.Statistics] ?: 0,
                 title = stringResource(MR.strings.label_stats),
                 onClick = { tap(LiveIconKind.Statistics, onClickStats) },
+                tall = tall,
             )
-            // KMK -->
+        }
+        // KMK -->
+        row { tall ->
             MoreRow(
                 kind = LiveIconKind.UpdateErrors,
                 play = plays[LiveIconKind.UpdateErrors] ?: 0,
                 title = stringResource(KMR.strings.option_label_library_update_errors),
                 onClick = { tap(LiveIconKind.UpdateErrors, onClickLibraryUpdateErrors) },
+                tall = tall,
                 trailing = if (updateErrorCount > 0) {
                     {
                         Badge(
@@ -218,163 +266,218 @@ fun MoreScreen(
                     null
                 },
             )
-            // KMK <--
+        }
+        // KMK <--
+        row { tall ->
             MoreRow(
                 kind = LiveIconKind.Database,
                 play = plays[LiveIconKind.Database] ?: 0,
                 title = stringResource(MR.strings.label_data_storage),
                 subtitle = stringResource(MR.strings.pref_backup_summary),
                 onClick = { tap(LiveIconKind.Database, onClickDataAndStorage) },
+                tall = tall,
             )
-            // SY -->
-            if (showBatchAdd) {
+        }
+        // SY -->
+        if (showBatchAdd) {
+            row { tall ->
                 MoreRow(
                     kind = LiveIconKind.BatchAdd,
                     play = plays[LiveIconKind.BatchAdd] ?: 0,
                     title = stringResource(SYMR.strings.eh_batch_add),
                     onClick = { tap(LiveIconKind.BatchAdd, onClickBatchAdd) },
+                    tall = tall,
                 )
             }
-            // SY <--
         }
+        // SY <--
     }
 
-    val appCard: @Composable (Modifier) -> Unit = { cardModifier ->
-        MoreCard(heading = "App", modifier = cardModifier) {
+    val appRows: List<@Composable (Boolean) -> Unit> = buildList<@Composable (Boolean) -> Unit> {
+        row { tall ->
             MoreRow(
                 kind = LiveIconKind.Settings,
                 play = plays[LiveIconKind.Settings] ?: 0,
                 title = stringResource(MR.strings.label_settings),
                 onClick = { tap(LiveIconKind.Settings, onClickSettings) },
+                tall = tall,
             )
-            // KMK --> Aniyomi's place for the player settings
+        }
+        // KMK --> Aniyomi's place for the player settings
+        row { tall ->
             MoreRow(
                 kind = LiveIconKind.PlayerSettings,
                 play = plays[LiveIconKind.PlayerSettings] ?: 0,
                 title = stringResource(AMR.strings.label_player_settings),
                 onClick = { tap(LiveIconKind.PlayerSettings, onClickPlayerSettings) },
+                tall = tall,
             )
-            MoreRow(
-                kind = LiveIconKind.SourceLab,
-                play = plays[LiveIconKind.SourceLab] ?: 0,
-                title = "Source Lab",
-                subtitle = "Build and test sources",
-                onClick = { tap(LiveIconKind.SourceLab, onClickSourceLab) },
-            )
+        }
+        // KMK (r115): on every screen size
+        if (showSourceLab) {
+            row { tall ->
+                MoreRow(
+                    kind = LiveIconKind.SourceLab,
+                    play = plays[LiveIconKind.SourceLab] ?: 0,
+                    title = "Source Lab",
+                    onClick = { tap(LiveIconKind.SourceLab, onClickSourceLab) },
+                    tall = tall,
+                )
+            }
+        }
+        row { tall ->
             MoreRow(
                 kind = LiveIconKind.SyncDevices,
                 play = plays[LiveIconKind.SyncDevices] ?: 0,
                 title = "Sync devices",
                 onClick = { tap(LiveIconKind.SyncDevices, onClickPairSync) },
+                tall = tall,
             )
+        }
+        row { tall ->
             MoreRow(
                 kind = LiveIconKind.Logs,
                 play = plays[LiveIconKind.Logs] ?: 0,
                 title = "Logs",
                 onClick = { tap(LiveIconKind.Logs, onClickLogs) },
+                tall = tall,
             )
-            // KMK <--
+        }
+        // KMK <--
+        row { tall ->
             MoreRow(
                 kind = LiveIconKind.About,
                 play = plays[LiveIconKind.About] ?: 0,
                 title = stringResource(MR.strings.pref_category_about),
                 subtitle = AboutScreen.getVersionName(withBuildDate = false),
                 onClick = { tap(LiveIconKind.About, onClickAbout) },
+                tall = tall,
             )
-            // KMK: Help entry and Sponsor button removed
         }
+        // KMK: Help entry and Sponsor button removed
     }
 
     Scaffold { contentPadding ->
-        ScrollbarLazyColumn(
-            // KMK: use contentPadding as preferable padding for ScrollbarLazyColumn when not using stickyHeader
-            contentPadding = contentPadding,
-        ) {
+        // KMK (r115): C3 "soft groups". Phone: one column of three rounded groups. ≥ 600 dp: fill the width — the two
+        // switches side by side, then Your library and App side by side, each stretching, with taller rows.
+        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            val wide = maxWidth >= 600.dp
+            MoreList(
+                wide = wide,
+                contentPadding = contentPadding,
+                switchRows = switchRows,
+                libraryRows = libraryRows,
+                appRows = appRows,
+            )
+        }
+    }
+}
+
+/** KMK (r115): adds one row to a group's list (a plain @Composable parameter, so the lambda is always composable) */
+private fun MutableList<@Composable (Boolean) -> Unit>.row(content: @Composable (Boolean) -> Unit) {
+    add(content)
+}
+
+/** KMK (r115): the scrolling list under the logo, phone (one column) or wide (fills the width) */
+@Composable
+private fun MoreList(
+    wide: Boolean,
+    contentPadding: PaddingValues,
+    switchRows: List<@Composable (Boolean) -> Unit>,
+    libraryRows: List<@Composable (Boolean) -> Unit>,
+    appRows: List<@Composable (Boolean) -> Unit>,
+) {
+    val gutter = if (wide) 28.dp else 16.dp
+    val gap = if (wide) 14.dp else 10.dp
+    ScrollbarLazyColumn(
+        // KMK: use contentPadding as preferable padding for ScrollbarLazyColumn when not using stickyHeader
+        contentPadding = contentPadding,
+    ) {
+        item {
+            LogoHeader()
+        }
+        if (wide) {
             item {
-                LogoHeader()
-            }
-            item {
-                BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-                    // ≥ 600 dp: icon, words and switch in one line; phones: icon + switch on top, words under
-                    val wide = maxWidth >= 600.dp
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(start = 16.dp, end = 16.dp, top = 16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        SwitchCard(
-                            modifier = Modifier.weight(1f),
-                            icon = downloadedOnlyIcon,
-                            title = stringResource(MR.strings.label_downloaded_only),
-                            subtitle = stringResource(MR.strings.downloaded_only_summary),
-                            checked = downloadedOnly,
-                            onCheckedChange = onDownloadedOnlyChange,
-                            wide = wide,
-                        )
-                        SwitchCard(
-                            modifier = Modifier.weight(1f),
-                            icon = incognitoIcon,
-                            title = stringResource(MR.strings.pref_incognito_mode),
-                            subtitle = stringResource(MR.strings.pref_incognito_mode_summary),
-                            checked = incognitoMode,
-                            onCheckedChange = onIncognitoModeChange,
-                            wide = wide,
-                        )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = gutter, end = gutter, top = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(gap),
+                ) {
+                    switchRows.forEach { row ->
+                        MoreGroup(rows = listOf(row), tall = true, modifier = Modifier.weight(1f))
                     }
                 }
             }
             item {
-                BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-                    val wide = maxWidth >= 600.dp
-                    val padded = Modifier
+                Row(
+                    modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp)
-                    if (wide) {
-                        Row(
-                            modifier = padded,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            verticalAlignment = Alignment.Top,
-                        ) {
-                            libraryCard(Modifier.weight(1f))
-                            appCard(Modifier.weight(1f))
-                        }
-                    } else {
-                        Column(
-                            modifier = padded,
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            libraryCard(Modifier.fillMaxWidth())
-                            appCard(Modifier.fillMaxWidth())
-                        }
+                        .padding(start = gutter, end = gutter, top = 16.dp, bottom = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(gap),
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        GroupHeading("Your library")
+                        MoreGroup(rows = libraryRows, tall = true, modifier = Modifier.fillMaxWidth())
                     }
+                    Column(modifier = Modifier.weight(1f)) {
+                        GroupHeading("App")
+                        MoreGroup(rows = appRows, tall = true, modifier = Modifier.fillMaxWidth())
+                    }
+                }
+            }
+        } else {
+            item {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = gutter, end = gutter, top = 12.dp, bottom = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(gap),
+                ) {
+                    MoreGroup(rows = switchRows, tall = false, modifier = Modifier.fillMaxWidth())
+                    MoreGroup(rows = libraryRows, tall = false, modifier = Modifier.fillMaxWidth())
+                    MoreGroup(rows = appRows, tall = false, modifier = Modifier.fillMaxWidth())
                 }
             }
         }
     }
 }
 
-/** KMK (r114): a rounded card with a small primary caps heading */
+/** KMK (r115): small primary caps heading above a wide-screen group */
 @Composable
-private fun MoreCard(
-    heading: String,
+private fun GroupHeading(text: String) {
+    Text(
+        text = text.uppercase(),
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp),
+    )
+}
+
+/** KMK (r115): a soft rounded group (18 dp corners) with thin lines between its rows */
+@Composable
+private fun MoreGroup(
+    rows: List<@Composable (Boolean) -> Unit>,
+    tall: Boolean,
     modifier: Modifier = Modifier,
-    content: @Composable ColumnScope.() -> Unit,
 ) {
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(18.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
     ) {
-        Column(modifier = Modifier.padding(vertical = 8.dp)) {
-            Text(
-                text = heading.uppercase(),
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 2.dp),
-            )
-            content()
+        Column(modifier = Modifier.padding(vertical = 2.dp)) {
+            rows.forEachIndexed { index, row ->
+                if (index > 0) {
+                    HorizontalDivider(
+                        thickness = 1.dp,
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+                    )
+                }
+                row(tall)
+            }
         }
     }
 }
@@ -388,15 +491,17 @@ private fun MoreRow(
     onClick: () -> Unit,
     subtitle: String? = null,
     trailing: (@Composable () -> Unit)? = null,
+    // KMK (r115): wide screens: taller rows (min 56 dp) with more room
+    tall: Boolean = false,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 52.dp)
+            .heightIn(min = if (tall) 56.dp else 52.dp)
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = if (tall) 20.dp else 14.dp, vertical = if (tall) 14.dp else 10.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        horizontalArrangement = Arrangement.spacedBy(if (tall) 22.dp else 20.dp),
     ) {
         LiveIcon(kind = kind, play = play)
         Column(modifier = Modifier.weight(1f)) {
@@ -429,68 +534,41 @@ private fun TrailingText(text: String) {
     )
 }
 
-/** KMK (r114): Downloaded only / Incognito as a card; a card that is on is tinted */
+/** KMK (r115): Downloaded only / Incognito as a switch row inside a group (the whole row toggles) */
 @Composable
-private fun SwitchCard(
+private fun MoreSwitchRow(
     icon: Painter,
     title: String,
     subtitle: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
-    wide: Boolean,
-    modifier: Modifier = Modifier,
+    tall: Boolean,
 ) {
-    val container = if (checked) {
-        MaterialTheme.colorScheme.secondaryContainer
-    } else {
-        MaterialTheme.colorScheme.surfaceContainer
-    }
-    val content = if (checked) {
-        MaterialTheme.colorScheme.onSecondaryContainer
-    } else {
-        MaterialTheme.colorScheme.onSurface
-    }
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(18.dp),
-        color = container,
-        contentColor = content,
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = if (tall) 56.dp else 52.dp)
+            .toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange)
+            .padding(horizontal = if (tall) 20.dp else 14.dp, vertical = if (tall) 14.dp else 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(if (tall) 22.dp else 20.dp),
     ) {
-        val toggle = Modifier.toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange)
-        if (wide) {
-            Row(
-                modifier = toggle.padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                Icon(painter = icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(text = title, style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        text = subtitle,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = content.copy(alpha = 0.72f),
-                    )
-                }
-                Switch(checked = checked, onCheckedChange = null)
-            }
-        } else {
-            Column(
-                modifier = toggle.padding(horizontal = 12.dp, vertical = 11.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(painter = icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    Spacer(modifier = Modifier.weight(1f))
-                    Switch(checked = checked, onCheckedChange = null)
-                }
-                Text(text = title, style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = content.copy(alpha = 0.72f),
-                )
-            }
+        Icon(painter = icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
+        Switch(checked = checked, onCheckedChange = null)
     }
 }

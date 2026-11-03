@@ -9,6 +9,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -28,12 +29,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
+import androidx.compose.material.icons.outlined.AutoFixHigh
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.FiberManualRecord
 import androidx.compose.material.icons.outlined.FileUpload
-import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -73,15 +75,16 @@ import eu.kanade.tachiyomi.jssource.lab.ApkImport
 import eu.kanade.tachiyomi.jssource.lab.DetectionStep
 import eu.kanade.tachiyomi.jssource.lab.EngineGuess
 import eu.kanade.tachiyomi.jssource.lab.ExtensionRecorder
-import eu.kanade.tachiyomi.jssource.lab.FingerprintFile
 import eu.kanade.tachiyomi.jssource.lab.LabFlowScreen
 import eu.kanade.tachiyomi.jssource.lab.LabTemplate
 import eu.kanade.tachiyomi.jssource.lab.RecordedConverter
 import eu.kanade.tachiyomi.jssource.lab.StepStatus
+import eu.kanade.tachiyomi.jssource.lab.sitecheck.SiteCheck
 import eu.kanade.tachiyomi.ui.sourcelab.LabStatusStrip
 import eu.kanade.tachiyomi.ui.sourcelab.LabTopBar
 import eu.kanade.tachiyomi.ui.sourcelab.MonoCard
 import eu.kanade.tachiyomi.ui.sourcelab.StripColor
+import eu.kanade.tachiyomi.ui.sourcelab.pagesource.PageSourceScreen
 import eu.kanade.tachiyomi.ui.sourcelab.tint
 import eu.kanade.tachiyomi.ui.webview.WebViewScreen
 import eu.kanade.tachiyomi.util.system.openInBrowser
@@ -97,6 +100,11 @@ internal object LabFlowScreenFactory {
  * pages and compare them with the engines it knows, then write the source from the matching template. Below,
  * the other ways in: a template, Build by tapping, Import a file, Duplicate a source, Import from extension.
  * The finished source goes to Half A through LabHandoff; this screen then pops itself.
+ *
+ * KMK (r115, mockups M3New / ESiteCheck): one address box with one main action, "Check the site" ([SiteCheckPane]:
+ * raw vs rendered, data requests, next page, embedded data, the engine; then the plan), and the four ways to start
+ * side by side (Site check, Build by tapping, From a template, Record and convert), then Import from an extension or
+ * a file. The engine's markers (the r96 Detected page) open from the plan's "See the markers".
  */
 internal class NewSourceScreen(private val kindHint: Boolean? = null) : Screen(), LabFlowScreen {
 
@@ -114,7 +122,8 @@ internal class NewSourceScreen(private val kindHint: Boolean? = null) : Screen()
                     title = "New source",
                     subtitle = newSourceSubtitle(state),
                     navigateUp = {
-                        if (state.phase != NewSourceScreenModel.Phase.Entry) model.backToEntry() else navigator.pop()
+                        // KMK (r115): the engine's markers go back to the Site check first
+                        if (state.phase != NewSourceScreenModel.Phase.Entry) model.back() else navigator.pop()
                         Unit
                     },
                 )
@@ -152,9 +161,12 @@ internal fun LabNewSourcePane(
 private fun newSourceSubtitle(state: NewSourceScreenModel.State): String {
     val host = state.url.trim().removePrefix("https://").removePrefix("http://").substringBefore('/')
     return when (state.phase) {
-        NewSourceScreenModel.Phase.Entry -> "paste the site address"
+        NewSourceScreenModel.Phase.Entry -> "Paste a site, or pick how you want to start"
         NewSourceScreenModel.Phase.Detecting -> "$host · detecting the engine"
         NewSourceScreenModel.Phase.Detected -> state.best?.let { "$host · ${it.engineName} ${it.confidence} %" } ?: "$host · no engine matched"
+        // KMK (r115): the Site check
+        NewSourceScreenModel.Phase.Checking -> "$host · Site check (about 10 s)"
+        NewSourceScreenModel.Phase.Checked -> "$host · Site check · " + (state.siteCheck?.best?.title?.lowercase() ?: "no plan fits")
     }
 }
 
@@ -179,7 +191,8 @@ private fun NewSourceContent(
         if (state.delivered) onDelivered()
     }
     // The system Back does what the bar's arrow does: a detection result goes back to the entry page first
-    BackHandler(enabled = state.phase != NewSourceScreenModel.Phase.Entry) { model.backToEntry() }
+    // (KMK r115: the engine's markers back to the Site check)
+    BackHandler(enabled = state.phase != NewSourceScreenModel.Phase.Entry) { model.back() }
 
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) model.importFile(uri)
@@ -197,24 +210,27 @@ private fun NewSourceContent(
             }
             HorizontalDivider()
         }
-        val (head, color) = when (state.phase) {
-            NewSourceScreenModel.Phase.Entry -> "New" to StripColor.Blue
-            NewSourceScreenModel.Phase.Detecting -> "Detecting" to StripColor.Blue
-            NewSourceScreenModel.Phase.Detected -> if (state.result?.writeOffered == true) "Detected" to StripColor.Green else "Detected" to StripColor.Amber
-        }
-        LabStatusStrip(
-            head = head,
-            color = color,
-            figures = listOf(
-                "Requests" to state.requests.toString(),
-                "Engine" to (state.best?.engineName?.substringBefore(" (") ?: "—"),
-                "Kind" to when (state.best?.kind ?: state.kindHint?.let { if (it) "anime" else "manga" }) {
-                    "anime" -> "Anime"
-                    "manga" -> "Manga"
-                    else -> "auto"
+        // KMK (r115): the strip only on the engine pages (the entry and the Site check follow mockups M3New / ESiteCheck)
+        val detectionPhase = state.phase == NewSourceScreenModel.Phase.Detecting || state.phase == NewSourceScreenModel.Phase.Detected
+        if (detectionPhase) {
+            LabStatusStrip(
+                head = if (state.phase == NewSourceScreenModel.Phase.Detecting) "Detecting" else "Detected",
+                color = when {
+                    state.phase == NewSourceScreenModel.Phase.Detecting -> StripColor.Blue
+                    state.result?.writeOffered == true -> StripColor.Green
+                    else -> StripColor.Amber
                 },
-            ),
-        )
+                figures = listOf(
+                    "Requests" to state.requests.toString(),
+                    "Engine" to (state.best?.engineName?.substringBefore(" (") ?: "—"),
+                    "Kind" to when (state.best?.kind ?: state.kindHint?.let { if (it) "anime" else "manga" }) {
+                        "anime" -> "Anime"
+                        "manga" -> "Manga"
+                        else -> "auto"
+                    },
+                ),
+            )
+        }
         if (state.busy != null) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp))
             Text(
@@ -224,21 +240,40 @@ private fun NewSourceContent(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
             )
         }
-        if (tablet) {
-            Row(modifier = Modifier.fillMaxSize()) {
-                MainColumn(state, model, pickFile, modifier = Modifier.weight(1f).fillMaxHeight())
-                Column(
-                    modifier = Modifier
-                        .width(380.dp)
-                        .fillMaxHeight()
-                        .verticalScroll(rememberScrollState())
-                        .padding(end = 16.dp, bottom = 16.dp),
-                ) {
-                    HowDetectionWorksCard(state.fingerprints)
-                }
-            }
-        } else {
-            MainColumn(state, model, pickFile, modifier = Modifier.fillMaxSize(), howCard = true)
+        val anime = state.kindHint == true || state.best?.kind == "anime"
+        val siteUrl = state.siteCheck?.url ?: state.url.trim().ifBlank { null }?.let { SiteCheck.address(it) }
+        when (state.phase) {
+            NewSourceScreenModel.Phase.Entry -> EntryColumn(
+                state = state,
+                model = model,
+                wide = tablet,
+                onBuild = { navigator.push(BuilderScreen(startUrl = state.url.trim().ifBlank { null }, anime = state.kindHint == true)) },
+                onImport = { pickFile("*/*") },
+                modifier = Modifier.fillMaxSize(),
+            )
+            NewSourceScreenModel.Phase.Checking, NewSourceScreenModel.Phase.Checked -> SiteCheckPane(
+                result = state.siteCheck,
+                wide = tablet,
+                onPlan = { plan ->
+                    when (plan.kind) {
+                        SiteCheck.PlanKind.Template -> model.writeDetected()
+                        SiteCheck.PlanKind.Html -> navigator.push(BuilderScreen(startUrl = siteUrl, anime = anime))
+                        SiteCheck.PlanKind.Browser -> navigator.push(
+                            BuilderScreen(startUrl = siteUrl, anime = anime, siteNote = browserNote(state.siteCheck)),
+                        )
+                        SiteCheck.PlanKind.Data -> if (siteUrl != null) navigator.push(PageSourceScreen(url = siteUrl, sourceKey = null))
+                    }
+                },
+                onMarkers = if (state.result != null) model::showDetection else null,
+                onTemplate = { model.openPicker(NewSourceScreenModel.Picker.Template) },
+                onRecord = model::openRecord,
+                onPageSource = { if (siteUrl != null) navigator.push(PageSourceScreen(url = siteUrl, sourceKey = null)) },
+                onAgain = model::checkSite,
+                onSkip = model::backToEntry,
+                modifier = Modifier.fillMaxSize(),
+            )
+            NewSourceScreenModel.Phase.Detecting, NewSourceScreenModel.Phase.Detected ->
+                MainColumn(state, model, modifier = Modifier.fillMaxSize())
         }
     }
 
@@ -308,32 +343,298 @@ private fun NewSourceContent(
     }
     val botCheck = state.botCheckUrl
     if (botCheck != null) {
+        // KMK (r115): the Site check's result stays behind the card (Check again after passing the check)
         AlertDialog(
-            onDismissRequest = model::backToEntry,
+            onDismissRequest = model::dismissBotCheck,
             title = { Text("The site wants a bot check") },
-            text = { Text("Open it in WebView, pass the check, then detect again. The check counts for the app's connection too.") },
+            text = { Text("Open it in WebView, pass the check, then check again. The check counts for the app's connection too.") },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        model.backToEntry()
+                        model.dismissBotCheck()
                         navigator.push(WebViewScreen(url = botCheck, initialTitle = host, sourceId = null))
                     },
                 ) { Text("Open in WebView") }
             },
-            dismissButton = { TextButton(onClick = model::backToEntry) { Text("Later") } },
+            dismissButton = { TextButton(onClick = model::dismissBotCheck) { Text("Later") } },
         )
     }
 }
 
-// ---------- the main column ----------
+// ---------- KMK (r115, mockup M3New): the entry page ----------
+
+/** The note the builder shows once when the Site check's plan is the hidden browser */
+private fun browserNote(result: SiteCheck.Result?): String {
+    val raw = result?.rawCards ?: 0
+    val rendered = result?.renderedCards ?: 0
+    return "Site check: the raw page has $raw title links, the browser shows $rendered (the list is built by the site's scripts). " +
+        "Tap as usual; then look at ⋮ › Page source: a source reading the plain page gets only what Raw has."
+}
+
+/**
+ * The address box with its one main action (Check the site) and the kind, then the four ways to start side by side
+ * (Site check recommended, Build by tapping, From a template, Record and convert), then Import from an extension / a
+ * file. [wide]: the address row on one line and the four tiles in one row; a phone stacks them.
+ */
+@Composable
+private fun EntryColumn(
+    state: NewSourceScreenModel.State,
+    model: NewSourceScreenModel,
+    wide: Boolean,
+    onBuild: () -> Unit,
+    onImport: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val scroll = rememberScrollState()
+    Column(
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = modifier.verticalScroll(scroll).padding(horizontal = 16.dp, vertical = 12.dp),
+    ) {
+        val field: @Composable (Modifier) -> Unit = { m ->
+            OutlinedTextField(
+                value = state.url,
+                onValueChange = model::setUrl,
+                singleLine = true,
+                leadingIcon = { Icon(Icons.Outlined.Language, contentDescription = null) },
+                placeholder = { Text("https://example.com") },
+                shape = RoundedCornerShape(28.dp),
+                textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace),
+                modifier = m,
+            )
+        }
+        val kinds: @Composable () -> Unit = {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FilterChip(selected = state.kindHint == null, onClick = { model.setKind(null) }, label = { Text("Let the Lab decide") })
+                FilterChip(selected = state.kindHint == false, onClick = { model.setKind(false) }, label = { Text("Manga") })
+                FilterChip(selected = state.kindHint == true, onClick = { model.setKind(true) }, label = { Text("Anime") })
+            }
+        }
+        val checkButton: @Composable (Modifier) -> Unit = { m ->
+            Button(onClick = model::checkSite, enabled = state.busy == null, modifier = m.heightIn(min = 48.dp)) {
+                Text("Check the site")
+            }
+        }
+        if (wide) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                field(Modifier.weight(1f))
+                kinds()
+                checkButton(Modifier)
+            }
+        } else {
+            field(Modifier.fillMaxWidth())
+            kinds()
+            checkButton(Modifier.fillMaxWidth())
+        }
+        if (wide) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+                (0 until 4).forEach { i -> StartTile(i, state, model, wide, onBuild, Modifier.weight(1f).fillMaxHeight()) }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                ImportRows(model, onImport, Modifier.weight(1f))
+            }
+        } else {
+            (0 until 4).forEach { i -> StartTile(i, state, model, wide, onBuild, Modifier.fillMaxWidth()) }
+            ImportRows(model, onImport, Modifier.fillMaxWidth())
+        }
+    }
+}
+
+/** One of the four ways to start ([index] 0 Site check, 1 Build by tapping, 2 From a template, 3 Record and convert) */
+@Composable
+private fun StartTile(
+    index: Int,
+    state: NewSourceScreenModel.State,
+    model: NewSourceScreenModel,
+    wide: Boolean,
+    onBuild: () -> Unit,
+    m: Modifier,
+) {
+    val templates = state.templates.count { !it.id.startsWith("recorded-") }
+    val engineNames = state.templates
+        .filter { !it.id.startsWith("blank-") && !it.id.startsWith("generic") && !it.id.startsWith("recorded-") }
+        .map { it.name.substringBefore(" (") }
+    when (index) {
+        0 -> StartCard(
+            icon = Icons.Outlined.AutoFixHigh,
+            title = "Site check",
+            badge = "Recommended",
+            body = "The Lab opens the site, compares what a source receives with what you see, finds its data requests " +
+                "and next page, and suggests the best way to read it.",
+            chips = listOf("~10 s", "fills what it can"),
+            steps = listOf("Paste the address", "Wait ~10 s", "Fix what's left (1–2 things)"),
+            action = "Check the site",
+            primary = true,
+            onClick = model::checkSite,
+            stretch = wide,
+            modifier = m,
+        )
+        1 -> StartCard(
+            icon = Icons.Outlined.TouchApp,
+            title = "Build by tapping",
+            badge = null,
+            body = "Open the site and tap the list, a title, an episode and the player. A checklist tests every tap on 3 titles.",
+            chips = listOf("no code", "HTML sites"),
+            steps = listOf("Tap a card on the list", "Tap the title, cover, episodes", "Tap the player"),
+            action = "Start",
+            primary = false,
+            onClick = onBuild,
+            stretch = wide,
+            modifier = m,
+        )
+        2 -> StartCard(
+            icon = Icons.Outlined.Description,
+            title = "From a template",
+            badge = null,
+            body = "Start from one of $templates templates" +
+                (if (engineNames.isNotEmpty()) " (generic list, ${engineNames.take(2).joinToString(", ")}…)" else "") +
+                " and fill in the blanks.",
+            chips = listOf("$templates templates", "code"),
+            steps = listOf("Pick a template", "Fill the blanks it asks for", "Run the test"),
+            action = "Start",
+            primary = false,
+            onClick = { model.openPicker(NewSourceScreenModel.Picker.Template) },
+            stretch = wide,
+            modifier = m,
+        )
+        else -> StartCard(
+            icon = Icons.Outlined.FiberManualRecord,
+            title = "Record and convert",
+            badge = null,
+            body = "Use an installed extension while the Lab records its requests, then turn them into a JS source.",
+            chips = listOf("from an APK", "${ExtensionRecorder.STEP_TIMEOUT_MS / 1000} s a step"),
+            steps = listOf("Pick the extension", "Let it run its short steps", "Convert"),
+            action = "Start",
+            primary = false,
+            onClick = model::openRecord,
+            stretch = wide,
+            modifier = m,
+        )
+    }
+}
+
+@Composable
+private fun StartCard(
+    icon: ImageVector,
+    title: String,
+    badge: String?,
+    body: String,
+    chips: List<String>,
+    steps: List<String>,
+    action: String,
+    primary: Boolean,
+    onClick: () -> Unit,
+    /** the four tiles side by side: the card fills the row's height and its button sits at the bottom */
+    stretch: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MaterialTheme.colorScheme
+    val green = StripColor.Green.tint()
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = if (primary) colors.primaryContainer.copy(alpha = 0.22f) else colors.surfaceContainer,
+        border = if (primary) BorderStroke(1.dp, colors.primary.copy(alpha = 0.6f)) else null,
+        modifier = modifier,
+    ) {
+        Column(modifier = (if (stretch) Modifier.fillMaxHeight() else Modifier).padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(icon, contentDescription = null, tint = colors.primary)
+                Spacer(Modifier.width(10.dp))
+                Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (badge != null) {
+                    Spacer(Modifier.width(8.dp))
+                    Surface(shape = RoundedCornerShape(8.dp), color = green.copy(alpha = 0.16f)) {
+                        Text(badge, fontSize = 12.sp, color = green, modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp))
+                    }
+                }
+            }
+            Text(body, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, modifier = Modifier.padding(top = 10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 10.dp)) {
+                chips.forEach { chip ->
+                    Surface(shape = RoundedCornerShape(8.dp), color = if (primary) green.copy(alpha = 0.14f) else colors.surfaceContainerHighest) {
+                        Text(
+                            chip,
+                            fontSize = 12.sp,
+                            color = if (primary) green else colors.onSurfaceVariant,
+                            maxLines = 1,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        )
+                    }
+                }
+            }
+            Text(
+                "YOU'LL DO",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = colors.primary,
+                modifier = Modifier.padding(top = 14.dp, bottom = 4.dp),
+            )
+            steps.forEachIndexed { index, step ->
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.size(20.dp).clip(CircleShape).background(colors.surfaceContainerHighest),
+                    ) {
+                        Text((index + 1).toString(), fontSize = 11.sp, color = colors.onSurfaceVariant)
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Text(step, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            if (stretch) Spacer(Modifier.weight(1f))
+            Spacer(Modifier.height(14.dp))
+            if (primary) {
+                Button(onClick = onClick) { Text(action) }
+            } else {
+                OutlinedButton(onClick = onClick) { Text(action) }
+            }
+        }
+    }
+}
+
+/** Import from an extension · Import a file (each gets [modifier]: side by side in a row, or stacked) */
+@Composable
+private fun ImportRows(model: NewSourceScreenModel, onImport: () -> Unit, modifier: Modifier) {
+    ImportRow(
+        icon = Icons.Outlined.Extension,
+        title = "Import from an extension",
+        subtitle = "Read an installed extension's web source",
+        action = "Pick",
+        onClick = { model.openPicker(NewSourceScreenModel.Picker.Extension) },
+        modifier = modifier,
+    )
+    ImportRow(
+        icon = Icons.Outlined.FileUpload,
+        title = "Import a file",
+        subtitle = ".js or .json from a friend or a backup",
+        action = "Choose",
+        onClick = onImport,
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun ImportRow(icon: ImageVector, title: String, subtitle: String, action: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceContainer, modifier = modifier) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
+            }
+            Spacer(Modifier.width(8.dp))
+            OutlinedButton(onClick = onClick) { Text(action) }
+        }
+    }
+}
+
+// ---------- the engine's page (r96; KMK r115: opened from the Site check's plan, "See the markers") ----------
 
 @Composable
 private fun MainColumn(
     state: NewSourceScreenModel.State,
     model: NewSourceScreenModel,
-    pickFile: (String) -> Unit,
     modifier: Modifier = Modifier,
-    howCard: Boolean = false,
 ) {
     val navigator = LocalNavigator.currentOrThrow
     LazyColumn(
@@ -341,56 +642,42 @@ private fun MainColumn(
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        if (state.phase == NewSourceScreenModel.Phase.Entry) {
-            item(key = "entry") { EntryCard(state, model) }
-            item(key = "start-from") {
-                StartFromCard(
-                    templates = state.templates,
-                    onTemplate = { model.openPicker(NewSourceScreenModel.Picker.Template) },
-                    onBuild = { navigator.push(BuilderScreen(state.url.trim().ifBlank { null }, state.kindHint == true)) },
-                    onImport = { pickFile("*/*") },
-                    onExtension = { model.openPicker(NewSourceScreenModel.Picker.Extension) },
-                )
+        item(key = "steps") { StepsCard(state.steps) }
+        val result = state.result
+        if (result != null) {
+            val best = result.best
+            item(key = "fingerprint") { FingerprintCard(best, result.others) }
+            if (best != null) {
+                item(key = "write") { WhatTheLabWillWriteCard(best, state.templateForBest) }
             }
-            if (howCard) item(key = "how") { HowDetectionWorksCard(state.fingerprints) }
-        } else {
-            item(key = "steps") { StepsCard(state.steps) }
-            val result = state.result
-            if (result != null) {
-                val best = result.best
-                item(key = "fingerprint") { FingerprintCard(best, result.others) }
-                if (best != null) {
-                    item(key = "write") { WhatTheLabWillWriteCard(best, state.templateForBest) }
+            item(key = "actions") {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    Button(
+                        onClick = model::writeDetected,
+                        enabled = result.writeOffered && state.busy == null,
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Write the source") }
+                    OutlinedButton(
+                        onClick = { navigator.push(BuilderScreen(result.siteUrl, (result.best?.kind ?: "") == "anime" || state.kindHint == true)) },
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Build by tapping instead") }
                 }
-                item(key = "actions") {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                        Button(
-                            onClick = model::writeDetected,
-                            enabled = result.writeOffered && state.busy == null,
-                            modifier = Modifier.weight(1f),
-                        ) { Text("Write the source") }
-                        OutlinedButton(
-                            onClick = { navigator.push(BuilderScreen(result.siteUrl, (result.best?.kind ?: "") == "anime" || state.kindHint == true)) },
-                            modifier = Modifier.weight(1f),
-                        ) { Text("Build by tapping instead") }
-                    }
-                    if (best != null && !result.writeOffered) {
-                        Text(
-                            text = "Below 60 % the Lab doesn't write from a template: the markers are shown so you can see why, and Build by tapping is one tap away.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 8.dp),
-                        )
-                    }
-                }
-            } else {
-                item(key = "running") {
+                if (best != null && !result.writeOffered) {
                     Text(
-                        text = "Fetching through the app's connection…",
+                        text = "Below 60 % the Lab doesn't write from a template: the markers are shown so you can see why, and Build by tapping is one tap away.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 8.dp),
                     )
                 }
+            }
+        } else {
+            item(key = "running") {
+                Text(
+                    text = "Fetching through the app's connection…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
@@ -413,117 +700,6 @@ private fun LabCard(title: String?, trailing: String? = null, content: @Composab
                 }
             }
             content()
-        }
-    }
-}
-
-@Composable
-private fun EntryCard(state: NewSourceScreenModel.State, model: NewSourceScreenModel) {
-    LabCard(title = "Site address", trailing = "paste or type") {
-        OutlinedTextField(
-            value = state.url,
-            onValueChange = model::setUrl,
-            singleLine = true,
-            placeholder = { Text("https://mangaread.org") },
-            textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 10.dp)) {
-            FilterChip(selected = state.kindHint == null, onClick = { model.setKind(null) }, label = { Text("Let the Lab decide") })
-            FilterChip(selected = state.kindHint == false, onClick = { model.setKind(false) }, label = { Text("Manga") })
-            FilterChip(selected = state.kindHint == true, onClick = { model.setKind(true) }, label = { Text("Anime") })
-        }
-        Text(
-            text = "The Lab loads the site through the app's connection (a hidden browser page when a bot check answers), " +
-                "compares it with the engines it knows, and writes the source from the matching template. Nothing is saved until you save.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(vertical = 12.dp),
-        )
-        Button(onClick = model::detect, enabled = state.busy == null, modifier = Modifier.fillMaxWidth().height(52.dp)) {
-            Icon(Icons.Outlined.Search, contentDescription = null)
-            Spacer(Modifier.width(8.dp))
-            Text("Detect the site", style = MaterialTheme.typography.titleMedium)
-        }
-    }
-}
-
-@Composable
-private fun StartFromCard(
-    templates: List<LabTemplate>,
-    onTemplate: () -> Unit,
-    onBuild: () -> Unit,
-    onImport: () -> Unit,
-    onExtension: () -> Unit,
-) {
-    val engineNames = templates.filter { !it.id.startsWith("blank-") && !it.id.startsWith("generic") && !it.id.startsWith("recorded-") }
-        .map { it.name.substringBefore(" (") }
-    LabCard(title = "Or start from") {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            StartTile(Icons.Outlined.Description, "A template", engineNames.take(3).joinToString(", ").ifBlank { "blank skeletons" }, onTemplate, Modifier.weight(1f))
-            StartTile(Icons.Outlined.TouchApp, "Build by tapping", "unknown engine", onBuild, Modifier.weight(1f))
-        }
-        Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            StartTile(Icons.Outlined.FileUpload, "Import a file", ".js or .json", onImport, Modifier.weight(1f))
-            // KMK (r104): "Duplicate a source" removed from here (owner); Import from extension takes its place
-            StartTile(Icons.Outlined.Extension, "Import from extension", "an installed manga or anime APK", onExtension, Modifier.weight(1f))
-        }
-    }
-}
-
-@Composable
-private fun StartTile(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLowest,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = modifier.heightIn(min = 72.dp).clickable(onClick = onClick),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.width(10.dp))
-            Column {
-                Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-        }
-    }
-}
-
-@Composable
-private fun HowDetectionWorksCard(fingerprints: FingerprintFile?) {
-    LabCard(title = "How detection works", trailing = "no guessing: fixed markers") {
-        val rows = listOf(
-            "1 · Fetch" to "home page, then one title it links to, then the chapter request a candidate needs (3 at most)",
-            "2 · Compare" to "each engine has 3–6 markers (a theme path, selector counts, a script name, a request)",
-            "3 · Score" to "matched markers weighted 3 / 2 / 1 ÷ the engine's total · ties by marker count",
-            "4 · Write" to "template + the site's own paths and attributes, every part with a description",
-            "Below 60 %" to "the Lab offers Build by tapping instead of writing from a template",
-        )
-        rows.forEach { (k, v) ->
-            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-                Text(k, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(110.dp))
-                Text(v, fontFamily = FontFamily.Monospace, fontSize = 12.sp, lineHeight = 16.sp, modifier = Modifier.weight(1f))
-            }
-            HorizontalDivider()
-        }
-        if (fingerprints != null) {
-            Text(
-                text = "Engines in fingerprints.json v${fingerprints.version}",
-                style = MaterialTheme.typography.labelLarge,
-                modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
-            )
-            fingerprints.engines.forEach { engine ->
-                Row(modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
-                    Text(engine.name, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(
-                        "${engine.markers.size} markers · ${engine.kind}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
         }
     }
 }

@@ -52,6 +52,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.navigator.LocalNavigator
 import eu.kanade.tachiyomi.jssource.lab.History
+import eu.kanade.tachiyomi.jssource.lab.LintCheck
 import eu.kanade.tachiyomi.jssource.lab.LintFinding
 import eu.kanade.tachiyomi.jssource.lab.LintRule
 import eu.kanade.tachiyomi.jssource.lab.LintSeverity
@@ -90,8 +91,11 @@ internal fun LintPane(
     var filter by rememberSaveable(state.key) { mutableStateOf(LintFilter.All) }
     var selectedKey by rememberSaveable(state.key) { mutableStateOf<String?>(null) }
     val offer = state.templateOffer
-    val showOffer = offer != null && (filter == LintFilter.All || filter == LintFilter.Tips)
-    val findings = all.filter { filter.matches(it) }
+    // KMK (r115, mock M3Lint): the template offer belongs to "In the code"
+    val showOffer = offer != null && (filter == LintFilter.All || filter == LintFilter.Code)
+    val originOf: (LintFinding) -> LintOrigin = { f -> lintOrigin(f, rules) }
+    // grouped by where they come from (the site, the code, the last test), in that order
+    val findings = all.filter { filter.matches(it, originOf(it)) }.sortedBy { originOf(it).ordinal }
     val selected = findings.firstOrNull { findingKey(it) == selectedKey }
     val offerSelected = showOffer && selectedKey == TEMPLATE_KEY
     // Nothing chosen yet: the first card (wide panes show it on the right)
@@ -215,7 +219,8 @@ internal fun LintPane(
                             modifier = Modifier.horizontalScroll(rememberScrollState()),
                         ) {
                             LintFilter.entries.forEach { f ->
-                                val n = all.count { f.matches(it) } + if (offer != null && (f == LintFilter.All || f == LintFilter.Tips)) 1 else 0
+                                val n = all.count { f.matches(it, originOf(it)) } +
+                                    if (offer != null && (f == LintFilter.All || f == LintFilter.Code)) 1 else 0
                                 FilterChip(
                                     selected = filter == f,
                                     onClick = { filter = f },
@@ -237,15 +242,11 @@ internal fun LintPane(
                                 Text(if (state.linting) "Checking…" else "Check now")
                             }
                             if (!fixAllInBar && safe.isNotEmpty()) {
-                                OutlinedButton(onClick = onFixAll) { Text("Fix all ${safe.size} safe ${if (safe.size == 1) "fix" else "fixes"}") }
+                                Button(onClick = onFixAll) {
+                                    Text(if (safe.size == 1) "Fix the 1 that can be fixed" else "Fix the ${safe.size} that can be fixed")
+                                }
                             }
                         }
-                    }
-                }
-                if (showOffer && offer != null) {
-                    item(key = TEMPLATE_KEY) {
-                        val on = offerSelected && wide
-                        offerCard(offer, on) { selectedKey = if (on) null else TEMPLATE_KEY }
                     }
                 }
                 if (lint != null && findings.isEmpty() && !showOffer) {
@@ -256,9 +257,25 @@ internal fun LintPane(
                         )
                     }
                 }
-                items(findings, key = { findingKey(it) }) { finding ->
-                    // a phone highlights nothing in the list: a tap opens the problem's page
-                    findingCard(finding, wide && finding === shown) { selectedKey = findingKey(finding) }
+                // KMK (r115, mock M3Lint): one group per origin under its small-caps heading (the template offer
+                // first in "In the code")
+                LintOrigin.entries.forEach { origin ->
+                    val group = findings.filter { originOf(it) == origin }
+                    val offerHere = origin == LintOrigin.Code && showOffer && offer != null
+                    if (group.isEmpty() && !offerHere) return@forEach
+                    item(key = "group-${origin.name}") {
+                        LabCaption(origin.label, modifier = Modifier.padding(top = 6.dp, start = 4.dp))
+                    }
+                    if (offerHere && offer != null) {
+                        item(key = TEMPLATE_KEY) {
+                            val on = offerSelected && wide
+                            offerCard(offer, on) { selectedKey = if (on) null else TEMPLATE_KEY }
+                        }
+                    }
+                    items(group, key = { findingKey(it) }) { finding ->
+                        // a phone highlights nothing in the list: a tap opens the problem's page
+                        findingCard(finding, wide && finding === shown) { selectedKey = findingKey(finding) }
+                    }
                 }
                 if (lint != null && lint.passed.isNotEmpty() && filter == LintFilter.All) {
                     item(key = "passed") {
@@ -359,21 +376,39 @@ private const val LEARN_RULE = "filter-value-is-label"
 
 private fun findingKey(f: LintFinding): String = "${f.ruleId}:${f.line}:${f.found.hashCode()}"
 
-/** Lint's filter chips */
+/** Lint's filter chips. KMK (r115, mock M3Lint): by where a finding comes from, not by its level */
 internal enum class LintFilter(val label: String) {
     All("All"),
-    Errors("Errors"),
-    Warnings("Warnings"),
-    Tips("Tips"),
+    Site("From the site"),
+    Code("In the code"),
+    Test("From the test"),
     Ignored("Ignored"),
     ;
 
-    fun matches(f: LintFinding): Boolean = when (this) {
+    fun matches(f: LintFinding, origin: LintOrigin): Boolean = when (this) {
         All -> !f.ignored
-        Errors -> !f.ignored && f.severity == LintSeverity.Error
-        Warnings -> !f.ignored && f.severity == LintSeverity.Warn
-        Tips -> !f.ignored && f.severity == LintSeverity.Info
+        Site -> !f.ignored && origin == LintOrigin.Site
+        Code -> !f.ignored && origin == LintOrigin.Code
+        Test -> !f.ignored && origin == LintOrigin.Test
         Ignored -> f.ignored
+    }
+}
+
+/** KMK (r115): where a finding comes from, by its rule's check kind */
+internal enum class LintOrigin(val label: String) { Site("From the site"), Code("In the code"), Test("From the last test") }
+
+/**
+ * KMK (r115): the site's replies (headers, status codes, a bot check met) / the code itself (patterns, selectors) /
+ * what the last test brought back (result fields, saved chapter addresses). A rule not in [rules] or with a check
+ * kind this build doesn't know counts as code.
+ */
+internal fun lintOrigin(f: LintFinding, rules: RulesFile?): LintOrigin {
+    val check = rules?.rules?.firstOrNull { it.id == f.ruleId }?.check ?: return LintOrigin.Code
+    return when (LintCheck.of(check)) {
+        LintCheck.HeaderPresent, LintCheck.ResponseStatus, LintCheck.RenderOption -> LintOrigin.Site
+        LintCheck.ResultField, LintCheck.CompareSavedChapterUrls -> LintOrigin.Test
+        // regex-in-code, selector-pattern, and any kind added later
+        else -> LintOrigin.Code
     }
 }
 
@@ -415,7 +450,27 @@ private fun ProblemCard(
             }
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                // KMK (r115, mock M3Lint): the level as a chip beside the title
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    LabChip(
+                        when (severity) {
+                            LintSeverity.Error -> "error"
+                            LintSeverity.Warn -> "warn"
+                            LintSeverity.Info -> "info"
+                        },
+                        when (severity) {
+                            LintSeverity.Error -> StripColor.Red
+                            LintSeverity.Warn -> StripColor.Amber
+                            LintSeverity.Info -> null
+                        },
+                    )
+                }
                 Text(
                     where,
                     style = MaterialTheme.typography.labelMedium,

@@ -27,6 +27,14 @@ data class BackupOptions(
     /** Only titles in these categories ([CategoryChoice] keys); null for all */
     val categoryKeys: Set<String>? = null,
     // KMK <--
+    // KMK (r115) -->
+    /** The Source Lab's files: each JS source's history, test runs, lint, health, explain, and sourcelab/ */
+    val sourceLabFiles: Boolean = true,
+    /** What JS sources keep for themselves (js_storage/); off by default, it may hold logins */
+    val jsStorage: Boolean = false,
+    /** Custom cover pictures of manga and anime (each up to 5 MB) */
+    val customCovers: Boolean = true,
+    // KMK (r115) <--
 ) {
 
     fun asBooleanArray() = booleanArrayOf(
@@ -47,11 +55,15 @@ data class BackupOptions(
         // KMK -->
         jsSources,
         // KMK <--
+        // KMK (r115): only ever added at the end (stored by position)
+        sourceLabFiles,
+        jsStorage,
+        customCovers,
     )
 
     fun canCreate() =
         libraryEntries || categories || appSettings || extensionStores || sourceSettings || savedSearchesFeeds ||
-            /* KMK --> */ jsSources /* KMK <-- */
+            /* KMK --> */ jsSources /* KMK <-- */ || /* KMK (r115) */ sourceLabFiles || jsStorage
 
     companion object {
         val libraryOptions = persistentListOf(
@@ -91,7 +103,8 @@ data class BackupOptions(
             Entry(
                 label = MR.strings.non_library_settings,
                 getter = BackupOptions::readEntries,
-                chip = "All read entries",
+                // KMK (r115): also anime watched outside the library
+                chip = "All read & watched",
                 setter = { options, enabled -> options.copy(readEntries = enabled) },
                 enabled = { it.libraryEntries },
             ),
@@ -102,6 +115,15 @@ data class BackupOptions(
                 chip = "Custom entry info",
                 setter = { options, enabled -> options.copy(customInfo = enabled) },
                 enabled = { it.libraryEntries },
+            ),
+            // KMK (r115): manga and anime custom covers, matched by source + url on restore
+            Entry(
+                label = MR.strings.custom_cover,
+                getter = BackupOptions::customCovers,
+                chip = "Custom covers",
+                setter = { options, enabled -> options.copy(customCovers = enabled) },
+                enabled = { it.libraryEntries },
+                backupOnly = true,
             ),
             Entry(
                 // KMK-->
@@ -141,6 +163,22 @@ data class BackupOptions(
                 setter = { options, enabled -> options.copy(jsSources = enabled) },
             ),
             // KMK <--
+            // KMK (r115): the Source Lab's files of each JS source, and JS source storage (off: may hold logins)
+            Entry(
+                label = KMR.strings.backup_js_sources,
+                getter = BackupOptions::sourceLabFiles,
+                chip = "Source Lab files",
+                setter = { options, enabled -> options.copy(sourceLabFiles = enabled) },
+                backupOnly = true,
+            ),
+            Entry(
+                label = KMR.strings.backup_js_sources,
+                getter = BackupOptions::jsStorage,
+                chip = "JS source storage (may hold logins)",
+                setter = { options, enabled -> options.copy(jsStorage = enabled) },
+                enabled = { it.jsSources },
+                backupOnly = true,
+            ),
             // KMK (r114): "Logins & tokens" listed last (the chip groups show it after JS sources); off by default
             Entry(
                 label = MR.strings.private_settings,
@@ -168,6 +206,10 @@ data class BackupOptions(
             // SY <--
             // KMK: older saved choices are shorter
             jsSources = array.getOrElse(12) { true },
+            // KMK (r115): older saved choices are shorter still
+            sourceLabFiles = array.getOrElse(13) { true },
+            jsStorage = array.getOrElse(14) { false },
+            customCovers = array.getOrElse(15) { true },
         )
     }
 
@@ -178,5 +220,7 @@ data class BackupOptions(
         val enabled: (BackupOptions) -> Boolean = { true },
         // KMK (r114): the short name on the backup screen's chips; null shows [label]
         val chip: String? = null,
+        // KMK (r115): a part only backups have (device sync's settings don't keep it, so its screen leaves it out)
+        val backupOnly: Boolean = false,
     )
 }

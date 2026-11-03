@@ -19,6 +19,14 @@ data class RestoreOptions(
     /** Only titles in these categories ([CategoryChoice] keys); null for all */
     val categoryKeys: Set<String>? = null,
     // KMK <--
+    // KMK (r115) -->
+    /** The Source Lab's files (of JS sources on this device after the restore) */
+    val sourceLabFiles: Boolean = true,
+    /** What JS sources keep for themselves (only in backups made with its option ticked) */
+    val jsStorage: Boolean = true,
+    /** Custom covers of the restored titles */
+    val customCovers: Boolean = true,
+    // KMK (r115) <--
 ) {
 
     fun asBooleanArray() = booleanArrayOf(
@@ -33,6 +41,10 @@ data class RestoreOptions(
         // KMK -->
         jsSources,
         // KMK <--
+        // KMK (r115): only ever added at the end (stored by position)
+        sourceLabFiles,
+        jsStorage,
+        customCovers,
     )
 
     fun canRestore() =
@@ -42,7 +54,8 @@ data class RestoreOptions(
             extensionStores ||
             sourceSettings /* SY --> */ ||
             savedSearchesFeeds /* SY <-- */ ||
-            /* KMK --> */ jsSources /* KMK <-- */
+            /* KMK --> */ jsSources /* KMK <-- */ ||
+            /* KMK (r115) */ sourceLabFiles || jsStorage
 
     companion object {
         val options = persistentListOf(
@@ -100,6 +113,10 @@ data class RestoreOptions(
             // SY <--
             // KMK: older saved choices are shorter
             jsSources = array.getOrElse(6) { true },
+            // KMK (r115): older saved choices are shorter still
+            sourceLabFiles = array.getOrElse(7) { true },
+            jsStorage = array.getOrElse(8) { true },
+            customCovers = array.getOrElse(9) { true },
         )
     }
 

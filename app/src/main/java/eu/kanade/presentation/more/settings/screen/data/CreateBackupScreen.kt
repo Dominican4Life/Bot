@@ -112,8 +112,10 @@ class CreateBackupScreen : Screen() {
                     BackupCard(modifier = cardModifier) {
                         BackupMuted("What goes in · settings")
                         Options(BackupOptions.settingsOptions, state, model)
+                        // KMK (r115): JS source storage can hold site logins too
                         BackupMuted(
-                            "Logins & tokens are tracker logins and other private settings; keep that file safe.",
+                            "Logins & tokens are tracker logins and other private settings. JS source storage can " +
+                                "hold site logins too. With either ticked, keep that file safe.",
                         )
                     }
                 }

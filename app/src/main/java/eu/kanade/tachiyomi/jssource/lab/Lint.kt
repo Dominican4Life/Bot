@@ -26,6 +26,8 @@ import kotlin.math.roundToLong
  * `check` is listed as "not checked by this build", never an error. Results go to `js_sources/<key>/lint.json`.
  * Lint runs after a save and after a Test Run and never blocks either. "Apply" only changes the code in the
  * editor (the owner still saves), and only when the rule's `find` occurs exactly once in the finding's part.
+ * KMK (r115): [RuleOverrides] (the Rules screen's switches, levels and wording) are applied in [run]; [rules]
+ * stays the file as written, so the Rules screen can show and reset to the built-in values.
  */
 internal object Lint {
 
@@ -119,7 +121,15 @@ internal object Lint {
         val notChecked = ArrayList<String>()
         val toRead = ArrayList<String>()
         var checked = 0
-        rules.rules.forEach { rule ->
+        // KMK (r115): the Rules screen's overrides: an off rule is skipped, a level / title / fix replaces the file's
+        val overrides = runCatching { RuleOverrides.all() }.getOrDefault(emptyMap())
+        var off = 0
+        rules.rules.forEach { builtIn ->
+            val rule = RuleOverrides.effective(builtIn, overrides)
+            if (rule == null) {
+                off++
+                return@forEach
+            }
             if (rule.applies.isNotEmpty() && rule.applies.none { it in subject.tags }) return@forEach
             if (rule.check == "text" || rule.check.isBlank()) {
                 toRead.add(rule.id)
@@ -156,7 +166,7 @@ internal object Lint {
             ignoredRuleIds = ignored,
         )
         runCatching { write(key, result) }.onFailure { AppLog.add('W', "lab", "Couldn't write lint.json of $key: ${it.message}") }
-        AppLog.add('I', "lab", "Lint of ${info.name}: ${findings.count { !it.ignored }} findings, ${passed.size} passed (rules v${rules.version})")
+        AppLog.add('I', "lab", "Lint of ${info.name}: ${findings.count { !it.ignored }} findings, ${passed.size} passed (rules v${rules.version}${if (off > 0) ", $off switched off" else ""})")
         LabStore.invalidate(key)
         result
     }

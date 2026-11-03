@@ -97,9 +97,19 @@ import java.util.Locale
  * again" ([findLateAgain]); a section's "Load more" button (found by picker.js, or tapped with Suggestions armed) can
  * be pressed up to 3 times by the source ([setLoadMorePresses]); "Scan it now" ([scanLoadMore]) presses it once in the
  * page and keeps the request that brought the new cards ([BuilderLateSections.findMore]).
+ *
+ * KMK (r115, Helper 2): the labels are one checklist. Every pick is run again on the raw page and on up to 3 titles
+ * ([scheduleRerun] → [BuilderRecheck], kept in [State.rechecks]); [checklistRow] gives each label one mark (✓ ! ✕ ○),
+ * one line and at most one action ([applyFix]: Read another picture attribute, Split into rows, Tap again, Page
+ * source). The helper card over the page has one primary action per verdict (and ✕ to keep the pick).
  */
-internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean, private val editKey: String? = null) :
-    StateScreenModel<BuilderScreenModel.State>(State(url = startUrl.orEmpty(), anime = anime, editKey = editKey)) {
+internal class BuilderScreenModel(
+    private val startUrl: String?,
+    anime: Boolean,
+    private val editKey: String? = null,
+    /** KMK (r115): the Site check's word on this site (a list made by scripts …), shown once over the page */
+    siteNote: String? = null,
+) : StateScreenModel<BuilderScreenModel.State>(State(url = startUrl.orEmpty(), anime = anime, editKey = editKey, notice = siteNote)) {
 
     /** The three pages of the flow and the labels each offers */
     enum class Step(val number: Int, val title: String, val labels: List<String>) {
@@ -301,6 +311,15 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
          * wording of [History.overwriteConfirm]): [confirmSave] overwrites it, [cancelSave] doesn't; null = none
          */
         val saveConfirm: String? = null,
+        /**
+         * KMK (r115, Helper 2): each pick run again on the raw page and on up to 3 titles ([BuilderRecheck]), by label;
+         * [recheckBusy] while pages are fetched; [recheckNote] the checklist's one-line summary ("3 titles · raw page")
+         */
+        val rechecks: Map<String, PickCheck.Recheck> = emptyMap(),
+        val recheckBusy: Boolean = false,
+        val recheckNote: String? = null,
+        /** KMK (r115): one-tap fixes that change a derived value ("Read data-src": coverAttr / detailsCoverAttr) */
+        val attrOverrides: Map<String, String> = emptyMap(),
     ) {
         val site: String get() = (pageUrl ?: loadUrl ?: url).let { Detector.normalize(it) }
         val host: String get() = site.removePrefix("https://").removePrefix("http://")
@@ -324,6 +343,11 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
 
     /** r100 (W3): Search / Tabs / Filters / Settings, recorded while the owner browses the site */
     val extras = BuilderExtrasModel()
+
+    // KMK (r115, Helper 2): the raw pages read by the checklist's re-run, and that run (declared before init: init's
+    // coroutines may rederive at once)
+    private val rerunPages = BuilderRecheck.Pages()
+    private var rerunJob: Job? = null
 
     /**
      * r100: scripts for the page (keep / mark / suggest / adopt …), evaluated by the screen in this order. A flow,
@@ -1564,6 +1588,7 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
         }
         if (!on) page("window.__labPicker.unsuggest && window.__labPicker.unsuggest();")
         AppLog.add('D', "lab", "helper: check each pick = $on")
+        scheduleRerun() // KMK (r115): the checklist's re-run follows the switch
     }
 
     /** "Use suggestion": the suggested element gets the card's label (and becomes the page's current element) */
@@ -2182,12 +2207,100 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
     private fun rederive() {
         val s = state.value
         val selection = runCatching {
-            withCode(Derive.derive(s.site, s.anime, s.picks, s.singleEpisode, s.tagGroups, s.suggestionGroups), s)
+            withOverrides(withCode(Derive.derive(s.site, s.anime, s.picks, s.singleEpisode, s.tagGroups, s.suggestionGroups), s), s)
         }
             .onFailure { AppLog.add('W', "lab", "Derive failed: ${it.message}") }
             .getOrNull()
         mutableState.update { it.copy(selection = selection) }
         recheck()
+        scheduleRerun()
+    }
+
+    /** KMK (r115): the checklist's one-tap value changes ([State.attrOverrides]) over what Derive found */
+    private fun withOverrides(selection: BuilderSelection, s: State): BuilderSelection {
+        if (s.attrOverrides.isEmpty()) return selection
+        return selection.copy(
+            derived = selection.derived + s.attrOverrides,
+            reasons = selection.reasons + s.attrOverrides.mapValues { (_, v) -> "set by the checklist: $v holds the picture in the raw page" },
+        )
+    }
+
+    // ---------- KMK (r115, mockup EHelper2): Helper 2, one checklist ----------
+
+    /**
+     * Runs every pick again on the raw page and on up to 3 titles ([BuilderRecheck]), 0.8 s after the last change (a
+     * burst of picks makes one run). Pages already read are reused, so a re-run is only Jsoup work. Off with "Check
+     * each pick".
+     */
+    private fun scheduleRerun(delayMs: Long = 800L) {
+        rerunJob?.cancel()
+        val s = state.value
+        if (!s.helper || s.selection == null || (s.picks.isEmpty() && s.tagGroups.isEmpty())) {
+            if (s.rechecks.isNotEmpty() || s.recheckBusy) mutableState.update { it.copy(rechecks = emptyMap(), recheckBusy = false, recheckNote = null) }
+            return
+        }
+        rerunJob = screenModelScope.launchIO {
+            delay(delayMs)
+            val now = state.value
+            val derived = now.selection?.derived ?: return@launchIO
+            val input = BuilderRecheck.Input(
+                derived = derived,
+                raws = now.raws,
+                picked = now.picks.map { it.pick.label }.toSet() + (if (now.tagGroups.isNotEmpty()) setOf("tags") else emptySet()),
+                tagGroups = now.tagGroups,
+                singleEpisode = now.singleEpisode,
+            )
+            val plan = BuilderRecheck.plan(input)
+            mutableState.update { it.copy(recheckBusy = true) }
+            try {
+                val result = BuilderRecheck.run(input, rerunPages, now.site.trimEnd('/') + "/")
+                val note = listOfNotNull(
+                    if (plan.list != null) "the raw list page" else null,
+                    if (plan.titles.isNotEmpty()) "${plan.titles.size} ${if (plan.titles.size == 1) "title" else "titles"}" else null,
+                    if (plan.chapter != null) "a chapter" else null,
+                ).joinToString(" · ").ifBlank { null }
+                mutableState.update { it.copy(rechecks = result, recheckBusy = false, recheckNote = note) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                AppLog.add('W', "lab", "helper2: re-run failed: ${e.message}")
+                mutableState.update { it.copy(recheckBusy = false, recheckNote = "not re-run: ${e.message ?: e.javaClass.simpleName}") }
+            }
+        }
+    }
+
+    /** The checklist's "Check again" */
+    fun rerunNow() = scheduleRerun(delayMs = 0L)
+
+    /** One checklist row for [label] ([PickCheck.row] over the tap's verdict and the re-run) */
+    fun checklistRow(s: State, label: String): PickCheck.Row {
+        val picked = if (label == "tags") s.tagGroups.isNotEmpty() else s.pick(label) != null
+        return PickCheck.row(
+            label = label,
+            picked = picked || s.fromCodeOnly(label),
+            optional = label in optionalLabels,
+            verdict = if (picked) s.checks[label] else null,
+            recheck = if (picked && s.helper) s.rechecks[label] else null,
+        )
+    }
+
+    /** A checklist row's one action (only what the builder already does) */
+    fun applyFix(label: String, fix: PickCheck.Fix) {
+        AppLog.add('I', "lab", "helper2 $label: ${fix.kind} ${fix.value}")
+        when (fix.kind) {
+            PickCheck.FixKind.UseAttr -> {
+                val key = if (label == "bigCover") "detailsCoverAttr" else "coverAttr"
+                mutableState.update { it.copy(attrOverrides = it.attrOverrides + (key to fix.value)) }
+                rederive()
+            }
+            PickCheck.FixKind.SplitRows -> fix.value.toIntOrNull()?.let { splitTagGroup(it) }
+            PickCheck.FixKind.TapAgain -> {
+                if (state.value.helperFor == label) rejectHelperPick()
+                arm(label)
+            }
+            // opened by the screen (it owns the navigator)
+            PickCheck.FixKind.PageSource -> Unit
+        }
     }
 
     /** r102: Edit by tapping on an older source: the code's values for every label not tapped again */
@@ -2226,7 +2339,7 @@ internal class BuilderScreenModel(private val startUrl: String?, anime: Boolean,
 
     private fun writeSource(inPlace: Boolean) {
         val s = state.value
-        val selection = s.selection ?: withCode(Derive.derive(s.site, s.anime, s.picks, s.singleEpisode, s.tagGroups, s.suggestionGroups), s)
+        val selection = s.selection ?: withOverrides(withCode(Derive.derive(s.site, s.anime, s.picks, s.singleEpisode, s.tagGroups, s.suggestionGroups), s), s)
         // r99: the JSON format has no way to say "the title page is the one episode": written as JS then
         // r99 fix: nor "no chapter link was picked" (its empty CHAPTER selector would fail without saying why): JS too,
         // whose getChapterList throws the clear error

@@ -4,11 +4,11 @@ import android.content.res.Configuration
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -24,18 +24,21 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.domain.ui.model.PanoramaStyle
+import eu.kanade.domain.ui.model.WideCoverStyle
 import eu.kanade.presentation.library.components.MangaComfortableGridItem
 import eu.kanade.presentation.library.components.MangaCompactGridItem
+import eu.kanade.presentation.more.settings.WideCoverPlace
+import eu.kanade.presentation.more.settings.WideCoverSync
 import kotlinx.collections.immutable.persistentListOf
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.domain.library.model.LibraryDisplayMode
@@ -198,6 +201,9 @@ fun MediaDisplayDialog(
                     FilterChip(
                         selected = displayMode == LibraryDisplayMode.ComfortableGridPanorama && panoramaStyle == style,
                         onClick = {
+                            // KMK (r115): through WideCoverSync ("Same everywhere"); the grids of History and
+                            // Updates still use the Library's style, as before
+                            WideCoverSync.pick(WideCoverPlace.HISTORY_UPDATES, WideCoverStyle.of(style))
                             panoramaStylePref.set(style)
                             displayModePref.set(LibraryDisplayMode.ComfortableGridPanorama)
                         },

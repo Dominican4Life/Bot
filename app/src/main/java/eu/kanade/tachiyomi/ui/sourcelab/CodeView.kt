@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.sourcelab
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -21,6 +22,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.PlayArrow
@@ -32,12 +34,15 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -48,8 +53,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import eu.kanade.tachiyomi.jssource.lab.ConsoleRow
 import eu.kanade.tachiyomi.jssource.lab.ExplainEntry
+import eu.kanade.tachiyomi.jssource.lab.LintFinding
+import eu.kanade.tachiyomi.jssource.lab.LintSeverity
 import eu.kanade.tachiyomi.jssource.lab.StepStatus
 import eu.kanade.tachiyomi.jssource.lab.TestRequest
 import eu.kanade.tachiyomi.jssource.lab.TestRun
@@ -103,10 +111,13 @@ internal fun PartsOutline(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.padding(horizontal = 8.dp, vertical = 12.dp)) {
+        // KMK (r115, mock M3Code): the card heading's small caps in the primary colour
         Text(
             "PARTS",
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.8.sp,
+            color = MaterialTheme.colorScheme.primary,
             modifier = Modifier.padding(start = 10.dp, bottom = 6.dp),
         )
         if (parts.isEmpty()) {
@@ -145,6 +156,7 @@ internal fun PartsOutline(
                     Text(
                         part.title,
                         style = MaterialTheme.typography.bodyMedium,
+                        fontFamily = FontFamily.Monospace,
                         color = when {
                             on -> MaterialTheme.colorScheme.onSecondaryContainer
                             part.lines == null -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
@@ -154,6 +166,142 @@ internal fun PartsOutline(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
+            }
+        }
+    }
+}
+
+/**
+ * KMK (r115, mock M3Code): the Code tab's left column: the Parts outline in a card, then a "Last test" card (k of n
+ * passed · time, and the first step that didn't pass, in its colour).
+ */
+@Composable
+internal fun PartsColumn(
+    state: SourceLabScreenModel.State,
+    statuses: Map<String, StepStatus>,
+    onPart: (ExplainEntry) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val run = state.lastRun
+    Column(
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = modifier.padding(start = 12.dp, end = 6.dp, top = 12.dp, bottom = 12.dp),
+    ) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surfaceContainer,
+            modifier = Modifier.fillMaxWidth().weight(1f),
+        ) {
+            PartsOutline(
+                parts = state.explain,
+                statuses = statuses,
+                selected = state.selectedPart,
+                onPart = onPart,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surfaceContainer,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            ) {
+                Text(
+                    "LAST TEST",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 0.8.sp,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    when {
+                        state.running -> "Testing now…"
+                        run == null -> "Not tested yet"
+                        else -> "${run.passed} of ${run.counted} passed · ${msText(run.totalMs)}"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                val worst = run?.steps?.firstOrNull { it.status == StepStatus.Red }
+                    ?: run?.steps?.firstOrNull { it.status == StepStatus.Amber }
+                if (worst != null && !state.running) {
+                    Text(
+                        worst.name + worst.evidence.takeIf { it.isNotBlank() }?.let { ": $it" }.orEmpty(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = worst.status.strip().tint(),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * KMK (r115, mock M3Code): under the code, the lint finding of the part shown (else the first error / warning) with
+ * its fix when the rule has one that applies here ("Apply fix"), else "Go to line"; × hides it until the source is
+ * left. Nothing when there is no finding.
+ */
+@Composable
+internal fun CodeFindingBar(
+    state: SourceLabScreenModel.State,
+    findings: List<LintFinding>,
+    onApply: (LintFinding) -> Unit,
+    onGoToLine: (Int) -> Unit,
+) {
+    var hidden by remember(state.key) { mutableStateOf(emptySet<String>()) }
+    val open = findings.filter { f -> !f.ignored && f.line != null && "${f.ruleId}:${f.line}" !in hidden }
+    val range = state.explain.firstOrNull { it.id == state.selectedPart }?.lines
+    val inPart = if (range != null) open.firstOrNull { f -> f.line?.let { it in range } == true } else null
+    val finding = inPart ?: open.firstOrNull { it.severity != LintSeverity.Info } ?: return
+    val line = finding.line ?: return
+    val rule = state.rules?.rules?.firstOrNull { it.id == finding.ruleId }
+    val canApply = finding.applicable && rule?.apply != null
+    val color = when (finding.severity) {
+        LintSeverity.Error -> StripColor.Red
+        LintSeverity.Warn -> StripColor.Amber
+        LintSeverity.Info -> StripColor.Neutral
+    }.tint()
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        border = BorderStroke(1.dp, color.copy(alpha = 0.35f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 8.dp, end = 8.dp, top = 6.dp, bottom = 8.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.padding(start = 14.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+        ) {
+            Box(modifier = Modifier.size(9.dp).clip(CircleShape).background(color))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Line $line · ${finding.title}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    finding.found,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (canApply) {
+                OutlinedButton(onClick = { onApply(finding) }) { Text("Apply fix") }
+            } else {
+                TextButton(onClick = { onGoToLine(line) }) { Text("Go to line") }
+            }
+            IconButton(onClick = { hidden = hidden + "${finding.ruleId}:${finding.line}" }) {
+                Icon(Icons.Outlined.Close, contentDescription = "Hide")
             }
         }
     }

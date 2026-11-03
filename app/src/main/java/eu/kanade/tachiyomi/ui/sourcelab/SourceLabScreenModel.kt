@@ -27,6 +27,8 @@ import eu.kanade.tachiyomi.jssource.lab.Templates
 import eu.kanade.tachiyomi.jssource.lab.TestRun
 import eu.kanade.tachiyomi.jssource.lab.TestRuns
 import eu.kanade.tachiyomi.jssource.lab.TestStep
+import eu.kanade.tachiyomi.jssource.lab.videodoctor.VideoDiagnosis
+import eu.kanade.tachiyomi.jssource.lab.videodoctor.VideoDoctor
 import eu.kanade.tachiyomi.ui.codeeditor.SourceEditorScreenModel
 import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.CancellationException
@@ -101,6 +103,13 @@ internal class SourceLabScreenModel(
         /** KMK (r100): the open source's template has a newer version ("Update template"), null when it hasn't */
         val templateOffer: TemplateUpdate.Offer? = null,
         val updatingTemplate: Boolean = false,
+        // KMK --> (r115) "Why won't it play" (W7's VideoDoctor) in the Test pane's Video step
+        /** Each source's last diagnosis (by key), kept while the Lab is open */
+        val diagnoses: Map<String, VideoDiagnosis> = emptyMap(),
+        /** The source whose check is running (null: none) and its latest step in words */
+        val doctorKey: String? = null,
+        val doctorProgress: String? = null,
+        // KMK <--
     ) {
         val source: LabSource? get() = key?.let { k -> sources.firstOrNull { it.key == k } }
     }
@@ -257,6 +266,79 @@ internal class SourceLabScreenModel(
             }
         }
     }
+
+    // KMK --> (r115) "Why won't it play"
+    private var doctorJob: Job? = null
+
+    // the newest check: an older, cancelled one never clears the newer one's running mark
+    @Volatile private var doctorToken = 0
+
+    /**
+     * Runs W7's VideoDoctor on the episode the last Test Run opened, with what the Test Run uses (the editor's test
+     * runtime, base URL, the source's headers); the result is kept per source in [State.diagnoses]
+     */
+    fun checkWhyNoPlay(editor: SourceEditorScreenModel) {
+        val key = state.value.key ?: return
+        val episode = VideoDoctor.episodeOf(state.value.lastRun)
+        if (episode == null) {
+            message("Run the test first: the check needs the episode it opened.")
+            return
+        }
+        doctorJob?.cancel()
+        val token = ++doctorToken
+        mutableState.update { it.copy(doctorKey = key, doctorProgress = null) }
+        doctorJob = screenModelScope.launchIO {
+            try {
+                val s = editor.state.value
+                val rt = editor.testRuntime()
+                val info = manager.get(key)
+                val diagnosis = VideoDoctor.diagnose(
+                    context = context,
+                    rt = rt,
+                    episodeUrl = episode,
+                    baseUrl = s.baseUrl.ifBlank { info?.baseUrl.orEmpty() },
+                    sourceHeaders = info?.headers.orEmpty(),
+                    sourceKey = key,
+                    onStep = { text -> if (token == doctorToken) mutableState.update { it.copy(doctorProgress = text) } },
+                )
+                mutableState.update {
+                    it.copy(diagnoses = it.diagnoses + (key to diagnosis), doctorKey = null, doctorProgress = null)
+                }
+            } catch (e: CancellationException) {
+                if (token == doctorToken) mutableState.update { it.copy(doctorKey = null, doctorProgress = null) }
+                throw e
+            } catch (e: Throwable) {
+                AppLog.add('W', "lab", "Why won't it play failed on $key: $e")
+                if (token == doctorToken) mutableState.update { it.copy(doctorKey = null, doctorProgress = null) }
+                message("The check failed: ${e.message ?: e.javaClass.simpleName}")
+            }
+        }
+    }
+
+    /**
+     * Puts [snippet] into the editor before the last line of the part [partId] (its closing brace), indented one step
+     * more than that line, as an unsaved change (nothing is saved). False (with a message) when the part isn't found.
+     */
+    fun insertIntoPart(editor: SourceEditorScreenModel, partId: String, snippet: String): Boolean {
+        val range = state.value.explain.firstOrNull { it.id == partId }?.lines
+        if (range == null) {
+            message("No $partId part in the code: copy the lines and paste them yourself.")
+            return false
+        }
+        val lines = editor.state.value.code.lines().toMutableList()
+        val at = (range.last - 1).coerceIn(0, lines.size)
+        val indent = lines.getOrNull(at)?.takeWhile { it == ' ' || it == '\t' }.orEmpty() + "  "
+        lines.addAll(at, snippet.trimEnd().lines().map { if (it.isBlank()) "" else indent + it })
+        editor.setCode(lines.joinToString("\n"))
+        editor.saveNote = "Why won't it play: added a fix to $partId"
+        revealLine(at + 1)
+        message("Added to $partId at line ${at + 1}. Check it, then Save.")
+        return true
+    }
+
+    /** A snackbar line from a pane (the Video step's "Try play" copy) */
+    fun say(text: String) = message(text)
+    // KMK <--
 
     fun cancelTest() {
         runJob?.cancel()

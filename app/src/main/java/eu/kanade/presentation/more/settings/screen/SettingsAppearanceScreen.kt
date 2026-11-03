@@ -3,32 +3,44 @@ package eu.kanade.presentation.more.settings.screen
 import android.app.Activity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import com.materialkolor.PaletteStyle
 import eu.kanade.core.preference.asState
+import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.domain.ui.model.AppTheme
-import eu.kanade.domain.ui.model.PanoramaStyle
 import eu.kanade.domain.ui.model.TabletUiMode
 import eu.kanade.domain.ui.model.ThemeMode
+import eu.kanade.domain.ui.model.WideCoverStyle
 import eu.kanade.domain.ui.model.setAppCompatDelegateThemeMode
 import eu.kanade.presentation.more.settings.Preference
+import eu.kanade.presentation.more.settings.WideCoverPlace
+import eu.kanade.presentation.more.settings.WideCoverSync
 import eu.kanade.presentation.more.settings.screen.appearance.AppCustomThemeColorPickerScreen
 import eu.kanade.presentation.more.settings.screen.appearance.AppLanguageScreen
 import eu.kanade.presentation.more.settings.widget.AppThemeModePreferenceWidget
 import eu.kanade.presentation.more.settings.widget.AppThemePreferenceWidget
+import eu.kanade.presentation.more.settings.widget.WideCoverPlaceRow
+import eu.kanade.presentation.more.settings.widget.WideCoverStylePicker
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.collections.immutable.persistentListOf
-import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.toImmutableMap
+import tachiyomi.domain.history.service.HistoryPreferences
+import tachiyomi.domain.library.model.LibraryDisplayMode
+import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.i18n.sy.SYMR
@@ -54,6 +66,8 @@ object SettingsAppearanceScreen : SearchableSettings {
         return listOf(
             getThemeGroup(uiPreferences = uiPreferences),
             // KMK -->
+            // KMK (r115): one card for every wide-cover setting (they were spread over this page and the view menus)
+            getWideCoversGroup(uiPreferences = uiPreferences),
             getMangaInfoThemeGroup(uiPreferences = uiPreferences),
             // KMK <--
             getDisplayGroup(uiPreferences = uiPreferences),
@@ -201,11 +215,112 @@ object SettingsAppearanceScreen : SearchableSettings {
                     title = stringResource(KMR.strings.pref_theme_cover_based_style),
                     enabled = mangaInfoThemeCoverBased,
                 ),
+                // KMK (r115): the title-page panorama switch and "Align cover to top" moved to the Wide covers card
+            ),
+        )
+    }
+
+    // KMK (r115): Wide covers (mockup SCovers). The picker and the per-place list write the old prefs through
+    // WideCoverSync; "Same everywhere" (default on) makes a change anywhere (here or a view menu) apply to all places.
+    @Composable
+    private fun getWideCoversGroup(
+        uiPreferences: UiPreferences,
+    ): Preference.PreferenceGroup {
+        val samePref = remember { uiPreferences.wideCoverSameEverywhere() }
+        val same by samePref.collectAsState()
+        val shared by remember { uiPreferences.wideCoverStyle() }.collectAsState()
+        val libraryPreferences = remember { Injekt.get<LibraryPreferences>() }
+        val sourcePreferences = remember { Injekt.get<SourcePreferences>() }
+        val historyPreferences = remember { Injekt.get<HistoryPreferences>() }
+        val libraryMode by remember { libraryPreferences.displayMode() }.collectAsState()
+        val libraryStyle by remember { uiPreferences.libraryPanoramaStyle() }.collectAsState()
+        val browseMode by remember { sourcePreferences.sourceDisplayMode() }.collectAsState()
+        val browseStyle by remember { uiPreferences.browsePanoramaStyle() }.collectAsState()
+        val historyOn by remember { historyPreferences.usePanoramaCover() }.collectAsState()
+        val flowOn by remember { uiPreferences.usePanoramaCoverFlow() }.collectAsState()
+        val headerOn by remember { uiPreferences.usePanoramaCoverMangaInfo() }.collectAsState()
+        val dialogsOn by remember { uiPreferences.usePanoramaCoverAlways() }.collectAsState()
+
+        val onStyle = if (shared != WideCoverStyle.OFF) shared else WideCoverStyle.of(libraryStyle)
+        fun switchValue(on: Boolean) = if (on) onStyle else WideCoverStyle.OFF
+        val values = mapOf(
+            WideCoverPlace.LIBRARY to WideCoverSync.styleOf(libraryMode, libraryStyle),
+            WideCoverPlace.BROWSE to WideCoverSync.styleOf(browseMode, browseStyle),
+            WideCoverPlace.HISTORY_UPDATES to switchValue(historyOn),
+            WideCoverPlace.SEARCH to switchValue(flowOn),
+            WideCoverPlace.TITLE_HEADER to switchValue(headerOn),
+            WideCoverPlace.DIALOGS to switchValue(dialogsOn),
+        )
+        // A Library / Browse grid other than Comfortable or Wide covers (Compact, List…) only uses the style later
+        val otherGrid = mapOf(
+            WideCoverPlace.LIBRARY to libraryMode.isOtherGrid(),
+            WideCoverPlace.BROWSE to browseMode.isOtherGrid(),
+        )
+        val differs = WideCoverPlace.entries.any { place ->
+            val value = values.getValue(place)
+            when {
+                !place.hasStyles -> (value == WideCoverStyle.OFF) != (shared == WideCoverStyle.OFF)
+                otherGrid[place] == true && shared == WideCoverStyle.OFF -> false
+                else -> value != shared
+            }
+        }
+        val note = when {
+            same && differs -> "Some places still have their own look. Tap a style to use it everywhere."
+            !same && differs -> "Places differ: tapping a style sets all of them."
+            else -> null
+        }
+
+        return Preference.PreferenceGroup(
+            title = "Wide covers",
+            preferenceItems = persistentListOf(
+                Preference.PreferenceItem.CustomPreference(
+                    title = "Wide covers",
+                ) {
+                    WideCoverStylePicker(
+                        selected = shared.takeUnless { differs },
+                        note = note,
+                        onPick = { WideCoverSync.setEverywhere(it) },
+                    )
+                },
                 Preference.PreferenceItem.SwitchPreference(
-                    preference = uiPreferences.usePanoramaCoverMangaInfo(),
-                    title = stringResource(KMR.strings.pref_panorama_cover),
-                    subtitle = stringResource(KMR.strings.pref_panorama_cover_summary),
+                    preference = samePref,
+                    title = "Same everywhere",
+                    subtitle = "A change in any view menu changes all of them",
+                    onValueChanged = { on ->
+                        if (on) WideCoverSync.setEverywhere(uiPreferences.wideCoverStyle().get())
+                        true
+                    },
                 ),
+                Preference.PreferenceItem.CustomPreference(
+                    title = "Where it applies",
+                ) {
+                    Column {
+                        Text(
+                            text = if (same) {
+                                "Where it applies (turn off Same everywhere to choose per place)"
+                            } else {
+                                "Where it applies"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                        )
+                        WideCoverPlace.entries.forEach { place ->
+                            WideCoverPlaceRow(
+                                place = place,
+                                value = values.getValue(place),
+                                note = when {
+                                    otherGrid[place] == true -> "Used when this screen shows the Wide covers grid"
+                                    place == WideCoverPlace.HISTORY_UPDATES ->
+                                        "Lists; their grids use the Library's style"
+                                    else -> null
+                                },
+                                enabled = !same,
+                                onPick = { WideCoverSync.apply(place, it) },
+                            )
+                        }
+                    }
+                },
                 Preference.PreferenceItem.SwitchPreference(
                     preference = uiPreferences.topAlignCover(),
                     title = stringResource(KMR.strings.pref_top_align_cover),
@@ -214,6 +329,9 @@ object SettingsAppearanceScreen : SearchableSettings {
             ),
         )
     }
+
+    private fun LibraryDisplayMode.isOtherGrid() =
+        this != LibraryDisplayMode.ComfortableGrid && this != LibraryDisplayMode.ComfortableGridPanorama
     // KMK <--
 
     @Composable
@@ -288,24 +406,8 @@ object SettingsAppearanceScreen : SearchableSettings {
         return Preference.PreferenceGroup(
             stringResource(SYMR.strings.pref_category_fork),
             preferenceItems = persistentListOf(
-                // KMK -->
-                Preference.PreferenceItem.SwitchPreference(
-                    preference = uiPreferences.usePanoramaCoverFlow(),
-                    title = stringResource(KMR.strings.pref_panorama_cover_flow),
-                    subtitle = stringResource(KMR.strings.pref_panorama_cover_flow_summary),
-                ),
-                // How wide covers look in "Panorama", in the library (also History and Updates) and in sources
-                Preference.PreferenceItem.ListPreference(
-                    preference = uiPreferences.libraryPanoramaStyle(),
-                    entries = panoramaStyleEntries(),
-                    title = stringResource(KMR.strings.pref_library_panorama_style),
-                ),
-                Preference.PreferenceItem.ListPreference(
-                    preference = uiPreferences.browsePanoramaStyle(),
-                    entries = panoramaStyleEntries(),
-                    title = stringResource(KMR.strings.pref_browse_panorama_style),
-                ),
-                // KMK <--
+                // KMK (r115): Panorama cover flow and the library / browse Panorama styles moved to the
+                // Wide covers card
                 Preference.PreferenceItem.SwitchPreference(
                     preference = uiPreferences.expandFilters(),
                     title = stringResource(SYMR.strings.toggle_expand_search_filters),
@@ -360,15 +462,6 @@ object SettingsAppearanceScreen : SearchableSettings {
         )
     }
     // SY <--
-
-    // KMK -->
-    @Composable
-    private fun panoramaStyleEntries() = persistentMapOf(
-        PanoramaStyle.FILL to stringResource(KMR.strings.panorama_style_fill),
-        PanoramaStyle.FIT to stringResource(KMR.strings.panorama_style_fit),
-        PanoramaStyle.WIDE to stringResource(KMR.strings.panorama_style_wide),
-    )
-    // KMK <--
 }
 
 private val DateFormats = listOf(

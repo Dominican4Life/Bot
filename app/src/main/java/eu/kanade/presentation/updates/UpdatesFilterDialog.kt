@@ -19,6 +19,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import eu.kanade.presentation.components.TabbedDialog
 import eu.kanade.presentation.components.TabbedDialogPaddings
+import eu.kanade.presentation.more.settings.WideCoverPlace
+import eu.kanade.presentation.more.settings.WideCoverSync
 import eu.kanade.tachiyomi.ui.updates.UpdatesSettingsScreenModel
 import kotlinx.collections.immutable.persistentListOf
 import tachiyomi.domain.updates.service.UpdatesPreferences
@@ -118,7 +120,8 @@ private fun ColumnScope.FilterSheet(
 
     Row(
         modifier = Modifier
-            .clickable { screenModel.toggleSwitch(UpdatesPreferences::usePanoramaCover) }
+            // KMK (r115): through WideCoverSync, so "Same everywhere" copies it to the other places
+            .clickable { WideCoverSync.pickSwitch(WideCoverPlace.HISTORY_UPDATES, !panoramaCover) }
             .fillMaxWidth()
             .padding(horizontal = SettingsItemsPaddings.Horizontal),
         verticalAlignment = Alignment.CenterVertically,
@@ -132,7 +135,7 @@ private fun ColumnScope.FilterSheet(
 
         Switch(
             checked = panoramaCover,
-            onCheckedChange = { screenModel.toggleSwitch(UpdatesPreferences::usePanoramaCover) },
+            onCheckedChange = { WideCoverSync.pickSwitch(WideCoverPlace.HISTORY_UPDATES, it) },
         )
     }
     // KMK <--
