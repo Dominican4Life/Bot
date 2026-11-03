@@ -197,7 +197,11 @@ open class BrowseSourceScreenModel(
             }
 
             // KMK: the Filter tab (and what was selected for it) is kept until the app closes
-            val keptFilterTab = BrowseTabCache.filterTabs["${this::class.qualifiedName}:${source.id}"] as? Listing.Search
+            // KMK (r113): dropped when the JS source was saved again since (its filters are the old code's)
+            val keptFilterTab = BrowseTabCache.keptFilterTab(
+                "${this::class.qualifiedName}:${source.id}",
+                Injekt.get<eu.kanade.tachiyomi.jssource.JsSourceManager>().stampOf(source.id),
+            ) as? Listing.Search
             it.copy(
                 listing = listing,
                 // KMK: the panel works on its own copy, so editing it doesn't change the kept tab's list
@@ -491,7 +495,7 @@ open class BrowseSourceScreenModel(
         )
         if (tabKey == Listing.FILTER_TAB) {
             tabCacheKey(listing)?.let { BrowseTabCache.drop(it) }
-            BrowseTabCache.filterTabs[filterTabKey()] = listing
+            BrowseTabCache.keepFilterTab(filterTabKey(), listing, Injekt.get<eu.kanade.tachiyomi.jssource.JsSourceManager>().stampOf(source.id))
         }
         mutableState.update {
             it.copy(

@@ -291,6 +291,12 @@ class JsSourceManager(private val context: Application) {
     fun idOf(key: String): Long = get(key)?.id ?: JsSourceInfo.idFor(key)
 
     /**
+     * KMK (r113): when the JS source with source id [id] was last saved (null: not a JS source). Browse keeps a
+     * source's Filter tab until the app closes; a tab kept from an older save has the old filters, so it is dropped.
+     */
+    fun stampOf(id: Long): Long? = _saved.value.firstOrNull { it.id == id }?.updatedAt
+
+    /**
      * KMK: Fills the Code editor's test copy of [key] (its own settings and storage) from the saved source's current
      * ones, so tests behave like the real source without changing it. The editor calls it once per source it opens.
      */

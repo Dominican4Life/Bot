@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.animesource.AnimeCatalogueSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.data.anime.Anime
 import eu.kanade.tachiyomi.data.anime.AnimeRepository
+import eu.kanade.tachiyomi.jssource.JsSourceManager
 import eu.kanade.tachiyomi.jssource.JsTabs
 import eu.kanade.tachiyomi.ui.anime.AnimeIncognito
 import kotlinx.collections.immutable.ImmutableList
@@ -39,7 +40,7 @@ import xyz.nulldev.ts.api.http.serializer.FilterSerializer
 class AnimeSourceScreenModel(
     private val sourceId: Long,
     private val repository: AnimeRepository = Injekt.get(),
-    sourceManager: AnimeSourceManager = Injekt.get(),
+    private val sourceManager: AnimeSourceManager = Injekt.get(),
     // KMK -->
     private val getSavedSearches: GetSavedSearchBySourceId = Injekt.get(),
     private val insertSavedSearch: InsertSavedSearch = Injekt.get(),
@@ -47,7 +48,13 @@ class AnimeSourceScreenModel(
     // KMK <--
 ) : StateScreenModel<AnimeSourceScreenModel.State>(State()) {
 
-    val source: AnimeCatalogueSource? = sourceManager.get(sourceId) as? AnimeCatalogueSource
+    // KMK (r113): read each time, so a JS source saved again (Edit by tapping) is used at once, not the old one
+    val source: AnimeCatalogueSource? get() = sourceManager.get(sourceId) as? AnimeCatalogueSource
+
+    private val jsSources: JsSourceManager by lazy { Injekt.get<JsSourceManager>() }
+
+    // KMK (r113): the JS source's save stamp the shown filters were made from
+    private var stamp: Long? = null
 
     private var loadJob: Job? = null
 
@@ -56,6 +63,9 @@ class AnimeSourceScreenModel(
     @Volatile private var loadGeneration = 0L
 
     init {
+        stamp = jsSources.stampOf(sourceId)
+        // KMK (r113): a Filter tab kept from before the source was saved again has the old code's filters: dropped
+        if (keptStamps[sourceId] != stamp) forgetKept()
         mutableState.update {
             it.copy(
                 filters = source?.getFilterList() ?: AnimeFilterList(),
@@ -70,6 +80,25 @@ class AnimeSourceScreenModel(
             .onEach { list ->
                 val sorted = list.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER, SavedSearch::name))
                 mutableState.update { it.copy(savedSearches = sorted.toImmutableList()) }
+            }
+            .launchIn(screenModelScope)
+        // KMK (r113): saved again while this screen is open: the new filters, and the list loaded again with them
+        jsSources.animeSourcesFlow
+            .onEach { list ->
+                val now = jsSources.stampOf(sourceId)
+                if (now == null || now == stamp) return@onEach
+                stamp = now
+                forgetKept()
+                // the new source from this list (the source manager may not have swapped it in yet)
+                val fresh = list.firstOrNull { it.id == sourceId }?.getFilterList()
+                    ?: source?.getFilterList() ?: AnimeFilterList()
+                mutableState.update { it.copy(filters = fresh, filterListing = null) }
+                val listing = state.value.listing
+                if (listing !is Listing.Search) {
+                    switchTo(listing, fresh, force = true)
+                } else if (!showHomeTab()) {
+                    switchTo(Listing.Popular, fresh, force = true)
+                }
             }
             .launchIn(screenModelScope)
         AnimeIncognito.subscribe(sourceId)
@@ -161,6 +190,8 @@ class AnimeSourceScreenModel(
         val filters = state.value.filters
         tabCache.remove(cacheKey(listing))
         keptFilterTabs[sourceId] = listing to filters
+        val made = stamp
+        if (made != null) keptStamps[sourceId] = made else keptStamps.remove(sourceId)
         mutableState.update { it.copy(filterListing = listing) }
         switchTo(listing, filters, force = true)
         // KMK <--
@@ -238,6 +269,13 @@ class AnimeSourceScreenModel(
         if (showing && !showHomeTab()) setListing(Listing.Popular)
     }
     // KMK <--
+
+    /** KMK (r113): forgets this source's kept Filter tab and kept lists (made with the old code) */
+    private fun forgetKept() {
+        keptFilterTabs.remove(sourceId)
+        keptStamps.remove(sourceId)
+        tabCache.keys.removeIf { it.startsWith("$sourceId:") }
+    }
 
     fun resetFilters() {
         mutableState.update { it.copy(filters = source?.getFilterList() ?: AnimeFilterList()) }
@@ -496,6 +534,9 @@ class AnimeSourceScreenModel(
         // Kept until the app closes, like the manga Browse tabs
         private val tabCache = java.util.concurrent.ConcurrentHashMap<String, TabEntry>()
         private val keptFilterTabs = java.util.concurrent.ConcurrentHashMap<Long, Pair<Listing.Search, AnimeFilterList>>()
+
+        // KMK (r113): the JS source's save stamp each kept Filter tab was made with
+        private val keptStamps = java.util.concurrent.ConcurrentHashMap<Long, Long>()
     }
     // KMK <--
 }

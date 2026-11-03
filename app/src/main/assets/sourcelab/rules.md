@@ -412,7 +412,7 @@ rules:
     title: A filter option's value looks like a label, not the site's code
     fix: "Sites send codes (most-viewed, multi, recent), not the words they show (Most Viewed). A value with a space, or a capitalised value equal to its label, was copied from the menu and the site answers it with nothing or everything. Pick the option on the site and read the address bar, or use Learn addresses in the builder: it presses the options and keeps the codes. If the site really sends this text, Ignore the rule."
     snippet: "{ label: \"Most Viewed\", value: \"most-viewed\" }"
-    params: { pattern: '\bvalue\\?["'']?\s*:\s*\\?["''][^"''\\]*[ ][^"''\\]*\\?["'']|\blabel\\?["'']?\s*:\s*\\?["'']([A-Z][^"''\\]*)\\?["'']\s*,\s*\\?["'']?value\\?["'']?\s*:\s*\\?["'']\1\\?["'']' }
+    params: { pattern: '\bvalue\\?["'']?\s*:\s*\\?["''][^"''\\]*[ ][^"''\\]*\\?["'']|\blabel\\?["'']?\s*:\s*\\?["'']([A-Z][^"''\\]*)\\?["'']\s*,\s*\\?["'']?value\\?["'']?\s*:\s*\\?["'']\1\\?["'']', unless: '^\s*var (TAG_BLOCK|TAG_GROUPS|SETTINGS|SUGGESTION_GROUPS) = |\bshape\s*=|\bvalue\s*:\s*"[~+>] ' }
     applies: [js]
   - id: cover-src-before-lazy
     severity: warn

@@ -29,6 +29,30 @@ object BrowseTabCache {
 
     /** Each source's Filter tab (its last filter or typed search), by screen and source, until Clear */
     val filterTabs = ConcurrentHashMap<String, Any>()
+
+    // KMK (r113): the JS source save each kept Filter tab was made with (see JsSourceManager.stampOf)
+    private val filterStamps = ConcurrentHashMap<String, Long>()
+
+    /** KMK (r113): keeps [tab] as [key]'s Filter tab, made with the source save [stamp] (null: not a JS source) */
+    fun keepFilterTab(key: String, tab: Any, stamp: Long?) {
+        filterTabs[key] = tab
+        if (stamp != null) filterStamps[key] = stamp else filterStamps.remove(key)
+    }
+
+    /**
+     * KMK (r113): [key]'s kept Filter tab, or null. A tab kept from another save of the source (a filter removed
+     * or added in the builder since) is dropped: its filters are the old ones and the sheet would show them.
+     */
+    fun keptFilterTab(key: String, stamp: Long?): Any? {
+        val tab = filterTabs[key] ?: return null
+        if (filterStamps[key] != stamp) {
+            filterTabs.remove(key)
+            filterStamps.remove(key)
+            return null
+        }
+        return tab
+    }
+
     private val scrolls = ConcurrentHashMap<String, Pair<Int, Int>>()
 
     /** KMK: Browse tabs kept now (for the memory lines in Logs) */
