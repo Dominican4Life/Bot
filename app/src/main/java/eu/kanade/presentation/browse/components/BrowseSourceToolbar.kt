@@ -163,14 +163,14 @@ fun BrowseSourceToolbar(
                                 ),
                             )
                         }
-                        // KMK (r117): under Incognito: the magnifier gets crossed out while it's on
+                        // KMK (r120): "AniList" under Incognito, switch on = AniList used; the magnifier is crossed out while off
                         if (sourceInfoOnly != null) {
                             add(
                                 AppBar.OverflowAction(
                                     title = stringResource(KMR.strings.browse_menu_source_info_only),
                                     onClick = onToggleSourceInfoOnly,
                                     icon = if (sourceInfoOnly) Icons.Outlined.SearchOff else Icons.Outlined.Search,
-                                    checked = sourceInfoOnly,
+                                    checked = !sourceInfoOnly,
                                 ),
                             )
                         }

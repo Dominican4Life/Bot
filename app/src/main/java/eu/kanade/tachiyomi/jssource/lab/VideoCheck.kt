@@ -177,7 +177,15 @@ object VideoCheck {
                     return Result(false, "quality", "quality answered ${reply.status} but isn't a playlist", 0)
                 }
                 val inner = hls(reply.finalUrl, reply.text, depth + 1)
-                val prefix = "${variants.size} qualit${if (variants.size == 1) "y" else "ies"}" + (resolution?.let { " · lowest $it" } ?: "")
+                // KMK (r120): every quality the stream holds ("holds 1080p / 720p / 480p"): a source that sends this as
+                // one video ("Auto") still lets the player list them (Quality sheet › Inside this stream)
+                val heights = lines.filter { it.startsWith("#EXT-X-STREAM-INF") }
+                    .mapNotNull { attrs(it)["RESOLUTION"]?.substringAfter('x', "")?.toIntOrNull() }
+                    .distinct().sortedDescending()
+                val holds = if (heights.isNotEmpty()) " · holds ${heights.joinToString(" / ") { "${it}p" }}" else ""
+                val prefix = "${variants.size} qualit${if (variants.size == 1) "y" else "ies"}" + holds +
+                    (resolution?.let { " · checked the lowest ($it)" } ?: "") +
+                    (if (variants.size > 1) " · the player lists them under Inside this stream" else "")
                 return inner.copy(detail = "$prefix · ${inner.detail}")
             }
             // A media playlist: its key, then its first piece

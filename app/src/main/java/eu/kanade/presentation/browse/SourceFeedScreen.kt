@@ -386,7 +386,7 @@ fun SourceFeedToolbar(
                             ),
                         )
                     }
-                    // KMK (r117): under Incognito: the magnifier gets crossed out while it's on
+                    // KMK (r120): "AniList" under Incognito, switch on = AniList used; the magnifier is crossed out while off
                     if (sourceInfoOnly != null) {
                         add(
                             AppBar.OverflowAction(
@@ -397,7 +397,7 @@ fun SourceFeedToolbar(
                                 } else {
                                     Icons.Outlined.Search
                                 },
-                                checked = sourceInfoOnly,
+                                checked = !sourceInfoOnly,
                             ),
                         )
                     }

@@ -19,15 +19,20 @@ import uy.kohesive.injekt.api.get
 object SourceInfoOnly {
     private val store get() = Injekt.get<PreferenceStore>()
 
-    private fun pref() = store.getStringSet("source_info_only", emptySet())
+    // KMK (r120): the switch is now "AniList" and OFF by default: a source uses AniList only once you turn it on in
+    // its ⋮. `anilist_on` holds the sources where it's on; the r117 `source_info_only` set isn't read any more (those
+    // sources are off anyway). "Source info only" = AniList off.
+    private fun pref() = store.getStringSet("anilist_on", emptySet())
 
     private fun key(sourceId: Long) = "anime:$sourceId"
 
-    fun isOn(sourceId: Long?): Boolean = sourceId != null && key(sourceId) in pref().get()
+    /** True when AniList is OFF for this source (the default): only the source's own info */
+    fun isOn(sourceId: Long?): Boolean = sourceId == null || key(sourceId) !in pref().get()
 
     fun subscribe(sourceId: Long): Flow<Boolean> =
-        pref().changes().map { key(sourceId) in it }.distinctUntilChanged()
+        pref().changes().map { key(sourceId) !in it }.distinctUntilChanged()
 
+    /** Flips the source's AniList switch */
     fun toggle(sourceId: Long) {
         val key = key(sourceId)
         pref().getAndSet { if (key in it) it - key else it + key }

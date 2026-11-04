@@ -258,12 +258,12 @@
     <string name="browse_right_panel">Right Panel</string>
     <string name="browse_menu_incognito">Incognito</string>
     <!-- KMK (r117): per-source "use only the source's own info" -->
-    <string name="browse_menu_source_info_only">Source only</string>
+    <string name="browse_menu_source_info_only">AniList</string>
     <!-- KMK (r118): Browse ⋮: edit a Source Lab source, or make one from an installed extension -->
     <string name="browse_menu_edit_source">Edit source</string>
     <string name="browse_menu_editable_copy">Make an editable copy</string>
-    <string name="source_info_only_on">Source info only: AniList won\'t be used for this source</string>
-    <string name="source_info_only_off">AniList info is back on for this source</string>
+    <string name="source_info_only_on">AniList off: only this source\'s own info</string>
+    <string name="source_info_only_off">AniList on: episode pictures, summaries and airing times from AniList</string>
     <string name="browse_menu_bulk_selection">Bulk Selection</string>
     <string name="browse_no_filters">This source has no filters. You can still save the list to use in Feed.</string>
     <string name="browse_page_previews_unavailable">Page previews aren\'t available for this source</string>

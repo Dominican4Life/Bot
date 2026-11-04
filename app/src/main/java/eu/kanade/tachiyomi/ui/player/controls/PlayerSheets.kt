@@ -348,42 +348,47 @@ private fun QualitySheetWithDetails(
     val serverHasOneVideo = selectedServer?.videoList?.size == 1
     val hasHosterList = !(hosterState.size == 1 && hosterState.first().name == Hoster.NO_HOSTER_LIST)
 
-    QualitySheet(
-        isLoadingHosters = isLoadingHosters,
-        hosterState = hosterState,
-        expandedState = expandedState,
-        selectedVideoIndex = selectedVideoIndex,
-        onClickHoster = onClickHoster,
-        onClickVideo = onClickVideo,
-        onEnsureHosterExpanded = onEnsureHosterExpanded,
-        defaultStreamSelector = defaultStreamSelector,
-        highlightDefaultStream = highlightDefaultStream,
-        autoScrollToDefault = autoScrollToDefault,
-        sheetActive = sheetActive,
-        displayHosters = displayHosters,
-        onDismissRequest = onDismissRequest,
-        dismissSheet = dismissSheet,
-        header = {
-            QualityDetailsHeader(
-                nowPlaying = nowPlaying,
-                videoTracks = videoTracks,
-                chosenTrack = chosenTrack,
-                onPickTrack = viewModel::selectVideoTrack,
-                serverHasOneVideo = serverHasOneVideo,
-                showServersCaption = hasHosterList,
-                onCheckInLab = labKey?.let { key ->
-                    {
-                        val intent = android.content.Intent(context, eu.kanade.tachiyomi.ui.main.MainActivity::class.java)
-                            .setAction("eu.kanade.tachiyomi.OPEN_SOURCE_LAB")
-                            .putExtra("sourceKey", key)
-                            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                        context.startActivity(intent)
-                    }
-                },
-            )
-        },
-        serverChips = chips,
-        showKindsNote = severalKinds && chips.isNotEmpty(),
-    )
+    // KMK (r120): "720p (Auto)" for the playing video whose label has no quality
+    androidx.compose.runtime.CompositionLocalProvider(
+        eu.kanade.tachiyomi.ui.player.controls.components.sheets.LocalPlayingHeight provides nowPlaying?.height,
+    ) {
+        QualitySheet(
+            isLoadingHosters = isLoadingHosters,
+            hosterState = hosterState,
+            expandedState = expandedState,
+            selectedVideoIndex = selectedVideoIndex,
+            onClickHoster = onClickHoster,
+            onClickVideo = onClickVideo,
+            onEnsureHosterExpanded = onEnsureHosterExpanded,
+            defaultStreamSelector = defaultStreamSelector,
+            highlightDefaultStream = highlightDefaultStream,
+            autoScrollToDefault = autoScrollToDefault,
+            sheetActive = sheetActive,
+            displayHosters = displayHosters,
+            onDismissRequest = onDismissRequest,
+            dismissSheet = dismissSheet,
+            header = {
+                QualityDetailsHeader(
+                    nowPlaying = nowPlaying,
+                    videoTracks = videoTracks,
+                    chosenTrack = chosenTrack,
+                    onPickTrack = viewModel::selectVideoTrack,
+                    serverHasOneVideo = serverHasOneVideo,
+                    showServersCaption = hasHosterList,
+                    onCheckInLab = labKey?.let { key ->
+                        {
+                            val intent = android.content.Intent(context, eu.kanade.tachiyomi.ui.main.MainActivity::class.java)
+                                .setAction("eu.kanade.tachiyomi.OPEN_SOURCE_LAB")
+                                .putExtra("sourceKey", key)
+                                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                            context.startActivity(intent)
+                        }
+                    },
+                )
+            },
+            serverChips = chips,
+            showKindsNote = severalKinds && chips.isNotEmpty(),
+        )
+    }
 }
 // KMK <--

@@ -96,6 +96,8 @@ fun WebViewScreenContent(
     val scope = rememberCoroutineScope()
 
     var currentUrl by remember { mutableStateOf(url) }
+    // KMK (r120): the last pop-up to another site that was blocked ("Allow once" opens it as a tab)
+    var blockedPopup by remember { mutableStateOf<String?>(null) }
     var showCloudflareHelp by remember { mutableStateOf(false) }
 
     // KMK (r109): the site's phone layout, remembered per host (the ⋮ menu's "Phone layout")
@@ -178,11 +180,51 @@ fun WebViewScreenContent(
                 resultMsg: Message,
             ): Boolean {
                 // if it wasn't initiated by a user gesture, we should ignore it like a normal browser would
-                if (isUserGesture) {
-                    windowStack.push(WebViewWindow(resultMsg, WebViewNavigator(coroutineScope)))
-                    return true
+                if (!isUserGesture) return false
+                // KMK (r120): a new window is first caught by a hidden probe to learn where it goes: the same site
+                // opens as a tab like before, another site (an ad pop-up) is blocked with "Pop-up blocked · Allow once"
+                val openerHost = siteOf(view.url ?: currentUrl)
+                val probe = WebView(view.context)
+                var decided = false
+                fun decide(target: String?) {
+                    if (decided || target.isNullOrBlank() || target == "about:blank") return
+                    decided = true
+                    probe.post { runCatching { probe.stopLoading(); probe.destroy() } }
+                    if (openerHost != null && siteOf(target) == openerHost) {
+                        windowStack.push(WebViewWindow(WebContent.Url(url = target), WebViewNavigator(coroutineScope)))
+                    } else {
+                        blockedPopup = target
+                        eu.kanade.tachiyomi.util.system.AppLog.add(
+                            'I',
+                            "webview",
+                            "Pop-up to another site blocked: ${siteOf(target) ?: target.take(60)}",
+                        )
+                    }
                 }
-                return false
+                probe.webViewClient = object : android.webkit.WebViewClient() {
+                    override fun shouldOverrideUrlLoading(
+                        v: WebView,
+                        request: android.webkit.WebResourceRequest,
+                    ): Boolean {
+                        decide(request.url.toString())
+                        return true
+                    }
+
+                    override fun onPageStarted(v: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+                        decide(url)
+                    }
+                }
+                val transport = resultMsg.obj as WebView.WebViewTransport
+                transport.webView = probe
+                resultMsg.sendToTarget()
+                // a window that never goes anywhere (about:blank written by script) is dropped after 10 s
+                probe.postDelayed({
+                    if (!decided) {
+                        decided = true
+                        runCatching { probe.destroy() }
+                    }
+                }, 10_000L)
+                return true
             }
         }
     }
@@ -282,6 +324,39 @@ fun WebViewScreenContent(
                         },
                     )
 
+                    // KMK (r120): "Pop-up blocked · Allow once"
+                    blockedPopup?.let { target ->
+                        Surface(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            shape = MaterialTheme.shapes.medium,
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        ) {
+                            androidx.compose.foundation.layout.Row(
+                                modifier = Modifier.padding(start = 14.dp, end = 4.dp),
+                                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                            ) {
+                                androidx.compose.material3.Text(
+                                    text = "Pop-up blocked · ${siteOf(target) ?: target.take(40)}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                androidx.compose.material3.TextButton(
+                                    onClick = {
+                                        blockedPopup = null
+                                        windowStack.push(
+                                            WebViewWindow(WebContent.Url(url = target), WebViewNavigator(coroutineScope)),
+                                        )
+                                    },
+                                ) { androidx.compose.material3.Text("Allow once") }
+                                androidx.compose.material3.TextButton(onClick = { blockedPopup = null }) {
+                                    androidx.compose.material3.Text("✕")
+                                }
+                            }
+                        }
+                    }
+
                     if (showCloudflareHelp) {
                         Surface(
                             modifier = Modifier.padding(8.dp),
@@ -367,4 +442,15 @@ fun WebViewScreenContent(
             )
         }
     }
+}
+
+/** KMK (r120): the site part of an address ("example.tv" for "https://www.cdn.example.tv/x"), null when unreadable */
+private fun siteOf(url: String): String? {
+    val host = runCatching { android.net.Uri.parse(url).host }.getOrNull()?.lowercase()?.removePrefix("www.")
+        ?: return null
+    val parts = host.split('.')
+    if (parts.size <= 2) return host
+    // two-part endings like co.uk / com.br keep three labels
+    val twoPart = parts[parts.size - 2].length <= 3 && parts.last().length == 2
+    return parts.takeLast(if (twoPart) 3 else 2).joinToString(".")
 }

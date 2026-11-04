@@ -218,7 +218,7 @@ internal fun AniListEpisodeInfoLine(
     sourceOnly: Boolean = false,
 ) {
     val text = when {
-        sourceOnly -> "Source info only: the source's own episode info is shown"
+        sourceOnly -> "AniList is off for this source: its own episode info is shown (Browse ⋮ › AniList)"
         info != null -> "Episode info: AniList · ${info.title}" +
             (if (info.offset > 0) " (from episode ${info.offset + 1})" else "")
         loading -> "Looking for this anime on AniList…"

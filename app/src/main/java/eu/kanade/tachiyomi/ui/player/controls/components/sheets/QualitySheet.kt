@@ -715,6 +715,12 @@ private fun VideoIcon(
     }
 }
 
+/**
+ * KMK (r120): the picture height mpv reports for the video playing now: a selected video whose label has no quality
+ * ("Auto", a server name) shows it as "720p (Auto)"
+ */
+val LocalPlayingHeight = androidx.compose.runtime.compositionLocalOf<Int?> { null }
+
 @Composable
 private fun VideoText(
     video: Video,
@@ -723,8 +729,18 @@ private fun VideoText(
     noHoster: Boolean,
     modifier: Modifier = Modifier,
 ) {
+    val playingHeight = LocalPlayingHeight.current
+    val label = remember(video.videoTitle, selected, playingHeight) {
+        if (selected && playingHeight != null && playingHeight > 0 &&
+            eu.kanade.tachiyomi.ui.player.PlayerMemory.qualityOf(video) == null
+        ) {
+            "${playingHeight}p (${video.videoTitle.ifBlank { "Auto" }})"
+        } else {
+            video.videoTitle
+        }
+    }
     Text(
-        text = video.videoTitle,
+        text = label,
         fontStyle = if (selected && !defaultSelected) FontStyle.Italic else FontStyle.Normal,
         fontWeight = when {
             defaultSelected -> FontWeight.Bold
