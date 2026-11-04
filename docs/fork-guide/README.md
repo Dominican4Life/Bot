@@ -933,6 +933,17 @@ Two commits (the first failed CI: `openers += opener` on a `MutableSet<Element>`
 - **JS time per source** (`jssource/JsTiming.kt`, `filesDir/js_timing.json`; timed in `JsRuntime.call`/`metadata`/load; network = fetchUrl/render/findVideo host waits): Diagnostics › Live "Source Lab sources · JS time" card (`ui/logs/JsTimeCard.kt`, placed in `ui/diagnostics/LiveTab.kt`), session / 24 h, last 20 calls, Reset for the card only. Test runs and test copies aren't timed.
 - **Faster directory reading** (builder; `newsource/dir/DirPager.kt`, `DirCache.kt`, `BuilderListReader`, `BuilderExtras*`): numbered directory pages read 3 at a time (max 4, staggered 150–400 ms), 1 at a time while `BotCheckGate.siteState` is slowed or after a 429; a bot check stops the read (never solved). Remembered reads in `sourcelab/dir_cache/` (7 days, "Read 2 h ago · Refresh"), left out of backups (`BackupFiles.createSourceLabFiles`).
 
+## Changes in r120 (4 November 2026)
+
+- **AniList switch, off by default** (`data/anime/SourceInfoOnly.kt`): the r117 "Source info only" row is now **AniList** on every anime source (Browse ⋮ under Incognito, both toolbars). Switch on = AniList used (episode pictures / titles / summaries, airing, title search); OFF by default. Stored in `anilist_on` (sources where it's on); `isOn(id)` still means "AniList off" for the callers. The r117 `source_info_only` set isn't read. The owner wanted it on every source, even ones with their own AniList setting.
+- **"720p (Auto)"** (`QualitySheet.LocalPlayingHeight`, provided in `PlayerSheets.QualitySheetWithDetails`): the selected video whose label has no quality shows mpv's height in front. Why: the site's "Auto" was the same single 720p stream, but the app only said "Auto".
+- **VideoCheck**: an HLS master lists every height it holds ("holds 1080p / 720p / 480p").
+- **WebView pop-ups** (`presentation/webview/WebViewScreenContent.kt` onCreateWindow): a user-gesture window goes to a hidden probe WebView first. Same site (`siteOf`, last two labels or three for co.uk-style) → opens as a tab like before. Another site → blocked, with a bar "Pop-up blocked · site · Allow once / ✕". Probes that never navigate are dropped after 10 s. Why: ad pop-ups kept opening dead tabs.
+
+## Changes in r121 (4 November 2026)
+
+- **Nightly Re-test removed**: the Lab ⋮ rows "Re-test nightly (03:00)" / "Nightly only on Wi-Fi" are gone. `App.onCreate` calls `RetestJob.cancelNightly` (cancels the WorkManager work `source_lab_retest`, sets the schedule off). Re-test all / Check all sources stay. Why: the owner checks by hand. Connection (⋮ › Connection, r116 pace) stays.
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
