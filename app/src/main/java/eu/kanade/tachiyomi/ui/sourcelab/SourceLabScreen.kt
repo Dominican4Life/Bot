@@ -38,7 +38,6 @@ import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
@@ -351,8 +350,6 @@ internal class SourceLabScreen(
         // KMK --> (r106) the code editor revamp: top bars, rail, Fix all, the last error, the Parts outline's dots
         var homeQuery by rememberSaveable { mutableStateOf("") }
         var homeSearchOpen by rememberSaveable { mutableStateOf(false) }
-        var nightly by remember { mutableStateOf(model.retestNightly()) }
-        var wifiOnly by remember { mutableStateOf(model.retestWifiOnly()) }
         var confirmFixAll by remember { mutableStateOf(false) }
         val lintFindings = (state.lint ?: state.source?.lastLint)?.findings.orEmpty()
         val lintCount = lintFindings.count { !it.ignored }
@@ -508,25 +505,7 @@ internal class SourceLabScreen(
                                         showMenu = false
                                         model.checkAllSources()
                                     }
-                                    HorizontalDivider()
-                                    // r96's Re-test all card: the nightly schedule and Wi-Fi only
-                                    DropdownMenuItem(
-                                        text = { Text("Re-test nightly (03:00)") },
-                                        trailingIcon = { Checkbox(checked = nightly, onCheckedChange = null) },
-                                        onClick = {
-                                            nightly = !nightly
-                                            model.setRetestSchedule(nightly)
-                                        },
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Nightly only on Wi-Fi") },
-                                        enabled = nightly,
-                                        trailingIcon = { Checkbox(checked = wifiOnly, onCheckedChange = null, enabled = nightly) },
-                                        onClick = {
-                                            wifiOnly = !wifiOnly
-                                            model.setRetestWifiOnly(wifiOnly)
-                                        },
-                                    )
+                                    // KMK (r121): the nightly Re-test (03:00 / Wi-Fi only) is gone; Re-test all stays
                                     HorizontalDivider()
                                     MenuItem("Logs", Icons.Outlined.Terminal) {
                                         showMenu = false

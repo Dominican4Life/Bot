@@ -49,7 +49,19 @@ class RetestJob(private val context: Context, params: WorkerParameters) : Corout
         /** "<time>|<passed>|<total>" of the last Re-test all (run now or scheduled) */
         internal fun lastResult(): Preference<String> = prefs.getString(Preference.appStateKey("source_lab_retest_last"), "")
 
-        /** Applies the saved schedule: enqueues the nightly work or cancels it */
+        /**
+         * KMK (r121): the nightly Re-test was removed (Re-test all by hand stays): cancels a schedule left from before
+         * and forgets it. Runs at every app start; harmless when nothing is scheduled.
+         */
+        fun cancelNightly(context: Context) {
+            WorkManager.getInstance(context).cancelUniqueWork(WORK)
+            if (schedule().get() != "off") {
+                schedule().set("off")
+                AppLog.add('I', "lab", "Nightly Re-test removed: the 03:00 schedule was cancelled")
+            }
+        }
+
+        /** Applies the saved schedule: enqueues the nightly work or cancels it (unused since r121) */
         fun apply(context: Context) {
             val nightly = schedule().get() == "nightly"
             val manager = WorkManager.getInstance(context)
