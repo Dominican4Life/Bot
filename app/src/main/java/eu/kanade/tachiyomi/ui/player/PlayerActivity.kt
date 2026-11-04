@@ -925,8 +925,6 @@ class PlayerActivity : BaseActivity() {
                     // KMK: a stream that stops well before its end usually lost its link (expired or blocked);
                     // self-healing links fetch a fresh one and resume (it skips files, torrents and chapter videos)
                     val stoppedEarly = duration > 0 && duration - pos > 30
-                    // KMK (r119): ended right after it started = failed (PlayerMemory; not after 30 s played)
-                    if (!isLocalFile && pos < 15 && !playedToEnd) viewModel.onPlaybackFailed("ended at $pos s")
                     if (!isLocalFile && (pos < 15 && !playedToEnd || stoppedEarly) &&
                         viewModel.trySelfHeal("The stream stopped at $pos s of $duration s")
                     ) {
@@ -1016,15 +1014,6 @@ class PlayerActivity : BaseActivity() {
                 }
 
                 logcat(LogPriority.ERROR) { errorMessage }
-                // KMK (r119) -->
-                // Hardware decoding failed for this file: the same video once more with hwdec=no, not a failure
-                if (viewModel.retryInSoftwareAfterDecodeError()) return
-                val forbidden = playerObserver.httpStatus == 403 || errorMessage.contains("403")
-                playerObserver.httpStatus = null
-                // PlayerMemory: counted before self-heal, so its retry of a 403 file already goes through the app
-                viewModel.onPlaybackFailed(if (forbidden) "403 $errorMessage" else errorMessage)
-                if (forbidden) viewModel.onPlainFileForbidden()
-                // KMK <--
                 // KMK -->
                 // A network/HTTP failure (often an expired link): fetch fresh links and resume instead of giving up
                 val isNetworkFailure = !httpError.isNullOrEmpty() ||
@@ -1435,8 +1424,6 @@ class PlayerActivity : BaseActivity() {
         applyStreamCache(video)
         // KMK <--
         setHttpOptions(video)
-        // KMK (r119): software decoding for a source whose hardware decoding failed before (PlayerMemory)
-        viewModel.applyRememberedDecoding()
 
         if (viewModel.isLoadingEpisode.value) {
             viewModel.currentEpisode.value?.let { episode ->
@@ -1510,9 +1497,8 @@ class PlayerActivity : BaseActivity() {
         val url = video.videoUrl
         if (!url.startsWith("http://") && !url.startsWith("https://")) return false
         if (url.startsWith("http://127.0.0.1") || url.startsWith("http://localhost")) return false
-        // KMK (r119): or an installed extension's source whose plain file got 403 from mpv before (PlayerMemory)
         val fromLab = viewModel.currentSource.value is eu.kanade.tachiyomi.jssource.JsAnimeSource ||
-            viewModel.isPreview || previewMode || viewModel.memoryWantsAppConnection()
+            viewModel.isPreview || previewMode
         if (!fromLab || viewModel.isEpisodeOnline() == false) return false
         val path = url.substringBefore('?').lowercase()
         val stream = video.type == eu.kanade.tachiyomi.animesource.model.VideoType.HLS ||
@@ -1606,10 +1592,8 @@ class PlayerActivity : BaseActivity() {
      * inheriting the previous file's `sid`/`aid`.
      */
     private fun loadFile(url: String, mpvArgs: List<Pair<String, String>> = emptyList()) {
-        // KMK (r119): the address mpv opens (the Quality sheet's "through the app's connection"), and a fresh
-        // 403 / decoder state for this file
+        // KMK (r119): the address mpv opens (the Quality sheet's "through the app's connection")
         viewModel.onLoadingFile(url)
-        playerObserver.httpStatus = null
         // We handle selecting these in the viewmodel
         val forcedOptions = listOf(
             Pair("sid", "no"),
@@ -1723,14 +1707,6 @@ class PlayerActivity : BaseActivity() {
 
     fun onTrackLoadedFailure(url: String) {
         viewModel.onTrackLoadedFailure(url)
-    }
-
-    /** KMK (r119): mpv reported a hardware decoding failure (PlayerObserver); handled on the main thread */
-    fun onDecoderTrouble(line: String, fellBack: Boolean) {
-        runOnUiThread {
-            if (player.isExiting) return@runOnUiThread
-            viewModel.onHardwareDecodeTrouble(line, fellBack)
-        }
     }
 
     /**

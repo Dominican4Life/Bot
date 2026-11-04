@@ -28,7 +28,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import eu.kanade.tachiyomi.animesource.model.Hoster
-import eu.kanade.tachiyomi.ui.player.PlayerMemory
 import eu.kanade.tachiyomi.ui.player.controls.components.sheets.NowPlaying
 import eu.kanade.tachiyomi.ui.player.controls.components.sheets.QualityDetailsHeader
 import kotlinx.coroutines.delay
@@ -174,7 +173,7 @@ fun PlayerSheets(
         }
 
         Sheets.QualityTracks -> {
-            // KMK (r119): with the "Now playing" details and PlayerMemory's server dots + chips
+            // KMK (r119): with the "Now playing" details
             QualitySheetWithDetails(
                 viewModel = viewModel,
                 isLoadingHosters = isLoadingHosters,
@@ -253,10 +252,6 @@ fun PlayerSheets(
                 onDismissRequest = onDismissRequest,
                 onEnterFiltersPanel = { onOpenPanel(Panels.VideoFilters) },
                 customButtons = buttons,
-                // KMK (r119): "Remembered for this source"
-                rememberedSourceId = viewModel.memorySourceId(),
-                rememberedSourceName = viewModel.currentSource.value?.name,
-                isLabSource = viewModel.currentSource.value is eu.kanade.tachiyomi.jssource.JsAnimeSource,
             )
         }
 
@@ -303,7 +298,7 @@ fun PlayerSheets(
 // KMK (r119) -->
 /**
  * The Quality sheet with its details header (XHQ1 / XHQ2): "Now playing" from mpv (refreshed every 2 s while open),
- * "Inside this stream" when mpv has several picture tracks, the one-quality card, and PlayerMemory's server rows.
+ * "Inside this stream" when mpv has several picture tracks, and the one-quality card.
  */
 @Composable
 private fun QualitySheetWithDetails(
@@ -323,7 +318,6 @@ private fun QualitySheetWithDetails(
     onDismissRequest: () -> Unit,
     dismissSheet: Boolean,
 ) {
-    val memoryVersion by PlayerMemory.version.composeCollectAsState()
     val videoTracks by viewModel.videoTrackList.composeCollectAsState()
     val chosenTrack by viewModel.chosenVideoTrack.composeCollectAsState()
     val currentVideo by viewModel.currentVideo.composeCollectAsState()
@@ -334,16 +328,13 @@ private fun QualitySheetWithDetails(
             delay(2_000L)
         }
     }
-    val sourceId = viewModel.memorySourceId()
     // KMK (r119): "Check the site in Source Lab" only for a Source Lab source
     val context = androidx.compose.ui.platform.LocalContext.current
-    val labKey = remember(sourceId) {
-        (viewModel.currentSource.value as? eu.kanade.tachiyomi.jssource.JsAnimeSource)?.info?.key
+    // KMK (r122): keyed on the source itself (the per-source memory's id helper is gone)
+    val source = viewModel.currentSource.value
+    val labKey = remember(source) {
+        (source as? eu.kanade.tachiyomi.jssource.JsAnimeSource)?.info?.key
     }
-    val chips = remember(hosterState, memoryVersion, sourceId) {
-        sourceId?.let { PlayerMemory.chips(PlayerMemory.peek(it), hosterState) }.orEmpty()
-    }
-    val severalKinds = remember(hosterState) { PlayerMemory.hasSeveralKinds(hosterState) }
     val selectedServer = hosterState.getOrNull(selectedVideoIndex.first) as? HosterState.Ready
     val serverHasOneVideo = selectedServer?.videoList?.size == 1
     val hasHosterList = !(hosterState.size == 1 && hosterState.first().name == Hoster.NO_HOSTER_LIST)
@@ -386,8 +377,6 @@ private fun QualitySheetWithDetails(
                     },
                 )
             },
-            serverChips = chips,
-            showKindsNote = severalKinds && chips.isNotEmpty(),
         )
     }
 }

@@ -53,20 +53,9 @@ class PlayerObserver(val activity: PlayerActivity) :
         }
 
         // KMK (r119) -->
-        // The HTTP status of a failed request (PlayerMemory: a plain file's 403 → the app's connection next time)
-        if (prefix.startsWith("ffmpeg")) {
-            HTTP_STATUS.find(text)?.groupValues?.get(1)?.toIntOrNull()?.let { httpStatus = it }
-        }
         // "Both surface and native_window are NULL" is expected with mediacodec-copy (mpv hands the decoder no
         // surface on purpose): a Debug line, not an Error
         val expectedCopyNote = SURFACE_NULL.containsMatchIn(text)
-        // A hardware decoding failure: remembered for the source, and the video goes on in software
-        if (!expectedCopyNote && level <= MPV.mpvLogLevel.MPV_LOG_LEVEL_WARN) {
-            when {
-                FELL_BACK.containsMatchIn(text) -> activity.onDecoderTrouble(text.trim(), fellBack = true)
-                HW_FAILED.containsMatchIn(text) -> activity.onDecoderTrouble(text.trim(), fellBack = false)
-            }
-        }
         // KMK <--
 
         val logPriority = when {
@@ -90,24 +79,12 @@ class PlayerObserver(val activity: PlayerActivity) :
 
     var httpError: String? = null
 
-    /** KMK (r119): the last HTTP error status ffmpeg reported for the file being opened (reset per file) */
-    @Volatile
-    var httpStatus: Int? = null
-
     companion object {
         const val TRACK_LOAD_FAILURE = "Can not open external file "
 
         // KMK (r119) -->
-        private val HTTP_STATUS = Regex("""HTTP error (\d{3})""")
         private val SURFACE_NULL = Regex(
             """(?i)(h264|hevc|h265|vp8|vp9|av1|mpeg2|mpeg4)_mediacodec: Both surface and native_window are NULL""",
-        )
-        private val FELL_BACK =
-            Regex("""(?i)falling back to software decoding|attempting next decoding method after failure""")
-        private val HW_FAILED = Regex(
-            """(?i)error while decoding frame \(hardware decoding\)""" +
-                """|failed to (init|initialize|create|configure).*(hwdec|mediacodec|hardware)""" +
-                """|mediacodec.*(decode|decoding) (error|failed)""",
         )
         // KMK <--
     }

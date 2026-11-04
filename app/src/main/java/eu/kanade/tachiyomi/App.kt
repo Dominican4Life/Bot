@@ -185,6 +185,8 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
         setupNotificationChannels()
         // KMK (r121): the nightly Re-test is gone; a schedule left from before is cancelled
         runCatching { eu.kanade.tachiyomi.jssource.lab.RetestJob.cancelNightly(this) }
+        // KMK (r122): files of the removed per-source player memory
+        Thread { runCatching { java.io.File(filesDir, "player_memory").deleteRecursively() } }.start()
         // KMK: a notification when a source needs a bot check passed in WebView
         eu.kanade.tachiyomi.data.notification.BotCheckNotifier.install(this)
 

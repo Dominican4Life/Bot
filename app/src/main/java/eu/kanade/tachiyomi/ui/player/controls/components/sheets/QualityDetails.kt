@@ -3,23 +3,15 @@ package eu.kanade.tachiyomi.ui.player.controls.components.sheets
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -27,10 +19,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.model.VideoType
-import eu.kanade.tachiyomi.ui.player.PlayerMemory
 import eu.kanade.tachiyomi.ui.player.TrackNode
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.i18n.stringResource
@@ -78,6 +69,17 @@ data class NowPlaying(
                 ?: fileFormat?.substringBefore(',')?.takeIf { it.isNotBlank() }
                 ?: "video"
         }
+}
+
+// KMK (r122): the quality a video's label gives ("1080p" from its resolution or title), else null. Moved here from
+// the removed per-source player memory; the Quality sheet's "720p (Auto)" uses it.
+private val QUALITY_HEIGHT = Regex("""(?<![\d.])(\d{3,4})\s?[pP](?![a-zA-Z])""")
+private val QUALITY_UHD = Regex("""(?i)(?<![a-z])(4k|uhd)(?![a-z])""")
+
+internal fun qualityLabelOf(video: Video): String? {
+    video.resolution?.takeIf { it > 0 }?.let { return "${it}p" }
+    QUALITY_HEIGHT.findAll(video.videoTitle).lastOrNull()?.groupValues?.get(1)?.let { return "${it}p" }
+    return if (QUALITY_UHD.containsMatchIn(video.videoTitle)) "2160p" else null
 }
 
 /** "H.264", "HEVC", "AAC", … from mpv's short codec names */
@@ -324,148 +326,4 @@ private fun VariantRow(label: String, detail: String, selected: Boolean, onClick
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
-}
-
-/** KMK (r119): the server dot: green played, yellow mixed, red failed, grey not tried */
-@Composable
-fun ServerDot(dot: PlayerMemory.Dot, modifier: Modifier = Modifier) {
-    val color = when (dot) {
-        PlayerMemory.Dot.Played -> Color(0xFF4CD27A)
-        PlayerMemory.Dot.Mixed -> Color(0xFFF2B84B)
-        PlayerMemory.Dot.Failed -> Color(0xFFFF6B6B)
-        PlayerMemory.Dot.NotTried -> Color(0xFF5D6068)
-    }
-    Box(modifier = modifier.size(8.dp).clip(CircleShape).background(color))
-}
-
-/** KMK (r119): the server chip: "Remembered · played 9×", "played 3× · failed 2×", "failed 2× (403)", "not tried" */
-@Composable
-fun ServerChip(chip: PlayerMemory.Chip, modifier: Modifier = Modifier) {
-    val text = when {
-        chip.remembered -> stringResource(KMR.strings.player_memory_chip_remembered, chip.played)
-        chip.played > 0 && chip.failed > 0 ->
-            stringResource(KMR.strings.player_memory_chip_played_failed, chip.played, chip.failed)
-        chip.played > 0 -> stringResource(KMR.strings.player_memory_chip_played, chip.played)
-        chip.failed > 0 && chip.lastError == "403" ->
-            stringResource(KMR.strings.player_memory_chip_failed_reason, chip.failed, "403")
-        chip.failed > 0 -> stringResource(KMR.strings.player_memory_chip_failed, chip.failed)
-        else -> stringResource(KMR.strings.player_memory_chip_not_tried)
-    }
-    val (bg, fg) = when {
-        chip.remembered -> Color(0xFF13301F) to Color(0xFF8EE0A8)
-        chip.dot == PlayerMemory.Dot.Failed -> Color(0xFF3A1D1D) to Color(0xFFFFB4AB)
-        else -> MaterialTheme.colorScheme.surfaceContainerHighest to MaterialTheme.colorScheme.onSurfaceVariant
-    }
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelSmall,
-        color = fg,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        modifier = modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(bg)
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-    )
-}
-
-/** KMK (r119): the muted note under the servers when a title lists Sub and Dub servers */
-@Composable
-fun KindsApartNote(modifier: Modifier = Modifier) {
-    Text(
-        text = stringResource(KMR.strings.player_quality_kinds_apart),
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = modifier.padding(vertical = 8.dp),
-    )
-}
-
-/**
- * KMK (r119): ⋮ › "Remembered for this source" (XHQ3): server first, quality, decoding, connection, and a Reset that
- * clears only PlayerMemory for this source.
- */
-@Composable
-fun RememberedForSourceDialog(
-    sourceName: String,
-    memory: PlayerMemory.Memory?,
-    isLabSource: Boolean,
-    onReset: () -> Unit,
-    onDismissRequest: () -> Unit,
-) {
-    val nothing = stringResource(KMR.strings.player_memory_nothing)
-    val server = memory?.let { PlayerMemory.firstServer(it) }
-    val serverValue = server?.let {
-        stringResource(KMR.strings.player_memory_server_value, PlayerMemory.Slot(it.name, it.kind).label, it.played)
-    } ?: nothing
-    val rows = listOf(
-        stringResource(KMR.strings.player_memory_server) to serverValue,
-        stringResource(KMR.strings.player_memory_quality) to (memory?.quality ?: nothing),
-        stringResource(KMR.strings.player_memory_decoding) to when (memory?.decoding) {
-            PlayerMemory.DECODING_HARDWARE -> stringResource(KMR.strings.player_memory_hardware_worked)
-            PlayerMemory.DECODING_SOFTWARE -> stringResource(KMR.strings.player_memory_software_after)
-            else -> nothing
-        },
-        stringResource(KMR.strings.player_memory_connection) to when (memory?.connection) {
-            PlayerMemory.CONNECTION_DIRECT -> stringResource(KMR.strings.player_memory_direct_worked)
-            PlayerMemory.CONNECTION_APP -> stringResource(
-                if (isLabSource) KMR.strings.player_memory_through_app else KMR.strings.player_memory_through_app_cookies,
-            )
-            else -> nothing
-        },
-    )
-    AlertDialog(
-        onDismissRequest = onDismissRequest,
-        title = { Text(stringResource(KMR.strings.player_memory_title, sourceName)) },
-        text = {
-            Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    text = stringResource(KMR.strings.player_memory_intro),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Column {
-                    rows.forEachIndexed { index, (key, value) ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            Text(text = key, style = MaterialTheme.typography.bodyMedium)
-                            Spacer(Modifier.weight(1f))
-                            Text(
-                                text = value,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        if (index < rows.lastIndex) HorizontalDivider()
-                    }
-                }
-                Text(
-                    text = stringResource(KMR.strings.player_memory_reset_note),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismissRequest) {
-                Text(stringResource(tachiyomi.i18n.MR.strings.action_close))
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    onReset()
-                    onDismissRequest()
-                },
-                enabled = memory?.isEmpty == false,
-            ) {
-                Text(stringResource(KMR.strings.player_memory_reset))
-            }
-        },
-    )
 }

@@ -55,14 +55,6 @@ import androidx.compose.material3.TimeInput
 import androidx.compose.material3.TimePicker
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState as composeCollectAsState
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.outlined.History
-import androidx.compose.ui.draw.clip
-import tachiyomi.core.common.util.lang.withIOContext
-import tachiyomi.i18n.kmk.KMR
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -105,22 +97,7 @@ fun MoreSheet(
     onEnterFiltersPanel: () -> Unit,
     customButtons: List<CustomButton>,
     modifier: Modifier = Modifier,
-    // KMK (r119): the source whose PlayerMemory the "Remembered for this source" row shows (null hides the row)
-    rememberedSourceId: Long? = null,
-    rememberedSourceName: String? = null,
-    isLabSource: Boolean = false,
 ) {
-    // KMK (r119) -->
-    var isRememberedShown by remember { mutableStateOf(false) }
-    val memoryVersion by eu.kanade.tachiyomi.ui.player.PlayerMemory.version.composeCollectAsState()
-    var shownMemory by remember { mutableStateOf<eu.kanade.tachiyomi.ui.player.PlayerMemory.Memory?>(null) }
-    LaunchedEffect(isRememberedShown, memoryVersion, rememberedSourceId) {
-        val id = rememberedSourceId
-        if (isRememberedShown && id != null) {
-            shownMemory = withIOContext { eu.kanade.tachiyomi.ui.player.PlayerMemory.load(id) }
-        }
-    }
-    // KMK <--
     val advancedPreferences = remember { Injekt.get<AdvancedPlayerPreferences>() }
     val audioPreferences = remember { Injekt.get<AudioPreferences>() }
     val gesturePreferences = remember { Injekt.get<GesturePreferences>() }
@@ -193,38 +170,6 @@ fun MoreSheet(
                             Text(text = stringResource(AMR.strings.player_sheets_filters_title))
                         }
                     }
-                }
-            }
-
-            // KMK (r119): what the player learned for this source (XHQ3)
-            if (rememberedSourceId != null) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .clickable { isRememberedShown = true }
-                        .padding(vertical = MaterialTheme.padding.small),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.medium),
-                ) {
-                    Icon(imageVector = Icons.Outlined.History, contentDescription = null)
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(text = stringResource(KMR.strings.player_memory_row))
-                        Text(
-                            text = stringResource(KMR.strings.player_memory_row_summary),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-                if (isRememberedShown) {
-                    RememberedForSourceDialog(
-                        sourceName = rememberedSourceName ?: "",
-                        memory = shownMemory,
-                        isLabSource = isLabSource,
-                        onReset = { eu.kanade.tachiyomi.ui.player.PlayerMemory.reset(rememberedSourceId) },
-                        onDismissRequest = { isRememberedShown = false },
-                    )
                 }
             }
 

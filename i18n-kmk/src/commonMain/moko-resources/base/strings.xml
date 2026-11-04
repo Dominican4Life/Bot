@@ -692,7 +692,7 @@
     <string name="cast_play_services_unavailable">Casting needs Google Play services, which aren\'t available on this device</string>
     <!-- KMK: player smart playback (r56) -->
     <string name="player_link_refreshing">The video link stopped working. Getting a fresh one…</string>
-    <!-- KMK (r119): Quality sheet details and per-source player memory -->
+    <!-- KMK (r119): Quality sheet details (r122: the per-source player memory is removed) -->
     <string name="player_quality_now_playing">Now playing</string>
     <string name="player_quality_video">Video</string>
     <string name="player_quality_audio">Audio</string>
@@ -713,30 +713,6 @@
     <string name="player_quality_one_title">This server sent one quality</string>
     <string name="player_quality_one_body">The source gave the player one video for this server, and it holds one picture track. If the site offers more, the source isn\'t sending them.</string>
     <string name="player_quality_servers">Servers</string>
-    <string name="player_quality_kinds_apart">Dub servers are in their own list: picking for Sub never switches you to Dub.</string>
-    <string name="player_memory_chip_remembered">Remembered · played %1$d×</string>
-    <string name="player_memory_chip_played">played %1$d×</string>
-    <string name="player_memory_chip_failed">failed %1$d×</string>
-    <string name="player_memory_chip_failed_reason">failed %1$d× (%2$s)</string>
-    <string name="player_memory_chip_played_failed">played %1$d× · failed %2$d×</string>
-    <string name="player_memory_chip_not_tried">not tried</string>
-    <string name="player_memory_row">Remembered for this source</string>
-    <string name="player_memory_row_summary">Server, quality, decoding, connection</string>
-    <string name="player_memory_title">Remembered for %1$s</string>
-    <string name="player_memory_intro">What the player learned from videos that played well on this source. Only these items. Your player settings aren\'t part of it.</string>
-    <string name="player_memory_server">Server first</string>
-    <string name="player_memory_quality">Quality</string>
-    <string name="player_memory_decoding">Decoding</string>
-    <string name="player_memory_connection">Connection</string>
-    <string name="player_memory_nothing">Nothing yet</string>
-    <string name="player_memory_server_value">%1$s (played %2$d×)</string>
-    <string name="player_memory_hardware_worked">Hardware (worked)</string>
-    <string name="player_memory_software_after">Software (hardware failed)</string>
-    <string name="player_memory_direct_worked">Direct (worked)</string>
-    <string name="player_memory_through_app_cookies">Through the app (needed cookies)</string>
-    <string name="player_memory_through_app">Through the app</string>
-    <string name="player_memory_reset_note">Reset clears only these items, for this source only. Your player settings, other sources, history and downloads stay as they are.</string>
-    <string name="player_memory_reset">Reset what\'s remembered</string>
     <string name="player_anime4k_lowered">Anime4K lowered to keep playback smooth</string>
     <string name="pref_player_performance_profile">Performance profile</string>
     <string name="pref_player_performance_profile_summary">Sets decoding, scaling, smooth motion, the Anime4K level and the cache size while playing. Custom uses your own settings</string>

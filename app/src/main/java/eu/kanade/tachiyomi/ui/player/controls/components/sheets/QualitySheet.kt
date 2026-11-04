@@ -106,11 +106,8 @@ fun QualitySheet(
     onDismissRequest: () -> Unit,
     dismissSheet: Boolean,
     modifier: Modifier = Modifier,
-    // KMK (r119): "Now playing" / "Inside this stream" / one-quality cards above the list (one lazy item), the
-    // servers' dots + chips from PlayerMemory, and the Sub / Dub note under the servers
+    // KMK (r119): "Now playing" / "Inside this stream" / one-quality cards above the list (one lazy item)
     header: (@Composable () -> Unit)? = null,
-    serverChips: Map<Int, eu.kanade.tachiyomi.ui.player.PlayerMemory.Chip> = emptyMap(),
-    showKindsNote: Boolean = false,
 ) {
     PlayerSheet(
         onDismissRequest = {
@@ -205,8 +202,6 @@ fun QualitySheet(
                         displayHosters = displayHosters,
                         modifier = modifier.padding(paddingValues = qualitySheetPadding),
                         header = header,
-                        serverChips = serverChips,
-                        showKindsNote = showKindsNote,
                     )
                 }
             }
@@ -407,8 +402,6 @@ fun QualitySheetHosterContent(
     displayHosters: Pair<Boolean, Boolean>,
     modifier: Modifier = Modifier,
     header: (@Composable () -> Unit)? = null,
-    serverChips: Map<Int, eu.kanade.tachiyomi.ui.player.PlayerMemory.Chip> = emptyMap(),
-    showKindsNote: Boolean = false,
 ) {
     val validHosters = hosterState.withIndex().filter { (_, state) ->
         state is HosterState.Idle ||
@@ -460,7 +453,6 @@ fun QualitySheetHosterContent(
             onClickVideo = onClickVideo,
             defaultVideoByHoster = defaultVideoByHoster,
             highlightDefaultStream = highlightDefaultStream,
-            serverChips = serverChips,
         )
 
         if (displayHosters.first) {
@@ -472,7 +464,6 @@ fun QualitySheetHosterContent(
                 onClickVideo = onClickVideo,
                 defaultVideoByHoster = defaultVideoByHoster,
                 highlightDefaultStream = highlightDefaultStream,
-                serverChips = serverChips,
             )
         }
 
@@ -485,12 +476,8 @@ fun QualitySheetHosterContent(
                 onClickVideo = onClickVideo,
                 defaultVideoByHoster = defaultVideoByHoster,
                 highlightDefaultStream = highlightDefaultStream,
-                serverChips = serverChips,
             )
         }
-
-        // KMK (r119): Sub and Dub servers stay apart
-        if (showKindsNote) item(key = "kinds-apart-note") { KindsApartNote() }
     }
 }
 
@@ -502,8 +489,6 @@ internal fun LazyListScope.hosterContent(
     onClickVideo: (Int, Int) -> Unit,
     defaultVideoByHoster: Map<Int, Int>,
     highlightDefaultStream: Boolean = true,
-    // KMK (r119)
-    serverChips: Map<Int, eu.kanade.tachiyomi.ui.player.PlayerMemory.Chip> = emptyMap(),
 ) {
     hosters.forEach { (hosterIdx, hoster) ->
         val isExpanded = expandedState.getOrNull(hosterIdx) ?: false
@@ -515,7 +500,6 @@ internal fun LazyListScope.hosterContent(
                 selected = selectedVideoIndex.first == hosterIdx,
                 isExpanded = isExpanded,
                 onClick = { onClickHoster(hosterIdx) },
-                chip = serverChips[hosterIdx],
             )
         }
 
@@ -546,8 +530,6 @@ fun HosterTrack(
     isExpanded: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    // KMK (r119): PlayerMemory's dot + chip for this server
-    chip: eu.kanade.tachiyomi.ui.player.PlayerMemory.Chip? = null,
 ) {
     Row(
         modifier = modifier
@@ -555,10 +537,6 @@ fun HosterTrack(
             .clickable(onClick = onClick),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (chip != null) {
-            ServerDot(chip.dot)
-            Spacer(modifier = Modifier.size(8.dp))
-        }
         Text(
             text = hoster.name,
             fontStyle = if (selected) FontStyle.Italic else FontStyle.Normal,
@@ -568,9 +546,6 @@ fun HosterTrack(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(end = MaterialTheme.padding.small),
         )
-        if (chip != null) {
-            ServerChip(chip, modifier = Modifier.padding(end = MaterialTheme.padding.small))
-        }
 
         when (hoster) {
             is HosterState.Idle -> {
@@ -732,7 +707,7 @@ private fun VideoText(
     val playingHeight = LocalPlayingHeight.current
     val label = remember(video.videoTitle, selected, playingHeight) {
         if (selected && playingHeight != null && playingHeight > 0 &&
-            eu.kanade.tachiyomi.ui.player.PlayerMemory.qualityOf(video) == null
+            qualityLabelOf(video) == null // KMK (r122): QualityDetails.kt
         ) {
             "${playingHeight}p (${video.videoTitle.ifBlank { "Auto" }})"
         } else {
