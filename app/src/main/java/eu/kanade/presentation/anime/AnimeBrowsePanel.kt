@@ -418,8 +418,46 @@ private fun AnimePanelEpisodeRow(
             episode.scanlator?.takeIf { it.isNotBlank() },
         ).joinToString(" • ")
     }
+    val summaryText = episode.summary?.takeIf { showSummary && it.isNotBlank() }
+    val rich = showThumb || summaryText != null
+    // KMK (r123): hide / bookmark / download; with a picture or summary shown they sit on the date line, right-aligned
+    // (the title and summary keep the full width beside the picture), otherwise at the row's end as before
+    val icons: @Composable () -> Unit = {
+        IconButton(onClick = onToggleSeen, modifier = Modifier.size(36.dp)) {
+            Icon(
+                imageVector = if (episode.seen) Icons.Filled.Visibility else Icons.Outlined.VisibilityOff,
+                contentDescription = stringResource(
+                    if (episode.seen) MR.strings.action_mark_as_unread else MR.strings.action_mark_as_read,
+                ),
+                tint = if (episode.seen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+        IconButton(onClick = onToggleBookmark, modifier = Modifier.size(36.dp)) {
+            Icon(
+                imageVector = if (episode.bookmark) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
+                contentDescription = stringResource(
+                    if (episode.bookmark) MR.strings.action_remove_bookmark else MR.strings.action_bookmark,
+                ),
+                tint = if (episode.bookmark) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                modifier = Modifier.size(20.dp),
+            )
+        }
+        // KMK (r88): download / queued / progress / downloaded, as on the manga preview's chapter rows
+        AnimeEpisodeDownloadIndicator(
+            enabled = true,
+            downloaded = downloaded,
+            queued = queued,
+            onClick = onDownload,
+            modifier = Modifier.size(36.dp),
+        )
+    }
     Row(
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = if (rich) Alignment.Top else Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
             .selectedBackground(selected)
@@ -462,10 +500,9 @@ private fun AnimePanelEpisodeRow(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            val summary = episode.summary?.takeIf { showSummary && it.isNotBlank() }
-            if (summary != null) {
+            if (summaryText != null) {
                 Text(
-                    text = summary,
+                    text = summaryText,
                     style = MaterialTheme.typography.bodySmall,
                     color = LocalContentColor.current.copy(
                         alpha = if (episode.seen) DISABLED_ALPHA else SECONDARY_ALPHA,
@@ -474,7 +511,21 @@ private fun AnimePanelEpisodeRow(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            if (subtitle.isNotEmpty()) {
+            if (rich) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = LocalContentColor.current.copy(
+                            alpha = if (episode.seen) DISABLED_ALPHA else SECONDARY_ALPHA,
+                        ),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    icons()
+                }
+            } else if (subtitle.isNotEmpty()) {
                 Text(
                     text = subtitle,
                     style = MaterialTheme.typography.bodySmall,
@@ -486,37 +537,6 @@ private fun AnimePanelEpisodeRow(
                 )
             }
         }
-        IconButton(onClick = onToggleSeen, modifier = Modifier.size(36.dp)) {
-            Icon(
-                imageVector = if (episode.seen) Icons.Filled.Visibility else Icons.Outlined.VisibilityOff,
-                contentDescription = stringResource(
-                    if (episode.seen) MR.strings.action_mark_as_unread else MR.strings.action_mark_as_read,
-                ),
-                tint = if (episode.seen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(20.dp),
-            )
-        }
-        IconButton(onClick = onToggleBookmark, modifier = Modifier.size(36.dp)) {
-            Icon(
-                imageVector = if (episode.bookmark) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
-                contentDescription = stringResource(
-                    if (episode.bookmark) MR.strings.action_remove_bookmark else MR.strings.action_bookmark,
-                ),
-                tint = if (episode.bookmark) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
-                modifier = Modifier.size(20.dp),
-            )
-        }
-        // KMK (r88): download / queued / progress / downloaded, as on the manga preview's chapter rows
-        AnimeEpisodeDownloadIndicator(
-            enabled = true,
-            downloaded = downloaded,
-            queued = queued,
-            onClick = onDownload,
-            modifier = Modifier.size(36.dp),
-        )
+        if (!rich) icons()
     }
 }
