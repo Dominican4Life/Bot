@@ -71,6 +71,7 @@ import coil3.asDrawable
 import coil3.imageLoader
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.domain.ui.UiPreferences
+import eu.kanade.domain.ui.model.PanoramaStyle
 import eu.kanade.presentation.anime.AnimeCategoryDialog
 import eu.kanade.presentation.anime.asDisplayManga
 import eu.kanade.presentation.anime.asMangaCover
@@ -88,6 +89,7 @@ import eu.kanade.presentation.manga.components.MangaChapterListItem
 import eu.kanade.presentation.manga.components.MangaInfoBox
 import eu.kanade.presentation.manga.components.MangaToolbar
 import eu.kanade.presentation.manga.components.OutlinedButtonWithArrow
+import eu.kanade.presentation.manga.components.RatioSwitchToPanorama
 import eu.kanade.presentation.manga.components.ScanlatorFilterDialog
 import eu.kanade.presentation.manga.components.SearchMetadataChips
 import eu.kanade.presentation.manga.components.getSwipeAction
@@ -1224,18 +1226,27 @@ private fun LazyListScope.relatedItems(
 
 @Composable
 private fun AnimeSuggestionsRow(suggestions: List<Anime>, onClick: (Anime) -> Unit) {
+    // KMK (r123): follows Appearance › "Search & suggestions" (usePanoramaCoverFlow): a wide cover gets a wide card
+    // (180 dp, Panorama FIT look) instead of being cropped into a tall one; tall covers keep the 110 dp card
+    val panoramaFlow by remember { Injekt.get<UiPreferences>().usePanoramaCoverFlow() }.collectAsState()
     LazyRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
     ) {
         items(suggestions, key = { it.id }) { anime ->
-            Box(Modifier.width(110.dp)) {
+            // KMK (r123): each card measures its own cover (height / width) to pick its width
+            val coverRatio = remember { mutableFloatStateOf(1f) }
+            val wideCard = panoramaFlow && coverRatio.floatValue <= RatioSwitchToPanorama
+            Box(Modifier.width(if (wideCard) 180.dp else 110.dp)) {
                 MangaComfortableGridItem(
                     coverData = anime.asMangaCover(),
                     title = anime.title,
                     onClick = { onClick(anime) },
                     onLongClick = { onClick(anime) },
-                    usePanoramaCover = false,
+                    // KMK (r123)
+                    coverRatio = coverRatio,
+                    usePanoramaCover = panoramaFlow,
+                    panoramaStyle = PanoramaStyle.FIT,
                 )
             }
         }

@@ -17,6 +17,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -26,6 +27,8 @@ import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
+import eu.kanade.domain.ui.UiPreferences
+import eu.kanade.domain.ui.model.PanoramaStyle
 import eu.kanade.presentation.anime.asMangaCover
 import eu.kanade.presentation.browse.RelatedMangaTitle
 import eu.kanade.presentation.browse.header
@@ -51,6 +54,7 @@ import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.EmptyScreen
 import tachiyomi.presentation.core.screens.LoadingScreen
+import tachiyomi.presentation.core.util.collectAsState as collectPrefAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
@@ -73,6 +77,9 @@ class AnimeRelatedScreen(
         val state by screenModel.state.collectAsState()
         val gridState = rememberLazyGridState()
         var scrolled by rememberSaveable { mutableStateOf(false) }
+        // KMK (r123): follows Appearance › "Search & suggestions" (usePanoramaCoverFlow): wide covers get the Panorama
+        // FIT card (as Browse does) in wider columns, instead of being cropped into tall cards
+        val panoramaFlow by remember { Injekt.get<UiPreferences>().usePanoramaCoverFlow() }.collectPrefAsState()
 
         LaunchedEffect(state.groups, state.loading) {
             if (scrolled || focusGroup == null || state.loading) return@LaunchedEffect
@@ -98,7 +105,8 @@ class AnimeRelatedScreen(
                     modifier = Modifier.padding(contentPadding),
                 )
                 else -> FastScrollLazyVerticalGrid(
-                    columns = GridCells.Adaptive(128.dp),
+                    // KMK (r123): wider columns for wide cards
+                    columns = GridCells.Adaptive(if (panoramaFlow) 180.dp else 128.dp),
                     state = gridState,
                     contentPadding = PaddingValues(
                         start = 8.dp,
@@ -137,7 +145,9 @@ class AnimeRelatedScreen(
                                 title = anime.title,
                                 onClick = { navigator.push(AnimeScreen(anime.id)) },
                                 onLongClick = { navigator.push(AnimeScreen(anime.id)) },
-                                usePanoramaCover = false,
+                                // KMK (r123)
+                                usePanoramaCover = panoramaFlow,
+                                panoramaStyle = PanoramaStyle.FIT,
                             )
                         }
                     }

@@ -7,6 +7,7 @@ import androidx.compose.animation.graphics.res.animatedVectorResource
 import androidx.compose.animation.graphics.res.rememberAnimatedVectorPainter
 import androidx.compose.animation.graphics.vector.AnimatedImageVector
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -65,8 +67,10 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.layout.ContentScale
@@ -76,6 +80,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withLink
@@ -102,6 +107,7 @@ import tachiyomi.domain.library.service.LibraryPreferences.Companion.MANGA_NON_C
 import tachiyomi.domain.manga.interactor.FetchInterval
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaCover as DomainMangaCover
+import tachiyomi.domain.manga.model.asMangaCover
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.i18n.sy.SYMR
@@ -145,6 +151,26 @@ fun MangaInfoBox(
     val panoramaPref by Injekt.get<UiPreferences>().usePanoramaCoverMangaInfo().collectAsState()
     val usePanoramaCover = forcePanoramaCover || panoramaPref
     val topAlignCover by Injekt.get<UiPreferences>().topAlignCover().collectAsState()
+    // KMK (r123): "Title page header" on = header B for every cover, wide or tall (the cover itself is the backdrop,
+    // title / author / source on its faded bottom); off = the header below, unchanged
+    if (panoramaPref) {
+        MangaInfoHeaderB(
+            isTabletUi = isTabletUi,
+            appBarPadding = appBarPadding,
+            manga = manga,
+            sourceName = sourceName,
+            isStubSource = isStubSource,
+            isSourceIncognito = isSourceIncognito,
+            onCoverClick = onCoverClick,
+            doSearch = doSearch,
+            librarySearch = librarySearch,
+            onSourceClick = onSourceClick,
+            onCoverLoaded = onCoverLoaded,
+            coverRatio = coverRatio,
+            modifier = modifier,
+        )
+        return
+    }
     // KMK <--
     Box(modifier = modifier) {
         // Backdrop
@@ -465,6 +491,128 @@ fun ExpandableMangaDescription(
     }
 }
 
+/**
+ * KMK (r123): title page header "B" (Settings › Appearance › Title page header on), shared by manga and anime.
+ * The cover spans the full width (phone: edge to edge under the see-through top bar; tablet: the left pane, under the
+ * top bar). A wide cover (height / width <= [RatioSwitchToPanorama]) is cropped to width × 0.71 (phone) or × 0.77
+ * (tablet); any other cover is shown whole at its own shape, capped at 1.6 × width (then cropped, top kept). 2:3 until
+ * the cover has loaded. The bottom 60 % fades to the background, with the usual title / author / status / source
+ * (same actions) centred on it. Tapping the cover opens the cover dialog.
+ */
+@Composable
+private fun MangaInfoHeaderB(
+    isTabletUi: Boolean,
+    appBarPadding: Dp,
+    manga: Manga,
+    sourceName: String,
+    isStubSource: Boolean,
+    isSourceIncognito: Boolean,
+    onCoverClick: () -> Unit,
+    doSearch: (query: String, global: Boolean) -> Unit,
+    librarySearch: (query: String) -> Unit,
+    onSourceClick: () -> Unit,
+    onCoverLoaded: (DomainMangaCover) -> Unit,
+    coverRatio: MutableFloatState,
+    modifier: Modifier = Modifier,
+) {
+    // The screens start coverRatio at 1f before any cover was measured: treat that as "not known yet" (2:3)
+    var ratioKnown by remember { mutableStateOf(coverRatio.floatValue != 1f) }
+    val measured = coverRatio.floatValue.takeIf { ratioKnown && it.isFinite() && it > 0f }
+    val isWide = measured != null && measured <= RatioSwitchToPanorama
+    val tallRatio = measured ?: (1f / MangaCover.Book.ratio)
+    val tooTall = !isWide && tallRatio > HEADER_B_MAX_TALL
+    // Height / width of the picture box
+    val boxRatio = when {
+        isWide -> if (isTabletUi) HEADER_B_WIDE_TABLET else HEADER_B_WIDE_PHONE
+        tooTall -> HEADER_B_MAX_TALL
+        else -> tallRatio
+    }
+    val background = MaterialTheme.colorScheme.background
+    val fadeColors = arrayOf(
+        0f to Color.Transparent,
+        0.45f to background.copy(alpha = 0.72f),
+        1f to background,
+    )
+    val titleStyle = MaterialTheme.typography.titleLarge.copy(
+        shadow = Shadow(color = background.copy(alpha = 0.85f), offset = Offset(0f, 2f), blurRadius = 12f),
+    )
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(top = if (isTabletUi) appBarPadding else 0.dp),
+    ) {
+        AsyncImage(
+            model = ImageRequest.Builder(LocalContext.current)
+                .data(manga)
+                .crossfade(true)
+                .build(),
+            contentDescription = stringResource(MR.strings.manga_cover),
+            contentScale = if (isWide || tooTall) ContentScale.Crop else ContentScale.FillWidth,
+            alignment = if (tooTall) Alignment.TopCenter else Alignment.Center,
+            onSuccess = { result ->
+                val image = result.result.image
+                coverRatio.floatValue = image.height.toFloat() / image.width
+                ratioKnown = true
+                onCoverLoaded(manga.asMangaCover())
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(1f / boxRatio)
+                .background(CoverPlaceholderColor)
+                .drawWithContent {
+                    drawContent()
+                    drawRect(
+                        brush = Brush.verticalGradient(
+                            *fadeColors,
+                            startY = size.height * (1f - HEADER_B_FADE),
+                            endY = size.height,
+                        ),
+                    )
+                }
+                .clickable(onClick = onCoverClick),
+        )
+        CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    // Phone: never under the top bar, even with a long title on a short wide cover
+                    .padding(
+                        start = 16.dp,
+                        top = if (isTabletUi) 0.dp else appBarPadding,
+                        end = 16.dp,
+                        bottom = 12.dp,
+                    ),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                MangaContentInfo(
+                    title = manga.title,
+                    author = manga.author,
+                    artist = manga.artist,
+                    status = manga.status,
+                    sourceName = sourceName,
+                    isStubSource = isStubSource,
+                    isSourceIncognito = isSourceIncognito,
+                    doSearch = doSearch,
+                    textAlign = TextAlign.Center,
+                    librarySearch = librarySearch,
+                    onSourceClick = onSourceClick,
+                    titleMaxLines = 4,
+                    titleStyle = titleStyle,
+                )
+            }
+        }
+    }
+}
+
+// KMK (r123): header B sizes (height / width of the picture)
+private const val HEADER_B_WIDE_PHONE = 0.71f
+private const val HEADER_B_WIDE_TABLET = 0.77f
+private const val HEADER_B_MAX_TALL = 1.6f
+
+/** KMK (r123): share of the picture, from the bottom, covered by the fade */
+private const val HEADER_B_FADE = 0.6f
+
 @Composable
 private fun MangaAndSourceTitlesLarge(
     appBarPadding: Dp,
@@ -660,6 +808,10 @@ private fun ColumnScope.MangaContentInfo(
     // KMK -->
     librarySearch: (query: String) -> Unit,
     onSourceClick: () -> Unit,
+    /** KMK (r123): header B keeps the title to 4 lines */
+    titleMaxLines: Int = Int.MAX_VALUE,
+    /** KMK (r123): header B's title with a shadow; null = titleLarge */
+    titleStyle: TextStyle? = null,
     // KMK <--
 ) {
     val context = LocalContext.current
@@ -698,7 +850,10 @@ private fun ColumnScope.MangaContentInfo(
     // KMK <--
     Text(
         text = title.ifBlank { stringResource(MR.strings.unknown_title) },
-        style = MaterialTheme.typography.titleLarge,
+        // KMK (r123): header B passes its own style and line cap
+        style = titleStyle ?: MaterialTheme.typography.titleLarge,
+        maxLines = titleMaxLines,
+        overflow = TextOverflow.Ellipsis,
         modifier = Modifier.clickableNoIndication(
             onLongClick = {
                 if (title.isNotBlank()) {
