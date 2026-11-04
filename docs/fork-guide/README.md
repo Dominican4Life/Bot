@@ -949,6 +949,22 @@ Two commits (the first failed CI: `openers += opener` on a `MutableSet<Element>`
 - **Per-source player memory removed** (the owner didn't want it): `PlayerMemory.kt` and everything it fed are gone. That covers the remembered server tried first (and its wait), played/failed counts, remembered quality, software decoding after a failure, and the app's connection for installed extensions. Also removed: the player ⋮ "Remembered for this source", the server dots and chips, and the Sub/Dub note. `App.onCreate` deletes `filesDir/player_memory`. `PlayerActivity.playsThroughApp` is the r118 rule again (Code editor sources' plain files and Lab previews only).
 - **Kept from r119/r120**: Quality sheet Now playing, Inside this stream (`videoTrackList` / `selectVideoTrack`), the one-quality card with Check the site in Source Lab, "720p (Auto)" (now `QualityDetails.qualityLabelOf`), and the PlayerObserver "(normal with copy decoding)" line.
 
+## Changes in r123 (4 November 2026)
+
+- **Title page header B** (`MangaInfoHeader.kt` `MangaInfoHeaderB`, used by `MangaInfoBox` for anime and manga, phone and tablet). It's on when "Title page header" (`use_panorama_cover_manga_info`) is on, for every cover; when that's off the old header is unchanged.
+  - **Size:** the whole cover spans the width (phone) or the left pane (tablet). Wide covers (ratio ≤ `RatioSwitchToPanorama`) are width × 0.71 on a phone and × 0.77 on a tablet, cropped. Tall covers use their own ratio, capped at 1.6 × width. Before the ratio is known it draws 2:3.
+  - **Text on the picture:** a 60 % fade, then title (4 lines), author and source via `MangaContentInfo`, with all the same clicks. The owner picked whole covers over a 4:5 cut.
+  - **Mockups:** design canvas page "Title page", XHead5–8.
+- **Suggestions follow "Search & suggestions"** (`use_panorama_cover_flow`): the anime title page row (`AnimeSuggestionsRow`) and `AnimeRelatedScreen` get 180 dp wide cards for wide covers. The manga row already followed it.
+- **Browse / Library preview panel** (`BrowsePreviewInfoHeader`) now uses the title page's pieces:
+  - `MangaInfoBox`, so header B applies there too, and the action row.
+  - A swipe card (`SwipeInfoCard`): page 1 is the description, page 2 the grouped tag rows (`NamespaceTags` / `TagsChip`). It has dots, a fixed 150 dp height and no headings; its page is kept while the app runs. Mockup: page "Browse panel", option E.
+- **Anime preview panel** (`AnimeBrowsePanel`):
+  - **Download menu:** only Unseen / All episodes / Bookmarked.
+  - **Display menu:** a new icon with Show episode thumbnail / summary. These are the title's own `episodeFlags`, with "Just this title / All titles from <source>" (`setEpisodeFlagBitsForSource` + `SourceInfoOnly.setSourceDefaults`).
+  - **Episode rows** show the episode picture (source preview, else the cover) and a 2-line summary. When either shows, the hide / bookmark / download icons move onto the date line under the summary, right-aligned (option B on XPanelEp).
+- r123 was built once with all of this: earlier r123 runs were cancelled while items were added.
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
