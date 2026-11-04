@@ -2134,6 +2134,20 @@ class PlayerViewModel @JvmOverloads constructor(
             // KMK: on a metered network the automatic pick goes for 720p or lower
             val capQuality = hosterIndex == -1 && shouldCapQualityForNetwork()
 
+            // KMK (r119) -->
+            // PlayerMemory: the best-scored remembered server of the same kind (or this session's own pick) is tried
+            // first; the other servers' automatic picks wait for it (at most MEMORY_WAIT_MS)
+            runCatching { PlayerMemory.load(source.id) }
+            memoryPick = null
+            val memoryTarget = if (hosterIndex == -1) {
+                runCatching { memoryTargetFor(source, hosterList, defaultSelector) }.getOrNull()
+            } else {
+                null
+            }
+            val memoryGate = kotlinx.coroutines.CompletableDeferred<Unit>()
+            if (memoryTarget == null) memoryGate.complete(Unit)
+            // KMK <--
+
             try {
                 coroutineScope {
                     hosterList.mapIndexed { hosterIdx, hoster ->
@@ -2156,6 +2170,17 @@ class PlayerViewModel @JvmOverloads constructor(
 
                             _hosterState.updateAt(hosterIdx, hosterState)
 
+                            // KMK (r119): the remembered server first
+                            if (memoryTarget != null && hosterIdx == memoryTarget.hosterIndex) {
+                                try {
+                                    tryMemoryPick(
+                                        source, memoryTarget, hosterState, capQuality, generation, hasFoundPreferredVideo,
+                                    )
+                                } finally {
+                                    memoryGate.complete(Unit)
+                                }
+                            }
+
                             if (hosterState is HosterState.Ready) {
                                 if (hosterIdx == hosterIndex) {
                                     // KMK -->
@@ -2175,6 +2200,10 @@ class PlayerViewModel @JvmOverloads constructor(
 
                                 // ANZ -->
                                 if (hosterIndex == -1) {
+                                    // KMK (r119): wait for the remembered server's pick
+                                    if (memoryTarget != null && hosterIdx != memoryTarget.hosterIndex) {
+                                        kotlinx.coroutines.withTimeoutOrNull(MEMORY_WAIT_MS) { memoryGate.await() }
+                                    }
                                     if (defaultSelector.isNotBlank()) {
                                         val ranked = DefaultStreamSelector.findRankedInHosters(defaultSelector, listOf(hosterState))
                                         ranked.firstOrNull()?.let { (_, rankedIdx) ->
@@ -2222,6 +2251,11 @@ class PlayerViewModel @JvmOverloads constructor(
                             // ANK --> A postponed selection may be waiting on this hoster
                             retryPendingVideoFallback(source)
                             // ANK <--
+                        }.also { job ->
+                            // KMK (r119): the others never wait on a remembered server that stopped early
+                            if (memoryTarget != null && hosterIdx == memoryTarget.hosterIndex) {
+                                job.invokeOnCompletion { memoryGate.complete(Unit) }
+                            }
                         }
                     }.awaitAll()
 
@@ -2387,7 +2421,13 @@ class PlayerViewModel @JvmOverloads constructor(
         // KMK: the episode (or its hoster list) changed while the link was resolved
         if (hosterGeneration.get() != generation) return false
 
+        // KMK (r119): whether PlayerMemory picked this video (read once: the next load is someone else's pick)
+        val fromMemory = memoryPick == (hosterIndex to videoIndex)
+        if (fromMemory) memoryPick = null
+
         if (resolvedVideo == null || resolvedVideo.videoUrl.isEmpty()) {
+            // KMK (r119): a link that can't be resolved is a load error for that server
+            memoryLinkFailed(source, selectedHosterState.name, video, fromMemory)
             if (currentVideo.value == null) {
                 _hosterState.updateAt(
                     hosterIndex,
@@ -2442,6 +2482,9 @@ class PlayerViewModel @JvmOverloads constructor(
         pendingStart = null
         loadedVideoEpisodeId = episodeId
         if (startAt != null) PlayerDebugLog.add("player", "Starting at ${startAt / 1000} s")
+        // KMK (r119): watched for 30 s played / failed (PlayerMemory)
+        startMemoryWatch(source, selectedHosterState.name, resolvedVideo, fromMemory)
+        chosenVideoTrack.update { _ -> null }
         eventChannel.send(Event.SetVideo(resolvedVideo, startAt))
         // KMK <--
         return true
@@ -2463,6 +2506,11 @@ class PlayerViewModel @JvmOverloads constructor(
         if (videoState == Video.State.ERROR) {
             return
         }
+
+        // KMK (r119): the user's own pick: memory follows it for the rest of this session (it counts as played once
+        // it plays 30 s), and never puts another server first meanwhile
+        sessionChoice = PlayerMemory.slotOf(hosterState.name, video) to PlayerMemory.qualityOf(video)
+        memoryPick = null
 
         // KMK: the list this tap belongs to, so a late answer can't land in another episode
         val generation = hosterGeneration.get()
@@ -2843,6 +2891,7 @@ class PlayerViewModel @JvmOverloads constructor(
         }
         if (selfHealCount >= MAX_SELF_HEALS) {
             PlayerDebugLog.add("self-heal", "Giving up after $selfHealCount attempts ($reason)")
+            onPlaybackFailed("self-heal gave up: $reason") // KMK (r119)
             return false
         }
 
@@ -2894,6 +2943,306 @@ class PlayerViewModel @JvmOverloads constructor(
         }
         return true
     }
+
+    // KMK (r119) -->
+    // --- Per-source player memory (PlayerMemory): server, quality, decoding, connection ---
+
+    /** The video being watched for "played" (30 s without an error) or "failed" */
+    private class MemoryWatch(
+        val sourceId: Long,
+        val slot: PlayerMemory.Slot,
+        val quality: String?,
+        val fromMemory: Boolean,
+        val plainFile: Boolean,
+    ) {
+        var ticks = 0
+        var lastPos = -1L
+        var done = false
+        var failed = false
+    }
+
+    @Volatile
+    private var memoryWatch: MemoryWatch? = null
+
+    /** The (hoster, video) the next [loadVideo] plays because PlayerMemory picked it */
+    @Volatile
+    private var memoryPick: Pair<Int, Int>? = null
+
+    /** The server + quality the user picked in this player session: memory never overrides it */
+    @Volatile
+    private var sessionChoice: Pair<PlayerMemory.Slot, String?>? = null
+
+    /** The user chose a decoder in this session: remembered decoding is left alone */
+    @Volatile
+    private var userPickedDecoder = false
+
+    /** The address mpv was last asked to open (a 127.0.0.1 relay address when it goes through the app) */
+    @Volatile
+    var playingUrl: String? = null
+        private set
+
+    /** mpv reported a hardware decoding failure for the file being played */
+    @Volatile
+    private var hwDecodeTroubleSeen = false
+    private var softwareSwitchFor: String? = null
+    private var softwareReloadFor: String? = null
+
+    /** mpv's hwdec before the memory switched it to "no" (put back for a source that decodes fine) */
+    private var hwdecBeforeMemory: String? = null
+
+    /** The source whose memory the ⋮ dialog and the Quality sheet show (null in a preview or without a source) */
+    fun memorySourceId(): Long? = if (isPreview) null else currentSource.value?.id
+
+    /** PlayerActivity: mpv is about to open [url] */
+    fun onLoadingFile(url: String) {
+        playingUrl = url
+        hwDecodeTroubleSeen = false
+    }
+
+    private fun isStreamVideo(video: Video): Boolean {
+        val url = video.videoUrl
+        return video.type == eu.kanade.tachiyomi.animesource.model.VideoType.HLS ||
+            video.type == eu.kanade.tachiyomi.animesource.model.VideoType.DASH ||
+            url.contains("m3u8", ignoreCase = true) ||
+            url.substringBefore('?').lowercase().endsWith(".mpd")
+    }
+
+    /** loadHosters: what to try first for [source], or null for the normal order (IO thread: reads the file) */
+    private fun memoryTargetFor(
+        source: AnimeSource,
+        hosters: List<Hoster>,
+        defaultSelector: String,
+    ): PlayerMemory.Target? {
+        if (isPreview || hosters.isEmpty()) return null
+        // The anime's saved default stream is the user's own choice: it wins
+        if (defaultSelector.isNotBlank()) return null
+        if (isEpisodeOnline() != true) return null
+        val memory = PlayerMemory.load(source.id)
+        return PlayerMemory.target(memory, hosters, sessionChoice)
+    }
+
+    /** loadHosters: plays the remembered server's video when [state] (the target hoster) has it */
+    private suspend fun tryMemoryPick(
+        source: AnimeSource,
+        target: PlayerMemory.Target,
+        state: HosterState,
+        capQuality: Boolean,
+        generation: Int,
+        found: AtomicBoolean,
+    ) {
+        if (state is HosterState.Error) {
+            PlayerDebugLog.add("memory", "The remembered server '${target.slot.label}' didn't load; normal order")
+            PlayerMemory.recordFailed(source.id, target.slot, "error", drop = sessionChoice == null, quality = null)
+            return
+        }
+        val ready = state as? HosterState.Ready ?: return
+        val picked = PlayerMemory.videoIndexIn(target, ready)
+        if (picked < 0) {
+            PlayerDebugLog.add("memory", "'${target.slot.label}' isn't in this title's list; normal order")
+            return
+        }
+        val videoIdx = if (capQuality) capQualityIndex(ready, picked) else picked
+        val video = ready.videoList.getOrNull(videoIdx) ?: return
+        if (!found.compareAndSet(false, true)) return
+        PlayerDebugLog.add(
+            "memory",
+            "Trying '${target.slot.label}' first (played ${target.played}×), '${video.videoTitle}'" +
+                (target.quality?.let { " (remembered $it)" } ?: ""),
+        )
+        memoryPick = target.hosterIndex to videoIdx
+        val success = loadVideo(source, video, target.hosterIndex, videoIdx, generation)
+        if (!success) {
+            memoryPick = null
+            found.set(false)
+        }
+    }
+
+    /** loadVideo: a video was sent to mpv; watch it for played / failed */
+    private fun startMemoryWatch(source: AnimeSource?, hosterName: String, video: Video, fromMemory: Boolean) {
+        memoryWatch = null
+        if (source == null || isPreview || isEpisodeOnline() != true) return
+        if (!video.videoUrl.startsWith("http") || video.videoUrl.startsWith(TorrentServerUtils.hostUrl)) return
+        memoryWatch = MemoryWatch(
+            sourceId = source.id,
+            slot = PlayerMemory.slotOf(hosterName, video),
+            quality = PlayerMemory.qualityOf(video),
+            fromMemory = fromMemory,
+            plainFile = !isStreamVideo(video),
+        )
+    }
+
+    /** loadVideo: the video's link couldn't be resolved */
+    private fun memoryLinkFailed(source: AnimeSource?, hosterName: String, video: Video, fromMemory: Boolean) {
+        if (source == null || isPreview) return
+        PlayerMemory.recordFailed(
+            source.id,
+            PlayerMemory.slotOf(hosterName, video),
+            "error",
+            drop = fromMemory,
+            quality = PlayerMemory.qualityOf(video),
+        )
+    }
+
+    /** onSecondReached: 30 s of playback (seconds that moved while not paused) = played */
+    private fun tickMemoryWatch(position: Long) {
+        val watch = memoryWatch ?: return
+        if (watch.done || watch.failed || paused.value == true || position == watch.lastPos) return
+        watch.lastPos = position
+        watch.ticks++
+        if (watch.ticks < MEMORY_PLAYED_SECONDS) return
+        watch.done = true
+        val hardware = mpv.getPropertyString("hwdec-current")?.let { it.isNotEmpty() && it != "no" }
+        val relayed = playingUrl?.startsWith("http://127.0.0.1") == true
+        val connection = when {
+            !watch.plainFile -> null
+            relayed -> PlayerMemory.CONNECTION_APP
+            else -> PlayerMemory.CONNECTION_DIRECT
+        }
+        PlayerMemory.recordPlayed(watch.sourceId, watch.slot, watch.quality, hardware, connection)
+        PlayerDebugLog.add("memory", "'${watch.slot.label}' ${watch.quality.orEmpty()} played $MEMORY_PLAYED_SECONDS s")
+    }
+
+    /**
+     * PlayerActivity / self-heal: the video failed (load error, 403, timeout, ended at once, self-heal gave up).
+     * Counted once per video sent to mpv, and not after it already played 30 s.
+     */
+    fun onPlaybackFailed(reason: String) {
+        val watch = memoryWatch ?: return
+        if (watch.done || watch.failed) return
+        watch.failed = true
+        val short = PlayerMemory.shortReason(reason)
+        PlayerMemory.recordFailed(watch.sourceId, watch.slot, short, drop = watch.fromMemory, quality = watch.quality)
+        PlayerDebugLog.add(
+            "memory",
+            "'${watch.slot.label}' failed ($short)" + if (watch.fromMemory) "; no longer tried first" else "",
+        )
+    }
+
+    /**
+     * PlayerActivity: mpv's own request for a plain file got 403. An installed extension's source then plays its files
+     * through the app's connection (HlsRelay.wrapFile, with the app's cookies) from now on; self-heal's retry already
+     * goes that way. Source Lab sources always do (r118).
+     */
+    fun onPlainFileForbidden() {
+        if (isPreview) return
+        val source = currentSource.value ?: return
+        if (source is eu.kanade.tachiyomi.jssource.JsAnimeSource || source !is AnimeHttpSource) return
+        val video = currentVideo.value ?: return
+        if (isStreamVideo(video) || playingUrl?.startsWith("http://127.0.0.1") == true) return
+        if (PlayerMemory.peek(source.id)?.connection == PlayerMemory.CONNECTION_APP) return
+        PlayerMemory.rememberThroughApp(source.id)
+        PlayerDebugLog.add("memory", "403 on a plain file: ${source.name} plays its files through the app from now on")
+    }
+
+    /** PlayerActivity.playsThroughApp: the source's files go through the app's connection (after a 403) */
+    fun memoryWantsAppConnection(): Boolean {
+        if (isPreview) return false
+        val source = currentSource.value as? AnimeHttpSource ?: return false
+        return PlayerMemory.peek(source.id)?.connection == PlayerMemory.CONNECTION_APP
+    }
+
+    /** PlayerActivity.setVideo (main thread): software decoding for a source whose hardware decoding failed */
+    fun applyRememberedDecoding() {
+        if (userPickedDecoder || isPreview) return
+        val sourceId = currentSource.value?.id ?: return
+        val software = PlayerMemory.peek(sourceId)?.decoding == PlayerMemory.DECODING_SOFTWARE
+        val current = mpv.getPropertyString("hwdec")
+        if (software && current != null && current != "no") {
+            hwdecBeforeMemory = current
+            mpv.setPropertyString("hwdec", "no")
+            PlayerDebugLog.add("memory", "Software decoding (hardware failed before for this source)")
+        } else if (!software && hwdecBeforeMemory != null) {
+            mpv.setPropertyString("hwdec", hwdecBeforeMemory!!)
+            hwdecBeforeMemory = null
+        }
+    }
+
+    /**
+     * PlayerObserver (main thread): mpv reported a hardware decoding failure. Remembered for the source (software next
+     * time); when mpv didn't switch to software by itself ([fellBack] false), the same video goes on with hwdec=no.
+     */
+    fun onHardwareDecodeTrouble(line: String, fellBack: Boolean) {
+        if (userPickedDecoder || isPreview) return
+        val source = currentSource.value ?: return
+        hwDecodeTroubleSeen = true
+        if (PlayerMemory.peek(source.id)?.decoding != PlayerMemory.DECODING_SOFTWARE) {
+            PlayerMemory.rememberSoftware(source.id)
+            PlayerDebugLog.add("memory", "Hardware decoding failed ($line): software for ${source.name} from now on")
+        }
+        if (fellBack) return
+        val video = currentVideo.value ?: return
+        if (softwareSwitchFor == video.videoUrl) return
+        softwareSwitchFor = video.videoUrl
+        val current = mpv.getPropertyString("hwdec")
+        if (current != null && current != "no") {
+            if (hwdecBeforeMemory == null) hwdecBeforeMemory = current
+            mpv.setPropertyString("hwdec", "no")
+            PlayerDebugLog.add("memory", "Going on with software decoding (hwdec=no)")
+        }
+    }
+
+    /**
+     * PlayerActivity, end of file with an error: when hardware decoding failed for this file, the same video is
+     * opened again once with hwdec=no (where it was) instead of counting as a failure.
+     */
+    fun retryInSoftwareAfterDecodeError(): Boolean {
+        if (!hwDecodeTroubleSeen || userPickedDecoder || isPreview) return false
+        val video = currentVideo.value ?: return false
+        if (softwareReloadFor == video.videoUrl) return false
+        softwareReloadFor = video.videoUrl
+        hwDecodeTroubleSeen = false
+        val current = mpv.getPropertyString("hwdec")
+        if (current != null && current != "no") {
+            if (hwdecBeforeMemory == null) hwdecBeforeMemory = current
+            mpv.setPropertyString("hwdec", "no")
+        }
+        val resumeAt = livePositionMs() ?: lastPlayedPositionMs()
+        PlayerDebugLog.add("memory", "Opening '${video.videoTitle}' again with software decoding")
+        playAfterNextLoad.set(true)
+        viewModelScope.launch { eventChannel.send(Event.SetVideo(video, resumeAt)) }
+        return true
+    }
+
+    // --- Quality sheet: what mpv is playing ---
+
+    /** mpv's picture tracks (several for an HLS stream that holds several qualities) */
+    val videoTrackList = mpv.propFlow<MPVNode>("track-list")
+        .map { node ->
+            node?.toObject<List<TrackNode>>(json)
+                ?.filter { it.isVideo && it.albumArt != true && it.image != true }
+                .orEmpty()
+        }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** The picture track the user picked in the sheet (null = Auto) */
+    val chosenVideoTrack = MutableStateFlow<Int?>(null)
+
+    /** Quality sheet: one track of the stream, or Auto (null) */
+    fun selectVideoTrack(id: Int?) {
+        chosenVideoTrack.update { _ -> id }
+        mpv.setPropertyString("vid", id?.toString() ?: "auto")
+        PlayerDebugLog.add("player", "Picture track: ${id ?: "auto"}")
+    }
+
+    /** Quality sheet: the "Now playing" figures, read from mpv (cheap property gets) */
+    fun nowPlaying(): eu.kanade.tachiyomi.ui.player.controls.components.sheets.NowPlaying =
+        eu.kanade.tachiyomi.ui.player.controls.components.sheets.NowPlaying(
+            videoCodec = mpv.getPropertyString("video-format"),
+            width = mpv.getPropertyInt("video-params/w") ?: mpv.getPropertyInt("width") ?: 0,
+            height = mpv.getPropertyInt("video-params/h") ?: mpv.getPropertyInt("height") ?: 0,
+            fps = mpv.getPropertyDouble("container-fps") ?: mpv.getPropertyDouble("estimated-vf-fps"),
+            audioCodec = mpv.getPropertyString("audio-codec-name"),
+            channels = mpv.getPropertyInt("audio-params/channel-count"),
+            sampleRate = mpv.getPropertyInt("audio-params/samplerate"),
+            audioBitrate = mpv.getPropertyDouble("audio-bitrate"),
+            videoBitrate = mpv.getPropertyDouble("video-bitrate"),
+            hwdec = mpv.getPropertyString("hwdec-current"),
+            fileFormat = mpv.getPropertyString("file-format"),
+            url = playingUrl ?: currentVideo.value?.videoUrl,
+            videoType = currentVideo.value?.type,
+        )
+    // KMK <--
 
     // --- Adaptive shader scaling ---
 
@@ -2972,6 +3321,8 @@ class PlayerViewModel @JvmOverloads constructor(
      */
     fun onSecondReached(position: Long) {
         if (isLoadingEpisode.value) return
+        // KMK (r119): 30 s played = a "played" for the server (PlayerMemory)
+        tickMemoryWatch(position)
         val currentEp = currentEpisode.value ?: return
         if (episodeId == -1L) return
         val dur = duration.value ?: return
@@ -3604,6 +3955,9 @@ class PlayerViewModel @JvmOverloads constructor(
 
     // ANZ -->
     fun updateDecoder(decoder: Decoder) {
+        // KMK (r119): the user's own decoder: remembered decoding stays out of it for this session
+        userPickedDecoder = true
+        hwdecBeforeMemory = null
         _manualDecoder.update { decoder }
         mpv.setPropertyString("hwdec", decoder.value)
     }
@@ -3831,6 +4185,12 @@ class PlayerViewModel @JvmOverloads constructor(
 
         /** Playing this long after a repair gives a later failure the full set of attempts again */
         private const val SELF_HEAL_RESET_MS = 2 * 60 * 1000L
+
+        /** KMK (r119): seconds of playback without an error that count a server as "played" (PlayerMemory) */
+        private const val MEMORY_PLAYED_SECONDS = 30
+
+        /** KMK (r119): how long the other servers wait for the remembered one before the normal order goes on */
+        private const val MEMORY_WAIT_MS = 10_000L
 
         /** r95: how often playback writes the position to the database (it was every second) */
         private const val PROGRESS_SAVE_MS = 10_000L

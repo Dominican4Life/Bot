@@ -106,6 +106,11 @@ fun QualitySheet(
     onDismissRequest: () -> Unit,
     dismissSheet: Boolean,
     modifier: Modifier = Modifier,
+    // KMK (r119): "Now playing" / "Inside this stream" / one-quality cards above the list (one lazy item), the
+    // servers' dots + chips from PlayerMemory, and the Sub / Dub note under the servers
+    header: (@Composable () -> Unit)? = null,
+    serverChips: Map<Int, eu.kanade.tachiyomi.ui.player.PlayerMemory.Chip> = emptyMap(),
+    showKindsNote: Boolean = false,
 ) {
     PlayerSheet(
         onDismissRequest = {
@@ -182,6 +187,7 @@ fun QualitySheet(
                         autoScrollToDefault = autoScrollToDefault,
                         sheetActive = sheetActive,
                         modifier = modifier.padding(paddingValues = qualitySheetPadding),
+                        header = header,
                     )
                 } else {
                     QualitySheetHosterContent(
@@ -198,6 +204,9 @@ fun QualitySheet(
                         sheetActive = sheetActive,
                         displayHosters = displayHosters,
                         modifier = modifier.padding(paddingValues = qualitySheetPadding),
+                        header = header,
+                        serverChips = serverChips,
+                        showKindsNote = showKindsNote,
                     )
                 }
             }
@@ -272,6 +281,8 @@ private fun ScrollToDefaultEffect(
     expandedState: List<Boolean>,
     listState: androidx.compose.foundation.lazy.LazyListState,
     onEnsureHosterExpanded: (Int) -> Unit,
+    // KMK (r119): lazy items above the list (the details header)
+    indexOffset: Int = 0,
 ) {
     LaunchedEffect(sheetActive, target, autoScrollToDefault, flatHosters, expandedState) {
         if (!sheetActive || !autoScrollToDefault || target == null || target.videoIndex < 0) {
@@ -286,7 +297,7 @@ private fun ScrollToDefaultEffect(
             delay(HostExpandSettleMs)
         }
 
-        val lazyIndex = if (target.hosterIndex < 0) {
+        val listIndex = if (target.hosterIndex < 0) {
             target.videoIndex
         } else {
             computeFlatVideoLazyIndex(
@@ -296,7 +307,8 @@ private fun ScrollToDefaultEffect(
                 targetVideoIndex = target.videoIndex,
             )
         }
-        if (lazyIndex < 0) return@LaunchedEffect
+        if (listIndex < 0) return@LaunchedEffect
+        val lazyIndex = listIndex + indexOffset
 
         snapshotFlow { listState.layoutInfo.totalItemsCount }
             .filter { it > lazyIndex }
@@ -317,6 +329,7 @@ fun QualitySheetVideoContent(
     autoScrollToDefault: Boolean = true,
     sheetActive: Boolean = true,
     modifier: Modifier = Modifier,
+    header: (@Composable () -> Unit)? = null,
 ) {
     val listState = rememberLazyListState()
     val defaultVideoIndex = remember(videoList, defaultStreamSelector, highlightDefaultStream) {
@@ -339,6 +352,7 @@ fun QualitySheetVideoContent(
         expandedState = emptyList(),
         listState = listState,
         onEnsureHosterExpanded = {},
+        indexOffset = if (header != null) 1 else 0,
     )
 
     // KMK: highest quality first
@@ -347,6 +361,8 @@ fun QualitySheetVideoContent(
         state = listState,
         modifier = modifier.fillMaxWidth(),
     ) {
+        // KMK (r119)
+        if (header != null) item(key = "quality-details") { header() }
         items(
             items = menuOrder,
             key = { videoIdx -> "video-$videoIdx-${videoList[videoIdx].url.hashCode()}" },
@@ -390,6 +406,9 @@ fun QualitySheetHosterContent(
     sheetActive: Boolean = true,
     displayHosters: Pair<Boolean, Boolean>,
     modifier: Modifier = Modifier,
+    header: (@Composable () -> Unit)? = null,
+    serverChips: Map<Int, eu.kanade.tachiyomi.ui.player.PlayerMemory.Chip> = emptyMap(),
+    showKindsNote: Boolean = false,
 ) {
     val validHosters = hosterState.withIndex().filter { (_, state) ->
         state is HosterState.Idle ||
@@ -424,12 +443,15 @@ fun QualitySheetHosterContent(
         expandedState = expandedState,
         listState = listState,
         onEnsureHosterExpanded = onEnsureHosterExpanded,
+        indexOffset = if (header != null) 1 else 0,
     )
 
     LazyColumn(
         state = listState,
         modifier = modifier.fillMaxWidth(),
     ) {
+        // KMK (r119)
+        if (header != null) item(key = "quality-details") { header() }
         hosterContent(
             hosters = validHosters,
             expandedState = expandedState,
@@ -438,6 +460,7 @@ fun QualitySheetHosterContent(
             onClickVideo = onClickVideo,
             defaultVideoByHoster = defaultVideoByHoster,
             highlightDefaultStream = highlightDefaultStream,
+            serverChips = serverChips,
         )
 
         if (displayHosters.first) {
@@ -449,6 +472,7 @@ fun QualitySheetHosterContent(
                 onClickVideo = onClickVideo,
                 defaultVideoByHoster = defaultVideoByHoster,
                 highlightDefaultStream = highlightDefaultStream,
+                serverChips = serverChips,
             )
         }
 
@@ -461,8 +485,12 @@ fun QualitySheetHosterContent(
                 onClickVideo = onClickVideo,
                 defaultVideoByHoster = defaultVideoByHoster,
                 highlightDefaultStream = highlightDefaultStream,
+                serverChips = serverChips,
             )
         }
+
+        // KMK (r119): Sub and Dub servers stay apart
+        if (showKindsNote) item(key = "kinds-apart-note") { KindsApartNote() }
     }
 }
 
@@ -474,6 +502,8 @@ internal fun LazyListScope.hosterContent(
     onClickVideo: (Int, Int) -> Unit,
     defaultVideoByHoster: Map<Int, Int>,
     highlightDefaultStream: Boolean = true,
+    // KMK (r119)
+    serverChips: Map<Int, eu.kanade.tachiyomi.ui.player.PlayerMemory.Chip> = emptyMap(),
 ) {
     hosters.forEach { (hosterIdx, hoster) ->
         val isExpanded = expandedState.getOrNull(hosterIdx) ?: false
@@ -485,6 +515,7 @@ internal fun LazyListScope.hosterContent(
                 selected = selectedVideoIndex.first == hosterIdx,
                 isExpanded = isExpanded,
                 onClick = { onClickHoster(hosterIdx) },
+                chip = serverChips[hosterIdx],
             )
         }
 
@@ -515,6 +546,8 @@ fun HosterTrack(
     isExpanded: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    // KMK (r119): PlayerMemory's dot + chip for this server
+    chip: eu.kanade.tachiyomi.ui.player.PlayerMemory.Chip? = null,
 ) {
     Row(
         modifier = modifier
@@ -522,6 +555,10 @@ fun HosterTrack(
             .clickable(onClick = onClick),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (chip != null) {
+            ServerDot(chip.dot)
+            Spacer(modifier = Modifier.size(8.dp))
+        }
         Text(
             text = hoster.name,
             fontStyle = if (selected) FontStyle.Italic else FontStyle.Normal,
@@ -531,6 +568,9 @@ fun HosterTrack(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(end = MaterialTheme.padding.small),
         )
+        if (chip != null) {
+            ServerChip(chip, modifier = Modifier.padding(end = MaterialTheme.padding.small))
+        }
 
         when (hoster) {
             is HosterState.Idle -> {

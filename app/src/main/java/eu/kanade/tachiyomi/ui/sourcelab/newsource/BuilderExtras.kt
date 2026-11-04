@@ -8,11 +8,16 @@ import eu.kanade.tachiyomi.jssource.jsJson
 import eu.kanade.tachiyomi.jssource.lab.Detector
 import eu.kanade.tachiyomi.jssource.obj
 import eu.kanade.tachiyomi.jssource.str
+import eu.kanade.tachiyomi.ui.sourcelab.newsource.dir.DirCache
+import eu.kanade.tachiyomi.ui.sourcelab.newsource.dir.DirPager
 import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -396,7 +401,14 @@ internal data class GroupRead(
     /** r107: when the next page is read (epoch ms, 0 = reading now), and the time a page has taken on average */
     val waitUntil: Long = 0L,
     val pageMs: Long = 0L,
-)
+    /** KMK (r119): the last page of the set in flight ([page]..[pageTo], counted like [page]; 0 = one page) */
+    val pageTo: Int = 0,
+    /** KMK (r119): when the names shown were read, when they came from the directory cache (0 = read now) */
+    val cachedAt: Long = 0L,
+) {
+    /** KMK (r119): "pages 4–6 of 12" / "page 4 of 12" */
+    fun pagesText(): String = if (pageTo > page) "pages $page–$pageTo of $maxPages" else "page $page of $maxPages"
+}
 
 /**
  * r106: a filter that has the name (or the address parameter) of filters already there ([conflicts]): the card it came
@@ -1356,9 +1368,11 @@ internal object BuilderExtrasLogic {
     }
 
     /** r107: "about 1.5 min" for reading [pages] pages with a pause of [lowMs]–[highMs] between them */
-    fun readEstimate(pages: Int, lowMs: Long, highMs: Long): String {
+    fun readEstimate(pages: Int, lowMs: Long, highMs: Long, inFlight: Int = 1): String {
         val n = pages.coerceAtLeast(1)
-        val ms = (n - 1) * (lowMs + highMs) / 2 + n * PAGE_FETCH_MS
+        // KMK (r119): [inFlight] pages at a time, the pause between each set
+        val sets = (n + inFlight.coerceAtLeast(1) - 1) / inFlight.coerceAtLeast(1)
+        val ms = (sets - 1) * (lowMs + highMs) / 2 + sets * PAGE_FETCH_MS
         return durationText(ms)
     }
 
@@ -2882,20 +2896,81 @@ internal class BuilderExtrasModel {
         if (todo.isEmpty()) return
         mutable.update { s -> s.copy(menuGroups = s.menuGroups.map { g -> if (todo.any { it.id == g.id }) g.copy(probe = DirProbe("reading")) else g }) }
         scope.launch {
-            for (g in todo) {
-                val url = g.href ?: continue
-                val probe = try {
-                    val scan = BuilderListReader.scan(url)
-                    DirProbe("done", scan.entries.size, scan.pages, scan.hasNext, scan.note, scan = scan)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Throwable) {
-                    DirProbe("failed", note = e.message ?: e.javaClass.simpleName)
+            // KMK (r119): a few directories at a time (one at a time while the site is asked slowly, its pace kept by
+            // the client); a bot check stops the ones not read yet (shown on their cards, never solved)
+            var i = 0
+            var blocked = false
+            while (i < todo.size) {
+                val width = DirPager.paceFor(todo[i].href.orEmpty()).inFlight
+                val set = todo.subList(i, minOf(todo.size, i + width))
+                i += set.size
+                if (blocked) {
+                    set.forEach { g -> showProbe(g, DirProbe("failed", note = "not read: " + DirPager.BOT_CHECK_TEXT), null) }
+                    continue
                 }
-                AppLog.add('D', "lab", "extras directory \"${g.name}\" $url: ${probe.state}, ${probe.entries} names, pages ${probe.pages}${if (probe.hasNext) ", next page" else ""} ${probe.note}".trim())
-                mutable.update { s -> s.copy(menuGroups = s.menuGroups.map { if (it.id == g.id) it.copy(probe = probe) else it }) }
+                val probes = coroutineScope {
+                    set.mapIndexed { k, g ->
+                        async {
+                            if (k > 0) delay(200L * k)
+                            probeOne(g)
+                        }
+                    }.awaitAll()
+                }
+                if (probes.any { it.note == DirPager.BOT_CHECK_TEXT }) blocked = true
             }
         }
+    }
+
+    /** KMK (r119): one directory card's first page scanned, shown on its card with a remembered read when there is one */
+    private suspend fun probeOne(g: MenuGroup): DirProbe {
+        val url = g.href ?: return DirProbe("failed", note = "no address")
+        val probe = try {
+            val scan = BuilderListReader.scan(url)
+            DirProbe("done", scan.entries.size, scan.pages, scan.hasNext, scan.note, scan = scan)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            DirProbe("failed", note = if (DirPager.isBotCheckError(e)) DirPager.BOT_CHECK_TEXT else e.message ?: e.javaClass.simpleName)
+        }
+        AppLog.add('D', "lab", "extras directory \"${g.name}\" $url: ${probe.state}, ${probe.entries} names, pages ${probe.pages}${if (probe.hasNext) ", next page" else ""} ${probe.note}".trim())
+        // KMK (r119): a read of this directory remembered in the last 7 days shows at once ("Read 2 h ago · Refresh")
+        val remembered = if (probe.state != "done") {
+            null
+        } else {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val scan = probe.scan?.takeIf { it.ok }
+                    if (scan != null) {
+                        val (from, to) = rangeOf(g, scan)
+                        DirCache.getDir(scan, from, to)?.let { (r, at) ->
+                            GroupRead(false, r.pages, r.entries.size, to - from + 1, r.reason, first = from, cachedAt = at)
+                        }
+                    } else {
+                        DirCache.getList(url, BuilderExtrasLogic.READ_PAGES)?.let { (r, at) ->
+                            GroupRead(false, r.pages, r.items.size, BuilderExtrasLogic.READ_PAGES, r.reason, cachedAt = at)
+                        }
+                    }
+                }.getOrNull()
+            }
+        }
+        showProbe(g, probe, remembered)
+        return probe
+    }
+
+    private fun showProbe(g: MenuGroup, probe: DirProbe, remembered: GroupRead?) = mutable.update { s ->
+        s.copy(
+            menuGroups = s.menuGroups.map {
+                if (it.id != g.id) it else it.copy(probe = probe, read = if (it.read == null && remembered != null) remembered else it.read)
+            },
+        )
+    }
+
+    /** KMK (r119): the page range a scanned directory's "Read pages now" reads (the card's choice, else the defaults) */
+    private fun rangeOf(g: MenuGroup, scan: BuilderListReader.DirScan): Pair<Int, Int> {
+        val choice = g.choice ?: BuilderExtrasLogic.defaultChoice(g.name, scan)
+        val from = if (scan.pageTemplate == null) 1 else choice.from.coerceIn(1, scan.pages.coerceAtLeast(1))
+        val to = choice.to.coerceIn(from, maxOf(from, scan.pages))
+        return from to to
     }
 
     /**
@@ -2903,14 +2978,15 @@ internal class BuilderExtrasModel {
      * read page after page with the pause the owner set, the progress on the card; the names become a filter (a text
      * box with suggestions when long) in the card's parent group
      */
-    fun readMenuGroup(id: Int, maxPages: Int = BuilderExtrasLogic.READ_PAGES) {
+    fun readMenuGroup(id: Int, maxPages: Int = BuilderExtrasLogic.READ_PAGES, refresh: Boolean = false) {
         if (readJob?.isActive == true) return
         val g = mutable.value.menuGroups.firstOrNull { it.id == id } ?: return
         if (g.href == null) return
         readStops.remove(id)
         // r106 fix: a parent flag left by an earlier Stop / Read all doesn't stop this card before its first page
         g.parent?.let { readStops.remove(it) }
-        readJob = scope.launch { readOne(g, maxPages) }
+        // KMK (r119): [refresh] = read the site again instead of the remembered list
+        readJob = scope.launch { readOne(g, maxPages, refresh = refresh) }
     }
 
     /** r106: a heading card's "Read all N": its sub-menus' directories one after another, with the same pause */
@@ -3193,10 +3269,21 @@ internal class BuilderExtrasModel {
         }
     }
 
-    private suspend fun readOne(g: MenuGroup, maxPages: Int, scroll: Boolean = true, inDoAll: Boolean = false) {
+    private suspend fun readOne(g: MenuGroup, maxPages: Int, scroll: Boolean = true, inDoAll: Boolean = false, refresh: Boolean = false) {
         val url = g.href ?: return
         val (low, high) = readPause()
         fun show(r: GroupRead) = mutable.update { s -> s.copy(menuGroups = s.menuGroups.map { if (it.id == g.id) it.copy(read = r) else it }) }
+        // KMK (r119): the list read in the last 7 days is used at once (Refresh reads it again)
+        val remembered = if (refresh) null else withContext(Dispatchers.IO) { runCatching { DirCache.getList(url, maxPages) }.getOrNull() }
+        if (remembered != null) {
+            val (r, at) = remembered
+            show(GroupRead(running = false, page = r.pages, entries = r.items.size, maxPages = maxPages, reason = r.reason, cachedAt = at))
+            AppLog.add('I', "lab", "extras read ${g.name}: ${r.items.size} names remembered (${DirCache.agoText(at)})")
+            if (mutable.value.menuGroups.none { it.id == g.id }) return
+            if (inDoAll && doAllStop) return
+            onListRead(url, r, BuilderExtrasLogic.formFor(r.items.size), g.name.ifBlank { null }, menuId = g.id)
+            return
+        }
         show(GroupRead(running = true, page = 1, entries = 0, maxPages = maxPages))
         // r106 fix: scrolled to, but the panel doesn't switch tabs for every sub-menu read
         // KMK (r109): the card's progress box comes to the top of the panel once, when the read starts
@@ -3208,7 +3295,19 @@ internal class BuilderExtrasModel {
                 maxPages = maxPages,
                 pauseMinMs = low,
                 pauseMaxMs = high,
-                onProgress = { page, entries -> show(GroupRead(running = true, page = page + 1, entries = entries, maxPages = maxPages)) },
+                onProgress = { p ->
+                    // KMK (r119): the pages in flight ("pages 4–6 of 12"), or the next one during a pause
+                    show(
+                        GroupRead(
+                            running = true,
+                            page = (if (p.from > 0) p.from else p.done + 1).coerceAtMost(maxPages),
+                            entries = p.entries,
+                            maxPages = maxPages,
+                            waitUntil = if (p.pauseMs > 0) System.currentTimeMillis() + p.pauseMs else 0L,
+                            pageTo = p.to.coerceAtMost(maxPages),
+                        ),
+                    )
+                },
                 shouldStop = { readStops[g.id] == true || (g.parent != null && g.parent == readAllParent && readStops[g.parent] == true) },
             )
         } catch (e: CancellationException) {
@@ -3219,6 +3318,7 @@ internal class BuilderExtrasModel {
             return
         }
         show(GroupRead(running = false, page = result.pages, entries = result.items.size, maxPages = maxPages, reason = result.reason))
+        withContext(Dispatchers.IO) { runCatching { DirCache.putList(url, result, maxPages) } }
         if (result.items.isEmpty()) return
         // r106 fix: a card closed ("Not this") while it was read makes nothing
         if (mutable.value.menuGroups.none { it.id == g.id }) return
@@ -3236,7 +3336,18 @@ internal class BuilderExtrasModel {
     fun setDirChoice(id: Int, choice: DirChoice) {
         val before = mutable.value.menuGroups.firstOrNull { it.id == id }
         mutable.update { s ->
-            s.copy(menuGroups = s.menuGroups.map { if (it.id == id) it.copy(choice = choice) else it })
+            s.copy(
+                menuGroups = s.menuGroups.map { g ->
+                    if (g.id != id) {
+                        g
+                    } else {
+                        // KMK (r119): a remembered read of another page range no longer describes the card
+                        val old = g.choice ?: g.probe?.scan?.takeIf { it.ok }?.let { BuilderExtrasLogic.defaultChoice(g.name, it) }
+                        val moved = old == null || old.from != choice.from || old.to != choice.to
+                        g.copy(choice = choice, read = if (moved && g.read?.cachedAt?.let { it > 0 } == true && g.made.isNullOrEmpty()) null else g.read)
+                    }
+                },
+            )
         }
         val g = before ?: return
         val scan = g.probe?.scan?.takeIf { it.ok } ?: return
@@ -3297,7 +3408,7 @@ internal class BuilderExtrasModel {
      * r107: the scanned card's "Make filter": Live keeps page 1's entries and lets the source read the rest as Browse
      * scrolls; Read pages now reads the page range first (pause, progress, Stop). Not scanned: the r106 read
      */
-    fun makeCollection(id: Int) {
+    fun makeCollection(id: Int, refresh: Boolean = false) {
         val g = mutable.value.menuGroups.firstOrNull { it.id == id } ?: return
         if (g.href == null) return
         if (readJob?.isActive == true) {
@@ -3315,13 +3426,14 @@ internal class BuilderExtrasModel {
         }
         readStops.remove(id)
         g.parent?.let { readStops.remove(it) }
-        readJob = scope.launch { collectOne(g, BuilderExtrasLogic.READ_PAGES) }
+        // KMK (r119): [refresh] = read the pages again instead of the remembered ones
+        readJob = scope.launch { collectOne(g, BuilderExtrasLogic.READ_PAGES, refresh = refresh) }
     }
 
-    private suspend fun collectOne(g: MenuGroup, maxPages: Int, scroll: Boolean = true, inDoAll: Boolean = false) {
+    private suspend fun collectOne(g: MenuGroup, maxPages: Int, scroll: Boolean = true, inDoAll: Boolean = false, refresh: Boolean = false) {
         val scan = g.probe?.scan?.takeIf { it.ok }
         if (scan == null) {
-            readOne(g, maxPages, scroll, inDoAll)
+            readOne(g, maxPages, scroll, inDoAll, refresh)
             return
         }
         val choice = g.choice ?: BuilderExtrasLogic.defaultChoice(g.name, scan)
@@ -3336,6 +3448,17 @@ internal class BuilderExtrasModel {
         val to = choice.to.coerceIn(from, maxOf(from, scan.pages))
         val count = to - from + 1
         fun show(r: GroupRead) = mutable.update { s -> s.copy(menuGroups = s.menuGroups.map { if (it.id == g.id) it.copy(read = r) else it }) }
+        // KMK (r119): these pages read in the last 7 days (same cards, parts and range) are used at once
+        val remembered = if (refresh) null else withContext(Dispatchers.IO) { runCatching { DirCache.getDir(scan, from, to) }.getOrNull() }
+        if (remembered != null) {
+            val (r, at) = remembered
+            show(GroupRead(running = false, page = r.pages, entries = r.entries.size, maxPages = count, reason = r.reason, first = from, cachedAt = at))
+            AppLog.add('I', "lab", "extras read directory ${g.name}: ${r.entries.size} entries remembered (${DirCache.agoText(at)})")
+            if (mutable.value.menuGroups.none { it.id == g.id }) return
+            if (inDoAll && doAllStop) return
+            finishCollection(g, scan, r.entries, choice.copy(live = false), r.pages, "remembered, ${r.reason}")
+            return
+        }
         show(GroupRead(running = true, page = 1, entries = 0, maxPages = count, first = from))
         // KMK (r109): the card's progress box comes to the top of the panel once, when the read starts
         // KMK (r112): not inside "Do all N"
@@ -3348,17 +3471,19 @@ internal class BuilderExtrasModel {
                 to = to,
                 pauseMinMs = low,
                 pauseMaxMs = high,
-                onProgress = { done, entries, pauseMs ->
+                onProgress = { p ->
                     val now = System.currentTimeMillis()
+                    // KMK (r119): the pages in flight ("pages 4–6 of 12"), or the next one during a pause
                     show(
                         GroupRead(
                             running = true,
-                            page = (done + 1).coerceAtMost(count),
-                            entries = entries,
+                            page = (if (p.from > 0) p.from else p.done + 1).coerceAtMost(count),
+                            entries = p.entries,
                             maxPages = count,
                             first = from,
-                            waitUntil = if (pauseMs > 0) now + pauseMs else 0L,
-                            pageMs = if (done > 0) (now - started + pauseMs) / done else 0L,
+                            waitUntil = if (p.pauseMs > 0) now + p.pauseMs else 0L,
+                            pageMs = if (p.done > 0) (now - started + p.pauseMs) / p.done else 0L,
+                            pageTo = p.to.coerceAtMost(count),
                         ),
                     )
                 },
@@ -3372,6 +3497,7 @@ internal class BuilderExtrasModel {
             return
         }
         show(GroupRead(running = false, page = result.pages, entries = result.entries.size, maxPages = count, reason = result.reason, first = from))
+        withContext(Dispatchers.IO) { runCatching { DirCache.putDir(scan, from, to, result) } }
         if (result.entries.isEmpty()) return
         // a card closed ("Not this") while it was read makes nothing
         if (mutable.value.menuGroups.none { it.id == g.id }) return

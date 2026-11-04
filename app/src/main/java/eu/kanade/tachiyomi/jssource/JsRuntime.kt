@@ -112,7 +112,8 @@ class JsRuntime private constructor(
 
     /** name, lang, iconUrl, baseUrl, hasPopular, hasLatest, hasDetails, hasFilters, hasTags, hasRelated, hasCatalogs, hasPreferences, rateLimitMs, headers */
     suspend fun metadata(): JsonObject = mutex.withLock {
-        val text = watchdog.guard { qjs.evaluate<String>(METADATA_SCRIPT, "<metadata>") }
+        // KMK (r119): timed for JsTiming
+        val text = timed("metadata") { watchdog.guard { qjs.evaluate<String>(METADATA_SCRIPT, "<metadata>") } }
         jsJson.parseToJsonElement(text).jsonObject.also { meta ->
             host.rateLimitMs = meta.long("rateLimitMs") ?: 0L
         }
@@ -150,6 +151,10 @@ class JsRuntime private constructor(
         val callsBefore = if (traced) host.hostCalls.get() else 0
         if (traced) JsTrace.before(host.sourceName, method, argList.take(120))
         // KMK <--
+        // KMK (r119): JS time per source (JsTiming): wall time and the network / sleep clocks before the call
+        val timedNs = if (host.timed) System.nanoTime() else 0L
+        val netBefore = if (host.timed) host.netClock.totalNs() else 0L
+        val sleepBefore = if (host.timed) host.sleepClock.totalNs() else 0L
         val text = try {
             Perf.traced({ "js:${host.sourceName}.$method" }) { // the name is built only while a trace records
                 withContext(Dispatchers.Default) { watchdog.guard { qjs.evaluate<String?>(code, "<$method>") } }
@@ -161,6 +166,7 @@ class JsRuntime private constructor(
             currentCoroutineContext().ensureActive()
             val message = e.message.orEmpty()
             if ("__NOT_IMPLEMENTED__" in message) throw NotImplementedError("This source has no $method")
+            if (host.timed) recordTiming(method, timedNs, netBefore, sleepBefore, ok = false) // KMK (r119)
             host.log("error", "$method failed: $message")
             runCatching { host.health?.error(method, message) } // KMK (r96): Source Lab health counters
             // KMK (r97) -->
@@ -175,8 +181,40 @@ class JsRuntime private constructor(
         // KMK (r97) -->
         if (traced) JsTrace.after(traceEvent(method, argList, startedNs, memBefore, pagesBefore, callsBefore, text, null))
         // KMK <--
+        if (host.timed) recordTiming(method, timedNs, netBefore, sleepBefore, ok = true) // KMK (r119)
         jsJson.parseToJsonElement(text ?: "null")
     }
+
+    // KMK (r119) -->
+    /** A call that started at [startNs] (with the wait clocks at [netBefore] / [sleepBefore]) ended: into [JsTiming] */
+    private fun recordTiming(method: String, startNs: Long, netBefore: Long, sleepBefore: Long, ok: Boolean) {
+        JsTiming.record(
+            sourceId = host.sourceId,
+            sourceName = host.sourceName,
+            method = method,
+            wallNs = System.nanoTime() - startNs,
+            netNs = host.netClock.totalNs() - netBefore,
+            sleepNs = host.sleepClock.totalNs() - sleepBefore,
+            ok = ok,
+        )
+    }
+
+    /** Runs [block] (an evaluation outside [call]) and records it in [JsTiming] as [name] when this runtime is timed */
+    private inline fun <T> timed(name: String, block: () -> T): T {
+        if (!host.timed) return block()
+        val t0 = System.nanoTime()
+        val net0 = host.netClock.totalNs()
+        val sleep0 = host.sleepClock.totalNs()
+        val result = try {
+            block()
+        } catch (e: Throwable) {
+            if (e !is CancellationException) recordTiming(name, t0, net0, sleep0, ok = false)
+            throw e
+        }
+        recordTiming(name, t0, net0, sleep0, ok = true)
+        return result
+    }
+    // KMK <--
 
     // KMK (r97) -->
     /** One js trace record for a call that just ended (under the mutex, so memoryUsage needs no tryLock) */
@@ -339,8 +377,14 @@ class JsRuntime private constructor(
         // KMK (r97): who this runtime is, for the Diagnostics network attribution (SourceTag on every request)
         val sourceId: Long = 0L,
         val key: String? = null,
+        // KMK (r119): counted in JsTiming (the runtime serving the app; not test copies, Lab tests or probes)
+        val timed: Boolean = false,
     ) {
         private val network: NetworkHelper by injectLazy()
+
+        // KMK (r119): time spent waiting on the network (fetchUrl / render / findVideo) and in host.sleep, for JsTiming
+        val netClock = JsTiming.WaitClock()
+        val sleepClock = JsTiming.WaitClock()
         private val pages = JsHtmlPages()
 
         // KMK (r97) -->
@@ -428,6 +472,17 @@ class JsRuntime private constructor(
             hostCalls.incrementAndGet() // KMK (r97)
             val payload = runCatching { jsJson.parseToJsonElement(payloadJson) as? JsonObject }.getOrNull()
                 ?: JsonObject(emptyMap())
+            // KMK (r119): network and sleep waits are timed for JsTiming (no allocation: one of two existing clocks)
+            val clock = if (!timed) {
+                null
+            } else {
+                when (channel) {
+                    "fetchUrl", "render", "findVideo" -> netClock
+                    "sleep" -> sleepClock
+                    else -> null
+                }
+            }
+            clock?.start()
             val result: Any? = try {
                 when (channel) {
                     "fetchUrl" -> fetch(payload)
@@ -584,6 +639,8 @@ class JsRuntime private constructor(
                     log("warn", "fetch failed: ${e.message}", payload.str("url")?.let { "Address: $it" })
                 }
                 mapOf("error" to (e.message ?: e.toString()))
+            } finally {
+                clock?.end() // KMK (r119)
             }
             return result.toJsonElement().toString()
         }
@@ -768,6 +825,8 @@ class JsRuntime private constructor(
                 // KMK (r97)
                 sourceId = sourceId,
                 key = key,
+                // KMK (r119): only the runtime serving the app is counted in JsTiming
+                timed = !testing && !testCopy && sourceId != 0L,
             )
             // KMK (r96): only the real source counts towards its health (not the editor's test copy, a probe, the
             // describe run of a save or the tag suggestions)
@@ -775,6 +834,7 @@ class JsRuntime private constructor(
             loadNativeLibrary()
             val qjs = QuickJs.create(jobDispatcher = Dispatchers.Default)
             val watchdog = Watchdog(name).also { it.qjs = qjs }
+            val loadStartNs = System.nanoTime() // KMK (r119): the load of the code counts as a "load" call in JsTiming
             try {
                 qjs.maxStackSize = 2L shl 20
                 qjs.memoryLimit = 128L shl 20
@@ -809,7 +869,15 @@ class JsRuntime private constructor(
                 watchdog.guard { qjs.evaluate<Any?>(source, if (json) "source.json" else "source.js") }
                 val problem = qjs.evaluate<String>(CONTRACT_SCRIPT, "<contract>")
                 if (problem.isNotEmpty()) throw JsException(problem)
+                // KMK (r119)
+                if (host.timed) {
+                    recordLoad(host, loadStartNs, ok = true)
+                }
             } catch (e: Throwable) {
+                // KMK (r119)
+                if (host.timed && e !is CancellationException) {
+                    recordLoad(host, loadStartNs, ok = false)
+                }
                 qjs.close()
                 throw if (e is JsException) e else JsException(e.message ?: e.toString(), e)
             }
@@ -825,6 +893,19 @@ class JsRuntime private constructor(
                     }
                 }
             }
+        }
+
+        // KMK (r119): the load of a source's code (prelude, stdlib, its top level) as one "load" call in JsTiming
+        private fun recordLoad(host: Host, startNs: Long, ok: Boolean) {
+            JsTiming.record(
+                sourceId = host.sourceId,
+                sourceName = host.sourceName,
+                method = "load",
+                wallNs = System.nanoTime() - startNs,
+                netNs = host.netClock.totalNs(),
+                sleepNs = host.sleepClock.totalNs(),
+                ok = ok,
+            )
         }
 
         private val CONTRACT_SCRIPT = """

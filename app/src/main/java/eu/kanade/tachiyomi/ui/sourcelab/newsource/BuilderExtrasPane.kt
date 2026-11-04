@@ -72,6 +72,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import eu.kanade.tachiyomi.ui.sourcelab.newsource.dir.DirCache
+import eu.kanade.tachiyomi.ui.sourcelab.newsource.dir.DirPager
 import kotlinx.coroutines.delay
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -955,7 +957,7 @@ private fun doAllPhaseText(kid: MenuGroup?, phase: String): String = when (phase
         val l = kid?.dirLearn
         if (l == null || !l.running || l.label.isEmpty()) "learning its menus" else "learning ${l.label} (${l.done} of ${l.total})"
     }
-    "reading" -> kid?.read?.takeIf { it.running }?.let { "reading page ${it.page} of ${it.maxPages}" } ?: "reading its pages"
+    "reading" -> kid?.read?.takeIf { it.running }?.let { "reading ${it.pagesText()}" } ?: "reading its pages"
     "making" -> "making its filter"
     else -> "starting"
 }
@@ -1058,7 +1060,7 @@ private fun runningText(kid: MenuGroup): String {
                 else -> ""
             }
         }
-        r != null && r.running -> "reading page ${r.page} of ${r.maxPages} · ${BuilderExtrasLogic.thousands(r.entries)} so far"
+        r != null && r.running -> "reading ${r.pagesText()} · ${BuilderExtrasLogic.thousands(r.entries)} so far"
         kid.probe?.state == "reading" -> "reading its first page"
         else -> "working"
     }
@@ -1127,7 +1129,18 @@ private fun MenuActions(group: MenuGroup, extras: BuilderExtrasModel) {
                         color = if (read.entries > 0) OkGreen else MaterialTheme.colorScheme.error,
                     )
                     read.reason?.let { Hint("Stopped: $it") }
-                    TextButton(onClick = { extras.readMenuGroup(group.id) }) { Text("Read again") }
+                    if (read.cachedAt > 0L) {
+                        // KMK (r119): a remembered list: made at once from it, or read again
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (group.made.isNullOrEmpty()) {
+                                Button(onClick = { extras.readMenuGroup(group.id) }) { Text("Make filter") }
+                                Spacer(Modifier.width(8.dp))
+                            }
+                            RememberedLine(read.cachedAt) { extras.readMenuGroup(group.id, refresh = true) }
+                        }
+                    } else {
+                        TextButton(onClick = { extras.readMenuGroup(group.id) }) { Text("Read again") }
+                    }
                 }
                 probe == null || probe.state == "reading" -> Unit
                 probe.pages > 1 || probe.hasNext -> {
@@ -1185,7 +1198,9 @@ private fun ReadSection(group: MenuGroup, read: GroupRead, extras: BuilderExtras
     }
     val wait = (read.waitUntil - now).coerceAtLeast(0L)
     val (low, high) = extras.pauseSeconds()
-    val perPage = if (read.pageMs > 0) read.pageMs else ((low + high) * 500f).toLong() + BuilderExtrasLogic.PAGE_FETCH_MS
+    // KMK (r119): before a page is done, the estimate counts the pages read at a time
+    val inFlight = group.href?.let { DirPager.paceFor(it).inFlight } ?: 1
+    val perPage = if (read.pageMs > 0) read.pageMs else (((low + high) * 500f).toLong() + BuilderExtrasLogic.PAGE_FETCH_MS) / inFlight
     val pagesLeft = (read.maxPages - read.page + 1).coerceAtLeast(0)
     val leftMs = wait + (pagesLeft - if (wait > 0) 0 else 1).coerceAtLeast(0) * perPage + if (wait > 0) 0L else BuilderExtrasLogic.PAGE_FETCH_MS
     Surface(
@@ -1198,14 +1213,21 @@ private fun ReadSection(group: MenuGroup, read: GroupRead, extras: BuilderExtras
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                // KMK (r119): "Reading pages 4–6 of 12…" while a set is in flight; Cancel ends the pages in flight now
+                // (what was read before is kept)
                 Text(
-                    "${group.name.ifBlank { "List" }} · reading page ${read.page} of ${read.maxPages}" +
-                        if (read.first > 1) " (site page ${read.first + read.page - 1})" else "",
+                    "${group.name.ifBlank { "List" }} · Reading ${read.pagesText()}…" +
+                        if (read.first > 1) {
+                            " (site page${if (read.pageTo > read.page) "s" else ""} ${read.first + read.page - 1}" +
+                                (if (read.pageTo > read.page) "–${read.first + read.pageTo - 1}" else "") + ")"
+                        } else {
+                            ""
+                        },
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f),
                 )
-                OutlinedButton(onClick = { extras.stopRead(group.id) }) { Text("Stop") }
+                OutlinedButton(onClick = { extras.stopRead(group.id) }) { Text("Cancel") }
             }
             LinearProgressIndicator(
                 progress = { ((read.page - 1).toFloat() / read.maxPages.coerceAtLeast(1)).coerceIn(0f, 1f) },
@@ -1219,6 +1241,19 @@ private fun ReadSection(group: MenuGroup, read: GroupRead, extras: BuilderExtras
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+}
+
+/** KMK (r119): "Read 2 h ago · Refresh" of a remembered directory */
+@Composable
+private fun RememberedLine(readAt: Long, onRefresh: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            DirCache.agoText(readAt) + " ·",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        TextButton(onClick = onRefresh) { Text("Refresh") }
     }
 }
 
@@ -1443,7 +1478,8 @@ private fun CollectionSection(group: MenuGroup, scan: BuilderListReader.DirScan,
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Pause between pages", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
             MonoLine(
-                "${seconds(pause.start)} – ${seconds(pause.endInclusive)} s · ${BuilderExtrasLogic.readEstimate(count, lowMs, highMs)}",
+                "${seconds(pause.start)} – ${seconds(pause.endInclusive)} s · " +
+                    BuilderExtrasLogic.readEstimate(count, lowMs, highMs, if (scan.pageTemplate != null) DirPager.paceFor(scan.url).inFlight else 1),
                 color = MaterialTheme.colorScheme.onSurface,
             )
         }
@@ -1457,7 +1493,15 @@ private fun CollectionSection(group: MenuGroup, scan: BuilderListReader.DirScan,
             // half-second stops, as in "Read the whole list"
             steps = 19,
         )
-        Hint("Random pause inside the range, one page after another, with Stop.")
+        // KMK (r119): numbered pages are read a few at a time
+        Hint(
+            if (scan.pageTemplate != null) {
+                "Up to ${DirPager.DEFAULT_IN_FLIGHT} pages at a time with a random pause inside the range between each set " +
+                    "(one at a time while the site asks for a slower pace), with Cancel."
+            } else {
+                "Random pause inside the range, one page after another (no page numbers in its address), with Cancel."
+            },
+        )
     }
     if (read != null && !read.running) {
         Text(
@@ -1467,16 +1511,21 @@ private fun CollectionSection(group: MenuGroup, scan: BuilderListReader.DirScan,
         )
         read.reason?.let { Hint("Stopped: $it") }
     }
+    val remembered = read != null && !read.running && read.cachedAt > 0L && !live
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Button(onClick = { extras.makeCollection(group.id) }) {
             Text(
                 when {
                     !group.made.isNullOrEmpty() -> "Make it again"
                     live -> "Make filter"
+                    // KMK (r119): the remembered pages make it at once
+                    remembered -> "Make filter"
                     else -> "Read and make filter"
                 },
             )
         }
+        // KMK (r119): "Read 2 h ago · Refresh" (Refresh reads the pages again, a few at a time)
+        if (remembered && read != null) RememberedLine(read.cachedAt) { extras.makeCollection(group.id, refresh = true) }
     }
 }
 

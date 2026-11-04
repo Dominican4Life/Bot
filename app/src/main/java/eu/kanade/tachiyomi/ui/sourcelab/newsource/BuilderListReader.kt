@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.ui.sourcelab.newsource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -14,12 +15,15 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
@@ -27,8 +31,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.tachiyomi.jssource.lab.Detector
-import eu.kanade.tachiyomi.network.NetworkHelper
-import eu.kanade.tachiyomi.network.await
+import eu.kanade.tachiyomi.network.BotCheckGate
+import eu.kanade.tachiyomi.ui.sourcelab.newsource.dir.DirCache
+import eu.kanade.tachiyomi.ui.sourcelab.newsource.dir.DirPager
 import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -37,7 +42,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
-import okhttp3.Request
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -70,9 +74,12 @@ internal object BuilderListReader {
     @Immutable
     data class Item(val text: String, val href: String)
 
-    /** [items] deduped by href in page order; [reason] says why it stopped; [shape] the list's link shape */
+    /**
+     * [items] deduped by href in page order; [reason] says why it stopped; [shape] the list's link shape. KMK (r119):
+     * [ended] end (the list ended by itself) | limit | stopped | failed | botcheck; only end / limit are remembered
+     */
     @Immutable
-    data class Result(val items: List<Item>, val pages: Int, val reason: String, val shape: String?)
+    data class Result(val items: List<Item>, val pages: Int, val reason: String, val shape: String?, val ended: String = "")
 
     private const val MIN_GROUP = 5
     private val OUTSIDE = setOf("nav", "header", "footer", "aside")
@@ -85,15 +92,20 @@ internal object BuilderListReader {
 
     /**
      * Reads [url] and its next pages, up to [maxPages], pausing a random [pauseMinMs]..[pauseMaxMs] between pages.
-     * [onProgress] (page, entries so far) runs on the caller's thread; [shouldStop] ends it after the current page,
+     * [onProgress] runs on the caller's thread; [shouldStop] ends it (KMK (r119): the pages in flight are cancelled),
      * keeping what was read. Cancelling the coroutine stops at once.
+     *
+     * KMK (r119): when page 1's Next link is page 2 of a numbered address, pages 2… are read a few at a time
+     * ([DirPager.readRange], in page order, one at a time while the site is asked slowly); else one after another by
+     * their Next links as before. A bot check page stops the read ([DirPager.BotCheckFound]); a 429 is asked once more
+     * after the site's pace.
      */
     suspend fun read(
         url: String,
         maxPages: Int,
         pauseMinMs: Long,
         pauseMaxMs: Long,
-        onProgress: (page: Int, entries: Int) -> Unit,
+        onProgress: (DirPager.Progress) -> Unit,
         shouldStop: () -> Boolean = { false },
     ): Result {
         val items = LinkedHashMap<String, Item>()
@@ -106,32 +118,58 @@ internal object BuilderListReader {
         var pageUrl = url.trim()
         var pages = 0
         var reason = ""
+        var ended = "end"
+        var saw429 = false
+        fun add(links: List<Item>): Int {
+            var added = 0
+            links.forEach { item ->
+                val old = items[item.href]
+                if (old == null) {
+                    items[item.href] = item
+                    added++
+                } else if (old.text.isBlank() && item.text.isNotBlank()) {
+                    items[item.href] = item
+                }
+            }
+            return added
+        }
         AppLog.add('I', "lab", "extras read list from $pageUrl: up to $limit pages, pause ${low}–$high ms")
         while (true) {
             if (shouldStop()) {
                 reason = "stopped by you after page $pages"
+                ended = "stopped"
                 break
             }
             var paused = 0L
             if (pages > 0) {
-                paused = Random.nextLong(low, high + 1)
-                pauseFor(paused, shouldStop)
+                paused = maxOf(Random.nextLong(low, high + 1), DirPager.paceFor(pageUrl, saw429).paceMs)
+                onProgress(DirPager.Progress(pages, items.size, 0, 0, paused))
+                DirPager.pauseFor(paused, shouldStop)
                 if (shouldStop()) {
                     reason = "stopped by you after page $pages"
+                    ended = "stopped"
                     break
                 }
             }
+            onProgress(DirPager.Progress(pages, items.size, pages + 1, pages + 1, 0L))
             visited += clean(pageUrl)
             val fetched = try {
-                fetch(pageUrl, referer)
+                fetchPaced(pageUrl, referer) { saw429 = true }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                reason = "page ${pages + 1} could not be read (${e.message ?: e.javaClass.simpleName})"
+                if (DirPager.isBotCheckError(e)) {
+                    reason = "page ${pages + 1}: ${DirPager.BOT_CHECK_TEXT}"
+                    ended = "botcheck"
+                } else {
+                    reason = "page ${pages + 1} could not be read (${e.message ?: e.javaClass.simpleName})"
+                    ended = "failed"
+                }
                 break
             }
             if (fetched.first >= 400) {
                 reason = "the site answered ${fetched.first} for page ${pages + 1}"
+                ended = if (pages > 0 && (fetched.first == 404 || fetched.first == 410)) "end" else "failed"
                 break
             }
             val current = pageUrl
@@ -147,24 +185,16 @@ internal object BuilderListReader {
                 }
                 break
             }
-            var added = 0
-            links.forEach { item ->
-                val old = items[item.href]
-                if (old == null) {
-                    items[item.href] = item
-                    added++
-                } else if (old.text.isBlank() && item.text.isNotBlank()) {
-                    items[item.href] = item
-                }
-            }
+            val added = add(links)
             AppLog.add('D', "lab", "extras read list page $pages: ${links.size} entries (paused $paused ms)")
-            onProgress(pages, items.size)
+            onProgress(DirPager.Progress(pages, items.size, 0, 0, 0L))
             if (added == 0 && pages > 1) {
                 reason = "page $pages repeated entries already read"
                 break
             }
             if (pages >= limit) {
                 reason = "read $limit pages, the limit you set"
+                ended = "limit"
                 break
             }
             val next = nextPage(doc, current, visited)
@@ -172,29 +202,76 @@ internal object BuilderListReader {
                 reason = "no next page after page $pages"
                 break
             }
+            // KMK (r119): page 2 of a numbered address: the rest a few at a time, in page order
+            val template = if (pages == 1) {
+                templateFrom(next.substringBefore('#'), 2)?.takeIf { clean(it.replace("{page}", "2")) == clean(next) }
+            } else {
+                null
+            }
+            if (template != null) {
+                val highest = highestPage(doc, current)
+                val last = if (highest > 1) minOf(limit, highest) else limit
+                var pageEnded = "end"
+                val end = DirPager.readRange(
+                    first = 2,
+                    last = last,
+                    urlOf = { n -> template.replace("{page}", n.toString()) },
+                    referer = referer,
+                    pauseMinMs = low,
+                    pauseMaxMs = high,
+                    shouldStop = shouldStop,
+                    onSet = { from, to, pause -> onProgress(DirPager.Progress(pages, items.size, from, to, pause)) },
+                    onPage = { n, page ->
+                        if (page.code >= 400) {
+                            pageEnded = if (page.code == 404 || page.code == 410) "end" else "failed"
+                            return@readRange "the site answered ${page.code} for page $n"
+                        }
+                        val d = withContext(Dispatchers.Default) { Jsoup.parse(page.body, page.url) }
+                        pages++
+                        val (_, more) = pageLinks(d, page.url, shape)
+                        if (more.isEmpty()) return@readRange "page $n has none of the list's links"
+                        val got = add(more)
+                        AppLog.add('D', "lab", "extras read list page $n: ${more.size} entries, $got new")
+                        onProgress(DirPager.Progress(pages, items.size, 0, 0, 0L))
+                        if (got == 0) "page $n repeated entries already read" else null
+                    },
+                )
+                reason = end.reason ?: when {
+                    end.kind == "stopped" -> "stopped by you after page $pages"
+                    last >= limit -> "read $limit pages, the limit you set"
+                    else -> "no next page after page $pages"
+                }
+                ended = when (end.kind) {
+                    "stopped", "botcheck", "failed" -> end.kind
+                    else -> if (end.reason == null) (if (last >= limit) "limit" else "end") else pageEnded
+                }
+                break
+            }
             pageUrl = next
         }
         AppLog.add('I', "lab", "extras read list: ${items.size} entries from $pages pages ($reason)")
-        return Result(items.values.toList(), pages, reason, shape)
+        return Result(items.values.toList(), pages, reason, shape, ended)
     }
 
-    /** Waits [ms] in small steps, ending early when [shouldStop] says so */
-    private suspend fun pauseFor(ms: Long, shouldStop: () -> Boolean) {
-        var left = ms
-        while (left > 0 && !shouldStop()) {
-            val step = minOf(left, 250L)
-            delay(step)
-            left -= step
-        }
+    /**
+     * KMK (r119): one page; a 429 (after the client's own Retry-After wait) marks the site slow, waits its pace and
+     * asks once more ([on429] lets the caller go one page at a time from then on). A bot check throws
+     */
+    private suspend fun fetchPaced(url: String, referer: String, on429: () -> Unit): Pair<Int, String> {
+        val first = DirPager.fetch(url, referer)
+        if (first.code != 429) return first.code to first.body
+        on429()
+        runCatching { BotCheckGate.markSlow(url) }
+        val pace = DirPager.paceFor(url, saw429 = true).paceMs
+        AppLog.add('I', "lab", "extras directory read: 429 for $url, one page at a time, asked again in $pace ms")
+        delay(pace)
+        val again = DirPager.fetch(url, referer)
+        return again.code to again.body
     }
 
-    private suspend fun fetch(url: String, referer: String): Pair<Int, String> = withContext(Dispatchers.IO) {
-        val network = Injekt.get<NetworkHelper>()
-        val builder = Request.Builder().url(url).header("Referer", referer)
-        val agent = runCatching { network.defaultUserAgentProvider() }.getOrNull().orEmpty()
-        if (agent.isNotBlank()) builder.header("User-Agent", agent)
-        network.client.newCall(builder.build()).await().use { response -> response.code to response.body.string() }
-    }
+    /** KMK (r119): through [DirPager.fetch] (a bot check page throws [DirPager.BotCheckFound]) */
+    private suspend fun fetch(url: String, referer: String): Pair<Int, String> =
+        DirPager.fetch(url, referer).let { it.code to it.body }
 
     private fun clean(url: String): String =
         url.toHttpUrlOrNull()?.let { it.newBuilder().fragment(null).build().toString() } ?: url.substringBefore('#')
@@ -435,9 +512,12 @@ internal object BuilderListReader {
         val ok: Boolean get() = item.isNotEmpty() && entries.isNotEmpty() && part("title") != null
     }
 
-    /** r107: a page range read with a scan's selectors: the entries (deduped by link), the pages read, why it ended */
+    /**
+     * r107: a page range read with a scan's selectors: the entries (deduped by link), the pages read, why it ended.
+     * KMK (r119): [ended] as [Result.ended]
+     */
     @Immutable
-    data class DirRead(val entries: List<DirEntry>, val pages: Int, val reason: String)
+    data class DirRead(val entries: List<DirEntry>, val pages: Int, val reason: String, val ended: String = "")
 
     // No braces in these patterns (ICU)
     private const val NUM = """(\d[\d.,]*(?:\s?[KMB](?![A-Za-z]))?)"""
@@ -717,8 +797,11 @@ internal object BuilderListReader {
 
     /**
      * r107: reads pages [from]..[to] of [scan]'s directory (page N from its `{page}` address; without one, page 1 and
-     * its Next links), pausing a random [pauseMinMs]..[pauseMaxMs] between pages. [onProgress] (pages done, entries so
-     * far, the pause before the next page in ms, 0 = none); [shouldStop] ends it after the current page
+     * its Next links), pausing a random [pauseMinMs]..[pauseMaxMs] between pages. [onProgress] (pages counted from
+     * [from]: 1 = the first page of the range); [shouldStop] ends it (KMK (r119): the pages in flight are cancelled).
+     *
+     * KMK (r119): with a `{page}` address the pages are read a few at a time ([DirPager.readRange]: in page order, one
+     * at a time while the site is asked slowly or after a 429, stopped by a bot check page)
      */
     suspend fun readDirectory(
         scan: DirScan,
@@ -726,7 +809,7 @@ internal object BuilderListReader {
         to: Int,
         pauseMinMs: Long,
         pauseMaxMs: Long,
-        onProgress: (done: Int, entries: Int, pauseMs: Long) -> Unit,
+        onProgress: (DirPager.Progress) -> Unit,
         shouldStop: () -> Boolean = { false },
     ): DirRead {
         val template = scan.pageTemplate
@@ -737,23 +820,71 @@ internal object BuilderListReader {
         val high = maxOf(pauseMinMs, pauseMaxMs).coerceAtLeast(0L)
         val referer = Detector.normalize(scan.url) + "/"
         val items = LinkedHashMap<String, DirEntry>()
-        val visited = HashSet<String>()
-        var n = start
-        var pageUrl: String? = if (template == null || start == 1) scan.url else template.replace("{page}", start.toString())
         var done = 0
         var reason = ""
+        var ended = "end"
+        fun s(n: Int) = if (n == 1) "" else "s"
+        suspend fun entriesOf(body: String, url: String): List<DirEntry> = withContext(Dispatchers.Default) {
+            val doc = Jsoup.parse(body, url)
+            runCatching { doc.select(scan.item) }.getOrNull().orEmpty().mapNotNull { entryOf(it, scan.shape, scan.link, scan.parts) }
+        }
         AppLog.add('I', "lab", "extras read directory ${scan.url}: pages $start–$end, pause $low–$high ms")
+        if (template != null) {
+            // KMK (r119): numbered pages, a few at a time, handed back in page order
+            var pageEnded = "end"
+            val run = DirPager.readRange(
+                first = start,
+                last = end,
+                urlOf = { n -> if (n == 1) scan.url else template.replace("{page}", n.toString()) },
+                referer = referer,
+                pauseMinMs = low,
+                pauseMaxMs = high,
+                shouldStop = shouldStop,
+                onSet = { a, b, pause -> onProgress(DirPager.Progress(done, items.size, a - start + 1, b - start + 1, pause)) },
+                onPage = { n, page ->
+                    if (page.code >= 400) {
+                        pageEnded = if (done > 0 && (page.code == 404 || page.code == 410)) "end" else "failed"
+                        return@readRange "the site answered ${page.code} for page $n"
+                    }
+                    val found = entriesOf(page.body, page.url)
+                    done++
+                    var added = 0
+                    found.forEach { if (items.putIfAbsent(it.href, it) == null) added++ }
+                    AppLog.add('D', "lab", "extras read directory page $n: ${found.size} entries, $added new")
+                    onProgress(DirPager.Progress(done, items.size, 0, 0, 0L))
+                    when {
+                        found.isEmpty() -> "page $n has none of the list's entries"
+                        added == 0 -> "page $n repeated entries already read"
+                        else -> null
+                    }
+                },
+            )
+            reason = run.reason ?: if (run.kind == "stopped") "stopped by you after $done page${s(done)}" else "read pages $start–$end, the range you set"
+            ended = when (run.kind) {
+                "stopped", "botcheck", "failed" -> run.kind
+                else -> if (run.reason == null) "limit" else pageEnded
+            }
+            AppLog.add('I', "lab", "extras read directory: ${items.size} entries from $done pages ($reason)")
+            return DirRead(items.values.toList(), done, reason, ended)
+        }
+        // No page numbers in its address: page 1 and its Next links, one after another
+        val visited = HashSet<String>()
+        var saw429 = false
+        var n = start
+        var pageUrl: String? = scan.url
         while (true) {
             if (shouldStop()) {
-                reason = "stopped by you after $done page" + if (done == 1) "" else "s"
+                reason = "stopped by you after $done page${s(done)}"
+                ended = "stopped"
                 break
             }
             if (done > 0) {
-                val paused = Random.nextLong(low, high + 1)
-                onProgress(done, items.size, paused)
-                pauseFor(paused, shouldStop)
+                val paused = maxOf(Random.nextLong(low, high + 1), DirPager.paceFor(scan.url, saw429).paceMs)
+                onProgress(DirPager.Progress(done, items.size, 0, 0, paused))
+                DirPager.pauseFor(paused, shouldStop)
                 if (shouldStop()) {
-                    reason = "stopped by you after $done page" + if (done == 1) "" else "s"
+                    reason = "stopped by you after $done page${s(done)}"
+                    ended = "stopped"
                     break
                 }
             }
@@ -762,17 +893,25 @@ internal object BuilderListReader {
                 reason = "no next page after page ${n - 1}"
                 break
             }
+            onProgress(DirPager.Progress(done, items.size, done + 1, done + 1, 0L))
             visited += clean(url)
             val fetched = try {
-                fetch(url, referer)
+                fetchPaced(url, referer) { saw429 = true }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                reason = "page $n could not be read (${e.message ?: e.javaClass.simpleName})"
+                if (DirPager.isBotCheckError(e)) {
+                    reason = "page $n: ${DirPager.BOT_CHECK_TEXT}"
+                    ended = "botcheck"
+                } else {
+                    reason = "page $n could not be read (${e.message ?: e.javaClass.simpleName})"
+                    ended = "failed"
+                }
                 break
             }
             if (fetched.first >= 400) {
                 reason = "the site answered ${fetched.first} for page $n"
+                ended = if (done > 0 && (fetched.first == 404 || fetched.first == 410)) "end" else "failed"
                 break
             }
             val doc = withContext(Dispatchers.Default) { Jsoup.parse(fetched.second, url) }
@@ -783,7 +922,7 @@ internal object BuilderListReader {
             var added = 0
             found.forEach { if (items.putIfAbsent(it.href, it) == null) added++ }
             AppLog.add('D', "lab", "extras read directory page $n: ${found.size} entries, $added new")
-            onProgress(done, items.size, 0L)
+            onProgress(DirPager.Progress(done, items.size, 0, 0, 0L))
             if (found.isEmpty()) {
                 reason = "page $n has none of the list's entries"
                 break
@@ -793,14 +932,15 @@ internal object BuilderListReader {
                 break
             }
             if (n >= end) {
-                reason = if (template == null) "read $count pages, the limit you set" else "read pages $start–$end, the range you set"
+                reason = "read $count pages, the limit you set"
+                ended = "limit"
                 break
             }
             n++
-            pageUrl = if (template != null) template.replace("{page}", n.toString()) else nextPage(doc, url, visited)
+            pageUrl = nextPage(doc, url, visited)
         }
         AppLog.add('I', "lab", "extras read directory: ${items.size} entries from $done pages ($reason)")
-        return DirRead(items.values.toList(), done, reason)
+        return DirRead(items.values.toList(), done, reason, ended)
     }
 
     /**
@@ -812,7 +952,12 @@ internal object BuilderListReader {
      */
     suspend fun withPicture(scan: DirScan, selectors: List<String>, attrs: List<String>): Pair<DirScan?, String> {
         val referer = Detector.normalize(scan.url) + "/"
-        val fetched = fetch(scan.url, referer)
+        // KMK (r119): a bot check page says so (never solved)
+        val fetched = try {
+            fetch(scan.url, referer)
+        } catch (e: DirPager.BotCheckFound) {
+            return null to DirPager.BOT_CHECK_TEXT
+        }
         if (fetched.first >= 400) return null to "the site answered ${fetched.first}"
         return withContext(Dispatchers.Default) {
             val doc = Jsoup.parse(fetched.second, scan.url)
@@ -1412,26 +1557,41 @@ internal fun ReadListDialog(
     val stop = remember { AtomicBoolean(false) }
     // r103: null = not chosen yet (a long list starts as a text box with suggestions)
     var form by remember { mutableStateOf<String?>(null) }
+    // KMK (r119): when the list shown was remembered (0 = read now)
+    var cachedAt by remember { mutableLongStateOf(0L) }
+
+    // KMK (r119): a list read in the last 7 days is shown at once ("Read 2 h ago · Refresh")
+    LaunchedEffect(url) {
+        val cached = withContext(Dispatchers.IO) { runCatching { DirCache.getList(url, 1) }.getOrNull() }
+        if (cached != null && result == null && !running) {
+            result = cached.first
+            cachedAt = cached.second
+            AppLog.add('I', "lab", "extras read list from $url: ${cached.first.items.size} entries remembered (${DirCache.agoText(cached.second)})")
+        }
+    }
 
     fun seconds(v: Float): String = if (v == v.toInt().toFloat()) v.toInt().toString() else v.toString()
 
     fun start() {
         stop.set(false)
         result = null
+        cachedAt = 0L
         running = true
-        progress = "Page 1 · 0 entries"
         val range = pause
         val count = pages.roundToInt()
+        progress = "Reading page 1 of $count…"
         job = scope.launch {
             try {
-                result = BuilderListReader.read(
+                val read = BuilderListReader.read(
                     url = url,
                     maxPages = count,
                     pauseMinMs = (range.start * 1000f).roundToLong(),
                     pauseMaxMs = (range.endInclusive * 1000f).roundToLong(),
-                    onProgress = { page, entries -> progress = "Page $page · $entries entries" },
+                    onProgress = { p -> progress = progressText(p, count) },
                     shouldStop = { stop.get() },
                 )
+                result = read
+                withContext(Dispatchers.IO) { runCatching { DirCache.putList(url, read, count) } }
             } finally {
                 running = false
             }
@@ -1460,8 +1620,9 @@ internal fun ReadListDialog(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    "Every page of this list is read, following its Next link. A random pause between pages keeps " +
-                        "the site from seeing a bot-like pace.",
+                    "Every page of this list is read, following its Next link (up to ${DirPager.DEFAULT_IN_FLIGHT} at a " +
+                        "time when its pages are numbered, one at a time while the site asks for a slower pace). A random " +
+                        "pause between them keeps the site from seeing a bot-like pace.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1495,6 +1656,18 @@ internal fun ReadListDialog(
                             ": ${done.reason}.",
                         style = MaterialTheme.typography.bodySmall,
                     )
+                    // KMK (r119): a remembered list: when it was read, Refresh reads it again
+                    if (cachedAt > 0L && !running) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                DirCache.agoText(cachedAt),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(" · ", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            TextButton(onClick = { start() }) { Text("Refresh") }
+                        }
+                    }
                     if (done.items.isNotEmpty()) {
                         Text(
                             done.items.take(6).joinToString(", ") { item ->
@@ -1553,6 +1726,17 @@ internal fun ReadListDialog(
             TextButton(onClick = { close() }) { Text(if (running) "Cancel" else "Close") }
         },
     )
+}
+
+/** KMK (r119): "Reading pages 4–6 of 12…" (pages in flight), "Next page in 2.5 s" (a pause), with the entries so far */
+internal fun progressText(p: DirPager.Progress, of: Int): String {
+    val head = when {
+        p.from > 0 && p.to > p.from -> "Reading pages ${p.from}–${p.to} of $of…"
+        p.from > 0 -> "Reading page ${p.from} of $of…"
+        p.pauseMs > 0 -> "Next page in ${String.format(java.util.Locale.US, "%.1f", p.pauseMs / 1000f)} s"
+        else -> "${p.done} of $of pages read"
+    }
+    return "$head · ${p.entries} entries"
 }
 
 /** r103: a list longer than a dropdown reads well as a text box with suggestions */

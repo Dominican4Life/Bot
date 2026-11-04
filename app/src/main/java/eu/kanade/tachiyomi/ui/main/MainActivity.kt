@@ -689,6 +689,14 @@ class MainActivity : BaseActivity() {
                 navigator.popUntilRoot()
                 HomeScreen.Tab.More(toDownloads = false, toLibraryUpdateErrors = true)
             }
+            // KMK (r119): the player's Quality sheet "Check the site in Source Lab": the Lab on that source's Test
+            "eu.kanade.tachiyomi.OPEN_SOURCE_LAB" -> {
+                val key = intent.getStringExtra("sourceKey")
+                navigator.push(
+                    eu.kanade.tachiyomi.ui.sourcelab.SourceLabScreen(key, eu.kanade.tachiyomi.ui.sourcelab.LabTab.Test),
+                )
+                null
+            }
             // KMK (r93): a pair sync notification: the Sync pop-up opens (HomeScreen or MoreTab shows it)
             eu.kanade.tachiyomi.pairsync.PairSyncService.ACTION_OPEN -> {
                 if (!eu.kanade.tachiyomi.ui.pairsync.PairSyncPopup.isOpen.value) navigator.popUntilRoot()

@@ -231,6 +231,8 @@ internal fun LiveTab(model: DiagnosticsScreenModel, header: HeaderSlot, tablet: 
             item("events") { EventsCard(window = window, onOpen = { m -> model.openLogAround(m.timeMs, m.tag) }) }
         }
         item("running") { RunningCard(diag = diag, onOpen = { model.setResource(it) }) }
+        // KMK (r119): JS time per Source Lab source (ui/logs/JsTimeCard.kt, data in jssource/JsTiming.kt)
+        item("js-time") { eu.kanade.tachiyomi.ui.logs.JsTimeCard() }
         item("advanced") {
             AdvancedCard(
                 model = model,

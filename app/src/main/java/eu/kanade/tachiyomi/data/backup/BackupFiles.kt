@@ -53,7 +53,10 @@ class BackupFiles(
             SOURCE_DIRS.forEach { name -> collect(File(dir, name), out) }
             SOURCE_FILES.forEach { name -> collect(File(dir, name), out) }
         }
-        collect(File(filesDir, SOURCE_LAB), out)
+        // KMK (r119): the builder's remembered directory reads (sourcelab/dir_cache) are a cache, not kept in backups
+        val labFiles = mutableListOf<BackupFile>()
+        collect(File(filesDir, SOURCE_LAB), labFiles)
+        labFiles.filterNotTo(out) { it.path.replace('\\', '/').contains("$SOURCE_LAB/dir_cache/") }
         log("Source Lab files: ${out.size} (${keys.size} sources, ${kb(out.sumOf { it.bytes.size.toLong() })})")
         out
     }.getOrElse {
