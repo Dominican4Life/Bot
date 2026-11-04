@@ -253,5 +253,6 @@ internal object BuilderRecheck {
         return base.toHttpUrlOrNull()?.resolve(href)?.toString() ?: href.toHttpUrlOrNull()?.toString()
     }
 
-    private fun clean(url: String): String = url.substringBefore('#')
+    /** The address a page is kept under in [Pages] (KMK r116: also the builder's suggestions and fingerprints) */
+    fun clean(url: String): String = url.substringBefore('#')
 }

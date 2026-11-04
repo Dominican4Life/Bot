@@ -320,13 +320,7 @@ object SettingsAdvancedScreen : SearchableSettings {
                         }
                     },
                 ),
-                // KMK -->
-                Preference.PreferenceItem.SwitchPreference(
-                    preference = networkPreferences.autoOpenBotChecks(),
-                    title = stringResource(KMR.strings.pref_auto_open_bot_checks),
-                    subtitle = stringResource(KMR.strings.pref_auto_open_bot_checks_summary),
-                ),
-                // KMK <--
+                // KMK (r116): "Open bot checks automatically" removed: checks wait for you instead (BotChecks)
                 Preference.PreferenceItem.ListPreference(
                     preference = networkPreferences.dohProvider(),
                     entries = persistentMapOf(

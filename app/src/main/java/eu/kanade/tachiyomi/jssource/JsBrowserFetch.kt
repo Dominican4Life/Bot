@@ -6,6 +6,7 @@ import android.os.Handler
 import android.os.Looper
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import eu.kanade.tachiyomi.network.BotCheckGate
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.util.system.AppLog
 import eu.kanade.tachiyomi.util.system.setDefaultSettings
@@ -58,6 +59,11 @@ internal object JsBrowserFetch {
             listOf("challenge-platform", "cf-chl", "Just a moment", "challenge-error-title", "cf_chl_opt", "Attention Required")
                 .any { it in body }
 
+    /**
+     * KMK (r116): [sourceId] (optional) names the source the request is for; without it the site is matched to a
+     * source by its address. When the hidden page still shows a check, the request waits (up to 10 min, shared with
+     * every request of the site) for you to pass it in WebView, then is sent once more; it never tries to pass it.
+     */
     suspend fun fetch(
         context: Context,
         url: String,
@@ -65,27 +71,66 @@ internal object JsBrowserFetch {
         headers: Map<String, String>,
         body: String?,
         binary: Boolean,
+        sourceId: Long? = null,
     ): Map<String, Any?> {
         val origin = originOf(url) ?: throw IllegalArgumentException("Not a web address: $url")
         val lock = locks.getOrPut(origin) { Mutex() }
-        return lock.withLock {
-            val started = System.currentTimeMillis()
-            val tab = withContext(Dispatchers.Main) { openTab(context, origin) }
-            try {
-                val result = withContext(Dispatchers.Main) { run(tab.webView, url, method, headers, body, binary) }
-                AppLog.add('D', "net", "BROWSER $method $url -> ${result["statusCode"]} in ${System.currentTimeMillis() - started} ms")
-                result
-            } finally {
-                withContext(Dispatchers.Main) {
-                    tab.lastUse = System.currentTimeMillis()
-                    handler.postDelayed({ closeIfIdle(origin) }, IDLE_MS + 1000)
+        // KMK (r116): the site's pace after a check or a 429
+        if (!binary) BotCheckGate.paceSuspend(url)
+        val userAgent = Injekt.get<NetworkHelper>().defaultUserAgentProvider()
+        val host = BotCheckGate.hostOf(url) ?: origin
+        var afterPass = false
+        while (true) {
+            // A check already waiting for you: wait with the others instead of loading it again
+            val outcome = if (!afterPass && BotCheckGate.isWaiting(url)) {
+                BotCheckGate.await("$origin/", userAgent, sourceId)
+            } else {
+                val result = lock.withLock {
+                    val started = System.currentTimeMillis()
+                    val tab = withContext(Dispatchers.Main) { openTab(context, origin) } ?: return@withLock null
+                    try {
+                        val reply = withContext(Dispatchers.Main) { run(tab.webView, url, method, headers, body, binary) }
+                        AppLog.add('D', "net", "BROWSER $method $url -> ${reply["statusCode"]} in ${System.currentTimeMillis() - started} ms")
+                        // KMK (r116): the page's own request got the check too: the page is dropped, you're asked
+                        val code = (reply["statusCode"] as? Number)?.toInt() ?: 0
+                        val replyHeaders = reply["headers"] as? Map<*, *>
+                        if (!binary && isChallenge(code, replyHeaders?.get("server")?.toString(), reply["body"]?.toString().orEmpty())) {
+                            withContext(Dispatchers.Main) {
+                                tabs.remove(origin)
+                                tab.webView.stopLoading()
+                                tab.webView.destroy()
+                            }
+                            null
+                        } else {
+                            reply
+                        }
+                    } finally {
+                        withContext(Dispatchers.Main) {
+                            tab.lastUse = System.currentTimeMillis()
+                            handler.postDelayed({ closeIfIdle(origin) }, IDLE_MS + 1000)
+                        }
+                    }
                 }
+                if (result != null) {
+                    if (afterPass) AppLog.add('I', "botcheck", "$host: sent again with your session, it went through")
+                    return result
+                }
+                // Still a check after your pass: said plainly, not tried again and again
+                if (afterPass) throw BotCheckGate.notSolvedError(host)
+                BotCheckGate.await("$origin/", userAgent, sourceId)
+            }
+            when (outcome) {
+                BotCheckGate.Outcome.PASSED -> afterPass = true
+                // Closed without a sign: tried once more; still a check → waits again (the 10 min still count)
+                BotCheckGate.Outcome.CLOSED -> Unit
+                BotCheckGate.Outcome.EXPIRED, BotCheckGate.Outcome.OUT_OF_TIME -> throw BotCheckGate.notSolvedError(host)
+                BotCheckGate.Outcome.CANCELED -> throw kotlinx.coroutines.CancellationException("Canceled")
             }
         }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    private suspend fun openTab(context: Context, origin: String): Tab {
+    private suspend fun openTab(context: Context, origin: String): Tab? {
         tabs[origin]?.let { return it }
         val loaded = CompletableDeferred<Unit>()
         val webView = WebView(context.applicationContext).apply {
@@ -123,24 +168,9 @@ internal object JsBrowserFetch {
         }
         if (stillChallenged) {
             webView.destroy()
-            // KMK: a check that needs a person: opened in WebView when the app is on screen; once it's passed there
-            // (same cookies and user agent as this page), the page is opened again. Once per site for a while.
-            val passed = try {
-                eu.kanade.tachiyomi.network.BotCheckCoordinator.await(
-                    "$origin/",
-                    Injekt.get<NetworkHelper>().defaultUserAgentProvider(),
-                )
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                false
-            }
-            if (passed) return openTab(context, origin)
-            // KMK: a notification to open the site in WebView and pass the check
-            eu.kanade.tachiyomi.network.BotCheckReporter.report("$origin/")
-            throw IllegalStateException(
-                "$origin wants you to pass its bot check: open the source in WebView, pass it, then try again",
-            )
+            // KMK (r116): a check that needs a person: never opened by itself. The caller registers it as waiting
+            // (notification, Browse, Source Lab ask you) and waits for your pass in WebView.
+            return null
         }
         return Tab(webView, System.currentTimeMillis()).also { tabs[origin] = it }
     }

@@ -26,11 +26,14 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -54,6 +57,8 @@ import java.util.Locale
  * lit), what the player asked for (status, short address, kind, which side sent it), the header difference, the
  * hidden address when one was read, and the fixes. It only shows [diagnosis] and hands a [VideoFix] to [onFix]
  * (the host screen writes it into the source); [onTryPlay] plays an address with headers (the host's player).
+ * KMK (r116): [onTryPlay] also gets the play box's bounds in the window (the preview window grows from it); the host
+ * opens VideoPreview with them (r115 copied the address to the clipboard).
  * [onCheck] starts (or re-runs) the check; [running] with [progress] shows it working.
  */
 @Composable
@@ -62,7 +67,7 @@ internal fun VideoDoctorPanel(
     running: Boolean,
     onCheck: () -> Unit,
     onFix: (VideoFix) -> Unit,
-    onTryPlay: (url: String, headers: Map<String, String>) -> Unit,
+    onTryPlay: (url: String, headers: Map<String, String>, sourceRect: android.graphics.Rect?) -> Unit,
     modifier: Modifier = Modifier,
     progress: String? = null,
 ) {
@@ -342,8 +347,10 @@ private fun fixLabel(fix: VideoFix): String = when (fix) {
 private fun FixCard(
     d: VideoDiagnosis,
     onFix: (VideoFix) -> Unit,
-    onTryPlay: (url: String, headers: Map<String, String>) -> Unit,
+    onTryPlay: (url: String, headers: Map<String, String>, sourceRect: android.graphics.Rect?) -> Unit,
 ) {
+    // KMK (r116): where the play box is, for the preview window's start
+    val boxBounds = remember { LabRectHolder() }
     val drmOnly = d.hit(VideoCause.Drm) && d.causes.count { it.hit } == 1
     if (d.fixes.isEmpty() && (d.tryUrl == null || drmOnly)) return
     DoctorCard {
@@ -371,18 +378,19 @@ private fun FixCard(
                         .height(96.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(Brush.linearGradient(listOf(top, bottom)))
-                        .clickable { onTryPlay(tryUrl, d.tryHeaders) },
+                        .onGloballyPositioned { boxBounds.rect = it.boundsInWindow().toAndroidRect() }
+                        .clickable { onTryPlay(tryUrl, d.tryHeaders, boxBounds.rect) },
                 ) {
                     Icon(
                         Icons.Filled.PlayArrow,
-                        contentDescription = "Try play",
+                        contentDescription = "Preview",
                         tint = MaterialTheme.colorScheme.onPrimaryContainer,
                         modifier = Modifier.size(34.dp),
                     )
                 }
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        "Try-play with the fixes applied, right here, before you save.",
+                        "Preview with the fixes applied, right here, before you save: it plays in a small window.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

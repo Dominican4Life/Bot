@@ -27,6 +27,8 @@ import eu.kanade.tachiyomi.jssource.lab.Templates
 import eu.kanade.tachiyomi.jssource.lab.TestRun
 import eu.kanade.tachiyomi.jssource.lab.TestRuns
 import eu.kanade.tachiyomi.jssource.lab.TestStep
+import eu.kanade.tachiyomi.jssource.lab.heal.HealedPick
+import eu.kanade.tachiyomi.jssource.lab.heal.PickHealer
 import eu.kanade.tachiyomi.jssource.lab.videodoctor.VideoDiagnosis
 import eu.kanade.tachiyomi.jssource.lab.videodoctor.VideoDoctor
 import eu.kanade.tachiyomi.ui.codeeditor.SourceEditorScreenModel
@@ -250,6 +252,8 @@ internal class SourceLabScreenModel(
                     headers = info?.headers.orEmpty(),
                     baseUrl = s.baseUrl.ifBlank { info?.baseUrl.orEmpty() },
                     query = query,
+                    // KMK (r116): self-healing compares against the code being tested (saved or not)
+                    code = s.code,
                     onProgress = { steps -> mutableState.update { it.copy(runSteps = steps) } },
                 )
                 mutableState.update { it.copy(running = false, runSteps = run.steps, previousRun = it.lastRun, lastRun = run) }
@@ -336,8 +340,35 @@ internal class SourceLabScreenModel(
         return true
     }
 
-    /** A snackbar line from a pane (the Video step's "Try play" copy) */
+    /** A snackbar line from a pane (the Video step's Preview when it can't start) */
     fun say(text: String) = message(text)
+    // KMK <--
+
+    // KMK --> (r116) self-healing picks
+    /**
+     * "Use the new picks and test again": [picks] are written into the editor's code ([PickHealer.applyToCode], the
+     * generic-list `var ITEM / TITLE / COVER … = "…"` values) as an unsaved change, then the Test Run runs again on it.
+     * Nothing is saved (the owner saves). Code that doesn't change says so and asks for picking by tapping.
+     */
+    fun useHealedPicks(editor: SourceEditorScreenModel, picks: List<HealedPick>, query: String) {
+        if (picks.isEmpty() || state.value.running) return
+        val key = state.value.key ?: return
+        val code = editor.state.value.code
+        val fixed = runCatching { PickHealer.applyToCode(code, picks) }
+            .onFailure { AppLog.add('W', "lab", "Self-healing on $key: applying the picks failed: $it") }
+            .getOrNull()
+        if (fixed == null || fixed == code) {
+            message("The picks aren't plain values in this code: pick them again by tapping.")
+            return
+        }
+        val labels = picks.joinToString(", ") { it.label }
+        editor.setCode(fixed)
+        editor.saveNote = "Self-healing: ${picks.size} ${if (picks.size == 1) "pick" else "picks"} moved ($labels)"
+        val moved = picks.joinToString("; ") { "${it.label} ${it.oldSelector} -> ${it.newSelector} (${it.score}%)" }
+        AppLog.add('I', "lab", "Self-healing on $key: used $moved")
+        message("New picks for $labels are in the editor (not saved). Testing again…")
+        runTest(editor, query)
+    }
     // KMK <--
 
     fun cancelTest() {

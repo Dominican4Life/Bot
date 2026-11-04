@@ -4,19 +4,14 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.app.PendingIntent
 import android.content.Context
-import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.PermissionChecker
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.ProcessLifecycleOwner
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
-import eu.kanade.tachiyomi.network.BotCheckCoordinator
 import eu.kanade.tachiyomi.network.BotCheckReporter
-import eu.kanade.tachiyomi.network.NetworkPreferences
 import eu.kanade.tachiyomi.source.DisabledSources
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.jssource.JsAnimeSource
@@ -35,6 +30,9 @@ import uy.kohesive.injekt.api.get
  * KMK: Like Kototoro, a notification for each source that hit a bot check the app couldn't pass by itself (tap to
  * open the source in WebView and pass it), or that answered "too many requests". When several sources are
  * waiting, a summary at the top lists them all. A bot check drops off once the source is opened in WebView.
+ *
+ * KMK (r116): the app never opens a check by itself; the notification (and BotChecks for the app's screens) asks
+ * you to, and the requests wait meanwhile.
  */
 object BotCheckNotifier {
 
@@ -60,48 +58,9 @@ object BotCheckNotifier {
     fun install(context: Context) {
         appContext = context.applicationContext
         BotCheckReporter.listener = { url, kind, sourceId -> onReport(url, kind, sourceId, force = false) }
-        BotCheckCoordinator.opener = ::openInWebView
-        BotCheckCoordinator.logger = { eu.kanade.tachiyomi.util.system.AppLog.add('I', "botcheck", it) }
-    }
-
-    /**
-     * KMK: Opens a source's bot check in WebView right away (it closes by itself once passed), when the app is on
-     * screen and the setting is on. Only a source's own site is opened, not image servers and the like.
-     */
-    private fun openInWebView(url: String, userAgent: String?): Boolean {
-        if (!::appContext.isInitialized) return false
-        val log = { text: String -> runCatching { eu.kanade.tachiyomi.util.system.AppLog.add('I', "botcheck", text) } }
-        val enabled = runCatching { Injekt.get<NetworkPreferences>().autoOpenBotChecks().get() }.getOrDefault(false)
-        if (!enabled) {
-            log("not opened: \"Open bot checks automatically\" is off")
-            return false
-        }
-        // The lifecycle can only be read on the main thread
-        val readState = { ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) }
-        val onScreen = runCatching {
-            if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
-                readState()
-            } else {
-                kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.Main) { readState() }
-            }
-        }.getOrDefault(false)
-        if (!onScreen) {
-            log("not opened: the app isn't on screen")
-            return false
-        }
-        val site = hostOf(url)?.let(::siteForHost)
-        if (site == null) {
-            log("not opened: $url isn't one of your sources' sites")
-            return false
-        }
-        if (DisabledSources.isDisabled(site.id)) {
-            log("not opened: ${site.name} is turned off")
-            return false
-        }
-        val intent = WebViewActivity.newAutoCloseIntent(appContext, url, site.id, site.name, userAgent)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        appContext.startActivity(intent)
-        return true
+        // KMK (r116): checks are never opened by themselves any more ("Open bot checks automatically" removed);
+        // they wait for you (BotChecks), and this notification asks you
+        BotChecks.install(context)
     }
 
     /** A source found to need a bot check (or to be asking for fewer requests); [force] shows it again right away */
@@ -164,7 +123,12 @@ object BotCheckNotifier {
                     setContentTitle(context.stringResource(KMR.strings.bot_check_title))
                     setContentText(text)
                     setStyle(NotificationCompat.BigTextStyle().bigText(text))
-                    val intent = WebViewActivity.newIntent(context, entry.url, entry.sourceId, entry.name)
+                    // KMK (r116): opens the check for you to pass; WebView closes by itself once it's passed
+                    val waitingUrl = entry.sourceId?.let { BotChecks.waiting.value[it]?.url } ?: entry.url
+                    val userAgent = eu.kanade.tachiyomi.network.BotCheckGate.waiting()
+                        .firstOrNull { it.host == eu.kanade.tachiyomi.network.BotCheckGate.hostOf(waitingUrl) }
+                        ?.userAgent
+                    val intent = WebViewActivity.newBotCheckIntent(context, waitingUrl, entry.sourceId, entry.name, userAgent)
                     setContentIntent(
                         PendingIntent.getActivity(
                             context,
@@ -238,6 +202,9 @@ object BotCheckNotifier {
 
     /** Site → source id, so failed requests don't look through every source each time */
     private val hostCache = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    /** KMK (r116): the source a site belongs to, for BotChecks */
+    internal fun sourceForHost(host: String): SiteInfo? = siteForHost(host.removePrefix("www."))
 
     /** The source a site belongs to */
     private fun siteForHost(host: String): SiteInfo? {

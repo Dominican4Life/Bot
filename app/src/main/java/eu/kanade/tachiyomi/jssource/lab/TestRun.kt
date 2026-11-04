@@ -2,7 +2,6 @@ package eu.kanade.tachiyomi.jssource.lab
 
 import android.app.Application
 import eu.kanade.tachiyomi.BuildConfig
-import eu.kanade.tachiyomi.jssource.HlsRelay
 import eu.kanade.tachiyomi.jssource.JsConsoleEntry
 import eu.kanade.tachiyomi.jssource.JsFilters
 import eu.kanade.tachiyomi.jssource.JsMapping
@@ -10,6 +9,9 @@ import eu.kanade.tachiyomi.jssource.JsPreferences
 import eu.kanade.tachiyomi.jssource.JsRuntime
 import eu.kanade.tachiyomi.jssource.JsSourceManager
 import eu.kanade.tachiyomi.jssource.jsJson
+import eu.kanade.tachiyomi.jssource.lab.heal.HealedPick
+import eu.kanade.tachiyomi.jssource.lab.heal.PickFingerprints
+import eu.kanade.tachiyomi.jssource.lab.heal.PickHealer
 import eu.kanade.tachiyomi.jssource.str
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.ui.codeeditor.SourceEditorScreenModel.Item
@@ -36,6 +38,8 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import okhttp3.Headers
 import okhttp3.Request
+import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.File
@@ -691,6 +695,8 @@ internal object TestRuns {
         headers: Map<String, String>,
         baseUrl: String,
         query: String,
+        // KMK (r116): the code under test (the editor's text, saved or not) for self-healing; null = the saved code
+        code: String? = null,
         onProgress: (List<TestStep>) -> Unit = {},
     ): TestRun = withContext(Dispatchers.IO) {
         val startedAt = System.currentTimeMillis()
@@ -698,6 +704,8 @@ internal object TestRuns {
         var running: TestStep? = null
         fun publish() = onProgress(steps + listOfNotNull(running))
         var effectiveQuery = query
+        // KMK (r116): the Title step's detail fields that came back empty (for self-healing)
+        var missingDetails: List<String> = emptyList()
         val runId = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date(startedAt))
         // KMK (r102): the Test Run console: every console line of this run, live, then saved beside the run
         val token = System.nanoTime()
@@ -715,6 +723,11 @@ internal object TestRuns {
                 },
                 onResult = { result ->
                     if (result.step == StepId.SEARCH) effectiveQuery = result.title.substringAfter('"', "").substringBeforeLast('"', "")
+                    if (result.step == StepId.TITLE && result.ok && result.text?.startsWith(SKIPPED) != true) {
+                        val filled = result.raw.firstOrNull()?.let(::detailFields).orEmpty() +
+                            if (result.text?.endsWith(LIST_COVER) == true) listOf("coverUrl") else emptyList()
+                        missingDetails = DETAIL_FIELDS.filter { it !in filled }
+                    }
                     steps.add(judge(result, anime))
                     running = null
                     publish()
@@ -751,6 +764,16 @@ internal object TestRuns {
                     publish()
                 }
             }
+            // KMK (r116): self-healing: broken list / title steps look for their picks again (the code isn't changed)
+            try {
+                val tested = code ?: runCatching { Injekt.get<JsSourceManager>().code(key) }.getOrNull()
+                if (tested != null) healSteps(key, steps, tested, sourceHeaders, missingDetails)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                AppLog.add('W', "lab", "Self-healing of $key failed: ${e.message ?: e}")
+            }
+            publish()
             val run = TestRun(
                 id = runId,
                 key = key,
@@ -985,6 +1008,132 @@ internal object TestRuns {
         return null
     }
 
+    // ---------- self-healing picks (r116) ----------
+
+    /** The Title step's detail fields → the builder's pick labels */
+    private val DETAIL_LABELS = linkedMapOf(
+        "coverUrl" to "bigCover",
+        "description" to "description",
+        "genres" to "tags",
+        "author" to "author",
+        "status" to "status",
+    )
+
+    /**
+     * Popular / Latest with 0 entries (or titles / covers empty on every entry) and a Title step with empty fields:
+     * when the source has pick fingerprints and generic-list selectors, the step's page is read again (one GET of the
+     * address the step fetched, the source's headers) and [PickHealer] looks for each broken pick. Found ones go into
+     * [TestStep.healed] and the step turns Amber "N picks moved". Nothing is written into the code here.
+     */
+    private fun healSteps(
+        key: String,
+        steps: MutableList<TestStep>,
+        code: String,
+        headers: Map<String, String>,
+        missingDetails: List<String>,
+    ) {
+        val fps = PickFingerprints.loadAll(key)
+        if (fps.isEmpty()) return
+        val selectors = PickHealer.selectorsInCode(code)
+        if (selectors.isEmpty()) return
+        val pages = HashMap<String, Document?>()
+        fun page(step: TestStep): Document? {
+            val url = step.requests.firstOrNull { it.method == "GET" && it.url.startsWith("http") && (it.status ?: 0) in 200..299 }?.url
+                ?: step.requests.firstOrNull { it.method == "GET" && it.url.startsWith("http") }?.url
+                ?: return null
+            return pages.getOrPut(url) { fetchPage(url, headers) }
+        }
+        fun works(doc: Document, sel: String): Boolean = runCatching { doc.select(sel).isNotEmpty() }.getOrDefault(false)
+        for (i in steps.indices) {
+            val step = steps[i]
+            val healed = ArrayList<HealedPick>()
+            when (step.id) {
+                StepId.POPULAR, StepId.LATEST -> {
+                    if (step.status == StepStatus.Skipped) continue
+                    val noTitles = step.items.isNotEmpty() && step.items.all { it.title.isBlank() }
+                    val noCovers = step.items.isNotEmpty() && step.items.all { it.imageUrl.isNullOrBlank() }
+                    if (step.count > 0 && !noTitles && !noCovers) continue
+                    val doc = page(step) ?: continue
+                    var itemSel = selectors["item"].orEmpty()
+                    if (itemSel.isBlank() || !works(doc, itemSel)) {
+                        val fp = fps["item"]
+                        val found = fp?.let { PickHealer.heal(doc, "item", itemSel, it, null) }
+                        if (found != null) {
+                            healed.add(found)
+                            itemSel = found.newSelector
+                        }
+                    }
+                    val cards = if (itemSel.isBlank()) emptyList() else runCatching { doc.select(itemSel).toList() }.getOrDefault(emptyList())
+                    if (cards.isNotEmpty()) {
+                        for (label in PickHealer.CARD_LABELS) {
+                            val sel = selectors[label].orEmpty()
+                            val fp = fps[label] ?: continue
+                            // A blank selector: the code's own fallback (first link / img) is used, nothing to heal
+                            if (sel.isBlank()) continue
+                            val inSomeCard = cards.any { card -> runCatching { card.selectFirst(sel) != null }.getOrDefault(false) }
+                            if (inSomeCard) continue
+                            PickHealer.heal(doc, label, sel, fp, itemSel)?.let { healed.add(it) }
+                        }
+                    }
+                }
+                StepId.TITLE -> {
+                    if (step.status == StepStatus.Skipped || missingDetails.isEmpty()) continue
+                    val labels = missingDetails.mapNotNull { DETAIL_LABELS[it] }.filter { it in fps && selectors[it].orEmpty().isNotBlank() }
+                    if (labels.isEmpty()) continue
+                    val doc = page(step) ?: continue
+                    for (label in labels) {
+                        val sel = selectors[label].orEmpty()
+                        if (works(doc, sel)) continue
+                        PickHealer.heal(doc, label, sel, fps.getValue(label), null)?.let { healed.add(it) }
+                    }
+                }
+                else -> continue
+            }
+            if (healed.isEmpty()) continue
+            val moved = if (healed.size == 1) "1 pick moved" else "${healed.size} picks moved"
+            steps[i] = step.copy(status = StepStatus.Amber, evidence = "$moved · ${step.evidence}", healed = healed)
+            AppLog.add(
+                'I',
+                "lab",
+                "Self-healing of $key, ${step.name}: " +
+                    healed.joinToString(" · ") { "${it.label} '${it.oldSelector}' → '${it.newSelector}' (${it.score}, ${it.matches}/${it.total})" },
+            )
+        }
+    }
+
+    /** The page at [url] as Jsoup reads it (≤ 3 MB, 2xx only), else null; never throws but for cancellation */
+    private fun fetchPage(url: String, headers: Map<String, String>): Document? {
+        val builder = Headers.Builder()
+        headers.forEach { (k, v) -> runCatching { builder.set(k, v) } }
+        if (builder["User-Agent"] == null) builder.set("User-Agent", Injekt.get<NetworkHelper>().defaultUserAgentProvider())
+        return try {
+            val request = Request.Builder().url(url).headers(builder.build()).get().build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    AppLog.add('D', "lab", "Self-healing: ${response.code} for ${shortUrl(url)}")
+                    return null
+                }
+                val bytes = response.body.byteStream().use { stream ->
+                    val out = java.io.ByteArrayOutputStream()
+                    val chunk = ByteArray(16 * 1024)
+                    while (out.size() < 3 * 1024 * 1024) {
+                        val n = stream.read(chunk)
+                        if (n <= 0) break
+                        out.write(chunk, 0, n)
+                    }
+                    out.toByteArray()
+                }
+                // The page's own charset (meta / BOM), UTF-8 when it names none
+                Jsoup.parse(java.io.ByteArrayInputStream(bytes), null, response.request.url.toString())
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            AppLog.add('D', "lab", "Self-healing: couldn't read ${shortUrl(url)}: ${e.message}")
+            null
+        }
+    }
+
     // ---------- image and video checks ----------
 
     private val client by lazy {
@@ -1069,8 +1218,13 @@ internal object TestRuns {
         }
     }
 
-    /** One probe per hoster (its first video): HLS through the relay, files by their first bytes */
-    private fun videoStep(hosters: TestStep, sourceHeaders: Map<String, String>): TestStep {
+    /**
+     * One check per hoster (its first video), KMK (r116): through [VideoCheck] with the same headers on every request
+     * (playlist → quality → key → first piece; DASH; files by their first bytes). Green only when every server's check
+     * is ok; a playlist that answers but whose quality / key / piece fails is Amber with the reason; Red when no
+     * server answers at all.
+     */
+    private suspend fun videoStep(hosters: TestStep, sourceHeaders: Map<String, String>): TestStep {
         val videos = hosters.items.filter { it.kind == "video" && it.url.startsWith("http") }
         val byServer = LinkedHashMap<String, TestItem>()
         videos.forEach { v ->
@@ -1082,37 +1236,31 @@ internal object TestRuns {
         val requests = ArrayList<TestRequest>()
         val notes = ArrayList<String>()
         var played = 0
+        var partly = 0
         byServer.forEach { (server, video) ->
             val own = (video.raw?.get("headers") as? JsonObject)?.mapNotNull { (k, v) -> (v as? JsonPrimitive)?.contentOrNull?.let { k to it } }?.toMap().orEmpty()
             val headers = sourceHeaders + own
-            val hls = "m3u8" in video.url.lowercase() || (video.raw?.str("type")?.lowercase()?.contains("hls") == true)
-            val target = if (hls) {
-                val builder = Headers.Builder()
-                headers.forEach { (k, v) -> runCatching { builder.set(k, v) } }
-                runCatching { HlsRelay.wrap(video.url, builder.build()) }.getOrDefault(video.url)
-            } else {
-                video.url
+            val trace = VideoCheck.trace(video.url, headers)
+            trace.hops.forEach { hop ->
+                requests.add(TestRequest("GET", hop.url, hop.status, hop.ms, viaBrowser = false, error = hop.error, bytes = hop.bytes.toLong()))
             }
-            val probe = probe(target, if (hls && target != video.url) emptyMap() else headers, head = false, rangeEnd = 2047)
-            requests.add(TestRequest("GET", video.url, probe.status, probe.ms, viaBrowser = false, error = probe.error))
-            val kind = mediaKind(probe)
-            val redirects = 0
+            val check = trace.result
+            val quality = video.title.takeIf { it != "Video" }?.let { " $it" }.orEmpty()
             when {
-                probe.ok && kind != null -> {
+                check.ok -> {
                     played++
-                    notes.add("$server played${video.title.takeIf { it != "Video" }?.let { " $it" }.orEmpty()} ($kind)")
+                    notes.add("$server played$quality (${check.detail})")
                 }
-                probe.ok -> notes.add("$server: $kind${probe.status} but not a playlist or a video file (${probe.contentType ?: "no content type"})")
-                else -> notes.add(
-                    "$server: ${probe.status ?: probe.error ?: "no reply"}" +
-                        (if (redirects > 0) " after $redirects redirects" else "") +
-                        if (headers.keys.none { it.equals("Referer", true) }) " · no Referer on the request" else "",
-                )
+                check.stage == "quality" || check.stage == "key" || check.stage == "piece" -> {
+                    partly++
+                    notes.add("$server: ${check.detail}")
+                }
+                else -> notes.add("$server: ${check.detail}")
             }
         }
         val status = when {
             played == byServer.size -> StepStatus.Green
-            played == 0 -> StepStatus.Red
+            played == 0 && partly == 0 -> StepStatus.Red
             else -> StepStatus.Amber
         }
         return TestStep(
@@ -1121,27 +1269,11 @@ internal object TestRuns {
             status = status,
             count = played,
             ms = System.currentTimeMillis() - started,
-            evidence = (if (status == StepStatus.Red) notes else notes.sortedBy { it.contains("played") }).joinToString(" · "),
+            evidence = (if (status == StepStatus.Red) notes else notes.sortedBy { it.contains(" played") }).joinToString(" · "),
             items = byServer.values.toList(),
             requests = requests,
             partIds = PartIndex.partsOfStep(StepId.VIDEO, anime = true),
         )
-    }
-
-    /** "hls", "mp4", "mkv", "mpeg" or null when the first bytes aren't a playlist or a video container */
-    private fun mediaKind(probe: Probe): String? {
-        val b = probe.bytes
-        val text = String(b, 0, b.size.coerceAtMost(64), Charsets.ISO_8859_1)
-        return when {
-            text.trimStart().startsWith("#EXTM3U") -> "hls"
-            probe.contentType?.contains("mpegurl", ignoreCase = true) == true -> "hls"
-            b.size >= 8 && String(b, 4, 4, Charsets.ISO_8859_1) == "ftyp" -> "mp4"
-            b.size >= 8 && String(b, 4, 4, Charsets.ISO_8859_1) == "moov" -> "mp4"
-            b.size >= 4 && b[0] == 0x1A.toByte() && b[1] == 0x45.toByte() && b[2] == 0xDF.toByte() && b[3] == 0xA3.toByte() -> "mkv"
-            b.size >= 4 && b[0] == 0.toByte() && b[1] == 0.toByte() && b[2] == 1.toByte() && b[3] == 0xBA.toByte() -> "mpeg"
-            probe.contentType?.startsWith("video/", ignoreCase = true) == true -> "video"
-            else -> null
-        }
     }
 
     // ---------- against the previous run ----------

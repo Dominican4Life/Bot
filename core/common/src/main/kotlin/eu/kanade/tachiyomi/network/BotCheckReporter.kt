@@ -56,6 +56,10 @@ class SiteBlockedException(val kind: BotCheckReporter.Kind, message: String) : I
 /**
  * KMK: Spots replies that are still a bot check or "too many requests" after the Cloudflare helper had its go,
  * and reports them. The reply itself is passed on unchanged.
+ *
+ * KMK (r116): a bot check here is never opened by itself any more: it's registered as waiting (BotCheckGate), the
+ * user is asked (notification, Browse, Source Lab) and the request waits for their pass in WebView, then is sent
+ * once more with that session. "Too many requests" is only reported here (the pace interceptor waits and retries).
  */
 class BotCheckInterceptor : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
@@ -63,21 +67,10 @@ class BotCheckInterceptor : Interceptor {
         val response = chain.proceed(request)
         if (!response.isSuccessful) {
             val kind = BotCheckReporter.classify(response) ?: return response
-            // A check that needs a person: opened in WebView when the app is on screen (setting on), and the
-            // request is sent again once it's passed. Otherwise only the notification, as before.
             if (kind == BotCheckReporter.Kind.BOT_CHECK) {
-                val passed = try {
-                    BotCheckCoordinator.awaitBlocking(
-                        url = request.url.toString(),
-                        userAgent = request.header("User-Agent"),
-                        isCanceled = { chain.call().isCanceled() },
-                    )
-                } catch (_: Exception) {
-                    false
-                }
-                if (passed) {
-                    response.close()
-                    return chain.proceed(request)
+                response.close()
+                return BotCheckGate.waitAndRetry(chain, request) {
+                    !it.isSuccessful && BotCheckReporter.classify(it) == BotCheckReporter.Kind.BOT_CHECK
                 }
             }
             BotCheckReporter.report(request.url.toString(), kind)

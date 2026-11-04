@@ -48,14 +48,17 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.net.toUri
 import androidx.core.view.WindowCompat
@@ -163,6 +166,33 @@ class PlayerActivity : BaseActivity() {
 
     // KMK: start in picture-in-picture once the video is loaded (see EXTRA_START_PIP)
     private var startInPip = false
+
+    // KMK (r116) -->
+    /** This start is a VideoPreview (plain address, no episode); set from the intent before anything loads */
+    private var previewMode = false
+
+    /**
+     * The player's orientation request is held back while a preview / start-in-PiP opens: an orientation request made
+     * before the window is in picture-in-picture would rotate the launching screen (the "close and reopen" flash).
+     * Released when the window leaves picture-in-picture, or once the video loaded outside it.
+     */
+    private var holdOrientation = false
+
+    /** The system was asked to start this activity already in picture-in-picture (Android 13+) */
+    private var launchedIntoPip = false
+
+    /** The early picture-in-picture entry (first resume) was tried */
+    private var earlyPipTried = false
+
+    /** The activity was recreated with a preview already in the view model: it keeps playing, nothing reloads */
+    private var restoringPreview = false
+
+    /** onCreate finished: a later preview intent reuses this running player (singleTask) */
+    private var created = false
+
+    /** A preview's load or playback problem, shown over the video (a dialog can't be seen in the small window) */
+    private val previewProblem = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+    // KMK <--
     val isPipSupportedAndEnabled by lazy {
         packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE) &&
             playerPreferences.enablePip().get()
@@ -233,6 +263,20 @@ class PlayerActivity : BaseActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+
+        // KMK (r116) -->
+        if (VideoPreview.isPreview(intent)) {
+            setIntent(intent)
+            startPreview(intent)
+            return
+        }
+        // A library episode opened in the running player ends a preview
+        if (previewMode) {
+            previewMode = false
+            previewProblem.value = null
+            if (!isInPictureInPictureMode) releaseOrientationHold()
+        }
+        // KMK <--
 
         val animeId = intent.extras?.getLong("animeId") ?: -1
         val episodeId = intent.extras?.getLong("episodeId") ?: -1
@@ -326,6 +370,15 @@ class PlayerActivity : BaseActivity() {
         PlayerDebugLog.clear()
         // An opening, ending or trailer from the AniList page starts in a small window
         startInPip = intent.getBooleanExtra(EXTRA_START_PIP, false)
+        // KMK <--
+        // KMK (r116) -->
+        previewMode = VideoPreview.isPreview(intent)
+        launchedIntoPip = intent.getBooleanExtra(VideoPreview.EXTRA_LAUNCHED_INTO_PIP, false)
+        restoringPreview = previewMode && savedInstanceState != null && viewModel.isPreview
+        // A preview always wants the small window (on devices that have one); restoring keeps the current window
+        if (previewMode && savedInstanceState == null) startInPip = true
+        holdOrientation = startInPip && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+        if (startInPip) PlayerDebugLog.add("player", "Starting in picture-in-picture (into PiP: $launchedIntoPip)")
         // KMK <--
 
         setupPlayerMPV()
@@ -444,6 +497,8 @@ class PlayerActivity : BaseActivity() {
                     // The Diagnostics floating log window over the player; composes nothing while hidden; hidden in PiP
                     eu.kanade.tachiyomi.ui.diagnostics.FloatingLogHost(hidden = pipMode.collectAsState().value)
                     // KMK <--
+                    // KMK (r116): a preview's problem, readable in the small window too; tap to hide
+                    PreviewProblem(previewProblem.collectAsState().value) { previewProblem.value = null }
                 }
             }
         }
@@ -459,6 +514,7 @@ class PlayerActivity : BaseActivity() {
         // ANK <--
 
         onNewIntent(this.intent)
+        created = true // KMK (r116)
     }
 
     override fun onDestroy() {
@@ -513,7 +569,8 @@ class PlayerActivity : BaseActivity() {
         castManager.maintainCastSessionBackground()
         // <-- Cast
 
-        if (isInPictureInPictureMode) {
+        // KMK (r116): a preview still on its way into the small window keeps loading (isExiting would drop its video)
+        if (isInPictureInPictureMode || (previewMode && startInPip && !isFinishing)) {
             super.onPause()
             return
         }
@@ -607,6 +664,11 @@ class PlayerActivity : BaseActivity() {
 
     override fun onStart() {
         super.onStart()
+        // KMK (r116): launched straight into PiP, there may be no onPictureInPictureModeChanged(true) to latch it
+        if (isInPictureInPictureMode) {
+            wasInPictureInPictureMode = true
+            pipMode.value = true
+        }
         setPictureInPictureParams(createPipParams())
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.setFlags(
@@ -756,8 +818,28 @@ class PlayerActivity : BaseActivity() {
     override fun onResume() {
         // ANZ -->
         // Resuming means the PiP window was expanded back to full screen, not dismissed.
-        wasInPictureInPictureMode = false
+        // KMK (r116): except a window that started in PiP and resumes while still in it (launched into PiP)
+        if ((startInPip || previewMode) && isInPictureInPictureMode) {
+            wasInPictureInPictureMode = true
+            pipMode.value = true
+        } else {
+            wasInPictureInPictureMode = false
+        }
         // ANZ <--
+        // KMK (r116): Android 8–12 (or a reused player): into the small window on the first resume, before the
+        // first frame and before the video loads; fileLoaded() tries again if this one is refused
+        if (startInPip && !earlyPipTried && !launchedIntoPip && !isInPictureInPictureMode &&
+            packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+        ) {
+            earlyPipTried = true
+            val entered = runCatching { enterPictureInPictureMode(createPipParams()) }
+                .onFailure { AppLog.add('W', "player", "Couldn't enter picture-in-picture early: ${it.message}") }
+                .getOrDefault(false)
+            if (entered) {
+                startInPip = false
+                wasInPictureInPictureMode = true
+            }
+        }
 
         // Cast -->
         // Reconnect cast if it was active
@@ -783,6 +865,8 @@ class PlayerActivity : BaseActivity() {
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
+        // KMK (r116): a preview moved into the pinned window without a mode callback still counts as in PiP
+        if (previewMode && isInPictureInPictureMode) wasInPictureInPictureMode = true
         if (!isInPictureInPictureMode) {
             // ANZ -->
             // Restoring instead of applying the stored VideoAspect keeps a custom aspect ratio
@@ -943,6 +1027,11 @@ class PlayerActivity : BaseActivity() {
 
                 viewModel.setCurrentVideoError()
 
+                // KMK (r116)
+                if (viewModel.isPreview) {
+                    viewModel.setIsStopped(true)
+                    return
+                }
                 if (playerPreferences.switchOnFailure().get()) {
                     if (!viewModel.loadBestVideo()) {
                         finish()
@@ -964,6 +1053,9 @@ class PlayerActivity : BaseActivity() {
 
             if (anime != null && episode != null) {
                 builder.setTitle(anime.title).setSubtitle(episode.name)
+            } else if (viewModel.isPreview) {
+                // KMK (r116)
+                builder.setTitle(viewModel.mediaTitle.value).setSubtitle("Preview")
             }
         }
         // ANZ -->
@@ -983,7 +1075,8 @@ class PlayerActivity : BaseActivity() {
             ),
         )
         // ANZ <--
-        builder.setSourceRectHint(pipRect)
+        // KMK (r116): the launching screen's video box until the player's own view is laid out
+        builder.setSourceRectHint(pipRect ?: VideoPreview.sourceRectOf(intent))
         // ANZ -->
         if (mpv.isInitialized) {
             mpv.getPropertyInt("video-params/h")?.let { height ->
@@ -1014,6 +1107,8 @@ class PlayerActivity : BaseActivity() {
                 unregisterReceiver(pipReceiver)
                 pipReceiver = null
             }
+            // KMK (r116): expanded (or closing); the player may now pick its orientation
+            releaseOrientationHold()
         } else {
             setPictureInPictureParams(createPipParams())
             viewModel.hideControls()
@@ -1060,6 +1155,7 @@ class PlayerActivity : BaseActivity() {
 
     private fun setupPlayerOrientation() {
         if (player.isExiting) return
+        if (holdOrientation) return // KMK (r116)
         // ANZ -->
         val target = when (playerPreferences.defaultPlayerOrientationType().get()) {
             PlayerOrientation.Free -> ActivityInfo.SCREEN_ORIENTATION_SENSOR
@@ -1502,6 +1598,17 @@ class PlayerActivity : BaseActivity() {
      * this case the activity is closed and a toast is shown to the user.
      */
     private fun setInitialEpisodeError(error: Throwable) {
+        // KMK (r116): a preview stays open and says what failed
+        if (viewModel.isPreview || previewMode) {
+            showPreviewProblem(
+                if (error is PlayerViewModel.ExceptionWithStringResource) {
+                    stringResource(error.stringResource)
+                } else {
+                    error.message ?: error.javaClass.simpleName
+                },
+            )
+            return
+        }
         if (error is PlayerViewModel.ExceptionWithStringResource) {
             toast(error.stringResource)
         } else {
@@ -1669,10 +1776,16 @@ class PlayerActivity : BaseActivity() {
         if (startInPip) {
             startInPip = false
             runOnUiThread {
+                // KMK (r116): whether the window is (or is going) into PiP
+                var inPip = isInPictureInPictureMode
                 if (packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE) && !isInPictureInPictureMode) {
-                    runCatching { enterPictureInPictureMode(createPipParams()) }
+                    inPip = runCatching { enterPictureInPictureMode(createPipParams()) }.getOrDefault(false)
                 }
+                // KMK (r116): still full screen (PiP refused or turned off for the app): orientation as usual
+                if (!inPip) releaseOrientationHold()
             }
+        } else if (holdOrientation) {
+            runOnUiThread { if (!isInPictureInPictureMode && !wasInPictureInPictureMode) releaseOrientationHold() }
         }
         // KMK <--
 
@@ -1772,6 +1885,7 @@ class PlayerActivity : BaseActivity() {
     }
 
     private fun endFile(eofReached: Boolean) {
+        if (viewModel.isPreview) return // KMK (r116): nothing plays next
         if (eofReached && playerPreferences.autoplayEnabled().get()) {
             viewModel.changeEpisode(previous = false, autoPlay = true)
         }
@@ -1782,6 +1896,11 @@ class PlayerActivity : BaseActivity() {
 
     /** Shows what went wrong with a button to copy the player log, so it can be sent for a fix */
     private fun showPlaybackProblem(message: String) {
+        // KMK (r116): a preview shows it over the video and in the Logs instead
+        if (viewModel.isPreview) {
+            showPreviewProblem(message)
+            return
+        }
         if (problemDialogShown || isFinishing) return
         problemDialogShown = true
         runOnUiThread {
@@ -1809,6 +1928,64 @@ class PlayerActivity : BaseActivity() {
     }
     // KMK <--
 
+    // KMK (r116) -->
+    /** Plays the preview of [intent] (VideoPreview.open): no episode, nothing saved, straight in the small window */
+    private fun startPreview(intent: Intent) {
+        previewMode = true
+        if (restoringPreview) {
+            // Recreated with the preview still loaded in the view model: keep playing it
+            restoringPreview = false
+            return
+        }
+        val request = VideoPreview.requestOf(intent) ?: run {
+            AppLog.add('E', "player", "Preview opened without an address")
+            finish()
+            return
+        }
+        // A running player reused for a preview goes into the small window too
+        if (created && !isInPictureInPictureMode &&
+            packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+        ) {
+            startInPip = true
+            launchedIntoPip = false
+            earlyPipTried = false
+            holdOrientation = true
+        }
+        viewModel.saveCurrentEpisodeWatchingProgress()
+        problemDialogShown = false
+        previewProblem.value = null
+        AppLog.add('I', "player", "Preview: ${request.title} · ${request.url.take(300)}")
+        lifecycleScope.launchIO {
+            val video = try {
+                VideoPreview.videoOf(request)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                withUIContext { showPreviewProblem("Couldn't prepare the address: ${e.message ?: e.javaClass.simpleName}") }
+                return@launchIO
+            }
+            withUIContext {
+                if (!isFinishing && !isDestroyed) viewModel.initPreview(video, request.title, request.url)
+            }
+        }
+    }
+
+    /** A preview's load or playback problem: shown over the video (also in the small window) and logged */
+    private fun showPreviewProblem(message: String) {
+        AppLog.add('E', "player", "Preview problem: $message · ${viewModel.previewUrl?.take(300)}")
+        PlayerDebugLog.add("player", "Preview problem: $message")
+        viewModel.isLoading.update { _ -> false }
+        runOnUiThread { previewProblem.value = message }
+    }
+
+    /** Lets the player pick its orientation again (held while a preview / start-in-PiP opens) */
+    private fun releaseOrientationHold() {
+        if (!holdOrientation) return
+        holdOrientation = false
+        if (!isFinishing) setupPlayerOrientation()
+    }
+    // KMK <--
+
     // ANZ -->
     fun setCustomVideoAspect(ratio: Double, label: String) {
         viewModel.setCustomVideoAspect(ratio, label)
@@ -1829,4 +2006,40 @@ class PlayerActivity : BaseActivity() {
         return super.dispatchKeyEvent(event)
     }
     // ANZ <--
+}
+
+// KMK (r116): a preview's problem over the video; small enough for the picture-in-picture window, tap to hide
+@androidx.compose.runtime.Composable
+private fun PreviewProblem(message: String?, onDismiss: () -> Unit) {
+    if (message == null) return
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(8.dp),
+        contentAlignment = androidx.compose.ui.Alignment.Center,
+    ) {
+        androidx.compose.material3.Surface(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp),
+            color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.78f),
+            contentColor = androidx.compose.ui.graphics.Color.White,
+        ) {
+            androidx.compose.foundation.layout.Column(
+                modifier = Modifier
+                    .clickable(onClick = onDismiss)
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+            ) {
+                androidx.compose.material3.Text(
+                    text = "Couldn't play the preview",
+                    style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
+                    maxLines = 1,
+                )
+                androidx.compose.material3.Text(
+                    text = message,
+                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                    maxLines = 4,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
 }

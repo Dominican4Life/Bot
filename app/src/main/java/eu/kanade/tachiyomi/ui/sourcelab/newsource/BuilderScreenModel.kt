@@ -25,12 +25,17 @@ import eu.kanade.tachiyomi.jssource.lab.PartIndex
 import eu.kanade.tachiyomi.jssource.lab.PickCheck
 import eu.kanade.tachiyomi.jssource.lab.PickInfo
 import eu.kanade.tachiyomi.jssource.lab.Templates
+import eu.kanade.tachiyomi.jssource.lab.VideoCheck
+import eu.kanade.tachiyomi.jssource.lab.heal.PickFingerprints
+import eu.kanade.tachiyomi.jssource.lab.heal.PickHealer
 import eu.kanade.tachiyomi.jssource.lab.labMeta
+import eu.kanade.tachiyomi.jssource.lab.sitecheck.PageFetch
 import eu.kanade.tachiyomi.jssource.lab.toJson
 import eu.kanade.tachiyomi.jssource.obj
 import eu.kanade.tachiyomi.jssource.str
 import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -38,9 +43,12 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.JsonArray
@@ -48,6 +56,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import org.jsoup.Jsoup
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withIOContext
 import uy.kohesive.injekt.Injekt
@@ -102,6 +111,12 @@ import java.util.Locale
  * ([scheduleRerun] → [BuilderRecheck], kept in [State.rechecks]); [checklistRow] gives each label one mark (✓ ! ✕ ○),
  * one line and at most one action ([applyFix]: Read another picture attribute, Split into rows, Tap again, Page
  * source). The helper card over the page has one primary action per verdict (and ✕ to keep the pick).
+ *
+ * KMK (r116): the suggestion box is back for every Ok / Warn pick ([startSuggest]: the page's own guess first, then
+ * [suggestAnother] walks [BuilderCandidates] on the raw page, each outlined by `suggestSelector`); Use this / Suggest
+ * another / Keep mine. Each labelled pick's [PickHealer.fingerprint] is saved ([saveFingerprints]: at once for an
+ * edited source, at write time for a new one once Source Lab gives it its key). "Test it now" also runs
+ * [VideoCheck] on the caught address (passed only when ok) and the card offers Preview (VideoPreview, in the screen).
  */
 internal class BuilderScreenModel(
     private val startUrl: String?,
@@ -219,9 +234,36 @@ internal class BuilderScreenModel(
     @Serializable
     data class LikeRow(val exact: String, val order: Int = -1, val values: List<String> = emptyList())
 
-    /** r100: the helper's "Test it now" on a Video pick: running, then what VideoFinder caught or why not */
+    /**
+     * r100: the helper's "Test it now" on a Video pick: running, then what VideoFinder caught or why not.
+     * KMK (r116): [ok] = the caught address also passed [VideoCheck] (playlist → quality → key → piece, or the file's
+     * first bytes); [stage] / [detail] say where it stopped; [url] / [headers] are what Preview plays
+     */
     @Immutable
-    data class VideoTest(val running: Boolean, val ok: Boolean, val text: String)
+    data class VideoTest(
+        val running: Boolean,
+        val ok: Boolean,
+        val text: String,
+        val url: String = "",
+        val headers: Map<String, String> = emptyMap(),
+        val stage: String = "",
+        val detail: String = "",
+        /** KMK (r116): the address was caught and VideoCheck is still running */
+        val checking: Boolean = false,
+    )
+
+    /**
+     * KMK (r116): the helper card's suggestion box for [label]: why the shown suggestion was offered ([reason]),
+     * looking for one ([busy]), a line when there is none ([note]), and whether "Suggest another" has more to try
+     */
+    @Immutable
+    data class SuggestUi(
+        val label: String,
+        val reason: String = "",
+        val busy: Boolean = false,
+        val note: String? = null,
+        val more: Boolean = true,
+    )
 
     @Immutable
     data class State(
@@ -264,6 +306,8 @@ internal class BuilderScreenModel(
         val helperFor: String? = null,
         /** r100: the element the page suggested for [helperFor] (via "suggest"), never a pending tap */
         val suggestion: RawPick? = null,
+        /** KMK (r116): the suggestion box of the helper card (shown only while its label is [helperFor]) */
+        val suggestUi: SuggestUi? = null,
         /** r100: the helper card's Up / Down: the element they reach gets this label again */
         val relabel: String? = null,
         /** r100: "OK, next: Cover": the label the Labels card points at next */
@@ -348,6 +392,16 @@ internal class BuilderScreenModel(
     // coroutines may rederive at once)
     private val rerunPages = BuilderRecheck.Pages()
     private var rerunJob: Job? = null
+
+    // KMK (r116): the helper's suggestions: the candidates still to try for the card's label (null = not read yet),
+    // the look-alike selectors already shown or picked, the reason of the one asked for, and whether an answer of
+    // "none" should go on to the next candidate
+    private var suggestQueue: ArrayDeque<BuilderCandidates.Candidate>? = null
+    private val suggestTried: MutableSet<String> = java.util.Collections.synchronizedSet(HashSet())
+    private var suggestReason: String = ""
+    private var suggestSeeking = false
+    private var suggestJob: Job? = null
+    private var suggestToken = 0
 
     /**
      * r100: scripts for the page (keep / mark / suggest / adopt …), evaluated by the screen in this order. A flow,
@@ -674,14 +728,186 @@ internal class BuilderScreenModel(
     private fun onSuggestion(raw: RawPick, forLabel: String, none: Boolean) {
         val s = state.value
         if (forLabel.isBlank() || forLabel != s.helperFor) return // a late answer for a card that went
-        if (none || raw.cssPath.isBlank() || raw.likeSelector == s.raws[forLabel]?.likeSelector) {
-            AppLog.add('D', "lab", "helper suggestion for $forLabel: none")
+        // KMK (r116): one already shown (or the pick itself) counts as none: the next candidate is tried
+        if (none || raw.cssPath.isBlank() || raw.likeSelector == s.raws[forLabel]?.likeSelector || raw.likeSelector in suggestTried) {
+            AppLog.add('D', "lab", "helper suggestion for $forLabel: none${if (suggestSeeking) " (trying the next candidate)" else ""}")
             mutableState.update { it.copy(suggestion = null) }
             if (!none) page("window.__labPicker.unsuggest();")
+            if (suggestSeeking) {
+                nextCandidate(forLabel)
+            } else {
+                suggestToken++
+                mutableState.update { it.copy(suggestUi = SuggestUi(forLabel, note = noneNote(forLabel, s))) }
+            }
             return
         }
-        AppLog.add('D', "lab", "helper suggestion for $forLabel: ${raw.likeSelector} ×${raw.count}")
-        mutableState.update { it.copy(suggestion = raw) }
+        suggestToken++
+        suggestTried.add(raw.likeSelector)
+        suggestSeeking = false
+        AppLog.add('D', "lab", "helper suggestion for $forLabel: ${raw.likeSelector} ×${raw.count} ($suggestReason)")
+        mutableState.update { it.copy(suggestion = raw, suggestUi = SuggestUi(forLabel, reason = suggestReason)) }
+    }
+
+    // ---------- KMK (r116): the helper's suggestions (Use this / Suggest another / Keep mine) ----------
+
+    /**
+     * A new pick for [label]: the page's own guess is asked for by applyLabel's script ([reason] says why it is
+     * offered); a Warn whose page has no guess goes on to [BuilderCandidates] at once, an Ok one stops with a line
+     */
+    private fun startSuggest(label: String, raw: RawPick, warn: Boolean, reason: String) {
+        suggestJob?.cancel()
+        suggestQueue = null
+        suggestTried.clear()
+        suggestTried.add(raw.likeSelector)
+        suggestReason = reason
+        suggestSeeking = warn
+        val token = ++suggestToken
+        mutableState.update { it.copy(suggestUi = SuggestUi(label, busy = true)) }
+        watchAnswer(label, token)
+    }
+
+    /** No answer from the page in 5 s (it navigated, the script is gone): the next candidate, or a quiet stop */
+    private fun watchAnswer(label: String, token: Int) {
+        screenModelScope.launchIO {
+            delay(5_000L)
+            if (token != suggestToken || state.value.helperFor != label || state.value.suggestUi?.busy != true) return@launchIO
+            AppLog.add('D', "lab", "helper suggestion for $label: no answer from the page")
+            if (suggestSeeking) {
+                nextCandidate(label)
+            } else {
+                mutableState.update { it.copy(suggestUi = SuggestUi(label, note = noneNote(label, it))) }
+            }
+        }
+    }
+
+    private fun noneNote(label: String, s: State): String =
+        "Nothing else on this page looks more like ${PickCheck.labelName(label, s.anime)}."
+
+    /** "Suggest another": the shown suggestion goes and the next candidate is outlined (dashed green) */
+    fun suggestAnother() {
+        val s = state.value
+        val label = s.helperFor ?: return
+        s.suggestion?.likeSelector?.let { suggestTried.add(it) }
+        page("window.__labPicker.unsuggest && window.__labPicker.unsuggest();")
+        mutableState.update { it.copy(suggestion = null) }
+        AppLog.add('D', "lab", "helper $label: suggest another (${suggestTried.size} tried)")
+        nextCandidate(label)
+    }
+
+    /** Sends the next untried candidate to the page (reading the candidates first, off the main thread) */
+    private fun nextCandidate(label: String) {
+        suggestJob?.cancel()
+        suggestSeeking = true
+        val token = ++suggestToken
+        mutableState.update { it.copy(suggestUi = SuggestUi(label, busy = true)) }
+        suggestJob = screenModelScope.launchIO {
+            val queue = suggestQueue ?: ArrayDeque(readCandidates(label)).also { suggestQueue = it }
+            if (token != suggestToken || state.value.helperFor != label) return@launchIO
+            val next = queue.removeFirstOrNull()
+            if (next == null) {
+                suggestSeeking = false
+                AppLog.add('D', "lab", "helper $label: no other candidate")
+                mutableState.update { it.copy(suggestUi = SuggestUi(label, note = "No other candidate on this page.", more = false)) }
+                return@launchIO
+            }
+            suggestReason = next.reason
+            AppLog.add('D', "lab", "helper $label: candidate ${next.selector} (${next.reason})")
+            page(
+                "if (window.__labPicker.suggestSelector) window.__labPicker.suggestSelector(" +
+                    "${JsonPrimitive(next.selector)}, ${JsonPrimitive(label)});",
+            )
+            watchAnswer(label, token)
+        }
+    }
+
+    /** The candidates for [label] on the raw page its pick was made on (kept by the checklist's re-run, else read) */
+    private suspend fun readCandidates(label: String): List<BuilderCandidates.Candidate> {
+        val s = state.value
+        val raw = s.raws[label] ?: return emptyList()
+        val doc = rawDoc(raw.pageUrl.ifBlank { s.pageUrl.orEmpty() }, s)
+        val list = runCatching {
+            BuilderCandidates.of(
+                label = label,
+                pickSelector = raw.likeSelector,
+                pickPath = raw.cssPath,
+                itemSelector = s.selection?.derived?.get("itemSelector")?.takeIf { label != "item" },
+                itemFromPicks = if (label == "item") itemSuggestion(s) else null,
+                doc = doc,
+            )
+        }.onFailure { AppLog.add('W', "lab", "helper $label: candidates not read: ${it.message}") }.getOrDefault(emptyList())
+        AppLog.add('D', "lab", "helper $label: ${list.size} candidates${if (doc == null) " (the raw page didn't load)" else ""}")
+        return list.filter { it.selector !in suggestTried }
+    }
+
+    /** The raw page at [url] as the checklist keeps it ([BuilderRecheck.Pages]); fetched once when it isn't there */
+    private suspend fun rawDoc(url: String, s: State): org.jsoup.nodes.Document? {
+        if (url.isBlank()) return null
+        val key = BuilderRecheck.clean(url)
+        if (rerunPages.has(key)) return rerunPages.get(key)
+        // at most 20 s (a site waiting for a bot check must not keep the helper's spinner going); not kept then
+        val page = withTimeoutOrNull(20_000L) { PageFetch.raw(key, s.site.trimEnd('/') + "/") } ?: return null
+        val doc = if (page.ok && !page.botCheck) {
+            withContext(Dispatchers.Default) { runCatching { Jsoup.parse(page.body, page.url) }.getOrNull() }
+        } else {
+            null
+        }
+        rerunPages.put(key, doc)
+        return doc
+    }
+
+    // ---------- KMK (r116): fingerprints of the picks (Test Run's self-healing reads them) ----------
+
+    /** The labels a fingerprint is kept for: single-selector picks (Tags / Suggestions are groups) */
+    private fun fingerprinted(s: State): Set<String> =
+        s.picks.map { it.pick.label }.filter { it != "tags" && it != "suggestions" && it in s.raws }.toSet()
+
+    /**
+     * Saves [PickHealer.fingerprint] of each of [labels]' picked element, found by its look-alike selector on the raw
+     * page the pick was made on, under the source [key]. Runs off the main thread; never fails a pick or a save.
+     */
+    @OptIn(DelicateCoroutinesApi::class)
+    private fun saveFingerprints(key: String, labels: Set<String>, s: State = state.value) {
+        if (labels.isEmpty()) return
+        val raws = labels.mapNotNull { l -> s.raws[l]?.let { l to it } }
+        // the app's scope: a new source's key arrives after the builder may have closed
+        launchIO {
+            var saved = 0
+            raws.forEach { (label, raw) ->
+                try {
+                    val doc = rawDoc(raw.pageUrl.ifBlank { s.pageUrl.orEmpty() }, s) ?: return@forEach
+                    val el = runCatching { doc.selectFirst(raw.likeSelector) }.getOrNull()
+                        ?: runCatching { doc.selectFirst(raw.cssPath) }.getOrNull()
+                        ?: return@forEach
+                    PickFingerprints.save(key, label, PickHealer.fingerprint(el))
+                    saved++
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    AppLog.add('W', "lab", "fingerprint $label of $key not saved: ${e.message}")
+                }
+            }
+            AppLog.add('D', "lab", "fingerprints of $key: $saved of ${raws.size} saved (${labels.joinToString(", ")})")
+        }
+    }
+
+    /**
+     * A new source gets its key when Source Lab saves what the builder delivered ([LabHandoff]): waits (≤ 60 s) for
+     * the saved source whose LabMeta has this write's [stamp], then saves the fingerprints under its key
+     */
+    @OptIn(DelicateCoroutinesApi::class)
+    private fun saveFingerprintsWhenSaved(stamp: Long, s: State) {
+        val labels = fingerprinted(s)
+        if (labels.isEmpty()) return
+        launchIO {
+            val info = withTimeoutOrNull(60_000L) {
+                manager.savedFlow.map { list -> list.firstOrNull { it.labMeta?.detectedAt == stamp } }.filterNotNull().first()
+            }
+            if (info == null) {
+                AppLog.add('W', "lab", "fingerprints: the new source of ${s.host} wasn't saved in 60 s: none kept")
+                return@launchIO
+            }
+            saveFingerprints(info.key, labels, s)
+        }
     }
 
     fun onPickerLog(text: String) {
@@ -814,6 +1040,7 @@ internal class BuilderScreenModel(
                 pending = null,
                 helperFor = if (s.helper) label else null,
                 suggestion = null,
+                suggestUi = null, // KMK (r116): startSuggest below sets it again when this pick gets one
                 relabel = null,
                 nextLabel = null,
                 videoTest = if (label == "video") null else s.videoTest,
@@ -870,7 +1097,9 @@ internal class BuilderScreenModel(
             val name = PickCheck.labelName(label, s.anime)
             script.append(" if (window.__labPicker.mark) window.__labPicker.mark(${JsonPrimitive(level)}, ${JsonPrimitive(name)});")
             // r103 fix: the menu warning asks Keep mine / Not this (no suggestion, which would swap Not this away)
-            if (check.level == PickCheck.Level.Warn && !menuTags) {
+            // KMK (r116): every pick gets a suggestion (Ok and Warn; Tags only on a Warn, Suggestions never)
+            val warn = check.level == PickCheck.Level.Warn
+            if (!menuTags && check.level != PickCheck.Level.Info && label != "suggestions" && (warn || label != "tags")) {
                 // r101: an Item that doesn't hold the Title / Cover: the card derived from those picks is always
                 // offered (the page's own search found nothing the second time in the owner's run)
                 val itemCss = if (label == "item" && check.checks.any { !it.ok && it.text.startsWith("doesn't hold") }) {
@@ -878,6 +1107,12 @@ internal class BuilderScreenModel(
                 } else {
                     null
                 }
+                startSuggest(
+                    label,
+                    raw,
+                    warn,
+                    if (itemCss != null) "the box that holds your Title and Cover picks" else BuilderCandidates.pageReason(label),
+                )
                 if (itemCss != null) {
                     AppLog.add('D', "lab", "helper suggestion for item from the Title / Cover picks: $itemCss")
                     script.append(
@@ -891,6 +1126,8 @@ internal class BuilderScreenModel(
             }
         }
         page(script.toString())
+        // KMK (r116): an edited source keeps the pick's fingerprint at once (a new one when it is written)
+        s.editKey?.let { key -> saveFingerprints(key, setOf(label)) }
     }
 
     /** r101: the Item the Title and Cover picks point at (Derive's common ancestor), as a selector for the page */
@@ -1598,7 +1835,10 @@ internal class BuilderScreenModel(
         val raw = s.suggestion ?: return
         page("if (window.__labPicker.adopt) window.__labPicker.adopt();")
         AppLog.add('I', "lab", "helper: used suggestion for $label (${raw.likeSelector} ×${raw.count})")
+        val old = s.raws[label]?.likeSelector
         applyLabel(label, raw)
+        // KMK (r116): the pick it replaced is never suggested back (the new pick's suggestion is asked for above)
+        old?.let { suggestTried.add(it) }
     }
 
     /** "Keep mine" / "OK": the card goes, the pick stays as it is */
@@ -1606,7 +1846,10 @@ internal class BuilderScreenModel(
         val s = state.value
         val label = s.helperFor ?: return
         if (s.checks[label]?.level == PickCheck.Level.Warn) AppLog.add('D', "lab", "helper $label: kept as picked")
-        mutableState.update { it.copy(helperFor = null, suggestion = null, relabel = null) }
+        suggestJob?.cancel() // KMK (r116)
+        suggestSeeking = false
+        suggestToken++
+        mutableState.update { it.copy(helperFor = null, suggestion = null, relabel = null, suggestUi = null) }
         page("window.__labPicker.unsuggest && window.__labPicker.unsuggest();")
     }
 
@@ -1698,7 +1941,7 @@ internal class BuilderScreenModel(
     fun testVideo() {
         val s = state.value
         val pick = s.raws["video"] ?: return
-        if (s.videoTest?.running == true) return
+        if (s.videoTest?.running == true || s.videoTest?.checking == true) return // KMK (r116): also while VideoCheck runs
         val pageUrl = pick.pageUrl.ifBlank { s.pageUrl.orEmpty() }
         if (pageUrl.isBlank()) return
         val frame = s.selection?.derived?.get("videoFrame")?.takeIf { it.isNotBlank() }
@@ -1716,7 +1959,14 @@ internal class BuilderScreenModel(
                     val servers = r.videos.map { it.server }.filter { it.isNotBlank() }.distinct().joinToString(", ")
                     val what = if (r.videos.size == 1) "a video" else "${r.videos.size} videos"
                     val from = if (servers.isNotEmpty()) " · from $servers" else ""
-                    VideoTest(false, true, "Found $what in $seconds s · $kinds$from")
+                    val found = "Found $what in $seconds s · $kinds$from"
+                    // KMK (r116): caught is not played: the address must also pass VideoCheck (the first one that
+                    // does is kept; else the first one's reason). Shown as "checking…" meanwhile
+                    val first = r.videos.first()
+                    mutableState.update {
+                        it.copy(videoTest = VideoTest(false, false, found, url = first.url, headers = first.headers, checking = true))
+                    }
+                    checkCaught(found, r.videos)
                 } else {
                     VideoTest(false, false, "No video in $seconds s: ${r.reason}")
                 }
@@ -1725,9 +1975,34 @@ internal class BuilderScreenModel(
             } catch (e: Throwable) {
                 VideoTest(false, false, "The test failed: ${e.message ?: e.toString()}")
             }
-            AppLog.add('I', "lab", "helper test video: ${test.text}")
+            AppLog.add('I', "lab", "helper test video: ${test.text}${if (test.stage.isNotBlank()) " · ${test.stage}: ${test.detail}" else ""}")
             mutableState.update { it.copy(videoTest = test) }
         }
+    }
+
+    /**
+     * KMK (r116): runs [VideoCheck] on up to 3 caught addresses (same headers the page used) and keeps the first that
+     * passes; "passed" only then. The result names the stage it stopped at (playlist, quality, key, piece, file)
+     */
+    private suspend fun checkCaught(found: String, videos: List<VideoFinder.Found>): VideoTest {
+        var firstFail: Pair<VideoFinder.Found, VideoCheck.Result>? = null
+        for (v in videos.take(3)) {
+            val c = try {
+                VideoCheck.check(v.url, v.headers)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                VideoCheck.Result(ok = false, stage = "playlist", detail = e.message ?: e.javaClass.simpleName, pieceBytes = 0)
+            }
+            AppLog.add('D', "lab", "helper video check ${v.url.take(120)}: ${if (c.ok) "ok" else "failed"} at ${c.stage} · ${c.detail}")
+            if (c.ok) {
+                val bytes = if (c.pieceBytes > 0) " · ${c.pieceBytes / 1024} KB read" else ""
+                return VideoTest(false, true, "$found · passed$bytes", url = v.url, headers = v.headers, stage = c.stage, detail = c.detail)
+            }
+            if (firstFail == null) firstFail = v to c
+        }
+        val (v, c) = firstFail ?: return VideoTest(false, false, found)
+        return VideoTest(false, false, "$found · doesn't play yet", url = v.url, headers = v.headers, stage = c.stage, detail = c.detail)
     }
 
     private fun kindName(kind: String): String = when (kind) {
@@ -2360,6 +2635,8 @@ internal class BuilderScreenModel(
             return
         }
         mutableState.update { it.copy(busy = if (editing != null) "Saving to ${editing.name}…" else "Writing the source…", error = null) }
+        // KMK (r116): this write's stamp (LabMeta.detectedAt): a new source's fingerprints find their key by it
+        val stamp = System.currentTimeMillis()
         screenModelScope.launchIO {
             try {
                 val generated = withIOContext {
@@ -2394,7 +2671,7 @@ internal class BuilderScreenModel(
                         templateVersion = template.version,
                         // r102: the selection and the builder's own state (Edit by tapping restores it)
                         picks = builderState(s, selection),
-                        detectedAt = System.currentTimeMillis(),
+                        detectedAt = stamp,
                         siteUrl = s.site,
                     )
                     val videoTodo = selection.derived["videoNote"]?.startsWith("TODO") == true
@@ -2414,9 +2691,11 @@ internal class BuilderScreenModel(
                 }
                 if (editing != null) {
                     saveInto(editing, generated, inPlace)
+                    saveFingerprints(editing.key, fingerprinted(s), s) // KMK (r116)
                     mutableState.update { it.copy(busy = null, delivered = true) }
                     return@launchIO
                 }
+                saveFingerprintsWhenSaved(stamp, s) // KMK (r116): before the handoff, so the save can't be missed
                 LabHandoff.deliver(generated)
                 AppLog.add('I', "lab", "Built by tapping on ${s.host}: ${s.picks.size} picks, ${selection.derived.size} values derived")
                 mutableState.update { it.copy(busy = null, delivered = true) }

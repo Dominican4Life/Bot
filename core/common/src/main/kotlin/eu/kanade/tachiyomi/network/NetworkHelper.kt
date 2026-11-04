@@ -63,6 +63,9 @@ import kotlin.random.Random
             .cache(httpCache)
             .addInterceptor(UncaughtExceptionInterceptor())
             .addInterceptor(UserAgentInterceptor(::defaultUserAgentProvider))
+            // KMK (r116): a site's pace after a bot check or "too many requests" (Retry-After waited out, sent once
+            // more); outside the Logs line, so a retried request shows twice there
+            .addInterceptor(BotCheckGate.PaceInterceptor())
             // KMK: each request in the in-app Logs screen (r95: unless tagged NoNetLog, as HLS stream pieces are)
             .addInterceptor { chain ->
                 val request = chain.request()

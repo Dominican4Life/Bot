@@ -29,6 +29,7 @@ import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Search
@@ -137,6 +138,8 @@ internal class SourceLabScreen(
         // KMK (r101, r106): Source info as a sheet (⋮ Source info; the phone's Code header row too). r106: the tablet's
         // panel beside the code gave its place to the Test Run panel
         var infoSheet by rememberSaveable { mutableStateOf(false) }
+        // KMK (r116): ⋮ › Connection (the source's bot-check session and its pace)
+        var connectionSheet by rememberSaveable { mutableStateOf(false) }
         val pop: () -> Unit = { navigator.pop() }
         // r98: the app's Log (Diagnostics, Log tab) on top of the Lab; Back returns here with the editor untouched
         val openLogs: () -> Unit = { navigator.push(DiagnosticsScreen(DiagTab.LOG)) }
@@ -267,6 +270,16 @@ internal class SourceLabScreen(
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
+        }
+
+        // KMK (r116, mock XBot): ⋮ › Connection: what BotChecks knows about this source and "Ask less often"
+        val connectionKey = state.key
+        if (connectionSheet && connectionKey != null) {
+            ConnectionSheet(
+                sourceId = editor.sourceId(connectionKey),
+                sourceName = editorState.name.ifBlank { state.source?.name.orEmpty() },
+                onDismiss = { connectionSheet = false },
+            )
         }
 
         EditorDialogs(
@@ -616,6 +629,11 @@ internal class SourceLabScreen(
                                             showMenu = false
                                             convertAgainNow()
                                         }
+                                    }
+                                    // KMK (r116): the source's bot-check session and pace
+                                    MenuItem("Connection", Icons.Outlined.Public) {
+                                        showMenu = false
+                                        connectionSheet = true
                                     }
                                     // KMK (r115): the page's Raw / Rendered / Requests, for this source's site
                                     MenuItem("Page source", Icons.Outlined.Code) {

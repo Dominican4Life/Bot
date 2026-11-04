@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -83,6 +84,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
@@ -103,6 +105,7 @@ import eu.kanade.tachiyomi.jssource.lab.Derive
 import eu.kanade.tachiyomi.jssource.lab.LabFlowScreen
 import eu.kanade.tachiyomi.jssource.lab.PickCheck
 import eu.kanade.tachiyomi.network.NetworkHelper
+import eu.kanade.tachiyomi.ui.player.VideoPreview
 import eu.kanade.tachiyomi.ui.sourcelab.pagesource.PageSourceScreen
 import eu.kanade.tachiyomi.util.system.AppLog
 import eu.kanade.tachiyomi.util.system.copyToClipboard
@@ -1822,7 +1825,8 @@ internal class BuilderScreen(
      * ! amber, i blue), the verdict and one sentence, the checks as chips, the suggestion when the page found one,
      * a few sample texts, and the buttons: Warn → Use suggestion / Keep mine; Ok → OK, next / Not this; a Video →
      * Test it now / OK; Up / Down move the pick and label it again. KMK (r115): one primary action ([HelperActions])
-     * and ✕ (keep).
+     * and ✕ (keep). KMK (r116): the suggestion box is back for every pick ([SuggestionBox]: Use this / Suggest another /
+     * Keep mine) and a Video test shows VideoCheck's verdict with Preview ([VideoTestBox]).
      */
     @Composable
     private fun HelperCard(state: BuilderScreenModel.State, model: BuilderScreenModel, wide: Boolean, modifier: Modifier) {
@@ -1830,6 +1834,9 @@ internal class BuilderScreen(
         val cardScroll = rememberScrollState()
         val chipsScroll = rememberScrollState()
         val actionsScroll = rememberScrollState()
+        // KMK (r116): the video box's place in the window (Preview's picture-in-picture grows from it)
+        val videoBox = remember { mutableStateOf<android.graphics.Rect?>(null) }
+        val context = LocalContext.current
         val label = state.helperFor ?: return
         val result = state.checks[label] ?: return
         val colors = helperColors()
@@ -1888,14 +1895,9 @@ internal class BuilderScreen(
                             }
                         }
                     }
-                    val suggestion = state.suggestion
-                    if (result.level == PickCheck.Level.Warn && suggestion != null) {
-                        Text(
-                            "Did you mean the ${suggestionNoun(label)} with the dashed outline? ${suggestion.count} found${suggestionTail(label)}.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(top = 10.dp),
-                        )
-                    }
+                    // KMK (r116): the suggestion box is back, for every pick (Use this / Suggest another / Keep mine)
+                    val suggestUi = state.suggestUi?.takeIf { it.label == label }
+                    if (suggestUi != null) SuggestionBox(state, model, label, result, suggestUi, colors)
                     if (result.samples.isNotEmpty()) {
                         val count = state.raws[label]?.count ?: result.samples.size
                         Column(modifier = Modifier.padding(top = 10.dp)) {
@@ -1931,15 +1933,25 @@ internal class BuilderScreen(
                     }
                     val test = state.videoTest
                     if (label == "video" && test != null) {
-                        Text(
-                            test.text,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = when {
-                                test.running -> MaterialTheme.colorScheme.onSurfaceVariant
-                                test.ok -> colors.ok
-                                else -> colors.warn
+                        VideoTestBox(
+                            test = test,
+                            colors = colors,
+                            onPlaced = { videoBox.value = it },
+                            onPreview = {
+                                val activity = context.findActivity()
+                                if (activity != null) {
+                                    AppLog.add('I', "lab", "helper video preview: ${test.url.take(120)}")
+                                    VideoPreview.open(
+                                        activity,
+                                        test.url,
+                                        test.headers,
+                                        "Video test · ${state.host.removePrefix("www.")}",
+                                        videoBox.value,
+                                    )
+                                } else {
+                                    AppLog.add('W', "lab", "helper video preview: no activity to open it from")
+                                }
                             },
-                            modifier = Modifier.padding(top = 10.dp),
                         )
                     }
                 }
@@ -1960,8 +1972,13 @@ internal class BuilderScreen(
     @Composable
     private fun HelperActions(state: BuilderScreenModel.State, model: BuilderScreenModel, label: String, result: PickCheck.Result) {
         when {
+            // KMK (r116): Use this lives in the suggestion box again; the card's own action is Tap again
             result.level == PickCheck.Level.Warn && state.suggestion != null -> {
-                Button(onClick = model::useSuggestion) { Text("Use the dashed one") }
+                OutlinedButton(onClick = { model.applyFix(label, PickCheck.Fix(PickCheck.FixKind.TapAgain, "Tap again")) }) {
+                    Icon(Icons.Outlined.TouchApp, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Tap again")
+                }
             }
             result.level == PickCheck.Level.Warn -> {
                 Button(onClick = { model.applyFix(label, PickCheck.Fix(PickCheck.FixKind.TapAgain, "Tap again")) }) {
@@ -1971,7 +1988,7 @@ internal class BuilderScreen(
                 }
             }
             label == "video" -> {
-                Button(onClick = model::testVideo, enabled = state.videoTest?.running != true) { Text("Test it now") }
+                Button(onClick = model::testVideo, enabled = state.videoTest?.let { it.running || it.checking } != true) { Text("Test it now") }
             }
             label == "chapter" && result.level == PickCheck.Level.Info -> {
                 Button(
@@ -1996,6 +2013,157 @@ internal class BuilderScreen(
                 }
             }
         }
+    }
+
+    /**
+     * KMK (r116): the helper's suggestion: why it was offered, "Title · 24 on this page · e.g. ‘…’" with up to 3
+     * sample texts, and Use this / Suggest another (the next candidate, outlined dashed green on the page) / Keep mine
+     * (the card goes, the pick stays). While looking: a spinner; with none: one line (Suggest another while more remain).
+     */
+    @Composable
+    private fun SuggestionBox(
+        state: BuilderScreenModel.State,
+        model: BuilderScreenModel,
+        label: String,
+        result: PickCheck.Result,
+        ui: BuilderScreenModel.SuggestUi,
+        colors: HelperColors,
+    ) {
+        val suggestion = state.suggestion
+        val name = PickCheck.labelName(label, state.anime)
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHighest,
+            border = BorderStroke(1.dp, colors.ok.copy(alpha = if (suggestion != null) 0.55f else 0.2f)),
+            modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                when {
+                    ui.busy -> Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Looking for something that fits $name better…", style = MaterialTheme.typography.bodySmall)
+                    }
+                    suggestion != null -> {
+                        Text(
+                            "Suggested · dashed green on the page",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = colors.ok,
+                        )
+                        if (ui.reason.isNotBlank()) {
+                            Text(ui.reason.replaceFirstChar { it.uppercase() }, style = MaterialTheme.typography.bodyMedium)
+                        }
+                        val samples = suggestion.samples.ifEmpty { listOfNotNull(suggestion.snippet.takeIf { it.isNotBlank() }) }
+                            .take(3)
+                            .joinToString(", ") { "\u2018${shortSample(it)}\u2019" }
+                        Text(
+                            "$name · ${suggestion.count} on this page" + if (samples.isNotEmpty()) " · e.g. $samples" else "",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    else -> Text(
+                        ui.note ?: "No suggestion for this pick.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                // wraps on a phone-width card (three buttons don't fit one line there)
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                ) {
+                    if (suggestion != null && !ui.busy) {
+                        Button(onClick = model::useSuggestion) { Text("Use this") }
+                    }
+                    if (!ui.busy && ui.more) {
+                        OutlinedButton(onClick = model::suggestAnother) { Text("Suggest another") }
+                    }
+                    // a text button, not only the card's ✕: the pick stays as tapped
+                    if (suggestion != null || result.level == PickCheck.Level.Warn) {
+                        TextButton(onClick = model::dismissHelper) { Text("Keep mine") }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun shortSample(text: String): String {
+        val t = text.trim().replace(Regex("\\s+"), " ")
+        return if (t.length > 32) t.take(30).trimEnd() + "\u2026" else t
+    }
+
+    /**
+     * KMK (r116): the Video test's box: what VideoFinder caught, then VideoCheck's verdict (passed only when every
+     * stage answered: playlist → quality → key → piece, or the file's first bytes) with the stage and detail, and
+     * Preview (the caught address + headers in the player's picture-in-picture, growing from this box)
+     */
+    @Composable
+    private fun VideoTestBox(
+        test: BuilderScreenModel.VideoTest,
+        colors: HelperColors,
+        onPlaced: (android.graphics.Rect) -> Unit,
+        onPreview: () -> Unit,
+    ) {
+        val tint = when {
+            test.running || test.checking -> MaterialTheme.colorScheme.onSurfaceVariant
+            test.ok -> colors.ok
+            else -> colors.warn
+        }
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHighest,
+            border = BorderStroke(1.dp, tint.copy(alpha = 0.4f)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 10.dp)
+                .onGloballyPositioned { coords ->
+                    val b = coords.boundsInWindow()
+                    onPlaced(android.graphics.Rect(b.left.toInt(), b.top.toInt(), b.right.toInt(), b.bottom.toInt()))
+                },
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                Text(test.text, style = MaterialTheme.typography.bodyMedium, color = tint)
+                if (test.checking) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Checking it plays: playlist, quality, key, first piece…", style = MaterialTheme.typography.bodySmall)
+                    }
+                } else if (test.stage.isNotBlank()) {
+                    Text(
+                        (if (test.ok) "\u2713 " else "\u2715 ") + videoStageName(test.stage) + if (test.detail.isNotBlank()) " · ${test.detail}" else "",
+                        fontSize = 13.sp,
+                        color = if (test.ok) colors.ok else colors.warn,
+                    )
+                }
+                if (test.url.isNotBlank() && !test.running) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedButton(onClick = onPreview) { Text("Preview") }
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "plays it in a small window with the same headers",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private fun videoStageName(stage: String): String = when (stage) {
+        "playlist" -> "Playlist"
+        "quality" -> "Quality list"
+        "key" -> "Key"
+        "piece" -> "First piece"
+        "file" -> "File"
+        else -> stage
     }
 
     /** Up / Down on the card: the pick moves and keeps its label */
@@ -2038,24 +2206,7 @@ internal class BuilderScreen(
         PickCheck.Level.Info -> "i"
     }
 
-    private fun suggestionNoun(label: String): String = when (label) {
-        "item" -> "boxes"
-        "cover", "image" -> "pictures"
-        "bigCover" -> "picture"
-        "description" -> "text"
-        "tags" -> "tags"
-        "video" -> "player"
-        "next" -> "link"
-        else -> "links"
-    }
-
-    private fun suggestionTail(label: String): String = when (label) {
-        "item" -> ", each with a picture and a title link"
-        "title" -> ", one in every box, each with the title's name"
-        "cover" -> ", one in every box"
-        "chapter" -> ", each opening a different one"
-        else -> ""
-    }
+    // KMK (r116): suggestionNoun / suggestionTail went with the r100 "Did you mean …" line (SuggestionBox says it now)
 
     private fun whatToTap(label: String): String = when (label) {
         "item" -> "a whole card"
@@ -2125,4 +2276,11 @@ internal class BuilderScreen(
         "suggestions" -> "Suggestions"
         else -> label
     }
+}
+
+/** KMK (r116): the Activity behind a Compose context (Preview opens the player from it) */
+private tailrec fun android.content.Context.findActivity(): android.app.Activity? = when (this) {
+    is android.app.Activity -> this
+    is android.content.ContextWrapper -> baseContext.findActivity()
+    else -> null
 }

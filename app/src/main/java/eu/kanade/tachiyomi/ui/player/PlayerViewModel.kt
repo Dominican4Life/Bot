@@ -1795,6 +1795,7 @@ class PlayerViewModel @JvmOverloads constructor(
         hostIndex: Int,
         vidIndex: Int,
     ): Pair<InitResult, Result<Boolean>> {
+        isPreview = false // KMK (r116): a library episode replaces a preview
         val defaultResult = InitResult(currentHosterList, qualityIndex, null)
         if (!needsInit(animeId, initialEpisodeId)) {
             // ANZ -->
@@ -2022,6 +2023,61 @@ class PlayerViewModel @JvmOverloads constructor(
         }
     }
     // ANK <--
+
+    // KMK (r116) -->
+    /**
+     * True while the player shows a preview (VideoPreview): one plain address, no anime, episode, source or list.
+     * Every progress/history/tracking path already does nothing without a current episode, so nothing is saved.
+     */
+    @Volatile
+    var isPreview = false
+        private set
+
+    /** The address of the preview being shown (before the HLS relay), for logs and the problem text */
+    var previewUrl: String? = null
+        private set
+
+    /** Shows [video] as a preview: a one-video "Preview" server, no episode list, next/previous off */
+    fun initPreview(video: Video, title: String, originalUrl: String) {
+        // Loads still running for an earlier episode or preview stop writing from here on
+        hosterGeneration.incrementAndGet()
+        getHosterVideoLinksJob?.cancel()
+        presplitHosters = emptyList()
+        pendingStart = null
+        preloaded = null
+        isPreview = true
+        previewUrl = originalUrl
+        _currentEpisode.update { _ -> null }
+        _currentAnime.update { _ -> null }
+        _currentSource.update { _ -> null }
+        _currentPlaylist.update { _ -> persistentListOf() }
+        _hasNextEpisode.update { _ -> false }
+        _hasPreviousEpisode.update { _ -> false }
+        _isEpisodeOnline.update { _ -> false }
+        mediaTitle.update { _ -> title }
+        animeTitle.update { _ -> "Preview" }
+        if (hasLoadedTracks.value) clearTracks()
+
+        val hoster = Hoster(hosterName = "Preview", videoList = listOf(video))
+        _hosterList.update { _ -> listOf(hoster) }
+        _hosterExpandedList.update { _ -> listOf(true) }
+        _hosterState.update { _ ->
+            listOf(HosterState.Ready(hoster.hosterName, listOf(video), listOf(Video.State.READY)))
+        }
+        _selectedHosterVideoIndex.update { _ -> Pair(0, 0) }
+        qualityIndex = Pair(0, 0)
+        _currentVideo.update { _ -> video }
+        loadedVideoEpisodeId = null
+        updateIsLoadingHosters(false)
+        updateIsLoadingEpisode(true)
+        // checkFileLoaded() unpauses once mpv has the file
+        _pausedState.update { _ -> false }
+        pause()
+        _isStopped.update { _ -> false }
+        PlayerDebugLog.add("player", "Preview: $originalUrl")
+        viewModelScope.launch { eventChannel.send(Event.SetVideo(video, null)) }
+    }
+    // KMK <--
 
     /**
      * Set the video list for hosters.

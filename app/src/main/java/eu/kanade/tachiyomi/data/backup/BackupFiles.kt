@@ -26,8 +26,9 @@ import java.io.File
  * bytes), and custom covers kept per title (source + url).
  *
  * - Source Lab files: per saved JS source `js_sources/<key>/history/`, `testruns/`, `lint.json`, `health.json`,
- *   `explain.json`, and the whole `sourcelab/` folder (imported rules, fingerprints, templates with their `current`
- *   pointers, rule overrides). The source's own code and `meta.json` are not here (they are the "JS sources" part).
+ *   `explain.json`, `fingerprints.json` (r116: the builder's pick fingerprints), and the whole `sourcelab/` folder
+ *   (imported rules, fingerprints, templates with their `current` pointers, rule overrides). The source's own code
+ *   and `meta.json` are not here (they are the "JS sources" part).
  * - JS source storage: `js_storage/<key>/` of saved sources (never the Code editor's `<key>.editor` test copies).
  * - Custom covers: manga ([CoverCache] custom cover files) and anime (`anime_covers/`).
  *
@@ -329,7 +330,8 @@ class BackupFiles(
 
         /** A source's Source Lab folders and files (relative to js_sources/<key>/) */
         private val SOURCE_DIRS = listOf("history", "testruns")
-        private val SOURCE_FILES = listOf("lint.json", "health.json", "explain.json")
+        // KMK (r116): fingerprints.json = the builder's pick fingerprints (PickHealer's self-healing)
+        private val SOURCE_FILES = listOf("lint.json", "health.json", "explain.json", "fingerprints.json")
 
         /** Larger files (a cover, a test run) are skipped */
         const val MAX_FILE_BYTES = 5L * 1024 * 1024

@@ -43,6 +43,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -56,12 +57,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.navigator.LocalNavigator
 import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
+import eu.kanade.tachiyomi.data.notification.BotChecks
 import eu.kanade.tachiyomi.jssource.JsIcons
 import eu.kanade.tachiyomi.jssource.JsSourceManager
 import eu.kanade.tachiyomi.jssource.lab.ApkImport
@@ -93,6 +96,8 @@ import uy.kohesive.injekt.api.get
  * KMK (r115, mock M3Home): no totals tiles or table header any more: counted chips (status chips in their colour),
  * one row per source with a status dot, the reason in one line and a Fix / Test button, and "Needs you" (failing,
  * old template, never tested) beside the list from 840 dp, else above it.
+ * KMK (r116): "Needs you" also lists bot checks waiting for the owner (Solve) and sources whose last Test Run healed
+ * picks (Review: the Test tab).
  */
 @Composable
 internal fun HomePane(
@@ -125,9 +130,23 @@ internal fun HomePane(
     val chipsScroll = rememberScrollState()
     // KMK (r115, mock M3Home): the totals tiles gave way to counted chips and the "Needs you" card (beside the list
     // from 840 dp, else above it); each row says how the source is doing and why, with the button that helps
-    val hasNeeds = state.sources.any { needsYou(it) } || templates.isNotEmpty()
+    // KMK (r116): bot checks waiting for the owner (any source: Solve opens its check page) and healed picks
+    val waitingChecks by BotChecks.waiting.collectAsState()
+    val context = LocalContext.current
+    val hasNeeds = state.sources.any { needsYou(it) || healedPicksOf(it.lastRun).isNotEmpty() } ||
+        templates.isNotEmpty() || waitingChecks.isNotEmpty()
     val needsCard: @Composable () -> Unit = {
-        NeedsYouCard(sources = state.sources, stale = templates, onOpen = onOpen, onTemplates = onTemplates)
+        NeedsYouCard(
+            sources = state.sources,
+            stale = templates,
+            waiting = waitingChecks.values.sortedBy { it.since },
+            onOpen = onOpen,
+            onTemplates = onTemplates,
+            onSolve = { w ->
+                AppLog.add('I', "lab", "Bot check: Solve from Home for ${w.name} (id ${w.sourceId})")
+                BotChecks.solve(context, w.sourceId)
+            },
+        )
     }
     BoxWithConstraints(modifier = modifier) {
         val wide = maxWidth >= 840.dp
@@ -249,12 +268,26 @@ internal fun needsYouCount(sources: List<LabSource>): Int = sources.count { need
 private fun NeedsYouCard(
     sources: List<LabSource>,
     stale: List<Pair<LabSource, LabTemplate>>,
+    waiting: List<BotChecks.Waiting>,
     onOpen: (String, LabTab) -> Unit,
     onTemplates: () -> Unit,
+    onSolve: (BotChecks.Waiting) -> Unit,
 ) {
     val failing = sources.filter { it.health.state == HealthState.Failing }
     val untested = sources.filter { it.health.state == HealthState.Unknown }
     val rows = buildList {
+        // KMK (r116, mock XBot): a check waiting blocks its requests, so it comes first
+        waiting.forEach { w ->
+            add(
+                Need(
+                    color = StripColor.Amber,
+                    title = "${w.name.ifBlank { botCheckHost(w) }} · bot check waiting",
+                    note = "${botCheckHost(w)} · ${w.pending} ${if (w.pending == 1) "request" else "requests"} waiting",
+                    action = "Solve",
+                    onAction = { onSolve(w) },
+                ),
+            )
+        }
         failing.forEach { s ->
             add(
                 Need(
@@ -265,6 +298,21 @@ private fun NeedsYouCard(
                     onAction = { onOpen(s.key, LabTab.Test) },
                 ),
             )
+        }
+        // KMK (r116, mock XHeal): the last Test Run found picks that moved (the owner decides on the Test tab)
+        sources.forEach { s ->
+            val healed = healedPicksOf(s.lastRun)
+            if (healed.isNotEmpty()) {
+                add(
+                    Need(
+                        color = StripColor.Amber,
+                        title = "${s.name.ifBlank { "Untitled" }} · ${healed.size} ${if (healed.size == 1) "pick" else "picks"} moved",
+                        note = healed.joinToString(", ") { it.label } + " · found again by their fingerprints",
+                        action = "Review",
+                        onAction = { onOpen(s.key, LabTab.Test) },
+                    ),
+                )
+            }
         }
         if (stale.isNotEmpty()) {
             val n = stale.size

@@ -634,7 +634,7 @@ class JsRuntime private constructor(
             val origin = JsBrowserFetch.originOf(url)
             val plainHeaders = headers.build().toMultimap().mapValues { it.value.firstOrNull().orEmpty() }
             suspend fun viaBrowser(): Map<String, Any?> {
-                val result = JsBrowserFetch.fetch(context, url, method, plainHeaders, body, binary)
+                val result = JsBrowserFetch.fetch(context, url, method, plainHeaders, body, binary, sourceId = sourceId) // KMK (r116): waits show for this source
                 if (testing) {
                     val code = (result["statusCode"] as? Number)?.toInt() ?: result["statusCode"]?.toString()?.toIntOrNull()
                     val failed = if (code == null || code >= 400) (result["body"] as? String)?.take(2048) else null

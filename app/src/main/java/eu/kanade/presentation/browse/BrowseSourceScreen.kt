@@ -16,6 +16,8 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.paging.LoadState
@@ -26,6 +28,9 @@ import eu.kanade.presentation.browse.components.BrowseSourceEHentaiList
 import eu.kanade.presentation.browse.components.BrowseSourceList
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.util.formattedMessage
+import eu.kanade.tachiyomi.data.notification.BotChecks
+import eu.kanade.tachiyomi.ui.webview.BotCheckPrompt
+import eu.kanade.tachiyomi.ui.webview.ReloadWhenBotCheckSolved
 import eu.kanade.tachiyomi.source.Source
 import exh.metadata.metadata.RaisedSearchMetadata
 import exh.source.isEhBasedSource
@@ -78,18 +83,47 @@ fun BrowseSourceContent(
         with(context) { state.error.formattedMessage }
     }
 
-    LaunchedEffect(errorState) {
+    // KMK (r116) -->
+    // A bot check waiting for you: "Solve the check to continue" instead of the error, and the list reloads by
+    // itself once you passed it
+    val botChecks by BotChecks.waiting.collectAsState()
+    val waitingCheck = source?.id?.let { botChecks[it] }
+    ReloadWhenBotCheckSolved(source?.id, waitingCheck) {
+        when {
+            mangaList.loadState.refresh is LoadState.Error -> mangaList.refresh()
+            mangaList.loadState.append is LoadState.Error -> mangaList.retry()
+            else -> Unit
+        }
+    }
+    // KMK <--
+
+    LaunchedEffect(errorState, /* KMK (r116) */ waitingCheck != null) {
         if (mangaList.itemCount > 0 && errorState != null && errorState is LoadState.Error) {
+            // KMK (r116): the snackbar asks you to solve the check instead
+            val checkSourceId = waitingCheck?.sourceId
             val result = snackbarHostState.showSnackbar(
-                message = getErrorMessage(errorState),
-                actionLabel = context.stringResource(MR.strings.action_retry),
+                message = if (checkSourceId != null) "Solve the check to continue" else getErrorMessage(errorState),
+                actionLabel = if (checkSourceId != null) "Solve it" else context.stringResource(MR.strings.action_retry),
                 duration = SnackbarDuration.Indefinite,
             )
             when (result) {
                 SnackbarResult.Dismissed -> snackbarHostState.currentSnackbarData?.dismiss()
-                SnackbarResult.ActionPerformed -> mangaList.retry()
+                SnackbarResult.ActionPerformed ->
+                    if (checkSourceId != null) BotChecks.solve(context, checkSourceId) else mangaList.retry()
             }
         }
+    }
+
+    // KMK (r116): while the list waits for (or failed on) a check, ask for it
+    if (mangaList.itemCount == 0 && waitingCheck != null &&
+        (mangaList.loadState.refresh is LoadState.Loading || errorState is LoadState.Error)
+    ) {
+        BotCheckPrompt(
+            waiting = waitingCheck,
+            onSolve = { BotChecks.solve(context, waitingCheck.sourceId) },
+            contentPadding = contentPadding,
+        )
+        return
     }
 
     if (mangaList.itemCount == 0 && mangaList.loadState.refresh is LoadState.Loading) {

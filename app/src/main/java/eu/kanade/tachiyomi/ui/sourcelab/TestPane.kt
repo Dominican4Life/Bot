@@ -45,6 +45,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -55,7 +56,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -64,6 +68,7 @@ import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.navigator.LocalNavigator
 import coil3.compose.AsyncImage
 import eu.kanade.tachiyomi.animeextension.AnimeSourceManager
+import eu.kanade.tachiyomi.data.notification.BotChecks
 import eu.kanade.tachiyomi.jssource.JsSourceManager
 import eu.kanade.tachiyomi.jssource.lab.ExplainEntry
 import eu.kanade.tachiyomi.jssource.lab.StepId
@@ -78,12 +83,14 @@ import eu.kanade.tachiyomi.jssource.lab.videodoctor.VideoFix
 import eu.kanade.tachiyomi.ui.anime.source.AnimeSourceScreen
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreen
 import eu.kanade.tachiyomi.ui.codeeditor.SourceEditorScreenModel
+import eu.kanade.tachiyomi.ui.player.VideoPreview
 import eu.kanade.tachiyomi.util.system.AppLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
@@ -99,6 +106,8 @@ import uy.kohesive.injekt.api.get
  * reason with Go to line / Show the part); "Against the previous run" under the steps; the run's console docked at
  * the bottom ([TestConsole]). Narrow (phone): the steps stack and the selected one opens its detail under it.
  * [onGoToLine] opens the code at a line (the Code tab).
+ * KMK (r116): a step with healed picks shows [HealCard]; a bot check waiting for this source shows [BotCheckCard];
+ * the Video step's videos and "Why won't it play"'s try-play open [VideoPreview].
  */
 @Composable
 internal fun TestPane(
@@ -119,18 +128,51 @@ internal fun TestPane(
     // KMK (r115): "Why won't it play": the fix waiting for the owner's OK (never written silently)
     var fixAsk by remember { mutableStateOf<Pair<VideoFix, VideoDiagnosis>?>(null) }
     val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+    // KMK (r116): Preview plays the address with its headers in the app's player, straight into a small window over
+    // the Lab (VideoPreview); r115 copied them to the clipboard for an outside player
+    val preview: (String, Map<String, String>, String, android.graphics.Rect?) -> Unit = { url, headers, title, rect ->
+        val activity = context.findLabActivity()
+        if (activity == null) {
+            AppLog.add('W', "lab", "Preview: no activity to start the player from")
+            model.say("The preview couldn't start here.")
+        } else {
+            val who = editorState.name.ifBlank { state.key.orEmpty() }
+            AppLog.add('I', "lab", "Preview of a video of $who: ${url.take(120)} (${headers.size} headers)")
+            runCatching { VideoPreview.open(activity, url, headers, title, rect) }
+                .onFailure {
+                    AppLog.add('W', "lab", "Preview failed: $it")
+                    model.say("The preview couldn't start: ${it.message ?: it.javaClass.simpleName}")
+                }
+        }
+    }
+    val sourceHeaders = state.key?.let { Injekt.get<JsSourceManager>().get(it)?.headers }.orEmpty()
+    val previewItem: (TestItem, android.graphics.Rect?) -> Unit = { item, rect ->
+        preview(item.url, sourceHeaders + videoHeadersOf(item), previewTitle(editorState.name, item.title), rect)
+    }
+    // KMK (r116): bot checks waiting for this source (BotChecks, the network side's), and the picks a Test step healed
+    val waitingChecks by BotChecks.waiting.collectAsState()
+    val labSourceId = state.key?.let { editor.sourceId(it) }
+    val waiting = labSourceId?.let { waitingChecks[it] }
     val doctor: @Composable (TestStep) -> Unit = { step ->
+        if (step.healed.isNotEmpty()) {
+            HealCard(
+                stepName = step.name,
+                picks = step.healed,
+                code = editorState.code,
+                canUse = !state.running && !editorState.json,
+                onUse = { model.useHealedPicks(editor, step.healed, query) },
+                onPickAgain = onEditByTapping?.takeIf { state.source?.let { madeByTapping(it) } == true },
+            )
+        }
         if (step.id == StepId.VIDEO) {
             VideoDoctorBlock(
                 step = step,
                 state = state,
                 onCheck = { model.checkWhyNoPlay(editor) },
                 onFix = { fix, diagnosis -> fixAsk = fix to diagnosis },
-                onTryPlay = { url, headers ->
-                    // No player path here plays a bare address with headers (the player needs a library episode),
-                    // so the address and its headers go to the clipboard for an outside player
-                    clipboard.setText(AnnotatedString(tryPlayText(url, headers)))
-                    model.say("The video address and its headers are copied: paste them into a player that takes headers.")
+                onTryPlay = { url, headers, rect ->
+                    preview(url, headers, previewTitle(editorState.name, "with the fixes"), rect)
                 },
             )
         }
@@ -155,6 +197,8 @@ internal fun TestPane(
     }
     val selected = steps.firstOrNull { stepKey(it) == selectedKey }
         ?: steps.firstOrNull { it.status == StepStatus.Red }
+        // KMK (r116): a step with healed picks is the one to look at when nothing failed
+        ?: steps.firstOrNull { it.healed.isNotEmpty() }
         ?: steps.firstOrNull()
     val source = state.source
     val showPart: (ExplainEntry) -> Unit = { entry ->
@@ -227,7 +271,14 @@ internal fun TestPane(
                         .verticalScroll(rememberScrollState())
                         .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp),
                 ) {
-                    StepDetail(step = page, parts = state.explain, onGoToLine = onGoToLine, onShowPart = showPart, showTitle = false)
+                    StepDetail(
+                        step = page,
+                        parts = state.explain,
+                        onGoToLine = onGoToLine,
+                        onShowPart = showPart,
+                        showTitle = false,
+                        onPreview = previewItem,
+                    )
                     doctor(page)
                 }
             }
@@ -260,6 +311,10 @@ internal fun TestPane(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(horizontal = 20.dp).padding(bottom = 8.dp),
             )
+            // KMK (r116, mock XBot): the site asks for a bot check: the owner solves it (the app never does)
+            if (waiting != null) {
+                BotCheckCard(waiting, modifier = Modifier.padding(horizontal = if (wide) 20.dp else 12.dp).padding(bottom = 8.dp))
+            }
             if (wide) {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -297,7 +352,13 @@ internal fun TestPane(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             } else {
-                                StepDetail(step = selected, parts = state.explain, onGoToLine = onGoToLine, onShowPart = showPart)
+                                StepDetail(
+                                    step = selected,
+                                    parts = state.explain,
+                                    onGoToLine = onGoToLine,
+                                    onShowPart = showPart,
+                                    onPreview = previewItem,
+                                )
                                 doctor(selected)
                             }
                         }
@@ -456,6 +517,8 @@ private fun StepDetail(
     onGoToLine: (Int) -> Unit,
     onShowPart: (ExplainEntry) -> Unit,
     showTitle: Boolean = true,
+    // KMK (r116): Preview of one of the Video step's videos (with the box's bounds for the small window)
+    onPreview: ((TestItem, android.graphics.Rect?) -> Unit)? = null,
 ) {
     val tint = step.status.strip().tint()
     val bad = step.status == StepStatus.Red || step.status == StepStatus.Amber
@@ -482,7 +545,7 @@ private fun StepDetail(
         }
     }
     StepChecks(step)
-    if (step.items.isNotEmpty()) CameBack(step)
+    if (step.items.isNotEmpty()) CameBack(step, onPreview)
     if (step.requests.isNotEmpty()) {
         LabCaption("Requests")
         Column {
@@ -669,7 +732,7 @@ private fun RelatedGroupRow(item: TestItem) {
 
 /** What came back: the covers of a list step with their titles, the first chapters, the video lines */
 @Composable
-private fun CameBack(step: TestStep) {
+private fun CameBack(step: TestStep, onPreview: ((TestItem, android.graphics.Rect?) -> Unit)? = null) {
     Column {
         Text(
             if (step.id == TestRuns.STEP_RELATED) {
@@ -711,15 +774,8 @@ private fun CameBack(step: TestStep) {
                 }
             }
             "video" -> step.items.take(6).forEach { item ->
-                Text(
-                    "${item.title} · ${item.subtitle.orEmpty().take(120)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    fontFamily = FontFamily.Monospace,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(top = 2.dp),
-                )
+                // KMK (r116): each video with an http address gets Preview (the app's player, in a small window)
+                VideoLine(item = item, onPreview = onPreview?.takeIf { item.url.startsWith("http") })
             }
             else -> step.items.take(8).forEach { item ->
                 Text(
@@ -756,7 +812,7 @@ private fun VideoDoctorBlock(
     state: SourceLabScreenModel.State,
     onCheck: () -> Unit,
     onFix: (VideoFix, VideoDiagnosis) -> Unit,
-    onTryPlay: (String, Map<String, String>) -> Unit,
+    onTryPlay: (String, Map<String, String>, android.graphics.Rect?) -> Unit,
 ) {
     var opened by rememberSaveable(state.key) { mutableStateOf(false) }
     val diagnosis = state.key?.let { state.diagnoses[it] }
@@ -802,9 +858,60 @@ internal fun videoFixSnippet(fix: VideoFix, diagnosis: VideoDiagnosis): String =
         "return found.videos;"
 }
 
-/** "Try play": the address, then one "Name: value" line per header */
-private fun tryPlayText(url: String, headers: Map<String, String>): String =
-    (listOf(url) + headers.map { (k, v) -> "$k: $v" }).joinToString("\n")
+/** KMK (r116): one video of the Video step: "server · address" and Preview; the box's bounds go to the player */
+@Composable
+private fun VideoLine(item: TestItem, onPreview: ((TestItem, android.graphics.Rect?) -> Unit)?) {
+    val bounds = remember { LabRectHolder() }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 2.dp)
+            .onGloballyPositioned { bounds.rect = it.boundsInWindow().toAndroidRect() },
+    ) {
+        Text(
+            "${item.title} · ${item.subtitle.orEmpty().ifBlank { item.url }.take(120)}",
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (onPreview != null) {
+            TextButton(onClick = { onPreview(item, bounds.rect) }) {
+                Icon(Icons.Outlined.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                Text(" Preview")
+            }
+        }
+    }
+}
+
+/** KMK (r116): the headers a video of the Test Run carries itself (its raw `headers` object) */
+private fun videoHeadersOf(item: TestItem): Map<String, String> =
+    (item.raw?.get("headers") as? JsonObject)
+        ?.mapNotNull { (k, v) -> (v as? JsonPrimitive)?.contentOrNull?.let { k to it } }
+        ?.toMap()
+        .orEmpty()
+
+private fun previewTitle(sourceName: String, what: String): String =
+    listOf(sourceName.ifBlank { "Source Lab" }, what.ifBlank { "Preview" }).joinToString(" · ")
+
+/** KMK (r116): where a box was last laid out (read on tap; not state, so scrolling doesn't recompose) */
+internal class LabRectHolder {
+    var rect: android.graphics.Rect? = null
+}
+
+/** KMK (r116): a Compose rect in window pixels as the android Rect the player's small window starts from */
+internal fun androidx.compose.ui.geometry.Rect.toAndroidRect(): android.graphics.Rect =
+    android.graphics.Rect(left.toInt(), top.toInt(), right.toInt(), bottom.toInt())
+
+/** KMK (r116): the Activity behind a Compose context (VideoPreview needs one) */
+internal tailrec fun android.content.Context.findLabActivity(): android.app.Activity? = when (this) {
+    is android.app.Activity -> this
+    is android.content.ContextWrapper -> baseContext.findLabActivity()
+    else -> null
+}
 
 @Composable
 private fun VideoFixDialog(

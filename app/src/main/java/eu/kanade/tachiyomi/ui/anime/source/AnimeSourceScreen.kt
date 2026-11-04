@@ -137,6 +137,13 @@ class AnimeSourceScreen(
         val screenModel = rememberScreenModel { AnimeSourceScreenModel(sourceId) }
         val state by screenModel.state.collectAsState()
         val preview by screenModel.preview.collectAsState()
+        // KMK (r116): a bot check waiting for you: "Solve the check to continue" instead of the error, and the list
+        // reloads by itself once you passed it
+        val botChecks by eu.kanade.tachiyomi.data.notification.BotChecks.waiting.collectAsState()
+        val waitingCheck = botChecks[sourceId]
+        eu.kanade.tachiyomi.ui.webview.ReloadWhenBotCheckSolved(sourceId, waitingCheck) {
+            if (state.error != null) screenModel.retry()
+        }
         val source = screenModel.source
 
         var searchQuery by rememberSaveable { mutableStateOf(initialQuery) }
@@ -415,6 +422,16 @@ class AnimeSourceScreen(
                                 message = stringResource(MR.strings.source_not_installed, sourceId.toString()),
                                 modifier = Modifier.padding(paddingValues),
                             )
+                            // KMK (r116)
+                            state.items.isEmpty() && waitingCheck != null &&
+                                (state.isLoading || state.error != null) ->
+                                eu.kanade.tachiyomi.ui.webview.BotCheckPrompt(
+                                    waiting = waitingCheck,
+                                    onSolve = {
+                                        eu.kanade.tachiyomi.data.notification.BotChecks.solve(context, sourceId)
+                                    },
+                                    contentPadding = paddingValues,
+                                )
                             state.items.isEmpty() && state.isLoading -> LoadingScreen(Modifier.padding(paddingValues))
                             state.items.isEmpty() && state.error != null -> ErrorWithRetry(
                                 message = state.error!!,

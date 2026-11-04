@@ -12,7 +12,6 @@ import androidx.core.net.toUri
 import androidx.lifecycle.lifecycleScope
 import eu.kanade.presentation.webview.WebViewScreenContent
 import eu.kanade.tachiyomi.R
-import eu.kanade.tachiyomi.network.BotCheckCoordinator
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.base.activity.BaseActivity
@@ -45,9 +44,12 @@ class WebViewActivity : BaseActivity() {
     // KMK: the source this WebView was opened for, if any
     private var botCheckSourceId: Long? = null
 
-    // KMK: opened by itself for a bot check: closes once it's passed, and tells whoever waits
-    private var autoCloseUrl: String? = null
+    // KMK (r116): opened for you to pass a bot check (Solve it / the notification), or a source with a check
+    // waiting: watches for the pass, tells the waiting requests, and (when opened to solve) closes by itself
+    private var watchedUrl: String? = null
+    private var closeWhenPassed = false
     private var botCheckPassed = false
+    private var webViewUserAgent: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -64,8 +66,6 @@ class WebViewActivity : BaseActivity() {
 
         if (!WebViewUtil.supportsWebView(this)) {
             toast(MR.strings.information_webview_required, Toast.LENGTH_LONG)
-            // KMK: a bot check opened by itself can't be passed here
-            intent.extras?.getString(URL_KEY)?.let { BotCheckCoordinator.finished(it, false) }
             finish()
             return
         }
@@ -101,8 +101,15 @@ class WebViewActivity : BaseActivity() {
         // The check's pass is only good for the browser that passed it: same user agent as the request that hit it
         intent.extras?.getString(USER_AGENT_KEY)?.takeIf { it.isNotBlank() }
             ?.let { headers = headers + ("user-agent" to it) }
-        if (intent.extras?.getBoolean(AUTO_CLOSE_KEY) == true) {
-            autoCloseUrl = url
+        // KMK (r116): never WebView's own default: the app's user agent, so the pass carries over to its requests
+        if (headers["user-agent"].isNullOrBlank()) {
+            headers = headers + ("user-agent" to network.defaultUserAgentProvider())
+        }
+        webViewUserAgent = headers["user-agent"]
+        closeWhenPassed = intent.extras?.getBoolean(BOT_CHECK_KEY) == true
+        val waitingHere = botCheckSourceId?.let { it in eu.kanade.tachiyomi.data.notification.BotChecks.waiting.value } == true
+        if (closeWhenPassed || waitingHere) {
+            watchedUrl = url
             watchBotCheck(url)
         }
         // KMK <--
@@ -122,9 +129,12 @@ class WebViewActivity : BaseActivity() {
     }
 
     override fun onDestroy() {
-        // KMK: whoever waits for this bot check is told how it went (not when only turning the screen)
-        if (!isChangingConfigurations) {
-            autoCloseUrl?.let { BotCheckCoordinator.finished(it, botCheckPassed) }
+        // KMK (r116): closed without a sign of a pass: the waiting requests try once more (not when only turning
+        // the screen); a pass was already told when it was seen
+        if (!isChangingConfigurations && !botCheckPassed) {
+            watchedUrl?.let {
+                eu.kanade.tachiyomi.data.notification.BotChecks.webViewDone(it, botCheckSourceId, false, webViewUserAgent)
+            }
         }
         // KMK: a source opened to pass its bot check is checked again once WebView closes
         botCheckSourceId?.let { eu.kanade.tachiyomi.data.notification.SourceStatusCheck.recheck(it) }
@@ -132,8 +142,10 @@ class WebViewActivity : BaseActivity() {
     }
 
     /**
-     * KMK: Looks every second for the site's Cloudflare pass (a new cf_clearance cookie, shared with the app's own
-     * connection), then closes WebView so the request that hit the check is sent again.
+     * KMK: Looks every second for the site's pass (a new cf_clearance cookie, shared with the app's own connection):
+     * you passed the check. The waiting requests are told and carry on with your session; when opened to solve the
+     * check, WebView closes by itself. Nothing on the page is touched. Other checks have no clear sign: closing
+     * WebView makes the waiting requests try once more.
      */
     private fun watchBotCheck(url: String) {
         val cookies = CookieManager.getInstance()
@@ -152,7 +164,8 @@ class WebViewActivity : BaseActivity() {
                     botCheckPassed = true
                     // A moment for the site to finish its redirect
                     delay(500)
-                    finish()
+                    eu.kanade.tachiyomi.data.notification.BotChecks.webViewDone(url, botCheckSourceId, true, webViewUserAgent)
+                    if (closeWhenPassed) finish()
                     break
                 }
             }
@@ -201,18 +214,21 @@ class WebViewActivity : BaseActivity() {
         private const val TITLE_KEY = "title_key"
 
         // KMK -->
-        private const val AUTO_CLOSE_KEY = "auto_close_key"
+        private const val BOT_CHECK_KEY = "bot_check_key"
         private const val USER_AGENT_KEY = "user_agent_key"
 
-        /** WebView for a bot check: closes by itself once it's passed */
-        fun newAutoCloseIntent(
+        /**
+         * KMK (r116): WebView for you to pass a source's bot check (BotChecks.solve, the notification): watches for
+         * the pass and closes by itself once it's seen. [userAgent]: the one the waiting requests used.
+         */
+        fun newBotCheckIntent(
             context: Context,
             url: String,
             sourceId: Long?,
             title: String?,
             userAgent: String?,
         ): Intent = newIntent(context, url, sourceId, title).apply {
-            putExtra(AUTO_CLOSE_KEY, true)
+            putExtra(BOT_CHECK_KEY, true)
             putExtra(USER_AGENT_KEY, userAgent)
         }
         // KMK <--

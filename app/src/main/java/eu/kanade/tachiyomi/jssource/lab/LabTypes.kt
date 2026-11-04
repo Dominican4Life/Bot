@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.jssource.lab
 
 import androidx.compose.runtime.Immutable
+import eu.kanade.tachiyomi.jssource.lab.heal.HealedPick
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.getAndUpdate
@@ -133,6 +134,9 @@ internal data class TestStep(
     val items: List<TestItem> = emptyList(),
     val requests: List<TestRequest> = emptyList(),
     val partIds: List<String> = emptyList(),   // which Explain parts this step exercised (method names)
+    // KMK (r116): picks PickHealer found again on this step's page (0 items / a field empty on all of them); missing
+    // in older runs = none. The step is Amber "N picks moved"; the code is never changed by the run
+    val healed: List<HealedPick> = emptyList(),
 )
 
 /** testruns/<id>.json; id = yyyyMMdd-HHmmss */
