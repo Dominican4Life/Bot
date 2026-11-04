@@ -1462,11 +1462,57 @@ class PlayerActivity : BaseActivity() {
                     withUIContext { toast(e.message ?: e.javaClass.simpleName) }
                 }
             }
+        } else if (playsThroughApp(video)) {
+            // KMK (r118): a Code editor source's plain video file goes through the app's connection (HlsRelay), so it
+            // gets the same cookies as the source's requests and downloads (hosts answer mpv's own request with 403)
+            val headers = fileHeaders(video)
+            lifecycleScope.launchIO {
+                val relayed = runCatching { eu.kanade.tachiyomi.jssource.HlsRelay.wrapFile(video.videoUrl, headers) }
+                    .onFailure { PlayerDebugLog.add("player", "Couldn't use the app's connection: ${it.message}") }
+                    .getOrNull()
+                withUIContext {
+                    if (player.isExiting) return@withUIContext
+                    PlayerDebugLog.add(
+                        "player",
+                        if (relayed != null) {
+                            "Plain video file: playing through the app's connection (its cookies + ${headers.names().size} headers)"
+                        } else {
+                            "Plain video file: playing it directly"
+                        },
+                    )
+                    loadFile(relayed ?: parseVideoUrl(video.videoUrl)!!, video.mpvArgs)
+                }
+            }
         } else {
             loadFile(parseVideoUrl(video.videoUrl)!!, video.mpvArgs)
         }
         // ANK <--
     }
+
+    /**
+     * KMK (r118): true for a plain http(s) video file of a Code editor source (or a Lab preview): not a stream
+     * (HLS goes through the relay already), not a download, torrent or an address the relay handed out
+     */
+    private fun playsThroughApp(video: Video): Boolean {
+        val url = video.videoUrl
+        if (!url.startsWith("http://") && !url.startsWith("https://")) return false
+        if (url.startsWith("http://127.0.0.1") || url.startsWith("http://localhost")) return false
+        val fromLab = viewModel.currentSource.value is eu.kanade.tachiyomi.jssource.JsAnimeSource ||
+            viewModel.isPreview || previewMode
+        if (!fromLab || viewModel.isEpisodeOnline() == false) return false
+        val path = url.substringBefore('?').lowercase()
+        val stream = video.type == eu.kanade.tachiyomi.animesource.model.VideoType.HLS ||
+            video.type == eu.kanade.tachiyomi.animesource.model.VideoType.DASH ||
+            path.endsWith(".mpd") || url.contains("m3u8", ignoreCase = true)
+        return !stream
+    }
+
+    /** KMK (r118): the headers the relay fetches a file with: the same ones mpv would have sent ([setHttpOptions]) */
+    private fun fileHeaders(video: Video): okhttp3.Headers =
+        video.headers
+            ?: (viewModel.currentSource.value as? AnimeHttpSource)?.headers
+            ?: (viewModel.currentSource.value as? eu.kanade.tachiyomi.jssource.JsAnimeSource)?.headers
+            ?: okhttp3.Headers.Builder().build()
 
     // KMK -->
     /**

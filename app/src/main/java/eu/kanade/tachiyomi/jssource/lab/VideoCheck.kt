@@ -294,12 +294,43 @@ object VideoCheck {
 
         // ---------- files ----------
 
+        /**
+         * KMK (r118): asks for the file once more without the app's cookies. A 401/403 then means the host wants the
+         * site's cookies: the player gets them (plain files of Code editor sources play through the app's
+         * connection since r118), but an outside player or a copied link won't. Empty when there's nothing to say.
+         */
+        private fun cookieNote(url: String): String {
+            val httpUrl = url.toHttpUrlOrNull() ?: return ""
+            val hasCookies = runCatching { Injekt.get<NetworkHelper>().cookieJar.loadForRequest(httpUrl).isNotEmpty() }
+                .getOrDefault(false)
+            if (!hasCookies) return ""
+            val builder = Headers.Builder()
+            sourceHeaders.forEach { (k, v) -> runCatching { builder.set(k, v) } }
+            if (builder["User-Agent"] == null) {
+                runCatching { builder.set("User-Agent", Injekt.get<NetworkHelper>().defaultUserAgentProvider()) }
+            }
+            builder.set("Range", "bytes=0-1023")
+            val started = System.currentTimeMillis()
+            val status = runCatching {
+                client.newBuilder().cookieJar(okhttp3.CookieJar.NO_COOKIES).build()
+                    .newCall(Request.Builder().url(httpUrl).headers(builder.build()).get().build())
+                    .execute().use { it.code }
+            }.getOrNull()
+            hops.add(Hop("file (no cookies)", url, status, System.currentTimeMillis() - started, 0, null))
+            return if (status == 401 || status == 403) " · needs the site's cookies ($status without them; the app's player sends them)" else ""
+        }
+
         private fun file(reply: Reply): Result {
             if (reply.bytes.isEmpty()) return Result(false, "file", "file ${reply.status} but empty", 0)
             val kind = kindOfBytes(reply.bytes, reply.contentType)
             return when {
                 kind == "web page" -> Result(false, "file", "file ${reply.status} is a web page, not video", reply.bytes.size)
-                kind != null -> Result(true, "file", "file ${reply.status} · ${reply.bytes.size} bytes ($kind)", reply.bytes.size)
+                kind != null -> Result(
+                    true,
+                    "file",
+                    "file ${reply.status} · ${reply.bytes.size} bytes ($kind)" + cookieNote(reply.finalUrl),
+                    reply.bytes.size,
+                )
                 else -> Result(false, "file", "file ${reply.status} but not a video (${reply.contentType ?: "no content type"})", reply.bytes.size)
             }
         }

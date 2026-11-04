@@ -231,6 +231,32 @@ internal class NewSourceScreenModel(kindHint: Boolean?) : StateScreenModel<NewSo
         if (state.value.result != null) mutableState.update { it.copy(phase = Phase.Detected) }
     }
 
+    /**
+     * KMK (r118): Browse ⋮ "Make an editable copy" of an installed extension source: reads its APK and records it
+     * straight away (Record and convert), as if it was picked in the Record and convert list. Once only per screen.
+     */
+    private var recordedInstalled = false
+
+    fun recordInstalled(sourceId: Long) {
+        if (recordedInstalled) return
+        recordedInstalled = true
+        mutableState.update { it.copy(busy = "Finding the extension…", recordFirst = true, error = null) }
+        screenModelScope.launchIO {
+            val rows = runCatching { ApkImport.installed() }
+                .onFailure { if (it is CancellationException) throw it }
+                .getOrElse { emptyList() }
+            val row = rows.firstOrNull { it.sourceId == sourceId }
+            if (row == null) {
+                AppLog.add('W', "lab", "Make an editable copy: no installed extension has the source $sourceId")
+                mutableState.update { it.copy(busy = null, extensions = rows, error = "This extension's source wasn't found") }
+                return@launchIO
+            }
+            AppLog.add('I', "lab", "Make an editable copy: recording ${row.sourceName} (${row.pkgName})")
+            mutableState.update { it.copy(extensions = rows, picker = Picker.Extension) }
+            importExtension(row)
+        }
+    }
+
     /** "Record and convert": the extension picker, then the recording starts as soon as the APK is read */
     fun openRecord() {
         openPicker(Picker.Extension)

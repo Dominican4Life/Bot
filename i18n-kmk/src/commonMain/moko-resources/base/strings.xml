@@ -258,7 +258,10 @@
     <string name="browse_right_panel">Right Panel</string>
     <string name="browse_menu_incognito">Incognito</string>
     <!-- KMK (r117): per-source "use only the source's own info" -->
-    <string name="browse_menu_source_info_only">Source info only</string>
+    <string name="browse_menu_source_info_only">Source only</string>
+    <!-- KMK (r118): Browse ⋮: edit a Source Lab source, or make one from an installed extension -->
+    <string name="browse_menu_edit_source">Edit source</string>
+    <string name="browse_menu_editable_copy">Make an editable copy</string>
     <string name="source_info_only_on">Source info only: AniList won\'t be used for this source</string>
     <string name="source_info_only_off">AniList info is back on for this source</string>
     <string name="browse_menu_bulk_selection">Bulk Selection</string>

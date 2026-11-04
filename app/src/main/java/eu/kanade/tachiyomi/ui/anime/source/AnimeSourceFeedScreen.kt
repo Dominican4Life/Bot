@@ -66,6 +66,8 @@ class AnimeSourceFeedScreen(private val sourceId: Long) : Screen() {
         val context = androidx.compose.ui.platform.LocalContext.current
         val haptic = LocalHapticFeedback.current
         val screenModel = rememberScreenModel { AnimeSourceFeedScreenModel(sourceId) }
+        // KMK (r118): ⋮ Edit source / Make an editable copy
+        val editAction = eu.kanade.tachiyomi.ui.sourcelab.rememberBrowseEditAction(sourceId, anime = true)
         val state by screenModel.state.collectAsState()
         val source = screenModel.source
         var searchQuery by remember { mutableStateOf<String?>(null) }
@@ -111,6 +113,7 @@ class AnimeSourceFeedScreen(private val sourceId: Long) : Screen() {
                     isRunning = false,
                     showBulkSelection = false,
                     sourceInfoOnly = sourceInfoOnly,
+                    editAction = editAction,
                     onToggleSourceInfoOnly = {
                         context.toast(
                             if (sourceInfoOnly) KMR.strings.source_info_only_off else KMR.strings.source_info_only_on,

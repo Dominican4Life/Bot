@@ -27,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Public
@@ -497,6 +498,11 @@ private fun RowMenu(source: LabSource, onOpen: (String, LabTab) -> Unit) {
     var confirmDelete by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val navigator = LocalNavigator.current
+    // KMK (r118): Edit: by tapping (builder / Tap to fix) or the code
+    var editing by remember { mutableStateOf(false) }
+    if (editing && navigator != null) {
+        EditSourceDialog(key = source.key, name = source.name, navigator = navigator, onDismiss = { editing = false })
+    }
     if (confirmDelete) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
@@ -530,8 +536,29 @@ private fun RowMenu(source: LabSource, onOpen: (String, LabTab) -> Unit) {
             Icon(Icons.Outlined.MoreVert, contentDescription = "More for ${source.name}")
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            // KMK (r118): Edit first, highlighted (replaces "Open the code": the dialog has Edit the code)
+            DropdownMenuItem(
+                text = {
+                    Text(
+                        "Edit",
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                },
+                leadingIcon = {
+                    Icon(
+                        Icons.Outlined.Edit,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                },
+                onClick = {
+                    open = false
+                    editing = true
+                },
+            )
+            HorizontalDivider()
             listOf(
-                LabTab.Code to "Open the code",
                 LabTab.Test to "Test",
                 LabTab.Lint to "Lint",
                 LabTab.History to "History",

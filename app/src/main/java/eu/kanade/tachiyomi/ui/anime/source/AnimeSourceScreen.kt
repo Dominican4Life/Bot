@@ -135,6 +135,8 @@ class AnimeSourceScreen(
         val context = LocalContext.current
         val haptic = LocalHapticFeedback.current
         val screenModel = rememberScreenModel { AnimeSourceScreenModel(sourceId) }
+        // KMK (r118): ⋮ Edit source / Make an editable copy
+        val editAction = eu.kanade.tachiyomi.ui.sourcelab.rememberBrowseEditAction(sourceId, anime = true)
         val state by screenModel.state.collectAsState()
         val preview by screenModel.preview.collectAsState()
         // KMK (r116): a bot check waiting for you: "Solve the check to continue" instead of the error, and the list
@@ -262,6 +264,7 @@ class AnimeSourceScreen(
                                 incognito = state.incognito,
                                 // KMK (r117): no AniList lookups for this source's titles
                                 sourceInfoOnly = state.sourceInfoOnly,
+                                editAction = editAction,
                                 onToggleSourceInfoOnly = {
                                     context.toast(
                                         if (state.sourceInfoOnly) {

@@ -92,9 +92,26 @@ object HlsRelay {
         return relayUrl(id, url, playlist = true)
     }
 
+    /**
+     * KMK (r118): the address mpv should open instead of [url], a plain video file (mp4, mkv, webm…) fetched with
+     * [headers] through the app's client, so it gets the same cookies the source's own requests and downloads get.
+     * Hosts that answer mpv's direct request with 403 (no cookies) play this way. Range is passed on, so seeking
+     * works. Call off the main thread the first time (opens the local socket).
+     */
+    @Synchronized
+    fun wrapFile(url: String, headers: Headers): String {
+        val id = nextId.getAndIncrement().toString()
+        sessions[id] = headers
+        originals[id] = url
+        lastUsed[id] = System.currentTimeMillis()
+        val ext = url.substringBefore('?').substringAfterLast('.', "").lowercase()
+            .takeIf { it in setOf("mp4", "mkv", "webm", "mov", "m4v", "avi", "flv", "ts") } ?: "mp4"
+        return "http://127.0.0.1:${port()}/f/$id?u=${Uri.encode(url)}&x=video.$ext"
+    }
+
     /** The stream behind a relayed address, or the address itself when it isn't one */
     fun original(url: String): String {
-        val match = Regex("""^http://127\.0\.0\.1:\d+/p/(\d+)\?""").find(url) ?: return url
+        val match = Regex("""^http://127\.0\.0\.1:\d+/[pf]/(\d+)\?""").find(url) ?: return url
         return originals[match.groupValues[1]] ?: url
     }
 
@@ -122,12 +139,17 @@ object HlsRelay {
             val target = parsed.getQueryParameter("u")
             val headers = id?.let { sessions[it] }
             val out = socket.getOutputStream()
-            if (target == null || headers == null || (kind != "p" && kind != "s")) {
+            if (target == null || headers == null || (kind != "p" && kind != "s" && kind != "f")) {
                 respond(out, 404, "text/plain", "Not found".toByteArray())
                 return
             }
             // KMK: this stream is in use (see lastUsed)
             if (id != null) lastUsed[id] = System.currentTimeMillis()
+            // KMK (r118): a plain video file: passed through as it comes (Range kept), with the app client's cookies
+            if (kind == "f") {
+                serveFile(out, target, headers, range)
+                return
+            }
             // KMK (r95): pieces go through the stream client too (no 120 s call deadline, no 5 MiB HTTP cache that
             // wrote every piece to flash once) and without the per-request "net" Logs line (one per piece pushed
             // everything else out of Logs)
@@ -300,6 +322,39 @@ object HlsRelay {
         }
     }
     // KMK <--
+
+    /** KMK (r118): a [wrapFile] request: the file with the source's headers + the app's cookies, streamed on */
+    private fun serveFile(out: OutputStream, target: String, headers: Headers, range: String?) {
+        val host = target.toHttpUrlOrNull()?.host ?: target
+        val request = Request.Builder().url(target).headers(headers)
+            .apply { range?.takeIf { it.isNotEmpty() }?.let { header("Range", it) } }
+            .tag(NoNetLog::class.java, NoNetLog)
+            .build()
+        val response = try {
+            execute(request, stream = true)
+        } catch (e: java.io.IOException) {
+            AppLog.add('W', "player", "Video file: couldn't reach $host: ${e.message}")
+            respond(out, 502, "text/plain", ByteArray(0))
+            return
+        }
+        response.use {
+            if (!it.isSuccessful) {
+                val cookies = runCatching { network.cookieJar.loadForRequest(target.toHttpUrl()).size }.getOrDefault(0)
+                AppLog.add(
+                    'W',
+                    "player",
+                    "Video file answered ${it.code} through the app's connection: $host " +
+                        "(headers: ${headers.names().joinToString().ifEmpty { "none" }}; cookies: $cookies)",
+                )
+                respond(out, it.code, "text/plain", ByteArray(0))
+                return
+            }
+            if (range == null) {
+                AppLog.add('D', "player", "Video file through the app's connection: $host (${it.code})")
+            }
+            passThrough(out, it)
+        }
+    }
 
     /** Points every playlist, piece, key and map of a playlist at the relay (keys go direct) */
     private fun rewrite(id: String, base: String, playlist: String): String {

@@ -173,6 +173,8 @@ data class BrowseSourceScreen(
 
         // SY -->
         val context = LocalContext.current
+        // KMK (r118): ⋮ Edit source / Make an editable copy
+        val editAction = eu.kanade.tachiyomi.ui.sourcelab.rememberBrowseEditAction(screenModel.source.id, anime = false)
         // SY <--
 
         // KMK -->
@@ -340,6 +342,7 @@ data class BrowseSourceScreen(
                                 // KMK -->
                                 onToggleIncognito = screenModel::toggleIncognitoMode,
                                 incognito = screenModel.incognitoMode.value,
+                                editAction = editAction,
                                 // KMK <--
                                 onSearch = screenModel::search,
                                 // KMK -->

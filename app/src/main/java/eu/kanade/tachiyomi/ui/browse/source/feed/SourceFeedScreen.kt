@@ -63,6 +63,8 @@ class SourceFeedScreen(val sourceId: Long) : Screen() {
         val state by screenModel.state.collectAsState()
         val navigator = LocalNavigator.currentOrThrow
         val context = LocalContext.current
+        // KMK (r118): ⋮ Edit source / Make an editable copy
+        val editAction = eu.kanade.tachiyomi.ui.sourcelab.rememberBrowseEditAction(screenModel.source.id, anime = false)
 
         // KMK -->
         screenModel.source.let {
@@ -155,6 +157,7 @@ class SourceFeedScreen(val sourceId: Long) : Screen() {
                         )
                     }.takeIf { screenModel.source is HttpSource },
                     onToggleIncognito = screenModel::toggleIncognitoMode,
+                    editAction = editAction,
                     onSourceSettingClick = {
                         when {
                             screenModel.source.isEhBasedSource() && isHentaiEnabled ->

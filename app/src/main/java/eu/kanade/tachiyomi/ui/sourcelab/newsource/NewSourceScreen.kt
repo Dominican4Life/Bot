@@ -106,13 +106,18 @@ internal object LabFlowScreenFactory {
  * side by side (Site check, Build by tapping, From a template, Record and convert), then Import from an extension or
  * a file. The engine's markers (the r96 Detected page) open from the plan's "See the markers".
  */
-internal class NewSourceScreen(private val kindHint: Boolean? = null) : Screen(), LabFlowScreen {
+internal class NewSourceScreen(
+    private val kindHint: Boolean? = null,
+    /** KMK (r118): Browse ⋮ "Make an editable copy": Record and convert of this installed extension source, at once */
+    private val recordSourceId: Long? = null,
+) : Screen(), LabFlowScreen {
 
     @Composable
     override fun Content() {
         val navigator = LocalNavigator.currentOrThrow
         val model = rememberScreenModel { NewSourceScreenModel(kindHint) }
         val state by model.state.collectAsState()
+        LaunchedEffect(recordSourceId) { recordSourceId?.let(model::recordInstalled) }
 
         // KMK (r110): the pushed form (the Lab itself shows the embedded one, [LabNewSourcePane]); the body, Back and
         // the dialogs are [NewSourceContent], shared by both

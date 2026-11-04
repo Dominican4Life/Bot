@@ -18,6 +18,8 @@ import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.filled.ViewModule
 import androidx.compose.material.icons.outlined.Checklist
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.SearchOff
@@ -102,6 +104,8 @@ fun BrowseSourceToolbar(
     /** KMK (r117): "Source info only" for this source (anime sources); null hides the menu item */
     sourceInfoOnly: Boolean? = null,
     onToggleSourceInfoOnly: () -> Unit = {},
+    /** KMK (r118): Edit source / Make an editable copy; null hides it */
+    editAction: eu.kanade.tachiyomi.ui.sourcelab.BrowseEditAction? = null,
     // KMK <--
 ) {
     // Avoid capturing unstable source in actions lambda
@@ -167,6 +171,22 @@ fun BrowseSourceToolbar(
                                     onClick = onToggleSourceInfoOnly,
                                     icon = if (sourceInfoOnly) Icons.Outlined.SearchOff else Icons.Outlined.Search,
                                     checked = sourceInfoOnly,
+                                ),
+                            )
+                        }
+                        // KMK (r118): Edit source (a Source Lab source) / Make an editable copy (an extension)
+                        if (editAction != null) {
+                            add(
+                                AppBar.OverflowAction(
+                                    title = stringResource(
+                                        if (editAction.copy) {
+                                            KMR.strings.browse_menu_editable_copy
+                                        } else {
+                                            KMR.strings.browse_menu_edit_source
+                                        },
+                                    ),
+                                    onClick = editAction.onClick,
+                                    icon = if (editAction.copy) Icons.Outlined.ContentCopy else Icons.Outlined.Edit,
                                 ),
                             )
                         }
