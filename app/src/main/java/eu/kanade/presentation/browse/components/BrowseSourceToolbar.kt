@@ -19,6 +19,8 @@ import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.filled.ViewModule
 import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.SearchOff
 import androidx.compose.material3.FilledTonalIconToggleButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -97,6 +99,9 @@ fun BrowseSourceToolbar(
     subtitleOverride: String? = null,
     showBulkSelection: Boolean = true,
     showIncognito: Boolean = true,
+    /** KMK (r117): "Source info only" for this source (anime sources); null hides the menu item */
+    sourceInfoOnly: Boolean? = null,
+    onToggleSourceInfoOnly: () -> Unit = {},
     // KMK <--
 ) {
     // Avoid capturing unstable source in actions lambda
@@ -151,6 +156,17 @@ fun BrowseSourceToolbar(
                                         incognito,
                                     ),
                                     checked = incognito,
+                                ),
+                            )
+                        }
+                        // KMK (r117): under Incognito: the magnifier gets crossed out while it's on
+                        if (sourceInfoOnly != null) {
+                            add(
+                                AppBar.OverflowAction(
+                                    title = stringResource(KMR.strings.browse_menu_source_info_only),
+                                    onClick = onToggleSourceInfoOnly,
+                                    icon = if (sourceInfoOnly) Icons.Outlined.SearchOff else Icons.Outlined.Search,
+                                    checked = sourceInfoOnly,
                                 ),
                             )
                         }

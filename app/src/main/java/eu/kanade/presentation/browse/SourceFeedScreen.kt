@@ -6,6 +6,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.SearchOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.SmallExtendedFloatingActionButton
 import androidx.compose.material3.Text
@@ -330,6 +332,9 @@ fun SourceFeedToolbar(
     isRunning: Boolean,
     showBulkSelection: Boolean = true,
     showIncognito: Boolean = true,
+    /** KMK (r117): "Source info only" for this source (anime sources); null hides the menu item */
+    sourceInfoOnly: Boolean? = null,
+    onToggleSourceInfoOnly: () -> Unit = {},
     // KMK <--
 ) {
     SearchToolbar(
@@ -371,6 +376,21 @@ fun SourceFeedToolbar(
                             AppBar.OverflowAction(
                                 title = stringResource(MR.strings.pref_incognito_mode),
                                 onClick = onToggleIncognito,
+                            ),
+                        )
+                    }
+                    // KMK (r117): under Incognito: the magnifier gets crossed out while it's on
+                    if (sourceInfoOnly != null) {
+                        add(
+                            AppBar.OverflowAction(
+                                title = stringResource(KMR.strings.browse_menu_source_info_only),
+                                onClick = onToggleSourceInfoOnly,
+                                icon = if (sourceInfoOnly) {
+                                    Icons.Outlined.SearchOff
+                                } else {
+                                    Icons.Outlined.Search
+                                },
+                                checked = sourceInfoOnly,
                             ),
                         )
                     }

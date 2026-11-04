@@ -104,6 +104,9 @@ class AnimeSourceScreenModel(
         AnimeIncognito.subscribe(sourceId)
             .onEach { on -> mutableState.update { it.copy(incognito = on) } }
             .launchIn(screenModelScope)
+        eu.kanade.tachiyomi.data.anime.SourceInfoOnly.subscribe(sourceId)
+            .onEach { on -> mutableState.update { it.copy(sourceInfoOnly = on) } }
+            .launchIn(screenModelScope)
         // KMK <--
     }
 
@@ -111,6 +114,9 @@ class AnimeSourceScreenModel(
     private val filterSerializer = FilterSerializer()
 
     fun toggleIncognito() = AnimeIncognito.toggle(sourceId)
+
+    // KMK (r117): "Source info only" (no AniList lookups for this source's titles)
+    fun toggleSourceInfoOnly() = eu.kanade.tachiyomi.data.anime.SourceInfoOnly.toggle(sourceId)
 
     /** Saves the current search words and filters under [name] */
     fun saveSearch(name: String) {
@@ -500,6 +506,8 @@ class AnimeSourceScreenModel(
         // KMK -->
         val savedSearches: ImmutableList<SavedSearch> = persistentListOf(),
         val incognito: Boolean = false,
+        /** KMK (r117): "Source info only" is on for this source */
+        val sourceInfoOnly: Boolean = false,
         val selectionMode: Boolean = false,
         val selection: Set<Long> = emptySet(),
         /** The Filter tab: the last filter / typed search, until Clear */

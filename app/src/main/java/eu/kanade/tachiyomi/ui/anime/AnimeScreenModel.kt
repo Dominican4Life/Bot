@@ -576,6 +576,16 @@ class AnimeScreenModel(
     private fun loadEpisodeInfo(force: Boolean = false) {
         if (!force && (episodeInfoJob != null)) return
         val anime = state.value.anime ?: return
+        // KMK (r117): "Source info only" for this source (Browse ⋮): no AniList lookup, the source's own info
+        if (eu.kanade.tachiyomi.data.anime.SourceInfoOnly.isOn(anime.source)) {
+            episodeInfoJob?.cancel()
+            episodeInfoJob = null
+            mutableState.update {
+                it.copy(episodeInfo = null, episodeInfoLoading = false, episodeInfoChecked = true, sourceInfoOnly = true)
+            }
+            return
+        }
+        if (state.value.sourceInfoOnly) mutableState.update { it.copy(sourceInfoOnly = false) }
         val numbers = state.value.allEpisodes.map { it.episodeNumber }
         episodeInfoJob?.cancel()
         episodeInfoJob = screenModelScope.launchIO {
@@ -605,6 +615,28 @@ class AnimeScreenModel(
 
     fun setShowSummaries(show: Boolean) = updateEpisodeFlags {
         if (show) it and Anime.HIDE_SUMMARIES.inv() else it or Anime.HIDE_SUMMARIES
+    }
+
+    /**
+     * KMK (r117): the Display tab's "All titles from this source": every anime saved from this source gets the
+     * picture ([previews]) or summary choice, and titles added from it later start with it. One title can still be
+     * changed by itself afterwards.
+     */
+    fun setDisplayForSource(previews: Boolean, show: Boolean) {
+        val anime = state.value.anime ?: return
+        if (previews) setShowPreviews(show) else setShowSummaries(show)
+        eu.kanade.tachiyomi.data.anime.SourceInfoOnly.setSourceDefaults(
+            anime.source,
+            previews = show.takeIf { previews },
+            summaries = show.takeIf { !previews },
+        )
+        screenModelScope.launchIO {
+            repository.setEpisodeFlagBitsForSource(
+                sourceId = anime.source,
+                bits = if (previews) Anime.HIDE_PREVIEWS else Anime.HIDE_SUMMARIES,
+                hide = !show,
+            )
+        }
     }
 
     /** One of the Anime.SEASON_GROUP_* values */
@@ -976,6 +1008,8 @@ class AnimeScreenModel(
         val episodeInfoLoading: Boolean = false,
         /** True once looked up (found or not), so "Change" knows there was no match */
         val episodeInfoChecked: Boolean = false,
+        /** KMK (r117): "Source info only" is on for this anime's source: AniList isn't asked */
+        val sourceInfoOnly: Boolean = false,
         val episodes: List<Episode> = emptyList(),
         /** Seasons after the season filters and sort */
         val seasons: List<Anime> = emptyList(),

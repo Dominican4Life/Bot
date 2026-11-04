@@ -97,6 +97,14 @@ object AnimeAiringRepository {
      * With [searchByTitle], an anime with no AniList / MyAnimeList track is searched by its title.
      */
     suspend fun forAnime(anime: Anime, searchByTitle: Boolean = true, force: Boolean = false): AnimeAiring? =
+        // KMK (r117): "Source info only" sources aren't looked up on AniList
+        if (SourceInfoOnly.isOn(anime.source)) {
+            null
+        } else {
+            forAnimeLookup(anime, searchByTitle, force)
+        }
+
+    private suspend fun forAnimeLookup(anime: Anime, searchByTitle: Boolean, force: Boolean): AnimeAiring? =
         withIOContext {
             val tracks = runCatching { Injekt.get<AnimeTrackRepository>().getTracks(anime.id) }.getOrDefault(emptyList())
             mutex.withLock {
@@ -133,7 +141,9 @@ object AnimeAiringRepository {
      * The next episodes of the [animes] that have an AniList or MyAnimeList track (asked in batches), plus any
      * found earlier by title on their page. Anime with nothing airing are left out.
      */
-    suspend fun forLibrary(animes: List<Anime>): Map<Long, AnimeAiring> = withIOContext {
+    suspend fun forLibrary(all: List<Anime>): Map<Long, AnimeAiring> = withIOContext {
+        // KMK (r117): "Source info only" sources aren't looked up on AniList
+        val animes = all.filterNot { SourceInfoOnly.isOn(it.source) }
         if (animes.isEmpty()) return@withIOContext emptyMap()
         val tracks = runCatching { Injekt.get<AnimeTrackRepository>().getAll().groupBy { it.animeId } }
             .getOrDefault(emptyMap())

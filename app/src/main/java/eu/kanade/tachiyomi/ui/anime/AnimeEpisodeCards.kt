@@ -214,8 +214,11 @@ internal fun AniListEpisodeInfoLine(
     loading: Boolean,
     checked: Boolean,
     onChange: () -> Unit,
+    /** KMK (r117): "Source info only" is on for this source: AniList isn't asked, no Change */
+    sourceOnly: Boolean = false,
 ) {
     val text = when {
+        sourceOnly -> "Source info only: the source's own episode info is shown"
         info != null -> "Episode info: AniList · ${info.title}" +
             (if (info.offset > 0) " (from episode ${info.offset + 1})" else "")
         loading -> "Looking for this anime on AniList…"
@@ -236,7 +239,7 @@ internal fun AniListEpisodeInfoLine(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
-        if (!loading) {
+        if (!loading && !sourceOnly) {
             TextButton(onClick = onChange) { Text("Change") }
         }
     }

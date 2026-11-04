@@ -260,6 +260,18 @@ class AnimeSourceScreen(
                                     screenModel.toggleIncognito()
                                 },
                                 incognito = state.incognito,
+                                // KMK (r117): no AniList lookups for this source's titles
+                                sourceInfoOnly = state.sourceInfoOnly,
+                                onToggleSourceInfoOnly = {
+                                    context.toast(
+                                        if (state.sourceInfoOnly) {
+                                            KMR.strings.source_info_only_off
+                                        } else {
+                                            KMR.strings.source_info_only_on
+                                        },
+                                    )
+                                    screenModel.toggleSourceInfoOnly()
+                                },
                                 onSearch = { screenModel.search(it) },
                                 toggleSelectionMode = screenModel::toggleSelectionMode,
                                 isRunning = false,

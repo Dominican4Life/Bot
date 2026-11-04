@@ -36,6 +36,10 @@ SELECT * FROM animes WHERE _id = :id;
 getByUrlAndSource:
 SELECT * FROM animes WHERE url = :url AND source = :source LIMIT 1;
 
+-- KMK (r117): every anime saved from one source (Display tab: "All titles from this source")
+getBySource:
+SELECT * FROM animes WHERE source = :source;
+
 -- KMK: the library. A season is left out when its parent is in the library (the parent stands for it).
 getFavorites:
 SELECT * FROM animes

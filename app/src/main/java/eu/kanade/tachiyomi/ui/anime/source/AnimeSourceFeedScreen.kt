@@ -69,6 +69,9 @@ class AnimeSourceFeedScreen(private val sourceId: Long) : Screen() {
         val state by screenModel.state.collectAsState()
         val source = screenModel.source
         var searchQuery by remember { mutableStateOf<String?>(null) }
+        // KMK (r117): "Source info only" for this source
+        val sourceInfoOnly by remember { eu.kanade.tachiyomi.data.anime.SourceInfoOnly.subscribe(sourceId) }
+            .collectAsState(initial = eu.kanade.tachiyomi.data.anime.SourceInfoOnly.isOn(sourceId))
 
         Scaffold(
             topBarScrollBehavior = TopAppBarDefaults.pinnedScrollBehavior(),
@@ -107,6 +110,13 @@ class AnimeSourceFeedScreen(private val sourceId: Long) : Screen() {
                     toggleSelectionMode = {},
                     isRunning = false,
                     showBulkSelection = false,
+                    sourceInfoOnly = sourceInfoOnly,
+                    onToggleSourceInfoOnly = {
+                        context.toast(
+                            if (sourceInfoOnly) KMR.strings.source_info_only_off else KMR.strings.source_info_only_on,
+                        )
+                        eu.kanade.tachiyomi.data.anime.SourceInfoOnly.toggle(sourceId)
+                    },
                 )
             },
             floatingActionButton = {

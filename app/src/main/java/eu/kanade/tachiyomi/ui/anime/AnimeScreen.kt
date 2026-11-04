@@ -334,6 +334,9 @@ class AnimeScreen(private val animeId: Long) : Screen() {
                     onDisplayNumberChanged = screenModel::setDisplayNumber,
                     onShowPreviewsChanged = screenModel::setShowPreviews,
                     onShowSummariesChanged = screenModel::setShowSummaries,
+                    // KMK (r117): "Just this title / All titles from <source>"
+                    sourceName = state.sourceName,
+                    onDisplayForSource = screenModel::setDisplayForSource,
                     onSeasonGroupingChanged = screenModel::setSeasonGrouping,
                     onReset = screenModel::resetEpisodeSettings,
                     onSetAsDefault = { dialog = AnimeDialog.SetDefault },
@@ -686,10 +689,51 @@ private fun AnimeEpisodeSettingsDialog(
     onDisplayNumberChanged: (Boolean) -> Unit,
     onShowPreviewsChanged: (Boolean) -> Unit,
     onShowSummariesChanged: (Boolean) -> Unit,
+    sourceName: String?,
+    onDisplayForSource: (previews: Boolean, show: Boolean) -> Unit,
     onSeasonGroupingChanged: (Long) -> Unit,
     onReset: () -> Unit,
     onSetAsDefault: () -> Unit,
 ) {
+    // KMK (r117): a thumbnail / summary change asks "Just this title / All titles from <source>":
+    // first = pictures (false = summaries), second = show
+    var askScope by remember { mutableStateOf<Pair<Boolean, Boolean>?>(null) }
+    askScope?.let { (previews, show) ->
+        AlertDialog(
+            onDismissRequest = { askScope = null },
+            title = { Text(stringResource(KMR.strings.anime_display_scope_title)) },
+            text = {
+                Column {
+                    TextButton(
+                        onClick = {
+                            askScope = null
+                            if (previews) onShowPreviewsChanged(show) else onShowSummariesChanged(show)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(stringResource(KMR.strings.anime_display_scope_this)) }
+                    TextButton(
+                        onClick = {
+                            askScope = null
+                            onDisplayForSource(previews, show)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            if (sourceName.isNullOrBlank()) {
+                                stringResource(KMR.strings.anime_display_scope_source_fallback)
+                            } else {
+                                stringResource(KMR.strings.anime_display_scope_source, sourceName)
+                            },
+                        )
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { askScope = null }) { Text(stringResource(MR.strings.action_cancel)) }
+            },
+        )
+    }
     TabbedDialog(
         onDismissRequest = onDismissRequest,
         tabTitles = persistentListOf(
@@ -778,12 +822,12 @@ private fun AnimeEpisodeSettingsDialog(
                     CheckboxItem(
                         label = stringResource(KMR.strings.anime_show_episode_thumbnail),
                         checked = anime.showPreviews,
-                        onClick = { onShowPreviewsChanged(!anime.showPreviews) },
+                        onClick = { askScope = true to !anime.showPreviews },
                     )
                     CheckboxItem(
                         label = stringResource(KMR.strings.anime_show_episode_summary),
                         checked = anime.showSummaries,
-                        onClick = { onShowSummariesChanged(!anime.showSummaries) },
+                        onClick = { askScope = false to !anime.showSummaries },
                     )
 
                     HorizontalDivider(
@@ -1319,6 +1363,7 @@ private fun EpisodeInfoLine(state: AnimeScreenModel.State, onChange: () -> Unit)
         loading = state.episodeInfoLoading,
         checked = state.episodeInfoChecked,
         onChange = onChange,
+        sourceOnly = state.sourceInfoOnly,
     )
 }
 

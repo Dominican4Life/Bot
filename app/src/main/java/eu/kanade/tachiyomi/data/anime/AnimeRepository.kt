@@ -186,7 +186,8 @@ class AnimeRepository(
             )
             val newId = animesQueries.selectLastInsertedRowId().executeAsOne()
             // KMK: episode sort / filters / display chosen with "Set as default"
-            val defaults = AnimeEpisodeDefaults.newAnimeFlags()
+            // KMK (r117): plus this source's own picture / summary defaults
+            val defaults = SourceInfoOnly.applySourceDefaults(sourceId, AnimeEpisodeDefaults.newAnimeFlags())
             if (defaults != 0L) animesQueries.setEpisodeFlags(flags = defaults, id = newId)
             newId
         }
@@ -239,7 +240,8 @@ class AnimeRepository(
                 )
                 val newId = animesQueries.selectLastInsertedRowId().executeAsOne()
                 // KMK: episode sort / filters / display chosen with "Set as default"
-                val defaults = AnimeEpisodeDefaults.newAnimeFlags()
+                // KMK (r117): plus this source's own picture / summary defaults
+                val defaults = SourceInfoOnly.applySourceDefaults(sourceId, AnimeEpisodeDefaults.newAnimeFlags())
                 if (defaults != 0L) animesQueries.setEpisodeFlags(flags = defaults, id = newId)
                 inserted++
                 animesQueries.getById(newId, ::mapAnimeRaw).executeAsOne().withCustomInfo()
@@ -295,6 +297,19 @@ class AnimeRepository(
 
     suspend fun setEpisodeFlags(anime: Anime, flags: Long) {
         handler.await { animesQueries.setEpisodeFlags(flags, anime.id) }
+    }
+
+    /**
+     * KMK (r117): the Display tab's "All titles from this source": sets or clears [bits] (Anime.HIDE_PREVIEWS /
+     * HIDE_SUMMARIES) on every anime saved from [sourceId], in one transaction
+     */
+    suspend fun setEpisodeFlagBitsForSource(sourceId: Long, bits: Long, hide: Boolean) {
+        handler.await(inTransaction = true) {
+            animesQueries.getBySource(sourceId, ::mapAnimeRaw).executeAsList().forEach { anime ->
+                val flags = if (hide) anime.episodeFlags or bits else anime.episodeFlags and bits.inv()
+                if (flags != anime.episodeFlags) animesQueries.setEpisodeFlags(flags, anime.id)
+            }
+        }
     }
 
     // Merging (KMK)
