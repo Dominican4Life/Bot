@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.ViewAgenda
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -44,6 +45,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.browse.components.BrowsePreviewInfoHeader
@@ -65,6 +67,7 @@ import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.selectedBackground
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
 
@@ -104,6 +107,69 @@ fun AnimeEpisodePanel(
         key(anime.id) {
             val listState = rememberLazyListState()
             val displayManga = remember(anime) { anime.asDisplayManga() }
+            // KMK (r123): episode thumbnails / summaries here too, the same per-title switches as the title page's
+            // Display tab (episodeFlags), with "Just this title / All titles from <source>"
+            var showThumbs by remember { mutableStateOf(anime.showPreviews) }
+            var showSummaries by remember { mutableStateOf(anime.showSummaries) }
+            var askScope by remember { mutableStateOf<Pair<Boolean, Boolean>?>(null) }
+            val scope = androidx.compose.runtime.rememberCoroutineScope()
+            val applyDisplay: (Boolean, Boolean, Boolean) -> Unit = { previews, show, wholeSource ->
+                if (previews) showThumbs = show else showSummaries = show
+                val bit = if (previews) Anime.HIDE_PREVIEWS else Anime.HIDE_SUMMARIES
+                scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    val repo = Injekt.get<eu.kanade.tachiyomi.data.anime.AnimeRepository>()
+                    var flags = anime.episodeFlags
+                    flags = if (showThumbs) flags and Anime.HIDE_PREVIEWS.inv() else flags or Anime.HIDE_PREVIEWS
+                    flags = if (showSummaries) flags and Anime.HIDE_SUMMARIES.inv() else flags or Anime.HIDE_SUMMARIES
+                    repo.setEpisodeFlags(anime, flags)
+                    if (wholeSource) {
+                        eu.kanade.tachiyomi.data.anime.SourceInfoOnly.setSourceDefaults(
+                            anime.source,
+                            previews = show.takeIf { previews },
+                            summaries = show.takeIf { !previews },
+                        )
+                        repo.setEpisodeFlagBitsForSource(anime.source, bit, hide = !show)
+                    }
+                }
+            }
+            askScope?.let { (previews, show) ->
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { askScope = null },
+                    title = { Text(stringResource(KMR.strings.anime_display_scope_title)) },
+                    text = {
+                        Column {
+                            androidx.compose.material3.TextButton(
+                                onClick = {
+                                    askScope = null
+                                    applyDisplay(previews, show, false)
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text(stringResource(KMR.strings.anime_display_scope_this)) }
+                            androidx.compose.material3.TextButton(
+                                onClick = {
+                                    askScope = null
+                                    applyDisplay(previews, show, true)
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(
+                                    if (sourceName.isBlank()) {
+                                        stringResource(KMR.strings.anime_display_scope_source_fallback)
+                                    } else {
+                                        stringResource(KMR.strings.anime_display_scope_source, sourceName)
+                                    },
+                                )
+                            }
+                        }
+                    },
+                    confirmButton = {},
+                    dismissButton = {
+                        androidx.compose.material3.TextButton(onClick = { askScope = null }) {
+                            Text(stringResource(MR.strings.action_cancel))
+                        }
+                    },
+                )
+            }
             // KMK (r88): download buttons like the manga preview's, fed by AnimeDownloadManager's queue and files
             val downloadManager = remember { Injekt.get<AnimeDownloadManager>() }
             val downloadQueue by downloadManager.queue.collectAsState()
@@ -162,6 +228,39 @@ fun AnimeEpisodePanel(
                             style = MaterialTheme.typography.titleMedium,
                             modifier = Modifier.weight(1f),
                         )
+                        // KMK (r123): thumbnails / summaries for this title's episodes
+                        var showDisplayMenu by remember { mutableStateOf(false) }
+                        Box {
+                            IconButton(onClick = { showDisplayMenu = true }) {
+                                Icon(
+                                    imageVector = Icons.Outlined.ViewAgenda,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                            DropdownMenu(expanded = showDisplayMenu, onDismissRequest = { showDisplayMenu = false }) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(KMR.strings.anime_show_episode_thumbnail)) },
+                                    trailingIcon = {
+                                        androidx.compose.material3.Checkbox(checked = showThumbs, onCheckedChange = null)
+                                    },
+                                    onClick = {
+                                        showDisplayMenu = false
+                                        askScope = true to !showThumbs
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(KMR.strings.anime_show_episode_summary)) },
+                                    trailingIcon = {
+                                        androidx.compose.material3.Checkbox(checked = showSummaries, onCheckedChange = null)
+                                    },
+                                    onClick = {
+                                        showDisplayMenu = false
+                                        askScope = false to !showSummaries
+                                    },
+                                )
+                            }
+                        }
                         // KMK (r88): the download menu, like the manga preview's
                         var showDownloadMenu by remember { mutableStateOf(false) }
                         Box {
@@ -226,6 +325,9 @@ fun AnimeEpisodePanel(
                             onLongClick = { onPlay(episode) },
                             onToggleSeen = { onToggleSeen(episode) },
                             onToggleBookmark = { onToggleBookmark(episode) },
+                            showThumb = showThumbs,
+                            showSummary = showSummaries,
+                            fallbackImage = displayManga.thumbnailUrl,
                             downloaded = episode.id in downloadedIds,
                             queued = queuedById[episode.id],
                             onDownload = { action ->
@@ -302,6 +404,10 @@ private fun AnimePanelEpisodeRow(
     onLongClick: () -> Unit,
     onToggleSeen: () -> Unit,
     onToggleBookmark: () -> Unit,
+    /** KMK (r123): the episode's picture on the left / its summary under the title (the title's Display switches) */
+    showThumb: Boolean,
+    showSummary: Boolean,
+    fallbackImage: String?,
     downloaded: Boolean,
     queued: AnimeDownloadManager.Item?,
     onDownload: (ChapterDownloadAction) -> Unit,
@@ -320,6 +426,19 @@ private fun AnimePanelEpisodeRow(
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(start = 16.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
     ) {
+        if (showThumb) {
+            val image = episode.previewUrl?.takeIf { it.isNotBlank() } ?: fallbackImage
+            coil3.compose.AsyncImage(
+                model = image,
+                contentDescription = null,
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                alpha = if (episode.seen) 0.5f else 1f,
+                modifier = Modifier
+                    .padding(end = 12.dp)
+                    .size(width = 112.dp, height = 63.dp)
+                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp)),
+            )
+        }
         Column(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -339,6 +458,18 @@ private fun AnimePanelEpisodeRow(
                     text = episode.name,
                     style = MaterialTheme.typography.bodyMedium,
                     color = LocalContentColor.current.copy(alpha = if (episode.seen) DISABLED_ALPHA else 1f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            val summary = episode.summary?.takeIf { showSummary && it.isNotBlank() }
+            if (summary != null) {
+                Text(
+                    text = summary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = LocalContentColor.current.copy(
+                        alpha = if (episode.seen) DISABLED_ALPHA else SECONDARY_ALPHA,
+                    ),
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
