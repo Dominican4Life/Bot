@@ -1,5 +1,12 @@
 package eu.kanade.presentation.browse.components
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -88,24 +95,125 @@ fun BrowsePreviewInfoHeader(
             interval = manga.fetchInterval,
         )
 
-        val tags = remember(manga.genre) { manga.genre?.filter { it.isNotBlank() } }
-        eu.kanade.presentation.manga.components.ExpandableMangaDescription(
-            defaultExpandState = true,
-            description = manga.description,
-            tagsProvider = { tags },
-            notes = manga.notes,
-            onTagSearch = { onSearch(it, false) },
-            onCopyTagToClipboard = { tag ->
+        // KMK (r123): the text and the tag rows in ONE swipe card (page 1 text, page 2 tags), dots under it, no
+        // headings; the card keeps one height so the episode list below doesn't jump
+        val tags = remember(manga.genre) { manga.genre?.filter { it.isNotBlank() }.orEmpty() }
+        val chips = remember(manga.source, tags) {
+            eu.kanade.presentation.manga.components.SearchMetadataChips(null, manga.source, tags)
+        }
+        val description = manga.description?.takeIf { it.isNotBlank() }
+        SwipeInfoCard(
+            description = description,
+            tags = tags,
+            chips = chips,
+            onSearch = onSearch,
+            onCopy = { tag ->
                 context.getSystemService(android.content.ClipboardManager::class.java)
                     ?.setPrimaryClip(android.content.ClipData.newPlainText(tag, tag))
             },
-            // Notes are edited on the full title page
-            onEditNotes = onOpenDetails,
-            searchMetadataChips = remember(manga.source, tags) {
-                eu.kanade.presentation.manga.components.SearchMetadataChips(null, manga.source, tags)
-            },
-            doSearch = onSearch,
         )
         HorizontalDivider(modifier = Modifier.padding(top = 8.dp))
     }
 }
+
+/** KMK (r123): which page of the swipe card shows when a panel opens (kept while the app is open) */
+private var swipeCardPage = 0
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SwipeInfoCard(
+    description: String?,
+    tags: List<String>,
+    chips: eu.kanade.presentation.manga.components.SearchMetadataChips?,
+    onSearch: (query: String, global: Boolean) -> Unit,
+    onCopy: (String) -> Unit,
+) {
+    val pages = buildList {
+        if (description != null) add(0)
+        if (tags.isNotEmpty()) add(1)
+    }
+    if (pages.isEmpty()) return
+    val pagerState = androidx.compose.foundation.pager.rememberPagerState(
+        initialPage = swipeCardPage.coerceIn(0, pages.size - 1),
+    ) { pages.size }
+    androidx.compose.runtime.LaunchedEffect(pagerState.currentPage) { swipeCardPage = pagerState.currentPage }
+    val shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp)
+    androidx.compose.foundation.pager.HorizontalPager(
+        state = pagerState,
+        pageSpacing = 12.dp,
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 6.dp)
+            .height(CardHeight),
+    ) { index ->
+        androidx.compose.foundation.layout.Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(shape)
+                .background(androidx.compose.material3.MaterialTheme.colorScheme.surfaceContainerHigh)
+                .verticalScroll(androidx.compose.foundation.rememberScrollState())
+                .padding(vertical = 10.dp),
+        ) {
+            when (pages[index]) {
+                0 -> androidx.compose.foundation.text.selection.SelectionContainer {
+                    androidx.compose.material3.Text(
+                        text = description.orEmpty(),
+                        style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(horizontal = 12.dp),
+                    )
+                }
+                else -> if (chips != null) {
+                    // grouped rows: label on the left, its values beside it (like the title page)
+                    eu.kanade.presentation.manga.components.NamespaceTags(
+                        tags = chips,
+                        onClick = { onSearch(it, false) },
+                        onLongClick = { onSearch(it, true) },
+                        onDoubleClick = onCopy,
+                    )
+                } else {
+                    androidx.compose.foundation.layout.FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.padding(horizontal = 12.dp),
+                    ) {
+                        tags.forEach { tag ->
+                            eu.kanade.presentation.manga.components.TagsChip(
+                                text = tag,
+                                onClick = { onSearch(tag, false) },
+                                onLongClick = { onSearch(tag, true) },
+                                onDoubleClick = { onCopy(tag) },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (pages.size > 1) {
+        androidx.compose.foundation.layout.Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp, androidx.compose.ui.Alignment.CenterHorizontally),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp),
+        ) {
+            pages.indices.forEach { i ->
+                val selected = pagerState.currentPage == i
+                androidx.compose.foundation.layout.Box(
+                    Modifier
+                        .height(7.dp)
+                        .width(if (selected) 18.dp else 7.dp)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .background(
+                            if (selected) {
+                                androidx.compose.material3.MaterialTheme.colorScheme.primary
+                            } else {
+                                androidx.compose.material3.MaterialTheme.colorScheme.outlineVariant
+                            },
+                        ),
+                )
+            }
+        }
+    }
+}
+
+private val CardHeight = 150.dp

@@ -176,13 +176,9 @@ fun AnimeEpisodePanel(
                                 expanded = showDownloadMenu,
                                 onDismissRequest = { showDownloadMenu = false },
                             ) {
+                                // KMK (r123): only Unseen / All episodes / Bookmarked here (the owner's choice), like the
+                                // manga preview panel
                                 listOf(
-                                    DownloadAction.NEXT_1_CHAPTER to
-                                        stringResource(KMR.strings.anime_download_next_one),
-                                    DownloadAction.NEXT_5_CHAPTERS to
-                                        stringResource(KMR.strings.anime_download_ahead_next, 5),
-                                    DownloadAction.NEXT_10_CHAPTERS to
-                                        stringResource(KMR.strings.anime_download_ahead_next, 10),
                                     DownloadAction.UNREAD_CHAPTERS to stringResource(KMR.strings.anime_filter_unseen),
                                     DownloadAction.ALL_CHAPTERS to
                                         stringResource(KMR.strings.anime_download_all_episodes),
