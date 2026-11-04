@@ -912,6 +912,11 @@ Two commits (the first failed CI: `openers += opener` on a `MutableSet<Element>`
 - **VideoCheck** (`jssource/lab/VideoCheck.kt`): HLS master → lowest quality → key (16 bytes for AES-128) → first piece (Range 0-65535); DASH manifest (+ DRM) → first segment; files sniffed. Test Run Video step: Green only when every server checks ok, Amber with the reason when the playlist answers but a piece/key fails. The builder's Test uses it too.
 - **VideoPreview** (`ui/player/VideoPreview.kt`, PlayerActivity/PlayerViewModel `isPreview`): plays a plain url + headers (HLS through the relay), launched into PiP with `ActivityOptions.makeLaunchIntoPip` (13+, source rect = the preview box) or early PiP on 8–12; orientation held until PiP is left; nothing saved; errors shown over the video. Used by the builder, the Test Run's Video step and Why won't it play.
 
+## Changes in r117 (4 November 2026)
+
+- **Source info only** (`data/anime/SourceInfoOnly.kt`, pref `source_info_only`, entries `anime:<source id>`): an anime source's ⋮ (BrowseSourceToolbar and SourceFeedToolbar, `sourceInfoOnly` param, null hides it) has it under Incognito, Search / SearchOff icon + switch. While on: `AnimeScreenModel.loadEpisodeInfo` skips `AniListEpisodeMatch.load` (state `sourceInfoOnly`, the info line says "Source info only", no Change), `AnimeAiringRepository.forAnime` returns null and `forLibrary` drops those titles (no airing, no title search). Tracking added by the user is untouched; AniSkip is not affected. Not offered for manga sources: manga pages make no automatic AniList lookups.
+- **Thumbnail / summary for a whole source**: the Display tab's two checkboxes ask "Just this title / All titles from <source>". All = `AnimeRepository.setEpisodeFlagBitsForSource` (new `animes.sq` query `getBySource`, one transaction, HIDE_PREVIEWS / HIDE_SUMMARIES bits) + per-source defaults `anime_source_show_previews_<id>` / `anime_source_show_summaries_<id>` (-1 follow app, 0 hide, 1 show), applied to new anime by `SourceInfoOnly.applySourceDefaults` in both insert paths. Per-title flags stay the source of truth; Reset still goes back to the app defaults.
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
