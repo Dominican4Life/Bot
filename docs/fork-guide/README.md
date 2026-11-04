@@ -944,6 +944,11 @@ Two commits (the first failed CI: `openers += opener` on a `MutableSet<Element>`
 
 - **Nightly Re-test removed**: the Lab ⋮ rows "Re-test nightly (03:00)" / "Nightly only on Wi-Fi" are gone. `App.onCreate` calls `RetestJob.cancelNightly` (cancels the WorkManager work `source_lab_retest`, sets the schedule off). Re-test all / Check all sources stay. Why: the owner checks by hand. Connection (⋮ › Connection, r116 pace) stays.
 
+## Changes in r122 (4 November 2026)
+
+- **Per-source player memory removed** (the owner didn't want it): `PlayerMemory.kt` and everything it fed are gone. That covers the remembered server tried first (and its wait), played/failed counts, remembered quality, software decoding after a failure, and the app's connection for installed extensions. Also removed: the player ⋮ "Remembered for this source", the server dots and chips, and the Sub/Dub note. `App.onCreate` deletes `filesDir/player_memory`. `PlayerActivity.playsThroughApp` is the r118 rule again (Code editor sources' plain files and Lab previews only).
+- **Kept from r119/r120**: Quality sheet Now playing, Inside this stream (`videoTrackList` / `selectVideoTrack`), the one-quality card with Check the site in Source Lab, "720p (Auto)" (now `QualityDetails.qualityLabelOf`), and the PlayerObserver "(normal with copy decoding)" line.
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
