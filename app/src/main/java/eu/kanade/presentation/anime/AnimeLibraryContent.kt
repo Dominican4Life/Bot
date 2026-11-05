@@ -1,5 +1,6 @@
 package eu.kanade.presentation.anime
 
+import dev.chrisbanes.haze.hazeSource
 import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
@@ -239,7 +240,10 @@ fun AnimeLibraryContent(
                     ) { panelButtons() }
                 }
 
+                // KMK (r131): the library covers are what the glass panel blurs
+                val glassHaze = remember { dev.chrisbanes.haze.HazeState() }
                 Box(modifier = Modifier.fillMaxSize()) {
+                Box(modifier = Modifier.fillMaxSize().hazeSource(glassHaze)) {
                 PullRefresh(
                     refreshing = isRefreshing,
                     enabled = selected.isEmpty(),
@@ -279,7 +283,12 @@ fun AnimeLibraryContent(
                         )
                     }
                 }
-                panels()
+                }
+                androidx.compose.runtime.CompositionLocalProvider(
+                    eu.kanade.presentation.browse.components.LocalGlassHaze provides glassHaze,
+                ) {
+                    panels()
+                }
                 }
 
                 // Keep the page in range when the pages change (grouping, categories)

@@ -964,8 +964,9 @@ private fun MangaSummary(
             {
                 // scrim
                 val colors = listOf(Color.Transparent, MaterialTheme.colorScheme.background)
+                // KMK (r131): expanded, only the arrow shows (no dark fade over the text)
                 Box(
-                    modifier = Modifier.background(Brush.verticalGradient(colors = colors)),
+                    modifier = if (expanded) Modifier else Modifier.background(Brush.verticalGradient(colors = colors)),
                     contentAlignment = Alignment.Center,
                 ) {
                     val image = AnimatedImageVector.animatedVectorResource(R.drawable.anim_caret_down)
@@ -977,7 +978,11 @@ private fun MangaSummary(
                         // KMK -->
                         tint = MaterialTheme.colorScheme.primary, // KMK: onBackground
                         // KMK <--
-                        modifier = Modifier.background(Brush.radialGradient(colors = colors.asReversed())),
+                        modifier = if (expanded) {
+                            Modifier
+                        } else {
+                            Modifier.background(Brush.radialGradient(colors = colors.asReversed()))
+                        },
                     )
                 }
             },

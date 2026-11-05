@@ -1,5 +1,10 @@
 package eu.kanade.presentation.reader
 
+import eu.kanade.presentation.util.isTabletUi
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.tappableElement
+import kotlin.math.roundToInt
+import androidx.compose.foundation.layout.offset
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
@@ -222,6 +227,10 @@ fun ReaderGlassSheet(
     pickerChapters: List<ReaderChapterItem> = emptyList(),
     onPickChapter: ((Chapter) -> Unit)? = null,
 ) {
+    // KMK (r131): on a wide screen it is a glass side panel instead (left or right, ⇄ swaps, remembered)
+    val sideMode = isTabletUi()
+    val leftPref = remember { eu.kanade.presentation.reader.appbars.ReaderGlass.sheetLeft() }
+    val onLeft by leftPref.collectPrefState()
     var picking by remember { mutableStateOf(false) }
     LaunchedEffect(visible) { if (!visible) picking = false }
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -242,9 +251,25 @@ fun ReaderGlassSheet(
         }
         AnimatedVisibility(
             visible = visible,
-            enter = androidx.compose.animation.slideInVertically { it } + androidx.compose.animation.fadeIn(),
-            exit = androidx.compose.animation.slideOutVertically { it } + androidx.compose.animation.fadeOut(),
-            modifier = Modifier.align(Alignment.BottomCenter),
+            enter = if (sideMode) {
+                androidx.compose.animation.slideInHorizontally { if (onLeft) -it else it } +
+                    androidx.compose.animation.fadeIn()
+            } else {
+                androidx.compose.animation.slideInVertically { it } + androidx.compose.animation.fadeIn()
+            },
+            exit = if (sideMode) {
+                androidx.compose.animation.slideOutHorizontally { if (onLeft) -it else it } +
+                    androidx.compose.animation.fadeOut()
+            } else {
+                androidx.compose.animation.slideOutVertically { it } + androidx.compose.animation.fadeOut()
+            },
+            modifier = Modifier.align(
+                when {
+                    !sideMode -> Alignment.BottomCenter
+                    onLeft -> Alignment.CenterStart
+                    else -> Alignment.CenterEnd
+                },
+            ),
         ) {
             val shape = RoundedCornerShape(eu.kanade.presentation.browse.components.GlassStyle.cornerDp() + 6.dp)
             val heightPx = (fullPx * fraction - drag.value).coerceIn(fullPx * 0.2f, fullPx * 0.94f)
@@ -255,21 +280,38 @@ fun ReaderGlassSheet(
                     surface = Color.Transparent,
                     surfaceContainerLow = Color.Transparent,
                     primary = eu.kanade.presentation.reader.appbars.ReaderGlass.accent,
+                    // KMK (r131): a chapter swipe shows a soft light block, not the theme's pink one
+                    primaryContainer = Color.White.copy(alpha = 0.2f),
+                    onPrimaryContainer = Color.White,
+                    surfaceContainerLowest = Color.Transparent,
                 ),
             ) {
                 Column(
                     modifier = Modifier
-                        .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.displayCutout))
+                        // KMK (r131): clear of the navigation bar and a taskbar shown over the reader
+                        .windowInsetsPadding(
+                            WindowInsets.navigationBars
+                                .union(WindowInsets.tappableElement)
+                                .union(WindowInsets.displayCutout)
+                                .let { if (sideMode) it.union(WindowInsets.statusBars) else it },
+                        )
                         .padding(8.dp)
-                        .sizeIn(maxWidth = 640.dp)
-                        .fillMaxWidth()
-                        .height(with(density) { heightPx.toDp() })
+                        .then(
+                            if (sideMode) {
+                                Modifier.width(420.dp).fillMaxHeight()
+                            } else {
+                                Modifier
+                                    .sizeIn(maxWidth = 640.dp)
+                                    .fillMaxWidth()
+                                    .height(with(density) { heightPx.toDp() })
+                            },
+                        )
                         .shadow(18.dp, shape)
                         .liquidGlass(shape, Color(0xFF14161E), thick = true)
                         .pointerInput(Unit) {},
                 ) {
                     // Handle: drag up for full height, down for half, further down to close
-                    Box(
+                    if (sideMode) Spacer(modifier = Modifier.height(10.dp)) else Box(
                         contentAlignment = Alignment.Center,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -350,6 +392,15 @@ fun ReaderGlassSheet(
                                 }
                             }
                         }
+                        if (sideMode) {
+                            IconButton(onClick = { leftPref.set(!onLeft) }) {
+                                Icon(
+                                    Icons.Outlined.SwapHoriz,
+                                    contentDescription = null,
+                                    tint = eu.kanade.presentation.reader.appbars.ReaderGlass.content,
+                                )
+                            }
+                        }
                         IconButton(onClick = onClose) {
                             Icon(
                                 Icons.Outlined.Close,
@@ -411,7 +462,9 @@ fun ReaderGlassSheet(
                                     .fillMaxSize()
                                     .padding(horizontal = 8.dp)
                                     .clip(RoundedCornerShape(14.dp))
-                                    .background(Color(0xFF14161E).copy(alpha = 0.94f)),
+                                    // KMK (r131): frosted like the sheet (the page behind, blurred)
+                                    .liquidGlass(RoundedCornerShape(14.dp), Color(0xFF14161E))
+                                    .background(Color(0xFF14161E).copy(alpha = 0.35f)),
                             ) {
                                 items(pickerChapters.size) { index ->
                                     val item = pickerChapters[index]
@@ -593,19 +646,34 @@ fun SlidingSidePanel(
             }
         }
 
-        // Tucked: a slim glass tab on the panel's side; tap it (or drag it out) to bring the panel back as it was
+        // Tucked: a glass tab on the panel's side; tap it (or drag it out) to bring the panel back as it was.
+        // KMK (r131): bigger, and hold it to move it up or down (remembered)
         if (canMove && visible && tucked) {
             val tabShape = if (start) {
-                RoundedCornerShape(topEnd = 18.dp, bottomEnd = 18.dp)
+                RoundedCornerShape(topEnd = 20.dp, bottomEnd = 20.dp)
             } else {
-                RoundedCornerShape(topStart = 18.dp, bottomStart = 18.dp)
+                RoundedCornerShape(topStart = 20.dp, bottomStart = 20.dp)
             }
+            val tabYPref = remember { eu.kanade.presentation.browse.components.PreviewGlass.tabY() }
+            val density = androidx.compose.ui.platform.LocalDensity.current
+            val tabHeightPx = with(density) { 150.dp.toPx() }
+            val roomPx = (constraints.maxHeight - tabHeightPx).coerceAtLeast(1f)
+            var tabY by remember { mutableStateOf(tabYPref.get().coerceIn(0f, 1f)) }
+            var lifted by remember { mutableStateOf(false) }
+            val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+            val lift by androidx.compose.animation.core.animateFloatAsState(if (lifted) 1.08f else 1f, label = "tabLift")
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(6.dp),
                 modifier = Modifier
-                    .align(if (start) Alignment.CenterStart else Alignment.CenterEnd)
-                    .width(46.dp)
+                    .align(if (start) Alignment.TopStart else Alignment.TopEnd)
+                    .offset { androidx.compose.ui.unit.IntOffset(0, (tabY * roomPx).roundToInt()) }
+                    .graphicsLayer {
+                        scaleX = lift
+                        scaleY = lift
+                    }
+                    .width(68.dp)
+                    .shadow(if (lifted) 16.dp else 8.dp, tabShape)
                     .clip(tabShape)
                     .liquidGlass(tabShape)
                     .clickable { tucked = false }
@@ -615,14 +683,33 @@ fun SlidingSidePanel(
                             if ((start && amount > 6f) || (!start && amount < -6f)) tucked = false
                         }
                     }
-                    .padding(vertical = 10.dp, horizontal = 5.dp),
+                    .pointerInput(roomPx) {
+                        androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress(
+                            onDragStart = {
+                                lifted = true
+                                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                            },
+                            onDragEnd = {
+                                lifted = false
+                                tabYPref.set(tabY)
+                            },
+                            onDragCancel = {
+                                lifted = false
+                                tabYPref.set(tabY)
+                            },
+                        ) { change, drag ->
+                            change.consume()
+                            tabY = (tabY + drag.y / roomPx).coerceIn(0f, 1f)
+                        }
+                    }
+                    .padding(vertical = 10.dp, horizontal = 6.dp),
             ) {
                 if (tuckCover != null) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
                             .aspectRatio(0.7f)
-                            .clip(RoundedCornerShape(6.dp)),
+                            .clip(RoundedCornerShape(8.dp)),
                     ) { tuckCover() }
                 }
                 Icon(
@@ -644,7 +731,20 @@ fun SlidingSidePanel(
             val glassShape = RoundedCornerShape(eu.kanade.presentation.browse.components.GlassStyle.cornerDp())
             Surface(
                 modifier = Modifier
-                    .then(if (glass) Modifier.padding(8.dp) else Modifier)
+                    // KMK (r131): the glass card stops above the navigation bar (and clear of a cutout)
+                    .then(
+                        if (glass) {
+                            Modifier
+                                .windowInsetsPadding(
+                                    WindowInsets.navigationBars.union(WindowInsets.displayCutout).only(
+                                        WindowInsetsSides.Bottom + if (start) WindowInsetsSides.Start else WindowInsetsSides.End,
+                                    ),
+                                )
+                                .padding(8.dp)
+                        } else {
+                            Modifier
+                        },
+                    )
                     .width(panelWidth)
                     .fillMaxHeight()
                     // Keep touches on the panel from reaching the reader underneath
@@ -680,9 +780,14 @@ fun SlidingSidePanel(
                                 .union(WindowInsets.navigationBars)
                                 .union(WindowInsets.displayCutout)
                                 .only(
-                                    (if (applyTopInset) WindowInsetsSides.Top else WindowInsetsSides.Bottom) +
-                                        WindowInsetsSides.Bottom +
-                                        if (start) WindowInsetsSides.Start else WindowInsetsSides.End,
+                                    if (glass) {
+                                        // The card itself already sits above the bars
+                                        if (applyTopInset) WindowInsetsSides.Top else WindowInsetsSides.Bottom
+                                    } else {
+                                        (if (applyTopInset) WindowInsetsSides.Top else WindowInsetsSides.Bottom) +
+                                            WindowInsetsSides.Bottom +
+                                            if (start) WindowInsetsSides.Start else WindowInsetsSides.End
+                                    },
                                 ),
                         ),
                 ) {

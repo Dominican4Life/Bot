@@ -95,22 +95,7 @@ fun MangaToolbar(
             if (isActionMode) {
                 AppBarTitle(actionModeCounter.toString())
             } else if (glass) {
-                // KMK (r130): the title in its own glass pill as it appears
-                val pillShape = androidx.compose.foundation.shape.CircleShape
-                androidx.compose.foundation.layout.Box(
-                    modifier = Modifier
-                        .alpha(titleAlphaProvider())
-                        .clip(pillShape)
-                        .liquidGlass(pillShape, MaterialTheme.colorScheme.surfaceContainerHigh)
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
-                ) {
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                    )
-                }
+                // KMK (r131): no title over the page, only the floating buttons
             } else {
                 AppBarTitle(title, modifier = Modifier.alpha(titleAlphaProvider()))
             }

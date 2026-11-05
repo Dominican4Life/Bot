@@ -1,5 +1,7 @@
 package eu.kanade.tachiyomi.ui.home
 
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -153,14 +155,20 @@ object HomeScreen : Screen() {
                                     label = { androidx.compose.material3.Text("Sync") },
                                     alwaysShowLabel = alwaysShowLabel,
                                 )
+                                // KMK (r131): the animated Logs icon from More; it plays when tapped
+                                var logsPlay by remember { mutableIntStateOf(0) }
                                 androidx.compose.material3.NavigationRailItem(
                                     selected = false,
                                     // KMK (r97): the bug button keeps its label and opens Diagnostics
-                                    onClick = { navigator.push(eu.kanade.tachiyomi.ui.diagnostics.DiagnosticsScreen()) },
+                                    onClick = {
+                                        logsPlay++
+                                        navigator.push(eu.kanade.tachiyomi.ui.diagnostics.DiagnosticsScreen())
+                                    },
                                     icon = {
-                                        androidx.compose.material3.Icon(
-                                            imageVector = androidx.compose.material.icons.Icons.Outlined.BugReport,
-                                            contentDescription = "Logs",
+                                        eu.kanade.presentation.components.LiveIcon(
+                                            kind = eu.kanade.presentation.components.LiveIconKind.Logs,
+                                            play = logsPlay,
+                                            tint = androidx.compose.material3.LocalContentColor.current,
                                         )
                                     },
                                     label = { androidx.compose.material3.Text("Logs") },

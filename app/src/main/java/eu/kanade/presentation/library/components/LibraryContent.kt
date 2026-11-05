@@ -1,5 +1,6 @@
 package eu.kanade.presentation.library.components
 
+import dev.chrisbanes.haze.hazeSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -124,7 +125,10 @@ fun LibraryContent(
             ) { panelButtons() }
         }
 
+        // KMK (r131): the library covers are what the glass panel blurs
+        val glassHaze = remember { dev.chrisbanes.haze.HazeState() }
         Box(modifier = Modifier.fillMaxSize()) {
+        Box(modifier = Modifier.fillMaxSize().hazeSource(glassHaze)) {
         PullRefresh(
             refreshing = isRefreshing,
             enabled = selection.isEmpty(),
@@ -164,7 +168,12 @@ fun LibraryContent(
             )
             }
         }
-        panels()
+        }
+        androidx.compose.runtime.CompositionLocalProvider(
+            eu.kanade.presentation.browse.components.LocalGlassHaze provides glassHaze,
+        ) {
+            panels()
+        }
         }
 
         LaunchedEffect(pagerState.currentPage) {

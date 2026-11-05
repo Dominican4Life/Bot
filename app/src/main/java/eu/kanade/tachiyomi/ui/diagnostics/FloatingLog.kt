@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.diagnostics
 
+import eu.kanade.presentation.browse.components.liquidGlass
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import android.content.Context
@@ -128,7 +129,26 @@ internal fun FloatingLogHost(hidden: Boolean = false) {
         if (collapsed) {
             FloatingBubble(parent = parent)
         } else {
-            FloatingWindow(parent = parent)
+            // KMK (r131): light text on the dark glass, whatever the app theme
+            val base = MaterialTheme.colorScheme
+            MaterialTheme(
+                colorScheme = base.copy(
+                    onSurface = Color(0xFFE6E8EE),
+                    onSurfaceVariant = Color(0xFFB8BCC6),
+                    surfaceContainerHighest = Color.White.copy(alpha = 0.08f),
+                    surfaceContainerHigh = Color.White.copy(alpha = 0.05f),
+                    outline = Color.White.copy(alpha = 0.4f),
+                    outlineVariant = Color.White.copy(alpha = 0.2f),
+                    secondaryContainer = Color.White.copy(alpha = 0.16f),
+                    onSecondaryContainer = Color.White,
+                ),
+            ) {
+                androidx.compose.runtime.CompositionLocalProvider(
+                    androidx.compose.material3.LocalContentColor provides Color(0xFFE6E8EE),
+                ) {
+                    FloatingWindow(parent = parent)
+                }
+            }
         }
     }
 }
@@ -191,13 +211,15 @@ private fun FloatingWindow(parent: IntSize) {
                 ),
         )
     }
+    // KMK (r131): it moves anywhere again (even partly off the side or bottom); only its title bar has to stay
+    // clear of the bars so it can always be grabbed
+    val keep = with(density) { 96.dp.roundToPx() }
+    val titleBar = with(density) { 36.dp.roundToPx() }
     fun clamp(r: IntArray): IntArray {
         val w = r[2].coerceIn(minW, maxW)
         val h = r[3].coerceIn(minH, maxH)
-        val minX = safe.left + margin
-        val minY = safe.top + margin
-        val x = r[0].coerceIn(minX, (parent.width - safe.right - w - margin).coerceAtLeast(minX))
-        val y = r[1].coerceIn(minY, (parent.height - safe.bottom - h - margin).coerceAtLeast(minY))
+        val x = r[0].coerceIn(safe.left - w + keep, (parent.width - safe.right - keep).coerceAtLeast(safe.left - w + keep))
+        val y = r[1].coerceIn(safe.top, (parent.height - safe.bottom - titleBar).coerceAtLeast(safe.top))
         return intArrayOf(x, y, w, h)
     }
     fun persist() {
@@ -282,10 +304,10 @@ private fun FloatingWindow(parent: IntSize) {
         modifier = Modifier
             .offset { IntOffset(rect[0], rect[1]) }
             .size(with(density) { rect[2].toDp() }, with(density) { rect[3].toDp() })
-            .shadow(8.dp, RoundedCornerShape(14.dp))
-            .clip(RoundedCornerShape(14.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.96f))
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f), RoundedCornerShape(14.dp)),
+            .shadow(10.dp, RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(16.dp))
+            // KMK (r131): frosted glass (the page behind, blurred, where the screen offers it)
+            .liquidGlass(RoundedCornerShape(16.dp), Color(0xFF14161E)),
     ) {
         // Title bar: drag grip, readout, Mark, collapse, close
         Row(
@@ -293,7 +315,7 @@ private fun FloatingWindow(parent: IntSize) {
             modifier = Modifier
                 .fillMaxWidth()
                 .height(36.dp)
-                .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                .background(Color.White.copy(alpha = 0.06f))
                 .pointerInput(parent, safe) {
                     detectDragGestures(onDragEnd = { persist() }) { change, drag ->
                         change.consume()
@@ -598,49 +620,55 @@ private fun FloatingBubble(parent: IntSize) {
     val errors by FloatingLogState.errorsSinceSeen.collectAsState()
     val recording by diag.recording.collectAsState()
     val saved = FloatingLogState.rect.value
-    var pos by remember(parent, safe) {
+    // KMK (r131): where it was left is kept (it used to jump back to the edge whenever the bars showed or hid)
+    var pos by remember {
         mutableStateOf(
-            IntOffset(
+            bubblePos ?: IntOffset(
                 maxX,
                 (saved?.getOrNull(1) ?: (parent.height * 2 / 3)).coerceIn(minY, maxY),
             ),
         )
     }
+    val shown = IntOffset(pos.x.coerceIn(minX, maxX), pos.y.coerceIn(minY, maxY))
+    var play by remember { mutableIntStateOf(0) }
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(200)
+        play++
+    }
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .offset { pos }
-            .size(52.dp)
-            .shadow(6.dp, CircleShape)
+            .offset { shown }
+            .size(54.dp)
+            .shadow(8.dp, CircleShape)
             .clip(CircleShape)
-            .background(MaterialTheme.colorScheme.primaryContainer)
+            .liquidGlass(CircleShape, Color(0xFF14161E))
             .then(if (recording != null) Modifier.border(3.dp, DiagColors.problem, CircleShape) else Modifier)
-            .pointerInput(parent, safe) {
-                detectDragGestures(
-                    onDragEnd = {
-                        // Snap to the nearest side
-                        val x = if (pos.x + sizePx / 2 < parent.width / 2) minX else maxX
-                        pos = IntOffset(x, pos.y)
-                    },
-                ) { change, drag ->
+            .pointerInput(minX, minY, maxX, maxY) {
+                // KMK (r131): anywhere on the screen (no snapping to a side)
+                detectDragGestures(onDragEnd = { bubblePos = pos }) { change, drag ->
                     change.consume()
+                    val from = IntOffset(pos.x.coerceIn(minX, maxX), pos.y.coerceIn(minY, maxY))
                     pos = IntOffset(
-                        (pos.x + drag.x.roundToInt()).coerceIn(minX, maxX),
-                        (pos.y + drag.y.roundToInt()).coerceIn(minY, maxY),
+                        (from.x + drag.x.roundToInt()).coerceIn(minX, maxX),
+                        (from.y + drag.y.roundToInt()).coerceIn(minY, maxY),
                     )
                 }
             }
             .pointerInput(Unit) {
                 detectTapGestures {
+                    play++
                     FloatingLogState.errorsSinceSeen.value = 0
                     FloatingLogState.collapsed.value = false
                 }
             },
     ) {
-        Icon(
-            Icons.Outlined.BugReport,
-            contentDescription = "Floating log",
-            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+        // KMK (r131): the animated Logs icon from More
+        eu.kanade.presentation.components.LiveIcon(
+            kind = eu.kanade.presentation.components.LiveIconKind.Logs,
+            play = play,
+            tint = Color.White,
+            size = 26.dp,
         )
         if (errors > 0) {
             Badge(
@@ -651,6 +679,9 @@ private fun FloatingBubble(parent: IntSize) {
         }
     }
 }
+
+/** KMK (r131): where the bubble was left, while the app runs */
+private var bubblePos: IntOffset? = null
 
 private fun rectKey(landscape: Boolean) = if (landscape) DiagKeys.FLOAT_RECT_LANDSCAPE else DiagKeys.FLOAT_RECT_PORTRAIT
 

@@ -96,6 +96,9 @@ object ReaderGlass {
 
     fun enabled(): Preference<Boolean> = store.getBoolean("reader_glass_bars", true)
 
+    /** KMK (r131): the tablet's Chapters / Pages side panel sits on the left */
+    fun sheetLeft(): Preference<Boolean> = store.getBoolean("reader_glass_sheet_left", false)
+
     /** The tint every glass surface of the reader uses: dark so white text reads on white pages too */
     // KMK (r126): follows Settings › Appearance › Glass
     val tint: Color

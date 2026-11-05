@@ -70,6 +70,9 @@ object PreviewGlass {
 
     /** KMK (r127): the side the panel sits on (true: left), changed by dragging it or with ⇄ */
     fun leftSide(): Preference<Boolean> = store.getBoolean("preview_glass_left", true)
+
+    /** KMK (r131): where the tucked tab sits, 0 (top) .. 1 (bottom) */
+    fun tabY(): Preference<Float> = store.getFloat("preview_glass_tab_y", 0.5f)
 }
 
 enum class PreviewPanelTab { LIST, PREVIEW, DETAILS }
@@ -313,7 +316,8 @@ object GlassStyle {
 
     fun corners(): Preference<Int> = store.getInt("glass_corners", 24)
 
-    fun knob(): Preference<Int> = store.getInt("glass_knob", KNOB_GLASS)
+    // KMK (r131): a new key, so a knob picked before the lens existed starts on the lens
+    fun knob(): Preference<Int> = store.getInt("glass_knob2", KNOB_GLASS)
 
     fun reduceTransparency(): Preference<Boolean> = store.getBoolean("glass_reduce_transparency", false)
 
