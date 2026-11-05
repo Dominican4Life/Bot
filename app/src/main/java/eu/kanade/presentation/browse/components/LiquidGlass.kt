@@ -45,6 +45,8 @@ import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.HazeStyle
 import dev.chrisbanes.haze.HazeTint
 import dev.chrisbanes.haze.hazeEffect
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 /**
  * KMK (r127): real glass, after Apple's Liquid Glass. A glass surface shows what is behind it, blurred and a little
@@ -311,7 +313,7 @@ private fun DrawScope.drawGlassLight(outline: Outline, edge: Float) {
 /** KMK (r129): Android's "Remove animations" (animator duration scale 0): the glass stops flexing */
 fun glassReduceMotion(): Boolean = runCatching {
     android.provider.Settings.Global.getFloat(
-        uy.kohesive.injekt.Injekt.get<android.app.Application>().contentResolver,
+        Injekt.get<android.app.Application>().contentResolver,
         android.provider.Settings.Global.ANIMATOR_DURATION_SCALE,
         1f,
     ) == 0f
