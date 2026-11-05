@@ -86,6 +86,7 @@ import eu.kanade.presentation.reader.sidePanelWidth
 import eu.kanade.presentation.theme.CoverSeedTheme
 import eu.kanade.presentation.util.AssistContentScreen
 import eu.kanade.presentation.util.Screen
+import eu.kanade.presentation.util.isTabletUi
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.online.HttpSource
@@ -222,7 +223,9 @@ data class BrowseSourceScreen(
         // Tapping a cover highlights it and opens the chapter (left) and page (right) preview panels
         val previewScreenModel = rememberScreenModel { BrowsePreviewScreenModel(screenModel.source) }
         val previewState by previewScreenModel.state.collectAsState()
-        val previewEnabled = smartSearchConfig == null
+        // KMK (r124): the Left / Right Panel previews are for tablets; on a phone a cover tap opens the title as before
+        // and the two buttons are hidden
+        val previewEnabled = smartSearchConfig == null && isTabletUi()
         // Which panels open on the first tap of a cover (set with the Left Panel / Right Panel buttons)
         val previewPanelsPreference = remember { Injekt.get<SourcePreferences>().browsePreviewPanels() }
         val previewPanels by previewPanelsPreference.collectAsState()

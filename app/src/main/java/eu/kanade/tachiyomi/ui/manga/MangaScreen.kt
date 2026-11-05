@@ -254,6 +254,11 @@ class MangaScreen(
         // KMK -->
         val coverRatio = remember { mutableFloatStateOf(1f) }
         val hazeState = remember { HazeState() }
+        // KMK (r124): ▦ Preview in the phone title page's sheet: the browse preview's page reader, on the saved chapters
+        val sheetPreviewModel = rememberScreenModel(tag = "title_sheet_preview") {
+            eu.kanade.tachiyomi.ui.browse.source.browse.BrowsePreviewScreenModel(successState.source)
+        }
+        val sheetPreviewState by sheetPreviewModel.state.collectAsState()
         val fullCoverBackground = MaterialTheme.colorScheme.surfaceTint.blend(MaterialTheme.colorScheme.surface)
         // KMK <--
 
@@ -442,6 +447,28 @@ class MangaScreen(
             coverRatio = coverRatio,
             onPaletteScreenClick = { navigator.push(PaletteScreen(successState.seedColor?.toArgb())) },
             hazeState = hazeState,
+            sheetHooks = eu.kanade.presentation.manga.MangaSheetHooks(
+                previewState = sheetPreviewState,
+                previewSource = sheetPreviewModel.httpSource,
+                nextChapter = screenModel.getNextUnreadChapter(),
+                onOpenPreview = {
+                    val manga = successState.manga
+                    if (sheetPreviewModel.state.value.manga?.id != manga.id) {
+                        sheetPreviewModel.select(manga, showChapters = false, showPages = true, refresh = false)
+                        (screenModel.getNextUnreadChapter() ?: successState.chapters.lastOrNull()?.chapter)
+                            ?.let(sheetPreviewModel::selectChapter)
+                    }
+                },
+                onSelectPreviewChapter = sheetPreviewModel::selectChapter,
+                onRetryPreview = { sheetPreviewModel.state.value.selectedChapter?.let(sheetPreviewModel::selectChapter) },
+                onOpenPage = { chapter, page, video ->
+                    context.startActivity(
+                        ReaderActivity.newIntent(context, chapter.mangaId, chapter.id, page, playVideo = video),
+                    )
+                },
+                onUnreadFilter = screenModel::setUnreadFilter,
+                onDownloadedFilter = screenModel::setDownloadedFilter,
+            ),
             // KMK <--
         )
 

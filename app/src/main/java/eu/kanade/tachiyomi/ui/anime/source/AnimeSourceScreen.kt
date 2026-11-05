@@ -90,6 +90,7 @@ import eu.kanade.presentation.library.components.MangaListItem
 import eu.kanade.presentation.reader.sidePanelWidth
 import eu.kanade.presentation.theme.CoverSeedTheme
 import eu.kanade.presentation.util.Screen
+import eu.kanade.presentation.util.isTabletUi
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
@@ -194,7 +195,11 @@ class AnimeSourceScreen(
             (if (isLandscape) libraryPreferences.landscapeColumns() else libraryPreferences.portraitColumns()).get()
         }
         val previewPanelsPref = remember { sourcePreferences.browsePreviewPanels() }
-        val previewPanels by previewPanelsPref.collectAsState()
+        val savedPreviewPanels by previewPanelsPref.collectAsState()
+        // KMK (r124): the Left / Right Panel previews are for tablets; on a phone a cover tap opens the title as before
+        // and the two buttons are hidden (the saved choice stays for when the app runs in tablet layout)
+        val panelsAllowed = isTabletUi()
+        val previewPanels = if (panelsAllowed) savedPreviewPanels else SourcePreferences.PREVIEW_PANELS_NONE
 
         val openWebView: (String, String) -> Unit = { url, title -> navigator.push(WebViewScreen(url, title)) }
         val playEpisode: (eu.kanade.tachiyomi.data.anime.Episode) -> Unit = { episode ->
@@ -316,6 +321,7 @@ class AnimeSourceScreen(
                                 showFilters = false
                                 showSettings = false
                             },
+                            showPanelButtons = panelsAllowed,
                             leftOn = SourcePreferences.previewLeftOn(previewPanels),
                             rightOn = SourcePreferences.previewRightOn(previewPanels),
                             onLeftChange = { on ->
@@ -652,6 +658,7 @@ private fun ListingChips(
     settingsOpen: Boolean,
     onSettings: (() -> Unit)?,
     onClosePanels: () -> Unit,
+    showPanelButtons: Boolean,
     leftOn: Boolean,
     rightOn: Boolean,
     onLeftChange: (Boolean) -> Unit,
@@ -734,16 +741,18 @@ private fun ListingChips(
                 )
             }
         }
-        Row(
-            modifier = Modifier.padding(end = MaterialTheme.padding.small),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            PreviewPanelButtons(
-                leftOn = leftOn,
-                rightOn = rightOn,
-                onLeftChange = onLeftChange,
-                onRightChange = onRightChange,
-            )
+        if (showPanelButtons) {
+            Row(
+                modifier = Modifier.padding(end = MaterialTheme.padding.small),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                PreviewPanelButtons(
+                    leftOn = leftOn,
+                    rightOn = rightOn,
+                    onLeftChange = onLeftChange,
+                    onRightChange = onRightChange,
+                )
+            }
         }
     }
 }

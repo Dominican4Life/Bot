@@ -172,6 +172,9 @@ class AnimeScreenModel(
         )
     }
 
+    /** KMK (r124): the first episode in watching order (the phone sheet's Play ⌄ › Start from the first) */
+    fun firstEpisode(): Episode? = state.value.watchingList().firstOrNull()
+
     /** Works the Start/Resume episode out once per change, not on every recomposition */
     private fun State.withNext(): State = copy(nextEpisode = watchingList().firstOrNull { !it.seen })
     // KMK <--

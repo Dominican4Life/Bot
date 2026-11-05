@@ -35,7 +35,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.outlined.AspectRatio
+import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.outlined.ViewAgenda
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
@@ -79,6 +83,11 @@ import eu.kanade.presentation.anime.rememberHasAnimeCategories
 import eu.kanade.presentation.browse.RelatedMangaTitle
 import eu.kanade.presentation.components.TabbedDialog
 import eu.kanade.presentation.components.TabbedDialogPaddings
+import eu.kanade.presentation.components.TitleSheet
+import eu.kanade.presentation.components.TitleSheetPlayMenuItem
+import eu.kanade.presentation.components.TitleSheetTab
+import eu.kanade.presentation.components.pinchColumns
+import eu.kanade.presentation.components.rememberTitleSheetState
 import eu.kanade.presentation.library.components.MangaComfortableGridItem
 import eu.kanade.presentation.manga.DownloadAction
 import eu.kanade.presentation.manga.ScanlatorFilterItem
@@ -114,6 +123,9 @@ import eu.kanade.tachiyomi.util.lang.toRelativeString
 import eu.kanade.tachiyomi.util.system.getBitmapOrNull
 import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableSet
 import kotlinx.coroutines.launch
@@ -144,9 +156,6 @@ import tachiyomi.presentation.core.util.collectAsState
 import tachiyomi.presentation.core.util.shouldExpandFAB
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import java.time.Instant
-import java.time.LocalDate
-import java.time.ZoneId
 
 /**
  * KMK: Anime details with its episode list. Built from the same pieces as the manga details page
@@ -275,6 +284,8 @@ class AnimeScreen(private val animeId: Long) : Screen() {
             onSourceClick = { navigator.push(AnimeSourceScreen(anime.source)) },
             onOpenAnime = { navigator.push(AnimeScreen(it.id)) },
             onPlay = playEpisode,
+            // KMK (r124): the sheet's Play ⌄ › Start from the first
+            onPlayFirst = { screenModel.firstEpisode()?.let(playEpisode) },
             onToggleSeen = screenModel::toggleSeen,
             onToggleBookmark = screenModel::toggleBookmark,
             selection = selection,
@@ -321,6 +332,14 @@ class AnimeScreen(private val animeId: Long) : Screen() {
             onMigrate = { mihon.feature.migration.anime.AnimeMigrationStart.open(listOf(animeId)) },
             onSeasonSelected = screenModel::selectSeason,
             onChangeEpisodeInfo = { dialog = AnimeDialog.EpisodeInfo },
+            // KMK (r124): the phone sheet's display menu (same choices as the panel and the Display tab)
+            onDisplay = { previews, show, wholeSource ->
+                when {
+                    wholeSource -> screenModel.setDisplayForSource(previews, show)
+                    previews -> screenModel.setShowPreviews(show)
+                    else -> screenModel.setShowSummaries(show)
+                }
+            },
         )
 
         CoverSeedTheme(seedColor = state.seedColor) {
@@ -528,6 +547,7 @@ private class AnimeActions(
     val onSourceClick: () -> Unit,
     val onOpenAnime: (Anime) -> Unit,
     val onPlay: (Episode) -> Unit,
+    val onPlayFirst: () -> Unit,
     val onToggleSeen: (Episode) -> Unit,
     val onToggleBookmark: (Episode) -> Unit,
     // KMK: episode multi-select
@@ -551,6 +571,8 @@ private class AnimeActions(
     val onSeasonSelected: (String) -> Unit,
     // KMK: "Change" on the AniList line above the episodes
     val onChangeEpisodeInfo: () -> Unit,
+    /** KMK (r124): pictures (true) or summaries, show, for every title of the source */
+    val onDisplay: (Boolean, Boolean, Boolean) -> Unit,
 )
 
 @Composable
@@ -1014,6 +1036,9 @@ private fun AnimeScreenSmall(
     val related = rememberRelatedSettings()
     // KMK: covers per line of the season grid
     val seasonColumns = (androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp / 120).coerceIn(2, 8)
+    // KMK (r124): the sheet layout (Settings › Appearance › "Title page sheet on phones")
+    val sheetEnabled by remember { TitleSheet.enabled() }.collectAsState()
+    val sheetState = rememberTitleSheetState()
     Scaffold(
         topBar = {
             val isFirstItemVisible by remember { derivedStateOf { listState.firstVisibleItemIndex == 0 } }
@@ -1034,13 +1059,18 @@ private fun AnimeScreenSmall(
         bottomBar = { EpisodeSelectionBar(actions) },
         floatingActionButton = {
             if (actions.selection.isEmpty()) {
-                StartFab(state, listState.shouldExpandFAB(), actions.onPlay)
+                // KMK (r124): the sheet's dock has the Play button
+                if (!sheetEnabled) StartFab(state, listState.shouldExpandFAB(), actions.onPlay)
             } else {
                 EpisodeOptionsFab(actions)
             }
         },
     ) { contentPadding ->
         val topPadding = contentPadding.calculateTopPadding()
+        if (sheetEnabled) {
+            AnimeTitleSheet(state, anime, actions, source, listState, sheetState, topPadding, related, seasonColumns)
+            return@Scaffold
+        }
         PullRefresh(
             refreshing = state.isRefreshing,
             onRefresh = actions.onRefresh,
@@ -1261,6 +1291,10 @@ private fun LazyListScope.episodeItems(
     seasonColumns: Int,
     /** KMK: episode cards per line when pictures or summaries are shown (two beside the info on a tablet) */
     episodeColumns: Int,
+    /** KMK (r124): false in the phone sheet, whose header has the count and buttons */
+    showHeader: Boolean = true,
+    /** KMK (r124): the phone sheet's ▦: episodes as picture tiles, [episodeColumns] per line */
+    tiles: Boolean = false,
 ) {
     // KMK: seasons saved in the database, shown as a row, grid or list (season settings)
     if (state.hasSeasons) {
@@ -1278,7 +1312,7 @@ private fun LazyListScope.episodeItems(
             )
         }
     }
-    item(key = "episodes_header") {
+    if (showHeader) item(key = "episodes_header") {
         // Like the manga chapter header: tap it to open the filter sheet
         Text(
             text = if (state.isLoaded && state.episodes.isEmpty() && !state.isRefreshing) {
@@ -1295,8 +1329,8 @@ private fun LazyListScope.episodeItems(
         )
     }
     // KMK: pictures or summaries on: cards like the AniList page, with its episode info when the anime is found there
-    if (anime.showPreviews || anime.showSummaries) {
-        item(key = "episode_info_line") { EpisodeInfoLine(state, actions.onChangeEpisodeInfo) }
+    if (tiles || anime.showPreviews || anime.showSummaries) {
+        if (!tiles) item(key = "episode_info_line") { EpisodeInfoLine(state, actions.onChangeEpisodeInfo) }
         val groups = mutableListOf<Pair<String?, MutableList<Episode>>>()
         episodes.forEach { episode ->
             val season = state.episodeSeasons[episode.id].takeIf { state.showSeasonHeaders }
@@ -1322,6 +1356,7 @@ private fun LazyListScope.episodeItems(
                                 episode = episode,
                                 actions = actions,
                                 modifier = Modifier.weight(1f),
+                                tile = tiles,
                             )
                         }
                         repeat(episodeColumns - line.size) { Spacer(modifier = Modifier.weight(1f)) }
@@ -1389,6 +1424,8 @@ private fun EpisodeCardItem(
     episode: Episode,
     actions: AnimeActions,
     modifier: Modifier = Modifier,
+    /** KMK (r124): a ▦ tile: always the picture, no summary */
+    tile: Boolean = false,
 ) {
     val context = LocalContext.current
     val uiPreferences = remember { Injekt.get<UiPreferences>() }
@@ -1455,7 +1492,7 @@ private fun EpisodeCardItem(
         anime.displayNumber || name == null -> stringResource(KMR.strings.anime_episode_number, numberText)
         else -> "$numberText. $name"
     }
-    val image: Any? = if (anime.showPreviews) {
+    val image: Any? = if (tile || anime.showPreviews) {
         aniList?.image ?: episode.previewUrl?.takeIf { it.isNotBlank() }?.let { url ->
             eu.kanade.tachiyomi.data.coil.EpisodePreview(
                 animeId = episode.animeId,
@@ -1467,7 +1504,7 @@ private fun EpisodeCardItem(
     } else {
         null
     }
-    val summary = if (anime.showSummaries) {
+    val summary = if (!tile && anime.showSummaries) {
         aniList?.summary?.takeIf { it.isNotBlank() } ?: episode.summary?.takeIf { it.isNotBlank() }
     } else {
         null
@@ -2204,3 +2241,266 @@ private fun saveAnimeCover(
     }
 }
 // KMK <--
+
+// KMK (r124) --> the phone title page as a sheet: info under it, episodes (☰) or episode tiles (▦) in it, a dock
+@Composable
+private fun AnimeTitleSheet(
+    state: AnimeScreenModel.State,
+    anime: Anime,
+    actions: AnimeActions,
+    source: eu.kanade.tachiyomi.animesource.AnimeSource?,
+    listState: androidx.compose.foundation.lazy.LazyListState,
+    sheetState: eu.kanade.presentation.components.TitleSheetState,
+    topPadding: androidx.compose.ui.unit.Dp,
+    related: RelatedSettings,
+    seasonColumns: Int,
+) {
+    val sheetListState = rememberLazyListState()
+    val tileListState = rememberLazyListState()
+    val tileColumnsPref = remember { TitleSheet.columns("anime") }
+    val tileColumns by tileColumnsPref.collectAsState()
+    val next = state.nextEpisode
+    val playLabel = next?.let {
+        val number = it.episodeNumber
+        val numberText = when {
+            number < 0 -> it.name
+            number % 1.0 == 0.0 -> "E" + number.toLong()
+            else -> "E$number"
+        }
+        stringResource(if (state.hasStarted) MR.strings.action_resume else MR.strings.action_start) + " · " + numberText
+    }
+    eu.kanade.presentation.components.TitleSheetBox(
+        state = sheetState,
+        topInset = topPadding,
+        showDock = actions.selection.isEmpty(),
+        playLabel = playLabel,
+        onPlay = { next?.let(actions.onPlay) },
+        playMenu = { dismiss ->
+            TitleSheetPlayMenuItem(stringResource(KMR.strings.title_sheet_start_first)) {
+                dismiss()
+                actions.onPlayFirst()
+            }
+            TitleSheetPlayMenuItem(stringResource(KMR.strings.title_sheet_pick)) {
+                dismiss()
+                sheetState.tab = TitleSheetTab.LIST
+                sheetState.moveTo(TitleSheet.FULL)
+            }
+        },
+        background = { bottomSpace ->
+            PullRefresh(
+                refreshing = state.isRefreshing,
+                onRefresh = actions.onRefresh,
+                enabled = true,
+                indicatorPadding = PaddingValues(top = topPadding),
+            ) {
+                LazyColumn(
+                    modifier = Modifier.fillMaxHeight(),
+                    state = listState,
+                    contentPadding = PaddingValues(bottom = bottomSpace + 8.dp),
+                ) {
+                    item(key = "info") {
+                        AnimeInfo(
+                            anime = anime,
+                            state = state,
+                            isTablet = false,
+                            appBarPadding = topPadding,
+                            actions = actions,
+                        )
+                    }
+                    relatedItems(state, related, uppercaseTitle = false, dividerAbove = true, actions)
+                }
+            }
+        },
+        sheetHeader = { AnimeSheetHeader(state, anime, actions, sheetState) },
+        sheetContent = { bottomSpace ->
+            if (sheetState.tab == TitleSheetTab.LIST) {
+                VerticalFastScroller(listState = sheetListState) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxHeight(),
+                        state = sheetListState,
+                        contentPadding = PaddingValues(bottom = bottomSpace),
+                    ) {
+                        episodeItems(state, anime, source, actions, seasonColumns, episodeColumns = 1, showHeader = false)
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .then(
+                            Modifier.pinchColumns(tileColumns) { tileColumnsPref.set(it.coerceIn(1, 4)) },
+                        ),
+                    state = tileListState,
+                    contentPadding = PaddingValues(bottom = bottomSpace),
+                ) {
+                    episodeItems(
+                        state,
+                        anime,
+                        source,
+                        actions,
+                        seasonColumns,
+                        episodeColumns = tileColumns.coerceIn(1, 4),
+                        showHeader = false,
+                        tiles = true,
+                    )
+                }
+            }
+        },
+    )
+}
+
+@Composable
+private fun AnimeSheetHeader(
+    state: AnimeScreenModel.State,
+    anime: Anime,
+    actions: AnimeActions,
+    sheetState: eu.kanade.presentation.components.TitleSheetState,
+) {
+    // "Just this title / All titles from <source>" for a thumbnail / summary change: first = pictures, second = show
+    var askScope by remember { mutableStateOf<Pair<Boolean, Boolean>?>(null) }
+    askScope?.let { (previews, show) ->
+        AlertDialog(
+            onDismissRequest = { askScope = null },
+            title = { Text(stringResource(KMR.strings.anime_display_scope_title)) },
+            text = {
+                Column {
+                    TextButton(
+                        onClick = {
+                            askScope = null
+                            actions.onDisplay(previews, show, false)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(stringResource(KMR.strings.anime_display_scope_this)) }
+                    TextButton(
+                        onClick = {
+                            askScope = null
+                            actions.onDisplay(previews, show, true)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            if (state.sourceName.isNullOrBlank()) {
+                                stringResource(KMR.strings.anime_display_scope_source_fallback)
+                            } else {
+                                stringResource(KMR.strings.anime_display_scope_source, state.sourceName!!)
+                            },
+                        )
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { askScope = null }) { Text(stringResource(MR.strings.action_cancel)) } },
+        )
+    }
+    val episodes = state.visibleEpisodes
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = if (state.isLoaded && state.episodes.isEmpty() && !state.isRefreshing) {
+                stringResource(KMR.strings.anime_no_episodes)
+            } else {
+                stringResource(KMR.strings.anime_episodes_count, episodes.size)
+            },
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier
+                .weight(1f)
+                .clickable(onClick = actions.onFilter)
+                .padding(vertical = 8.dp),
+        )
+        if (sheetState.tab == TitleSheetTab.PREVIEW) {
+            Box {
+                var sizeMenu by remember { mutableStateOf(false) }
+                androidx.compose.material3.IconButton(onClick = { sizeMenu = true }) {
+                    Icon(
+                        Icons.Outlined.AspectRatio,
+                        contentDescription = stringResource(KMR.strings.title_sheet_size),
+                    )
+                }
+                eu.kanade.presentation.components.TitleSheetSizeMenu(
+                    expanded = sizeMenu,
+                    onDismissRequest = { sizeMenu = false },
+                    kind = "anime",
+                    showShape = false,
+                )
+            }
+        } else {
+            Box {
+                var displayMenu by remember { mutableStateOf(false) }
+                androidx.compose.material3.IconButton(onClick = { displayMenu = true }) {
+                    Icon(
+                        Icons.Outlined.ViewAgenda,
+                        contentDescription = stringResource(MR.strings.action_display),
+                    )
+                }
+                androidx.compose.material3.DropdownMenu(
+                    expanded = displayMenu,
+                    onDismissRequest = { displayMenu = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(KMR.strings.anime_show_episode_thumbnail)) },
+                        trailingIcon = {
+                            androidx.compose.material3.Checkbox(checked = anime.showPreviews, onCheckedChange = null)
+                        },
+                        onClick = {
+                            displayMenu = false
+                            askScope = true to !anime.showPreviews
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(KMR.strings.anime_show_episode_summary)) },
+                        trailingIcon = {
+                            androidx.compose.material3.Checkbox(checked = anime.showSummaries, onCheckedChange = null)
+                        },
+                        onClick = {
+                            displayMenu = false
+                            askScope = false to !anime.showSummaries
+                        },
+                    )
+                }
+            }
+        }
+        Box {
+            var downloadMenu by remember { mutableStateOf(false) }
+            androidx.compose.material3.IconButton(onClick = { downloadMenu = true }) {
+                Icon(
+                    Icons.Outlined.Download,
+                    contentDescription = stringResource(MR.strings.manga_download),
+                )
+            }
+            androidx.compose.material3.DropdownMenu(
+                expanded = downloadMenu,
+                onDismissRequest = { downloadMenu = false },
+            ) {
+                listOf(
+                    DownloadAction.UNREAD_CHAPTERS to stringResource(KMR.strings.anime_filter_unseen),
+                    DownloadAction.ALL_CHAPTERS to stringResource(KMR.strings.anime_download_all_episodes),
+                    DownloadAction.BOOKMARKED_CHAPTERS to stringResource(MR.strings.download_bookmarked),
+                ).forEach { (action, label) ->
+                    DropdownMenuItem(
+                        text = { Text(label) },
+                        onClick = {
+                            downloadMenu = false
+                            actions.onDownload(action)
+                        },
+                    )
+                }
+            }
+        }
+        androidx.compose.material3.IconButton(onClick = actions.onFilter) {
+            Icon(
+                Icons.Outlined.FilterList,
+                contentDescription = stringResource(MR.strings.action_filter),
+                tint = if (state.filterActive) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    androidx.compose.material3.LocalContentColor.current
+                },
+            )
+        }
+    }
+    // Season tabs stay with the episodes (they're part of the list), so nothing more here
+}
+// KMK (r124) <--

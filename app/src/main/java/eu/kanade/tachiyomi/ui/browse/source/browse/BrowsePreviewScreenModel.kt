@@ -119,8 +119,10 @@ class BrowsePreviewScreenModel(
      * Selects a cover and opens the panels.
      * @param showChapters open the left (chapters) panel
      * @param showPages open the right (pages) panel
+     * @param refresh KMK (r124): false for the phone title page's ▦ Preview, whose title page already refreshes the
+     * title from the source: only the saved chapters are used
      */
-    fun select(manga: Manga, showChapters: Boolean = true, showPages: Boolean = true) {
+    fun select(manga: Manga, showChapters: Boolean = true, showPages: Boolean = true, refresh: Boolean = true) {
         if (state.value.manga?.id == manga.id) {
             mutableState.update { it.copy(chapterPanelOpen = showChapters, pagePanelOpen = showPages) }
             return
@@ -131,7 +133,7 @@ class BrowsePreviewScreenModel(
                 manga = manga,
                 chapterPanelOpen = showChapters,
                 pagePanelOpen = showPages,
-                chaptersLoading = true,
+                chaptersLoading = refresh,
             )
         }
 
@@ -202,7 +204,13 @@ class BrowsePreviewScreenModel(
         }
 
         // Refresh the details and chapter list from the source, unless they were saved less than a day ago
-        refreshFromSource(manga, force = false)
+        if (refresh) {
+            refreshFromSource(manga, force = false)
+        } else {
+            jobs += screenModelScope.launchIO {
+                selectDefaultChapter(manga.id, getMangaWithChapters.awaitChapters(manga.id, applyFilter = true))
+            }
+        }
 
         loadSeedColor(manga)
     }

@@ -215,6 +215,12 @@ object SettingsAppearanceScreen : SearchableSettings {
                     title = stringResource(KMR.strings.pref_theme_cover_based_style),
                     enabled = mangaInfoThemeCoverBased,
                 ),
+                // KMK (r124): the phone title page's sheet (chapters / episodes sheet, ▦ Preview, Play dock)
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = eu.kanade.presentation.components.TitleSheet.enabled(),
+                    title = stringResource(KMR.strings.title_sheet_pref),
+                    subtitle = stringResource(KMR.strings.title_sheet_pref_summary),
+                ),
                 // KMK (r115): the title-page panorama switch and "Align cover to top" moved to the Wide covers card
             ),
         )

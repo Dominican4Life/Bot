@@ -815,4 +815,30 @@
     <string name="anilist_chapter_count">%1$d chapters</string>
     <string name="anilist_volume_count">%1$d volumes</string>
     <string name="welcome_version">Welcome to v%1$s</string>
+    <!-- KMK (r124): the phone title page sheet -->
+    <string name="title_sheet_pref">Title page sheet on phones</string>
+    <string name="title_sheet_pref_summary">Chapters and episodes in a sheet you drag up, with a ▦ Preview and a Play dock. Off: the classic list</string>
+    <string name="title_sheet_list">List</string>
+    <string name="title_sheet_preview">Preview</string>
+    <string name="title_sheet_size">Preview size</string>
+    <string name="title_sheet_columns">Columns</string>
+    <string name="title_sheet_shape">Shape</string>
+    <string name="title_sheet_shape_auto">Auto</string>
+    <string name="title_sheet_shape_page">Page 2:3</string>
+    <string name="title_sheet_shape_square">Square</string>
+    <string name="title_sheet_shape_strip">Strip slices</string>
+    <string name="title_sheet_opens_at">Sheet opens at</string>
+    <string name="title_sheet_peek">Peek</string>
+    <string name="title_sheet_half">Half</string>
+    <string name="title_sheet_full">Full</string>
+    <string name="title_sheet_last_used">Last used</string>
+    <string name="title_sheet_size_note">Pinch the grid to change columns too. Saved separately for manga, long strips and anime.</string>
+    <string name="title_sheet_long_strip">Long strip</string>
+    <string name="title_sheet_read">Read</string>
+    <string name="title_sheet_start_first">Start from the first</string>
+    <string name="title_sheet_pick">Pick one…</string>
+    <string name="title_sheet_chapters">%1$d chapters</string>
+    <string name="title_sheet_pick_chapter">Pick a chapter</string>
+    <string name="title_sheet_no_pages">No pages to show</string>
+    <string name="title_sheet_download_all">All chapters</string>
 </resources>
