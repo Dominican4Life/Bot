@@ -988,6 +988,27 @@ Two commits (the first failed CI: `openers += opener` on a `MutableSet<Element>`
     - Play ⌄ › "Start from the first" uses `AnimeScreenModel.firstEpisode()`.
   - Don't change: the classic list path must stay as it was when the switch is off. Chapter rows in the sheet are the same `sharedChapterItems` (swipes, selection, the bottom action bar); the dock hides while chapters are selected.
 
+## Changes in r125 (5 November 2026)
+
+- **Glass reader bars** (`presentation/reader/appbars/ReaderGlass.kt`, `ReaderAppBars.glass`; Settings › Reader › "Glass reader bars", pref `reader_glass_bars`, default on; off = the old bars, unchanged).
+  - **Top:** a round back button, a title pill (title, chapter, page) and ⋮. Tapping the title opens the Chapters panel, whose header has a Pages button; the Pages panel has a Chapters button.
+  - **No bottom button bar.** ⋮ opens `GlassActionSheet`: the reading modes as icons (tap = this series, `ReaderViewModel.setMangaReadingMode`), then the reader's existing buttons: Chapters, Pages, Crop, Rotation, Page layout and Shift (same conditions as before), WebView, Browser, Share, Settings.
+  - **Slider:** `ChapterNavigator` reads `LocalReaderGlass`. One glass bar around the buttons and slider, and the existing slider placement settings (vertical, left-handed, force horizontal) still decide where it goes.
+  - **Knob and track:** `GlassSliderThumb` is a capsule that grows while dragged; `glassSliderColors` hides the step dots.
+- **Reader chapter rows:** `MangaChapterListItem(trailing)` plus `ChapterListContent(onToggleRead)` give every row eye, bookmark and download. Swipe right marks it read (`ReaderViewModel.toggleRead`), swipe left bookmarks it. Side panels on phones are 88 % wide (one at a time).
+- **Tablet glass preview panel** (`presentation/browse/components/PreviewGlass.kt`; Settings › Appearance › "Glass preview panel", pref `preview_glass_panel`, default on; off = the old left/right panels).
+  - `SlidingSidePanel(glass)` draws a floating, rounded, see-through card.
+  - The grid padding is 0 in browse, library, anime browse and anime library, so the covers don't move.
+  - The top is `GlassPanelTop`: cover, title, author, status and four round icon buttons (no labels). `BrowsePreviewInfoHeader` draws it when `LocalInfoHeaderPart` = TOP, and only the description and tags when it is DETAILS.
+  - Manga tabs Chapters / Preview / Details. Preview is two pages per row inside the panel's list; `onShowPages` opens the page loading. The separate right panel is hidden in glass mode.
+  - Anime tabs Episodes / Details; the player panel is glass too.
+  - `GlassPanelPlay` (Continue / Start / Read) sits at the bottom. A cover tap opens one panel (`showChapters = true`, `showPages = false`) when glass is on.
+- **No ⌄ on the phone dock's Play button** (`TitleSheet.SplitPlayButton`).
+- **No "Apply to which titles?" step:** thumbnail / summary changes in the anime panel, the title page's Display tab and the phone sheet go straight to every title of the source (`setDisplayForSource` / `applyDisplay(…, true)`).
+- **Library Left/Right panels on phones:** hidden; a cover tap opens the title page (`libraryPanelsAllowed()`, `isTabletUi()` in `Buttons`).
+- Mockups: canvas page "Liquid glass" (XGlassPanel, XKoto2, XGlassSettings).
+- Not done yet: the Apple-guided glass settings screen (XGlassSettings: Regular/Clear/Solid, dimming, thickness, tint only the main action, knob turns to glass while dragging, accessibility follow-system) — waiting on the owner.
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
