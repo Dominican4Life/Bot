@@ -1080,6 +1080,19 @@ Two commits (the first failed CI: `openers += opener` on a `MutableSet<Element>`
   - The dock is a glass capsule with Play still tinted.
   - `AppBar(glassButtons)` → `MangaToolbar(glass)` puts the up/home and action buttons on glass capsules.
 
+## Changes in r130
+
+- **Chapter sheet** (`ChapterSheetHeader`): the All / Unread / Downloaded chips were removed, since the filter button covers them.
+- **Top buttons:** `MangaToolbar(sheetHasActions)` drops download and filter from the app bar when the title sheet is used (`useSheet`), so the glass capsule only has ⋮. Without the sheet they stay.
+- **⋮ menu order:** Edit (`action_edit_short`, only for library titles), Files (`action_files`), Share, Notes, Merge, Migrate, then related, recommendations and merge settings, and Clear Data (`action_clear_data`) last.
+  - Clear Data uses `AppBar.OverflowAction(destructive = true)`, which shows in the error colour.
+  - Edit categories was removed (long-press the heart).
+  - Files only shows when `MangaScreenModel.hasMangaFolder()` finds the title's folder (downloads, or the saved cover.jpg/index.json). It's checked on IO in `MangaDetailContent` and again when the downloaded count changes.
+- **Frosted top bar** (phone, sheet + glass):
+  - `frostState` is a second `hazeSource` on the sheet's background (`TitleSheetBox(frostSource)`).
+  - The top bar slot draws a zero-height-reporting frost box (status bar + 64 dp + 44 dp) with `hazeEffect` (20 dp blur, dark tint, a top-to-bottom progressive gradient, alpha following the old background alpha).
+  - The toolbar's own background stays transparent. The title shows in a glass pill (`MangaToolbar(glass)`).
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
