@@ -1009,6 +1009,16 @@ Two commits (the first failed CI: `openers += opener` on a `MutableSet<Element>`
 - Mockups: canvas page "Liquid glass" (XGlassPanel, XKoto2, XGlassSettings).
 - Not done yet: the Apple-guided glass settings screen (XGlassSettings: Regular/Clear/Solid, dimming, thickness, tint only the main action, knob turns to glass while dragging, accessibility follow-system) — waiting on the owner.
 
+## Changes in r126
+
+- **One preview-panel button** (`BrowseSourceChrome.PreviewPanelButtons`): a single `PanelToggleButton` with the new `ic_preview_panel_24dp` icon replaces Left/Right. On = `leftOn || rightOn`; turning it off clears both sides.
+- **Debug floating window / bubble** (`FloatingLog.kt`): clamped to `WindowInsets.safeDrawing ∪ ime` (`rememberSafeInsets`), so they never slide under the status/nav bars or cutout where Android eats the touches. Drag handlers are keyed on `(parent, safe)`.
+- **Tablet glass panel Preview tab** (`BrowseChapterPanel`): with glass on, the Preview tab shows the top header, the tabs and the phone's `TitlePagePreview` (chapter picker, ⤢ columns/shape, long-strip slices).
+- **Anime glass panel** (`AnimeBrowsePanel.kt`): the right player panel is gone when glass is on (`showPlayer = !PreviewGlass.isOn() && …`). A Preview tab shows episode tiles (`AnimeEpisodeTile`, columns from `TitleSheet.columns("anime")`), and tapping one plays it in `AnimeFloatingPlayer`: a draggable/resizable window clamped to the screen, hosting `AnimePreviewSection(settingsInitiallyOpen = false)` with View/Looks/Split.
+- **Full player View card** (`VideoFiltersPanel.kt`, `PlayerFilterView`): Filtered / Original / Split before-after. Split saves the player's own `vf` chain and `hwdec`, switches to `mediacodec-copy` + `splitGraph`, and restores both when you leave Split. Filter sliders call `reapply`.
+- **Settings › Appearance › Glass** (`GlassSettingsScreen`, `GlassStyle` in `PreviewGlass.kt`): material Regular/Clear/Solid, see-through, corners, slider knob Capsule/Large/Dot, reduce transparency, increase contrast (follow system / on / off), the two glass switches and reset, with a live preview. `GlassPanelColor`, `panelGlassEdge`, `ReaderGlass.tint`, `readerGlass`, `SlidingSidePanel` corners and `GlassSliderThumb` all read `GlassStyle`. Values are read when drawn, so panels already open pick up changes the next time they open.
+- Must not change: glass stays on the controls layer only; never glass on glass; covers stay put (grid padding 0 with glass).
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
