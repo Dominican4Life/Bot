@@ -1,5 +1,6 @@
 package eu.kanade.presentation.anime
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -192,11 +193,11 @@ fun AnimeSelectionBar(
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.padding(horizontal = 4.dp).weight(1f),
             )
-            BarButton(Icons.Outlined.SelectAll, stringResource(MR.strings.action_select_all), onSelectAll)
-            BarButton(Icons.Outlined.FlipToBack, stringResource(MR.strings.action_select_inverse), onInvert)
+            BarButton(GlassIcons.SelectAll, stringResource(MR.strings.action_select_all), onSelectAll)
+            BarButton(GlassIcons.InvertSelection, stringResource(MR.strings.action_select_inverse), onInvert)
             BarButton(Icons.AutoMirrored.Outlined.Label, stringResource(MR.strings.action_move_category), onSetCategories)
-            BarButton(Icons.Outlined.DoneAll, stringResource(KMR.strings.anime_action_mark_seen), onMarkSeen)
-            BarButton(Icons.Outlined.RemoveDone, stringResource(KMR.strings.anime_action_mark_unseen), onMarkUnseen)
+            BarButton(GlassIcons.Read, stringResource(KMR.strings.anime_action_mark_seen), onMarkSeen)
+            BarButton(GlassIcons.Unread, stringResource(KMR.strings.anime_action_mark_unseen), onMarkUnseen)
             if (onMigrate != null) {
                 BarButton(Icons.Outlined.SwapCalls, stringResource(MR.strings.migrate), onMigrate)
             }

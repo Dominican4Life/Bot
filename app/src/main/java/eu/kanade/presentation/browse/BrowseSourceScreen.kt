@@ -1,5 +1,6 @@
 package eu.kanade.presentation.browse
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListState
@@ -157,7 +158,7 @@ fun BrowseSourceContent(
                     if (onWebViewClick != null) {
                         EmptyScreenAction(
                             MR.strings.action_open_in_web_view,
-                            icon = Icons.Outlined.Public,
+                            icon = GlassIcons.WebView,
                             onClick = onWebViewClick,
                         )
                     } else {

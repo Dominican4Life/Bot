@@ -1,5 +1,10 @@
 package eu.kanade.presentation.manga.components
 
+import eu.kanade.presentation.browse.components.liquidGlass
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.clickable
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -27,33 +32,33 @@ fun OutlinedButtonWithArrow(
     text: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    icon: ImageVector = Icons.AutoMirrored.Filled.ArrowForward,
+    icon: ImageVector = GlassIcons.Arrow,
 ) {
-    OutlinedButton(
-        onClick = onClick,
+    // KMK (r132): one glass capsule: the words, and the new arrow on its own at the end
+    val shape = RoundedCornerShape(25.dp)
+    Row(
         modifier = modifier
             .fillMaxWidth()
             .padding(
                 horizontal = MaterialTheme.padding.medium,
                 vertical = MaterialTheme.padding.small,
-            ),
-        colors = ButtonDefaults.outlinedButtonColors(),
-        shape = RoundedCornerShape(8.dp),
+            )
+            .height(50.dp)
+            .clip(shape)
+            .liquidGlass(shape)
+            .clickable(onClick = onClick)
+            .padding(start = 22.dp, end = 18.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = text,
-            )
-            Spacer(modifier = Modifier.width(4.dp))
-            Icon(
-                imageVector = icon,
-                contentDescription = "Arrow",
-            )
-        }
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+        )
     }
 }
 

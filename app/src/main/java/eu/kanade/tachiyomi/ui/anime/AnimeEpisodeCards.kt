@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.anime
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -163,7 +164,7 @@ internal fun AnimeEpisodeCard(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (bookmark) {
                         Icon(
-                            imageVector = Icons.Filled.Bookmark,
+                            imageVector = GlassIcons.Bookmark,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(12.dp),

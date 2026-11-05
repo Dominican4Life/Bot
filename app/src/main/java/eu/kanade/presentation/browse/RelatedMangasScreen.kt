@@ -1,5 +1,8 @@
 package eu.kanade.presentation.browse
 
+import eu.kanade.presentation.browse.components.liquidGlass
+import androidx.compose.foundation.layout.Box
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -175,7 +178,15 @@ fun RelatedMangaTitle(
             }
         }
         if (showArrow) {
-            Icon(imageVector = Icons.AutoMirrored.Outlined.ArrowForward, contentDescription = null)
+            // KMK (r132): the new arrow on its own in a small round glass button
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .liquidGlass(androidx.compose.foundation.shape.CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(imageVector = GlassIcons.Arrow, contentDescription = null, modifier = Modifier.size(20.dp))
+            }
         }
     }
 }

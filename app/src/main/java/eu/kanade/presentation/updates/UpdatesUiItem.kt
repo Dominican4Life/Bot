@@ -1,5 +1,6 @@
 package eu.kanade.presentation.updates
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -398,7 +399,7 @@ private fun UpdatesUiItem(
                     }
                     if (update.bookmark) {
                         Icon(
-                            imageVector = Icons.Filled.Bookmark,
+                            imageVector = GlassIcons.Bookmark,
                             contentDescription = stringResource(MR.strings.action_filter_bookmarked),
                             modifier = Modifier
                                 .sizeIn(maxHeight = with(LocalDensity.current) { textHeight.toDp() - 2.dp }),

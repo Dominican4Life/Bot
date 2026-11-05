@@ -1,5 +1,6 @@
 package eu.kanade.presentation.webview
 
+import eu.kanade.presentation.components.GlassIcons
 import android.content.pm.ApplicationInfo
 import android.graphics.Bitmap
 import android.os.Message
@@ -272,7 +273,7 @@ fun WebViewScreenContent(
                                     ),
                                     AppBar.Action(
                                         title = stringResource(MR.strings.action_webview_forward),
-                                        icon = Icons.AutoMirrored.Outlined.ArrowForward,
+                                        icon = GlassIcons.Arrow,
                                         onClick = {
                                             if (navigator.canGoForward) {
                                                 navigator.navigateForward()

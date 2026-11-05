@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.diagnostics
 
+import eu.kanade.presentation.components.GlassIcons
 import android.content.Context
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -346,7 +347,7 @@ private fun DiagTab.icon(selected: Boolean): ImageVector = when (this) {
     DiagTab.LIVE -> if (selected) Icons.Filled.Analytics else Icons.Outlined.Analytics
     DiagTab.LOG -> if (selected) Icons.AutoMirrored.Filled.Article else Icons.AutoMirrored.Outlined.Article
     DiagTab.CAPTURE -> if (selected) Icons.Filled.RadioButtonChecked else Icons.Outlined.RadioButtonUnchecked
-    DiagTab.HEALTH -> if (selected) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder
+    DiagTab.HEALTH -> if (selected) GlassIcons.InLibrary else GlassIcons.AddToLibrary
     DiagTab.REPORT -> if (selected) Icons.Filled.Description else Icons.Outlined.Description
     DiagTab.PROBES -> if (selected) Icons.Filled.Code else Icons.Outlined.Code
 }

@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.anime.anilist
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -304,7 +305,7 @@ fun AniListActionRow(actions: AniListActions, manga: Boolean) {
     Row(modifier = Modifier.padding(start = 16.dp, top = 4.dp, end = 16.dp)) {
         ActionButton(
             title = stringResource(MR.strings.action_web_view),
-            icon = { Icon(Icons.Outlined.Public, contentDescription = null, tint = it, modifier = Modifier.size(20.dp)) },
+            icon = { Icon(GlassIcons.WebView, contentDescription = null, tint = it, modifier = Modifier.size(20.dp)) },
             onClick = actions.onWebView,
         )
         if (!manga) {
@@ -378,7 +379,7 @@ fun AniListStatsRow(details: AniListDetails, modifier: Modifier = Modifier) {
             Stat(Icons.Outlined.StarOutline, "$score%", tint = FillerGold)
         }
         details.popularity?.let { Stat(Icons.Outlined.Groups, compact(it)) }
-        details.favourites?.let { Stat(Icons.Outlined.FavoriteBorder, compact(it)) }
+        details.favourites?.let { Stat(GlassIcons.AddToLibrary, compact(it)) }
         if (details.reviews > 0) {
             Stat(Icons.Outlined.RateReview, stringResource(KMR.strings.anilist_reviews, details.reviews))
         }

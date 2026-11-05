@@ -1,5 +1,6 @@
 package eu.kanade.presentation.reader
 
+import eu.kanade.presentation.components.GlassIcons
 import eu.kanade.presentation.util.isTabletUi
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.tappableElement
@@ -143,7 +144,7 @@ fun ReaderChapterListPanel(
             if (onSwitchToPages != null) {
                 IconButton(onClick = onSwitchToPages) {
                     Icon(
-                        imageVector = Icons.Outlined.GridView,
+                        imageVector = GlassIcons.Preview,
                         contentDescription = stringResource(KMR.strings.reader_pages),
                         tint = MaterialTheme.colorScheme.primary,
                     )
@@ -299,7 +300,10 @@ fun ReaderGlassSheet(
                         .padding(8.dp)
                         .then(
                             if (sideMode) {
-                                Modifier.width(420.dp).fillMaxHeight()
+                                // KMK (r132): the same width as the browse panel
+                                Modifier
+                                    .width(sidePanelWidth(androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp.dp))
+                                    .fillMaxHeight()
                             } else {
                                 Modifier
                                     .sizeIn(maxWidth = 640.dp)
@@ -422,7 +426,7 @@ fun ReaderGlassSheet(
                     ) {
                         listOf(
                             false to (Icons.Outlined.FormatListNumbered to stringResource(MR.strings.chapters)),
-                            true to (Icons.Outlined.GridView to stringResource(KMR.strings.reader_pages)),
+                            true to (GlassIcons.Preview to stringResource(KMR.strings.reader_pages)),
                         ).forEach { (pagesTab, iconLabel) ->
                             val on = pagesTab == showPages
                             Row(
@@ -432,7 +436,11 @@ fun ReaderGlassSheet(
                                     .weight(1f)
                                     .clip(CircleShape)
                                     .background(if (on) Color.White.copy(alpha = 0.16f) else Color.Transparent)
-                                    .clickable { onShowPages(pagesTab) }
+                                    // KMK (r132): switching Chapters / Pages closes the chapter picker
+                                    .clickable {
+                                        picking = false
+                                        onShowPages(pagesTab)
+                                    }
                                     .padding(vertical = 7.dp),
                             ) {
                                 Icon(
@@ -465,7 +473,8 @@ fun ReaderGlassSheet(
                                     .clip(RoundedCornerShape(14.dp))
                                     // KMK (r131): frosted like the sheet (the page behind, blurred)
                                     .liquidGlass(RoundedCornerShape(14.dp), Color(0xFF14161E))
-                                    .background(Color(0xFF14161E).copy(alpha = 0.35f)),
+                                    // KMK (r132): denser frost, so the names stay readable over the pages
+                                    .background(Color(0xFF14161E).copy(alpha = 0.72f)),
                             ) {
                                 items(pickerChapters.size) { index ->
                                     val item = pickerChapters[index]

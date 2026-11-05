@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.browse.migration.manga
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.layout.PaddingValues
@@ -262,7 +263,7 @@ data class MigrateMangaScreen(
                         persistentListOf(
                             AppBar.Action(
                                 title = stringResource(MR.strings.action_select_all),
-                                icon = Icons.Outlined.SelectAll,
+                                icon = GlassIcons.SelectAll,
                                 onClick = onClickSelectAll,
                             ),
                         ),
@@ -276,12 +277,12 @@ data class MigrateMangaScreen(
                     persistentListOf(
                         AppBar.Action(
                             title = stringResource(MR.strings.action_select_all),
-                            icon = Icons.Outlined.SelectAll,
+                            icon = GlassIcons.SelectAll,
                             onClick = onClickSelectAll,
                         ),
                         AppBar.Action(
                             title = stringResource(MR.strings.action_select_inverse),
-                            icon = Icons.Outlined.FlipToBack,
+                            icon = GlassIcons.InvertSelection,
                             onClick = onClickInvertSelection,
                         ),
                     ),

@@ -1,5 +1,6 @@
 package eu.kanade.presentation.reader.appbars
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.material.icons.Icons
@@ -78,7 +79,7 @@ fun ReaderBottomBar(
             // KMK -->
             IconButton(onClick = onClickPageGrid) {
                 Icon(
-                    imageVector = Icons.Outlined.GridView,
+                    imageVector = GlassIcons.Preview,
                     contentDescription = stringResource(KMR.strings.reader_page_grid_view),
                     tint = iconColor,
                 )
@@ -89,7 +90,7 @@ fun ReaderBottomBar(
         if (ReaderBottomButton.WebView.isIn(enabledButtons) && onClickWebView != null) {
             IconButton(onClick = onClickWebView) {
                 Icon(
-                    imageVector = Icons.Outlined.Public,
+                    imageVector = GlassIcons.WebView,
                     contentDescription = stringResource(MR.strings.action_open_in_web_view),
                     // KMK -->
                     tint = iconColor,

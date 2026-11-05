@@ -1,5 +1,15 @@
 package eu.kanade.presentation.manga.components
 
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.EditNote
+import androidx.compose.material.icons.automirrored.outlined.CallMerge
+import androidx.compose.material.icons.outlined.SwapHoriz
+import androidx.compose.material.icons.outlined.Explore
+import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.outlined.DeleteOutline
+import eu.kanade.presentation.components.GlassIcons
 import eu.kanade.presentation.browse.components.liquidGlass
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.draw.clip
@@ -78,6 +88,11 @@ fun MangaToolbar(
     glass: Boolean = false,
     // KMK (r130): the title sheet shows download and filter itself
     sheetHasActions: Boolean = false,
+    // KMK (r132): the counts shown in the download menu
+    downloadCounts: DownloadMenuCounts? = null,
+    // KMK (r132): tablet title page: the Preview and Suggestions toggles at the start of the glass capsule
+    previewToggle: Pair<Boolean, () -> Unit>? = null,
+    suggestionsToggle: Pair<Boolean, () -> Unit>? = null,
     // KMK <--
     modifier: Modifier = Modifier,
 ) {
@@ -124,19 +139,12 @@ fun MangaToolbar(
                     expanded = downloadExpanded,
                     onDismissRequest = { downloadExpanded = false },
                 ) {
-                    listOf(
-                        DownloadAction.UNREAD_CHAPTERS to stringResource(MR.strings.download_unread),
-                        DownloadAction.ALL_CHAPTERS to stringResource(KMR.strings.browse_download_all_chapters),
-                        DownloadAction.BOOKMARKED_CHAPTERS to stringResource(MR.strings.download_bookmarked),
-                    ).forEach { (action, label) ->
-                        DropdownMenuItem(
-                            text = { Text(text = label) },
-                            onClick = {
-                                downloadExpanded = false
-                                onClickDownload(action)
-                            },
-                        )
-                    }
+                    // KMK (r132): icons and how many chapters each choice would download
+                    GlassDownloadMenuItems(
+                        counts = downloadCounts,
+                        onDismiss = { downloadExpanded = false },
+                        onAction = onClickDownload,
+                    )
                 }
             }
 
@@ -147,18 +155,39 @@ fun MangaToolbar(
                         add(
                             AppBar.Action(
                                 title = stringResource(MR.strings.action_select_all),
-                                icon = Icons.Outlined.SelectAll,
+                                icon = GlassIcons.SelectAll,
                                 onClick = onSelectAll,
                             ),
                         )
                         add(
                             AppBar.Action(
                                 title = stringResource(MR.strings.action_select_inverse),
-                                icon = Icons.Outlined.FlipToBack,
+                                icon = GlassIcons.InvertSelection,
                                 onClick = onInvertSelection,
                             ),
                         )
                         return@apply
+                    }
+                    // KMK (r132): Preview / Suggestions toggles (gold when on)
+                    previewToggle?.let { (on, toggle) ->
+                        add(
+                            AppBar.Action(
+                                title = stringResource(KMR.strings.title_sheet_preview),
+                                icon = GlassIcons.Preview,
+                                iconTint = if (on) androidx.compose.ui.graphics.Color(0xFFF2C94C) else null,
+                                onClick = toggle,
+                            ),
+                        )
+                    }
+                    suggestionsToggle?.let { (on, toggle) ->
+                        add(
+                            AppBar.Action(
+                                title = stringResource(KMR.strings.pref_source_related_mangas),
+                                icon = GlassIcons.Suggestions,
+                                iconTint = if (on) androidx.compose.ui.graphics.Color(0xFFF2C94C) else null,
+                                onClick = toggle,
+                            ),
+                        )
                     }
                     // KMK (r130): with the title sheet, download and filter are on the sheet only
                     if (!sheetHasActions) {
@@ -166,7 +195,7 @@ fun MangaToolbar(
                             add(
                                 AppBar.Action(
                                     title = stringResource(MR.strings.manga_download),
-                                    icon = Icons.Outlined.Download,
+                                    icon = GlassIcons.Download,
                                     onClick = { downloadExpanded = !downloadExpanded },
                                 ),
                             )
@@ -174,7 +203,7 @@ fun MangaToolbar(
                         add(
                             AppBar.Action(
                                 title = stringResource(MR.strings.action_filter),
-                                icon = Icons.Outlined.FilterList,
+                                icon = GlassIcons.Filter,
                                 iconTint = filterTint,
                                 onClick = onClickFilter,
                             ),
@@ -187,6 +216,7 @@ fun MangaToolbar(
                         add(
                             AppBar.OverflowAction(
                                 title = stringResource(KMR.strings.action_edit_short),
+                                icon = Icons.Outlined.Edit,
                                 onClick = onClickEditInfo,
                             ),
                         )
@@ -195,6 +225,7 @@ fun MangaToolbar(
                         add(
                             AppBar.OverflowAction(
                                 title = stringResource(KMR.strings.action_files),
+                                icon = Icons.Outlined.Folder,
                                 onClick = onOpenMangaFolder,
                             ),
                         )
@@ -203,6 +234,7 @@ fun MangaToolbar(
                         add(
                             AppBar.OverflowAction(
                                 title = stringResource(MR.strings.action_share),
+                                icon = Icons.Outlined.Share,
                                 onClick = onClickShare,
                             ),
                         )
@@ -210,6 +242,7 @@ fun MangaToolbar(
                     add(
                         AppBar.OverflowAction(
                             title = stringResource(MR.strings.action_notes),
+                            icon = Icons.Outlined.EditNote,
                             onClick = onClickEditNotes,
                         ),
                     )
@@ -218,6 +251,7 @@ fun MangaToolbar(
                         add(
                             AppBar.OverflowAction(
                                 title = stringResource(SYMR.strings.merge),
+                                icon = Icons.AutoMirrored.Outlined.CallMerge,
                                 onClick = onClickMerge,
                             ),
                         )
@@ -227,6 +261,7 @@ fun MangaToolbar(
                         add(
                             AppBar.OverflowAction(
                                 title = stringResource(MR.strings.action_migrate),
+                                icon = Icons.Outlined.SwapHoriz,
                                 onClick = onClickMigrate,
                             ),
                         )
@@ -236,6 +271,7 @@ fun MangaToolbar(
                         add(
                             AppBar.OverflowAction(
                                 title = stringResource(KMR.strings.pref_source_related_mangas),
+                                icon = GlassIcons.Suggestions,
                                 onClick = onClickRelatedMangas,
                             ),
                         )
@@ -245,6 +281,7 @@ fun MangaToolbar(
                         add(
                             AppBar.OverflowAction(
                                 title = stringResource(SYMR.strings.az_recommends),
+                                icon = Icons.Outlined.Explore,
                                 onClick = onClickRecommend,
                             ),
                         )
@@ -253,6 +290,7 @@ fun MangaToolbar(
                         add(
                             AppBar.OverflowAction(
                                 title = stringResource(SYMR.strings.merge_settings),
+                                icon = Icons.Outlined.Tune,
                                 onClick = onClickMergedSettings,
                             ),
                         )
@@ -270,6 +308,7 @@ fun MangaToolbar(
                     add(
                         AppBar.OverflowAction(
                             title = stringResource(KMR.strings.action_clear_data),
+                            icon = Icons.Outlined.DeleteOutline,
                             onClick = onClearManga,
                             destructive = true,
                         ),

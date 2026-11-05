@@ -237,43 +237,31 @@ fun TagsChip(
     CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
         if (onClick != null) {
             // KMK -->
-            if (borderM3 != null || pureDarkMode) {
-                // KMK <--
-                SuggestionChip(
-                    modifier = modifier,
-                    onClick = onClick,
-                    label = {
-                        Text(
-                            text = text,
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    },
-                    border = borderM3
-                        // KMK -->
-                        ?: SuggestionChipDefaultsM3.suggestionChipBorder(
-                            enabled = true,
-                            borderColor = MaterialTheme.colorScheme.primary,
-                        ),
-                )
-            } else {
-                ElevatedSuggestionChip(
-                    modifier = modifier,
-                    onClick = onClick,
-                    label = {
-                        Text(
-                            text = text,
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    },
-                    colors = SuggestionChipDefaultsM3.elevatedSuggestionChipColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            // KMK (r132): every tag is a small frosted glass chip
+            SuggestionChip(
+                modifier = modifier,
+                onClick = onClick,
+                label = {
+                    Text(
+                        text = text,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                },
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(15.dp),
+                colors = SuggestionChipDefaultsM3.suggestionChipColors(
+                    containerColor = androidx.compose.ui.graphics.Color(0xFF181A22).copy(alpha = 0.58f),
+                    labelColor = androidx.compose.ui.graphics.Color(0xFFECEEF2),
+                ),
+                border = BorderStroke(
+                    1.dp,
+                    androidx.compose.ui.graphics.Brush.verticalGradient(
+                        0f to androidx.compose.ui.graphics.Color.White.copy(alpha = 0.32f),
+                        1f to androidx.compose.ui.graphics.Color.White.copy(alpha = 0.08f),
                     ),
-                )
-            }
+                ),
+            )
             // KMK <--
         } else {
             SuggestionChip(

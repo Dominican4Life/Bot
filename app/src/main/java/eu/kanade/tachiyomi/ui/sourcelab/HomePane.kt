@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.sourcelab
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -600,7 +601,7 @@ private fun RowMenu(source: LabSource, onOpen: (String, LabTab) -> Unit) {
             )
             DropdownMenuItem(
                 text = { Text("WebView") },
-                leadingIcon = { Icon(Icons.Outlined.Public, contentDescription = null) },
+                leadingIcon = { Icon(GlassIcons.WebView, contentDescription = null) },
                 onClick = {
                     open = false
                     val manager = Injekt.get<JsSourceManager>()

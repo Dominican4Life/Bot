@@ -1,5 +1,6 @@
 package eu.kanade.presentation.manga
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -41,6 +42,8 @@ import eu.kanade.presentation.components.TitleSheetBox
 import eu.kanade.presentation.components.TitleSheetPlayMenuItem
 import eu.kanade.presentation.components.TitleSheetState
 import eu.kanade.presentation.components.TitleSheetTab
+import eu.kanade.presentation.manga.components.DownloadMenuCounts
+import eu.kanade.presentation.manga.components.GlassDownloadMenuItems
 import eu.kanade.presentation.manga.components.TitlePagePreview
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowsePreviewScreenModel
@@ -203,28 +206,21 @@ private fun ChapterSheetHeader(
             Box {
                 var open by remember { mutableStateOf(false) }
                 IconButton(onClick = { open = true }) {
-                    Icon(Icons.Outlined.Download, contentDescription = stringResource(MR.strings.manga_download))
+                    Icon(GlassIcons.Download, contentDescription = stringResource(MR.strings.manga_download))
                 }
-                DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-                    listOf(
-                        DownloadAction.UNREAD_CHAPTERS to stringResource(MR.strings.download_unread),
-                        DownloadAction.ALL_CHAPTERS to stringResource(KMR.strings.title_sheet_download_all),
-                        DownloadAction.BOOKMARKED_CHAPTERS to stringResource(MR.strings.download_bookmarked),
-                    ).forEach { (action, label) ->
-                        DropdownMenuItem(
-                            text = { Text(label) },
-                            onClick = {
-                                open = false
-                                onDownloadActionClicked(action)
-                            },
-                        )
-                    }
+                eu.kanade.presentation.components.DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                    // KMK (r132): icons and how many chapters each choice would download
+                    GlassDownloadMenuItems(
+                        counts = remember(state.chapters) { DownloadMenuCounts.of(state.chapters) },
+                        onDismiss = { open = false },
+                        onAction = onDownloadActionClicked,
+                    )
                 }
             }
         }
         IconButton(onClick = onFilterClicked) {
             Icon(
-                Icons.Outlined.FilterList,
+                GlassIcons.Filter,
                 contentDescription = stringResource(MR.strings.action_filter),
                 tint = if (state.filterActive) MaterialTheme.colorScheme.primary else LocalContentColor.current,
             )

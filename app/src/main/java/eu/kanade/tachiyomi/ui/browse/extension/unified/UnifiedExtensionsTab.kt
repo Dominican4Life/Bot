@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.browse.extension.unified
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
@@ -73,7 +74,7 @@ fun unifiedExtensionsTab(
         actions = persistentListOf(
             AppBar.Action(
                 title = stringResource(MR.strings.action_filter),
-                icon = Icons.Outlined.FilterList,
+                icon = GlassIcons.Filter,
                 onClick = { navigator.push(ExtensionFilterScreen()) },
             ),
         ),

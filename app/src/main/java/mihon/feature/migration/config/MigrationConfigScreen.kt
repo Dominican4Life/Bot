@@ -1,5 +1,6 @@
 package mihon.feature.migration.config
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -198,7 +199,7 @@ class MigrationConfigScreen(private val mangaIds: Collection<Long>) : Screen() {
                         // KMK <--
                         SmallExtendedFloatingActionButton(
                             text = { Text(text = stringResource(MR.strings.migrationConfigScreen_continueButtonText)) },
-                            icon = { Icon(imageVector = Icons.AutoMirrored.Outlined.ArrowForward, contentDescription = null) },
+                            icon = { Icon(imageVector = GlassIcons.Arrow, contentDescription = null) },
                             onClick = {
                                 screenModel.saveSources()
                                 continueMigration(openSheet = true, extraSearchQuery = null)

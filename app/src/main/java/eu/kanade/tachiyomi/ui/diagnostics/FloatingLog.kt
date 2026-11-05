@@ -219,7 +219,9 @@ private fun FloatingWindow(parent: IntSize) {
         val w = r[2].coerceIn(minW, maxW)
         val h = r[3].coerceIn(minH, maxH)
         val x = r[0].coerceIn(safe.left - w + keep, (parent.width - safe.right - keep).coerceAtLeast(safe.left - w + keep))
-        val y = r[1].coerceIn(safe.top, (parent.height - safe.bottom - titleBar).coerceAtLeast(safe.top))
+        // KMK (r132): top and bottom stay fully between the status bar and the navigation bar / taskbar (with gesture
+        // navigation that's the thin gesture line); left and right stay free
+        val y = r[1].coerceIn(safe.top, (parent.height - safe.bottom - h).coerceAtLeast(safe.top))
         return intArrayOf(x, y, w, h)
     }
     fun persist() {
@@ -307,7 +309,9 @@ private fun FloatingWindow(parent: IntSize) {
             .shadow(10.dp, RoundedCornerShape(16.dp))
             .clip(RoundedCornerShape(16.dp))
             // KMK (r131): frosted glass (the page behind, blurred, where the screen offers it)
-            .liquidGlass(RoundedCornerShape(16.dp), Color(0xFF14161E)),
+            .liquidGlass(RoundedCornerShape(16.dp), Color(0xFF14161E))
+            // KMK (r132): denser frost so the lines stay readable over busy pages
+            .background(Color(0xFF14161E).copy(alpha = 0.55f)),
     ) {
         // Title bar: drag grip, readout, Mark, collapse, close
         Row(
@@ -614,10 +618,13 @@ private fun FloatingBubble(parent: IntSize) {
     // KMK (r126): clear of the bars, the cutout and the keyboard, like the window
     val safe = rememberSafeInsets()
     val minX = safe.left + margin
-    val maxX = (parent.width - safe.right - sizePx - margin).coerceAtLeast(minX)
-    val minY = safe.top + margin
+    // KMK (r132): room for the counts inside the capsule
+    val maxX = (parent.width - safe.right - sizePx - with(density) { 44.dp.roundToPx() } - margin).coerceAtLeast(minX)
+    // KMK (r132): clear of the top bar's buttons
+    val minY = safe.top + with(density) { 64.dp.roundToPx() } + margin
     val maxY = (parent.height - safe.bottom - sizePx - margin).coerceAtLeast(minY)
     val errors by FloatingLogState.errorsSinceSeen.collectAsState()
+    val warnings by FloatingLogState.warningsSinceSeen.collectAsState()
     val recording by diag.recording.collectAsState()
     val saved = FloatingLogState.rect.value
     // KMK (r131): where it was left is kept (it used to jump back to the edge whenever the bars showed or hid)
@@ -635,15 +642,18 @@ private fun FloatingBubble(parent: IntSize) {
         kotlinx.coroutines.delay(200)
         play++
     }
-    Box(
-        contentAlignment = Alignment.Center,
+    // KMK (r132): one glass capsule: the live Logs icon (the recording ring around it) and the counts inside, amber
+    // for warnings and red for errors (99+), instead of a badge stuck on the corner
+    val capsule = androidx.compose.foundation.shape.RoundedCornerShape(27.dp)
+    androidx.compose.foundation.layout.Row(
+        verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .offset { shown }
-            .size(54.dp)
-            .shadow(8.dp, CircleShape)
-            .clip(CircleShape)
-            .liquidGlass(CircleShape, Color(0xFF14161E))
-            .then(if (recording != null) Modifier.border(3.dp, DiagColors.problem, CircleShape) else Modifier)
+            .height(54.dp)
+            .shadow(8.dp, capsule)
+            .clip(capsule)
+            .liquidGlass(capsule, Color(0xFF14161E))
+            .background(Color(0xFF14161E).copy(alpha = 0.45f))
             .pointerInput(minX, minY, maxX, maxY) {
                 // KMK (r131): anywhere on the screen (no snapping to a side)
                 detectDragGestures(onDragEnd = { bubblePos = pos }) { change, drag ->
@@ -659,24 +669,49 @@ private fun FloatingBubble(parent: IntSize) {
                 detectTapGestures {
                     play++
                     FloatingLogState.errorsSinceSeen.value = 0
+                    FloatingLogState.warningsSinceSeen.value = 0
                     FloatingLogState.collapsed.value = false
                 }
-            },
+            }
+            .padding(horizontal = 9.dp),
     ) {
-        // KMK (r131): the animated Logs icon from More
-        eu.kanade.presentation.components.LiveIcon(
-            kind = eu.kanade.presentation.components.LiveIconKind.Logs,
-            play = play,
-            tint = Color.White,
-            size = 26.dp,
-        )
-        if (errors > 0) {
-            Badge(
-                containerColor = DiagColors.problem,
-                contentColor = Color.White,
-                modifier = Modifier.align(Alignment.TopEnd).padding(4.dp),
-            ) { Text(if (errors > 99) "99+" else "$errors") }
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(36.dp)
+                .then(if (recording != null) Modifier.border(3.dp, DiagColors.problem, CircleShape) else Modifier),
+        ) {
+            // KMK (r131): the animated Logs icon from More
+            eu.kanade.presentation.components.LiveIcon(
+                kind = eu.kanade.presentation.components.LiveIconKind.Logs,
+                play = play,
+                tint = Color.White,
+                size = 24.dp,
+            )
         }
+        if (warnings > 0) CountPill(warnings, Color(0xFFF2C94C), Color(0xFF2A2105))
+        if (errors > 0) CountPill(errors, DiagColors.problem, Color.White)
+    }
+}
+
+@Composable
+private fun CountPill(count: Int, color: Color, text: Color) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .padding(start = 5.dp)
+            .height(22.dp)
+            .widthIn(min = 22.dp)
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(11.dp))
+            .background(color.copy(alpha = 0.92f))
+            .padding(horizontal = 6.dp),
+    ) {
+        Text(
+            text = if (count > 99) "99+" else "$count",
+            color = text,
+            fontSize = 11.sp,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+        )
     }
 }
 

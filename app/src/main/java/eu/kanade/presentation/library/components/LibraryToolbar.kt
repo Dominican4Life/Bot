@@ -1,5 +1,6 @@
 package eu.kanade.presentation.library.components
 
+import eu.kanade.presentation.components.GlassIcons
 import android.content.Context
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Row
@@ -134,7 +135,7 @@ private fun LibraryRegularToolbar(
                 persistentListOf(
                     AppBar.Action(
                         title = stringResource(MR.strings.action_filter),
-                        icon = Icons.Outlined.FilterList,
+                        icon = GlassIcons.Filter,
                         iconTint = filterTint,
                         onClick = onClickFilter,
                     ),
@@ -217,12 +218,12 @@ private fun LibrarySelectionToolbar(
                 persistentListOf(
                     AppBar.Action(
                         title = stringResource(MR.strings.action_select_all),
-                        icon = Icons.Outlined.SelectAll,
+                        icon = GlassIcons.SelectAll,
                         onClick = onClickSelectAll,
                     ),
                     AppBar.Action(
                         title = stringResource(MR.strings.action_select_inverse),
-                        icon = Icons.Outlined.FlipToBack,
+                        icon = GlassIcons.InvertSelection,
                         onClick = onClickInvertSelection,
                     ),
                 ),

@@ -1,5 +1,7 @@
 package eu.kanade.presentation.components
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -318,7 +320,16 @@ fun AppBarActions(
             expanded = showMenu,
             onDismissRequest = { showMenu = false },
         ) {
-            overflowActions.map {
+            overflowActions.forEachIndexed { index, it ->
+                // KMK (r132): no dividers; only a small gap before the destructive item (Clear Data)
+                if (it.destructive && index > 0) {
+                    androidx.compose.foundation.layout.Spacer(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                            .background(Color.Black.copy(alpha = 0.22f)),
+                    )
+                }
                 DropdownMenuItem(
                     onClick = {
                         it.onClick()
@@ -334,7 +345,13 @@ fun AppBarActions(
                     },
                     // KMK -->
                     leadingIcon = if (it.icon != null) {
-                        { Icon(imageVector = it.icon, contentDescription = null) }
+                        {
+                            Icon(
+                                imageVector = it.icon,
+                                contentDescription = null,
+                                tint = if (it.destructive) MaterialTheme.colorScheme.error else LocalContentColor.current,
+                            )
+                        }
                     } else if (it.painter != null) {
                         { Icon(painter = it.painter, contentDescription = null) }
                     } else {

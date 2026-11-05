@@ -772,8 +772,10 @@ class ReaderActivity : BaseActivity() {
             configuration.orientation == Configuration.ORIENTATION_LANDSCAPE && landscapeVerticalSeekbar
         val verticalSeekbarHorizontal = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
         val viewerIsVertical = (state.viewer is WebtoonViewer || state.viewer is VerticalPagerViewer)
-        val showVerticalSeekbar =
-            !forceHorizontalSeekbar && (verticalSeekbarLandscape || verticalSeekbarHorizontal) && viewerIsVertical
+        // KMK (r132): on tablets a long strip gets the vertical glass slider on the side too, like on the phone
+        val tabletVertical = configuration.smallestScreenWidthDp >= 600
+        val showVerticalSeekbar = !forceHorizontalSeekbar &&
+            (verticalSeekbarLandscape || verticalSeekbarHorizontal || tabletVertical) && viewerIsVertical
         val navBarType = when {
             !showVerticalSeekbar -> NavBarType.Bottom
             leftHandedVerticalSeekbar -> NavBarType.VerticalLeft

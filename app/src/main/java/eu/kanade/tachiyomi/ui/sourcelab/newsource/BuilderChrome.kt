@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.sourcelab.newsource
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.animation.core.animate
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
@@ -314,7 +315,7 @@ internal fun BuilderAddressBar(
                 BarButton(Icons.AutoMirrored.Outlined.KeyboardArrowLeft, "Back", enabled = canGoBack, onClick = onBack)
                 BarButton(Icons.AutoMirrored.Outlined.KeyboardArrowRight, "Forward", enabled = canGoForward, onClick = onForward)
                 when {
-                    edited -> BarButton(Icons.AutoMirrored.Outlined.ArrowForward, "Go", filled = true, onClick = onGo)
+                    edited -> BarButton(GlassIcons.Arrow, "Go", filled = true, onClick = onGo)
                     loading -> BarButton(Icons.Outlined.Close, "Stop loading", onClick = onStop)
                     else -> BarButton(Icons.Outlined.Refresh, "Reload", onClick = onReload)
                 }

@@ -1,5 +1,6 @@
 package eu.kanade.presentation.reader.appbars
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Bookmark
 import androidx.compose.material.icons.outlined.BookmarkBorder
@@ -44,7 +45,7 @@ fun ReaderTopBar(
                                     },
                                 ),
                                 icon = if (bookmarked) {
-                                    Icons.Outlined.Bookmark
+                                    GlassIcons.Bookmark
                                 } else {
                                     Icons.Outlined.BookmarkBorder
                                 },

@@ -154,7 +154,7 @@ fun Modifier.swipeBetweenTabs(count: Int, selected: Int, onSelect: (Int) -> Unit
 @Composable
 fun mediaDisplayAction(displayMode: LibraryDisplayMode, onClick: () -> Unit) = AppBar.Action(
     title = stringResource(MR.strings.action_display_mode),
-    icon = if (displayMode == LibraryDisplayMode.List) Icons.AutoMirrored.Filled.ViewList else Icons.Filled.ViewModule,
+    icon = if (displayMode == LibraryDisplayMode.List) GlassIcons.LayoutList else GlassIcons.Display,
     onClick = onClick,
 )
 
@@ -194,8 +194,8 @@ fun MediaDisplayDialog(
                     )
                 }
                 listOf(
-                    KMR.strings.panorama_style_fill to PanoramaStyle.FILL,
                     KMR.strings.panorama_style_fit to PanoramaStyle.FIT,
+                    KMR.strings.panorama_style_fill to PanoramaStyle.FILL,
                     KMR.strings.panorama_style_wide to PanoramaStyle.WIDE,
                 ).map { (titleRes, style) ->
                     FilterChip(

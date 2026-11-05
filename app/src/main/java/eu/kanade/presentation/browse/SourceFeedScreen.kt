@@ -1,5 +1,6 @@
 package eu.kanade.presentation.browse
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.items
@@ -182,7 +183,7 @@ fun SourceFeedScreen(
                         },
                     )
                 },
-                icon = { Icon(Icons.Outlined.FilterList, contentDescription = "") },
+                icon = { Icon(GlassIcons.Filter, contentDescription = "") },
                 onClick = onFabClick,
             )
             // KMK <--
@@ -372,7 +373,7 @@ fun SourceFeedToolbar(
                             AppBar.Action(
                                 title = stringResource(MR.strings.action_web_view),
                                 onClick = { func() },
-                                icon = Icons.Outlined.Public,
+                                icon = GlassIcons.WebView,
                             ),
                         )
                     }

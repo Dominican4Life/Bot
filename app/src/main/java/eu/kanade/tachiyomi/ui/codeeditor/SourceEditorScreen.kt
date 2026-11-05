@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.codeeditor
 
+import eu.kanade.presentation.components.GlassIcons
 import android.content.Context
 import android.content.SharedPreferences
 import android.net.Uri
@@ -902,10 +903,10 @@ private fun Context.fileName(uri: Uri): String? = runCatching {
 /** KMK: The test buttons of the Code Editor */
 private enum class TestAction(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
     RUN_ALL("Run all", Icons.AutoMirrored.Outlined.PlaylistPlay),
-    POPULAR("Popular", Icons.Outlined.FavoriteBorder),
+    POPULAR("Popular", GlassIcons.AddToLibrary),
     LATEST("Latest", Icons.Outlined.NewReleases),
     CATALOGS("Catalogs", Icons.AutoMirrored.Outlined.ViewList),
-    FILTERS("Filters", Icons.Outlined.FilterList),
+    FILTERS("Filters", GlassIcons.Filter),
     SETTINGS("Source settings", Icons.Outlined.Settings),
     CLEAR("Clear", Icons.Outlined.ClearAll),
 }
@@ -922,7 +923,7 @@ private fun TestButton(
         selected = picked == action,
         label = action.label,
         icon = action.icon,
-        filledIcon = if (action == TestAction.POPULAR) Icons.Outlined.Favorite else null,
+        filledIcon = if (action == TestAction.POPULAR) GlassIcons.InLibrary else null,
         onClick = {
             onPick(action)
             onRun()

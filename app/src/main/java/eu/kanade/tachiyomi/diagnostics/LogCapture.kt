@@ -461,7 +461,12 @@ internal object LogCapture {
             problemCount.incrementAndGet()
             DiagIo.forceSoon()
             if (FloatingLogState.visible.value && FloatingLogState.collapsed.value) {
-                FloatingLogState.errorsSinceSeen.update { it + 1 }
+                // KMK (r132): errors and warnings counted apart (red and amber in the bubble)
+                if (level == 'E') {
+                    FloatingLogState.errorsSinceSeen.update { it + 1 }
+                } else {
+                    FloatingLogState.warningsSinceSeen.update { it + 1 }
+                }
             }
         }
     }

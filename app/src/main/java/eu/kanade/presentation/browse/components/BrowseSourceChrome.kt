@@ -1,5 +1,6 @@
 package eu.kanade.presentation.browse.components
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.fadeIn
@@ -146,9 +147,7 @@ fun RowScope.PreviewPanelButtons(
             onLeftChange(checked)
             if (!checked && rightOn) onRightChange(false)
         },
-        icon = androidx.compose.ui.graphics.vector.ImageVector.vectorResource(
-            eu.kanade.tachiyomi.R.drawable.ic_preview_panel_24dp,
-        ),
+        icon = GlassIcons.Preview,
         label = stringResource(KMR.strings.preview_glass_pref),
     )
 }

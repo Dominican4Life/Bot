@@ -1,5 +1,6 @@
 package eu.kanade.presentation.browse.components
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.List
 import androidx.compose.material.icons.automirrored.outlined.TrendingUp
@@ -32,7 +33,7 @@ object CatalogTabIcons {
         Regex("""\bnew|latest|fresh|release""") to Icons.Outlined.NewReleases,
         Regex("recent|updated|update|added|ago") to Icons.Outlined.Schedule,
         Regex("popular|views?|viewed|watched") to Icons.Outlined.Visibility,
-        Regex("favou?rite|loved|liked|likes") to Icons.Outlined.FavoriteBorder,
+        Regex("favou?rite|loved|liked|likes") to GlassIcons.AddToLibrary,
         // KMK (r107) fix: people before the star rule ("Pornstars" is people), with the directory's people words
         Regex("actress|actor|model|performer|cast|idol|people|person|creator|artist|pornstar") to Icons.Outlined.PersonOutline,
         Regex("featured|pick|recommend|star|rated|rating") to Icons.Outlined.StarBorder,

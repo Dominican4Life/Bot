@@ -1,5 +1,6 @@
 package eu.kanade.presentation.browse.components
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -151,14 +152,14 @@ internal fun GlassPanelTop(
                 Spacer(modifier = Modifier.weight(1f))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     RoundIcon(
-                        if (manga.favorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                        if (manga.favorite) GlassIcons.InLibrary else GlassIcons.AddToLibrary,
                         stringResource(MR.strings.add_to_library),
                         selected = manga.favorite,
                         onClick = onAddToLibrary,
                     )
-                    RoundIcon(Icons.Outlined.HourglassEmpty, null, onClick = onOpenDetails)
-                    RoundIcon(Icons.Outlined.Sync, stringResource(MR.strings.manga_tracking_tab), onClick = onOpenDetails)
-                    RoundIcon(Icons.Outlined.Public, stringResource(MR.strings.action_web_view), onClick = onWebView)
+                    RoundIcon(GlassIcons.NextUpdate, null, onClick = onOpenDetails)
+                    RoundIcon(GlassIcons.TrackerAdd, stringResource(MR.strings.manga_tracking_tab), onClick = onOpenDetails)
+                    RoundIcon(GlassIcons.WebView, stringResource(MR.strings.action_web_view), onClick = onWebView)
                 }
             }
         }
@@ -223,9 +224,9 @@ internal fun GlassPanelTabs(
         horizontalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         val tabs = buildList {
-            add(Triple(PreviewPanelTab.LIST, Icons.AutoMirrored.Outlined.ViewList, listLabel))
+            add(Triple(PreviewPanelTab.LIST, GlassIcons.Chapters, listLabel))
             if (showPreview) {
-                add(Triple(PreviewPanelTab.PREVIEW, Icons.Outlined.GridView, stringResource(KMR.strings.title_sheet_preview)))
+                add(Triple(PreviewPanelTab.PREVIEW, GlassIcons.Preview, stringResource(KMR.strings.title_sheet_preview)))
             }
             add(Triple(PreviewPanelTab.DETAILS, Icons.Outlined.Info, stringResource(KMR.strings.preview_glass_details)))
         }

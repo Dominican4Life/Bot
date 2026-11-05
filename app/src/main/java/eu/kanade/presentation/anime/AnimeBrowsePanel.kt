@@ -1,5 +1,6 @@
 package eu.kanade.presentation.anime
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -417,7 +418,7 @@ fun AnimeEpisodePanel(
                         Box {
                             IconButton(onClick = { showDownloadMenu = true }, enabled = preview.episodes.isNotEmpty()) {
                                 Icon(
-                                    imageVector = Icons.Outlined.Download,
+                                    imageVector = GlassIcons.Download,
                                     contentDescription = stringResource(MR.strings.manga_download),
                                     tint = MaterialTheme.colorScheme.primary,
                                 )
@@ -627,7 +628,7 @@ private fun AnimePanelEpisodeRow(
         }
         IconButton(onClick = onToggleBookmark, modifier = Modifier.size(36.dp)) {
             Icon(
-                imageVector = if (episode.bookmark) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
+                imageVector = if (episode.bookmark) GlassIcons.Bookmark else Icons.Outlined.BookmarkBorder,
                 contentDescription = stringResource(
                     if (episode.bookmark) MR.strings.action_remove_bookmark else MR.strings.action_bookmark,
                 ),

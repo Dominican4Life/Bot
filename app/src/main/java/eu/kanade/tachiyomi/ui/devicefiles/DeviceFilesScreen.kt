@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.devicefiles
 
+import eu.kanade.presentation.components.GlassIcons
 import android.Manifest
 import android.content.Intent
 import android.net.Uri
@@ -374,7 +375,7 @@ private fun SearchField(text: String, hint: String, onChange: (String) -> Unit) 
 }
 
 private fun FileCategory.icon(): ImageVector = when (this) {
-    FileCategory.Downloads -> Icons.Outlined.Download
+    FileCategory.Downloads -> GlassIcons.Download
     FileCategory.Images -> Icons.Outlined.Image
     FileCategory.Videos -> Icons.Outlined.Movie
     FileCategory.Audio -> Icons.Outlined.MusicNote
@@ -542,7 +543,7 @@ private fun ListPage(
                         IconButton(onClick = {
                             selection.clear()
                             selection.addAll(shown.map { it.path })
-                        }) { Icon(Icons.Outlined.SelectAll, contentDescription = "Select all") }
+                        }) { Icon(GlassIcons.SelectAll, contentDescription = "Select all") }
                         IconButton(onClick = { actions.run(FileAction.Restore, selectedFiles) { selection.clear() } }) {
                             Icon(Icons.Outlined.RestoreFromTrash, contentDescription = "Restore")
                         }
@@ -574,7 +575,7 @@ private fun ListPage(
                         IconButton(onClick = {
                             selection.clear()
                             selection.addAll(shown.map { it.path })
-                        }) { Icon(Icons.Outlined.SelectAll, contentDescription = "Select all") }
+                        }) { Icon(GlassIcons.SelectAll, contentDescription = "Select all") }
                         IconButton(onClick = {
                             model.toggleFavourites(selectedFiles)
                             selection.clear()

@@ -1,5 +1,6 @@
 package eu.kanade.presentation.history.components
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -214,7 +215,7 @@ fun HistoryItem(
         if (!history.coverData.isMangaFavorite) {
             IconButton(onClick = onClickFavorite) {
                 Icon(
-                    imageVector = Icons.Outlined.FavoriteBorder,
+                    imageVector = GlassIcons.AddToLibrary,
                     contentDescription = stringResource(MR.strings.add_to_library),
                     tint = MaterialTheme.colorScheme.onSurface,
                 )

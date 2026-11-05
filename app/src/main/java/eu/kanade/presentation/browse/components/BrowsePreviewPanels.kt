@@ -1,5 +1,6 @@
 package eu.kanade.presentation.browse.components
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -240,7 +241,7 @@ fun BrowseChapterPanel(
                     Box {
                         IconButton(onClick = { showDownloadMenu = true }, enabled = state.manga != null) {
                             Icon(
-                                imageVector = Icons.Outlined.Download,
+                                imageVector = GlassIcons.Download,
                                 contentDescription = stringResource(MR.strings.manga_download),
                                 tint = MaterialTheme.colorScheme.primary,
                             )
@@ -267,7 +268,7 @@ fun BrowseChapterPanel(
                     val filterActive = state.manga?.chaptersFiltered() == true || state.scanlatorFilterActive
                     IconButton(onClick = onOpenFilters, enabled = state.manga != null) {
                         Icon(
-                            imageVector = Icons.Outlined.FilterList,
+                            imageVector = GlassIcons.Filter,
                             contentDescription = stringResource(MR.strings.action_filter),
                             tint = if (filterActive) {
                                 MaterialTheme.colorScheme.tertiary
@@ -549,7 +550,7 @@ private fun BrowseChapterRow(
         // Bookmark
         IconButton(onClick = onToggleBookmark, modifier = Modifier.size(36.dp)) {
             Icon(
-                imageVector = if (chapter.bookmark) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
+                imageVector = if (chapter.bookmark) GlassIcons.Bookmark else Icons.Outlined.BookmarkBorder,
                 contentDescription = stringResource(
                     if (chapter.bookmark) MR.strings.action_remove_bookmark else MR.strings.action_bookmark,
                 ),

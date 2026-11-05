@@ -1,5 +1,6 @@
 package eu.kanade.presentation.reader
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -196,7 +197,7 @@ fun ChapterListContent(
                         IconButton(onClick = { onBookmark(chapterItem.chapter) }) {
                             Icon(
                                 imageVector = if (chapterItem.chapter.bookmark) {
-                                    Icons.Filled.Bookmark
+                                    GlassIcons.Bookmark
                                 } else {
                                     Icons.Outlined.BookmarkBorder
                                 },

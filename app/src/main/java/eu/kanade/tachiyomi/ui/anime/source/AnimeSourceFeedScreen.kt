@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.anime.source
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -125,7 +126,7 @@ class AnimeSourceFeedScreen(private val sourceId: Long) : Screen() {
             floatingActionButton = {
                 SmallExtendedFloatingActionButton(
                     text = { Text(text = stringResource(MR.strings.action_filter)) },
-                    icon = { Icon(Icons.Outlined.FilterList, contentDescription = null) },
+                    icon = { Icon(GlassIcons.Filter, contentDescription = null) },
                     onClick = { navigator.push(AnimeSourceScreen(sourceId, openFilters = true)) },
                 )
             },

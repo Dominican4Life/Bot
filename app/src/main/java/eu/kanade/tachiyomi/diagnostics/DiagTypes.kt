@@ -912,6 +912,8 @@ internal object FloatingLogState {
     val paused = MutableStateFlow(false)
     val tagFilter = MutableStateFlow<String?>(null)
     val errorsSinceSeen = MutableStateFlow(0)
+    /** KMK (r132): warnings since the bubble was last opened (amber count next to the red one) */
+    val warningsSinceSeen = MutableStateFlow(0)
     /** x, y, w, h in px for the current orientation; null = default corner */
     val rect = MutableStateFlow<IntArray?>(null)
 }

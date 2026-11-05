@@ -1,5 +1,6 @@
 package eu.kanade.presentation.updates
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -563,12 +564,12 @@ private fun UpdatesAppBar(
                 persistentListOf(
                     AppBar.Action(
                         title = stringResource(MR.strings.action_select_all),
-                        icon = Icons.Outlined.SelectAll,
+                        icon = GlassIcons.SelectAll,
                         onClick = onSelectAll,
                     ),
                     AppBar.Action(
                         title = stringResource(MR.strings.action_select_inverse),
-                        icon = Icons.Outlined.FlipToBack,
+                        icon = GlassIcons.InvertSelection,
                         onClick = onInvertSelection,
                     ),
                 ),

@@ -1,5 +1,12 @@
 package eu.kanade.presentation.category.components
 
+import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.border
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -249,21 +256,23 @@ fun ChangeCategoryDialog(
         return
     }
     var selection by remember { mutableStateOf(initialSelection) }
+    // KMK (r132): a glass window: rounded boxes, a pencil to edit categories, "+ New category", Cancel / Save capsules
     AlertDialog(
         onDismissRequest = onDismissRequest,
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp),
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.97f),
         confirmButton = {
-            Row {
-                tachiyomi.presentation.core.components.material.TextButton(onClick = {
-                    onDismissRequest()
-                    onEditCategories()
-                }) {
-                    Text(text = stringResource(MR.strings.action_edit))
-                }
-                Spacer(modifier = Modifier.weight(1f))
-                tachiyomi.presentation.core.components.material.TextButton(onClick = onDismissRequest) {
-                    Text(text = stringResource(MR.strings.action_cancel))
-                }
-                tachiyomi.presentation.core.components.material.TextButton(
+            Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)) {
+                GlassDialogButton(
+                    text = stringResource(MR.strings.action_cancel),
+                    primary = false,
+                    modifier = Modifier.weight(1f),
+                    onClick = onDismissRequest,
+                )
+                GlassDialogButton(
+                    text = stringResource(MR.strings.action_save),
+                    primary = true,
+                    modifier = Modifier.weight(1f),
                     onClick = {
                         onDismissRequest()
                         onConfirm(
@@ -275,13 +284,24 @@ fun ChangeCategoryDialog(
                                 .map { it.value.id },
                         )
                     },
-                ) {
-                    Text(text = stringResource(MR.strings.action_ok))
-                }
+                )
             }
         },
         title = {
-            Text(text = stringResource(MR.strings.action_move_category))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(text = stringResource(MR.strings.categories), modifier = Modifier.weight(1f))
+                androidx.compose.material3.IconButton(
+                    onClick = {
+                        onDismissRequest()
+                        onEditCategories()
+                    },
+                ) {
+                    androidx.compose.material3.Icon(
+                        imageVector = androidx.compose.material.icons.Icons.Outlined.Edit,
+                        contentDescription = stringResource(MR.strings.action_edit_categories),
+                    )
+                }
+            }
         },
         text = {
             Column(
@@ -299,31 +319,80 @@ fun ChangeCategoryDialog(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { onChange(checkbox) },
+                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                            .clickable { onChange(checkbox) }
+                            .padding(vertical = 10.dp, horizontal = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        when (checkbox) {
-                            is CheckboxState.TriState -> {
-                                TriStateCheckbox(
-                                    state = checkbox.asToggleableState(),
-                                    onClick = { onChange(checkbox) },
-                                )
-                            }
-                            is CheckboxState.State -> {
-                                Checkbox(
-                                    checked = checkbox.isChecked,
-                                    onCheckedChange = { onChange(checkbox) },
-                                )
-                            }
-                        }
-
+                        tachiyomi.presentation.core.components.GlassTriStateBox(
+                            state = when (checkbox) {
+                                is CheckboxState.TriState.Include -> tachiyomi.core.common.preference.TriState.ENABLED_IS
+                                is CheckboxState.TriState.Exclude -> tachiyomi.core.common.preference.TriState.ENABLED_NOT
+                                is CheckboxState.State.Checked -> tachiyomi.core.common.preference.TriState.ENABLED_IS
+                                else -> tachiyomi.core.common.preference.TriState.DISABLED
+                            },
+                        )
                         Text(
                             text = checkbox.value.visualName,
                             modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
                         )
                     }
                 }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                        .clickable {
+                            onDismissRequest()
+                            onEditCategories()
+                        }
+                        .padding(vertical = 10.dp, horizontal = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    androidx.compose.material3.Icon(
+                        imageVector = androidx.compose.material.icons.Icons.Outlined.Add,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = stringResource(MR.strings.action_add_category),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
+                    )
+                }
             }
         },
     )
+}
+
+/** KMK (r132): a glass window's button: a capsule, tinted gold when it's the main one */
+@Composable
+fun GlassDialogButton(text: String, primary: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val shape = androidx.compose.foundation.shape.RoundedCornerShape(21.dp)
+    androidx.compose.foundation.layout.Box(
+        modifier = modifier
+            .height(42.dp)
+            .clip(shape)
+            .background(
+                if (primary) {
+                    androidx.compose.ui.graphics.Color(0xFFF2C94C).copy(alpha = 0.92f)
+                } else {
+                    androidx.compose.ui.graphics.Color.White.copy(alpha = 0.10f)
+                },
+            )
+            .border(
+                1.dp,
+                androidx.compose.ui.graphics.Color.White.copy(alpha = if (primary) 0.45f else 0.18f),
+                shape,
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 18.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelLarge,
+            color = if (primary) androidx.compose.ui.graphics.Color(0xFF2A2105) else MaterialTheme.colorScheme.onSurface,
+        )
+    }
 }

@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.anime
 
+import eu.kanade.presentation.components.GlassIcons
 import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -202,7 +203,7 @@ fun EpisodeOptionsDialog(
                                 ?.setPrimaryClip(ClipData.newPlainText(episode.name, video.videoUrl))
                             context.toast(MR.strings.copied_to_clipboard_plain)
                         }
-                        OptionRow(Icons.Outlined.Download, stringResource(KMR.strings.anime_download_internally)) {
+                        OptionRow(GlassIcons.Download, stringResource(KMR.strings.anime_download_internally)) {
                             onDownload(video)
                             context.toast(KMR.strings.anime_download_added)
                             onDismissRequest()

@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.anime
 
+import eu.kanade.presentation.components.GlassIcons
 import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -1881,7 +1882,7 @@ private fun RichEpisodeItem(
             ) {
                 if (bookmark) {
                     Icon(
-                        imageVector = Icons.Filled.Bookmark,
+                        imageVector = GlassIcons.Bookmark,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier
@@ -2466,7 +2467,7 @@ private fun AnimeSheetHeader(
             var downloadMenu by remember { mutableStateOf(false) }
             androidx.compose.material3.IconButton(onClick = { downloadMenu = true }) {
                 Icon(
-                    Icons.Outlined.Download,
+                    GlassIcons.Download,
                     contentDescription = stringResource(MR.strings.manga_download),
                 )
             }
@@ -2491,7 +2492,7 @@ private fun AnimeSheetHeader(
         }
         androidx.compose.material3.IconButton(onClick = actions.onFilter) {
             Icon(
-                Icons.Outlined.FilterList,
+                GlassIcons.Filter,
                 contentDescription = stringResource(MR.strings.action_filter),
                 tint = if (state.filterActive) {
                     MaterialTheme.colorScheme.primary

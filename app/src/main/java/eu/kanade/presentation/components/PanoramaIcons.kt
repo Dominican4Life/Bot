@@ -16,30 +16,14 @@ import eu.kanade.domain.ui.model.PanoramaStyle
 object PanoramaIcons {
 
     /** A book-cover frame, the wide cover filling its middle and a light tint above and below it */
-    val ColorFill: ImageVector by lazy {
-        icon("PanoramaColorFill") {
-            outline(x = 6f, y = 2f, w = 12f, h = 20f)
-            tint(x = 7.5f, y = 3.5f, w = 9f, h = 4.5f)
-            fill(x = 7.5f, y = 8.5f, w = 9f, h = 7f)
-            tint(x = 7.5f, y = 16f, w = 9f, h = 4.5f)
-        }
-    }
+    // KMK (r132): redrawn in the glass icon style (a lighter cover + the solid wide cover), see [GlassIcons]
+    val ColorFill: ImageVector get() = GlassIcons.PanoramaColorFill
 
     /** A book cover next to a wide cover of the same width, so shorter */
-    val FitWidth: ImageVector by lazy {
-        icon("PanoramaFitWidth") {
-            outline(x = 2f, y = 3f, w = 9f, h = 15f)
-            fill(x = 13f, y = 3f, w = 9f, h = 6f)
-        }
-    }
+    val FitWidth: ImageVector get() = GlassIcons.PanoramaFitWidth
 
     /** A book cover next to a wide cover of the same height, twice as wide */
-    val Wide: ImageVector by lazy {
-        icon("PanoramaWide") {
-            outline(x = 1.5f, y = 5f, w = 7f, h = 14f)
-            fill(x = 10.5f, y = 5f, w = 12f, h = 14f)
-        }
-    }
+    val Wide: ImageVector get() = GlassIcons.PanoramaWide
 
     fun of(style: PanoramaStyle): ImageVector = when (style) {
         PanoramaStyle.FILL -> ColorFill

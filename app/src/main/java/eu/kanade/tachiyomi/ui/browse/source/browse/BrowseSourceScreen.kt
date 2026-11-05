@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.browse.source.browse
 
+import eu.kanade.presentation.components.GlassIcons
 import dev.chrisbanes.haze.hazeSource
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateDpAsState
@@ -396,8 +397,8 @@ data class BrowseSourceScreen(
                                     BrowseTabChip(
                                         selected = !panelOpen && state.listing == Listing.Popular,
                                         label = sourceTabs?.popularName ?: stringResource(MR.strings.popular),
-                                        icon = Icons.Outlined.FavoriteBorder,
-                                        filledIcon = Icons.Outlined.Favorite,
+                                        icon = GlassIcons.AddToLibrary,
+                                        filledIcon = GlassIcons.InLibrary,
                                         onClick = {
                                             if (!panelOpen && state.listing == Listing.Popular) {
                                                 // Tapping the selected tab loads it again from page 1
@@ -446,7 +447,7 @@ data class BrowseSourceScreen(
                                 BrowseTabChip(
                                     selected = filterSelected,
                                     label = stringResource(MR.strings.action_filter),
-                                    icon = Icons.Outlined.FilterList,
+                                    icon = GlassIcons.Filter,
                                     onClick = {
                                         if (filterPanelOpen) {
                                             screenModel.setDialog(null)

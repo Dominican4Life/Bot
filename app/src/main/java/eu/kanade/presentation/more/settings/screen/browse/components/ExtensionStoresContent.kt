@@ -1,5 +1,6 @@
 package eu.kanade.presentation.more.settings.screen.browse.components
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -146,7 +147,7 @@ private fun ExtensionStoresListItem(
                 ) {
                     IconButton(onClick = onOpenWebsite) {
                         Icon(
-                            imageVector = Icons.Outlined.Public,
+                            imageVector = GlassIcons.WebView,
                             contentDescription = stringResource(MR.strings.action_open_in_browser),
                         )
                     }

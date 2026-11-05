@@ -1,5 +1,9 @@
 package eu.kanade.presentation.browse.components
 
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
+import eu.kanade.presentation.components.GlassIcons
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.graphics.res.animatedVectorResource
 import androidx.compose.animation.graphics.res.rememberAnimatedVectorPainter
@@ -137,9 +141,9 @@ fun BrowseSourceToolbar(
                                 AppBar.Action(
                                     title = stringResource(MR.strings.action_display_mode),
                                     icon = if (displayMode == LibraryDisplayMode.List) {
-                                        Icons.AutoMirrored.Filled.ViewList
+                                        GlassIcons.LayoutList
                                     } else {
-                                        Icons.Filled.ViewModule
+                                        GlassIcons.Display
                                     },
                                     onClick = { selectingDisplayMode = true },
                                 ),
@@ -207,7 +211,7 @@ fun BrowseSourceToolbar(
                                     title = stringResource(MR.strings.action_web_view),
                                     onClick = onWebViewClick,
                                     // KMK -->
-                                    icon = Icons.Outlined.Public,
+                                    icon = GlassIcons.WebView,
                                     // KMK <--
                                 ),
                             )
@@ -237,6 +241,7 @@ fun BrowseSourceToolbar(
             ) {
                 RadioMenuItem(
                     text = { Text(text = stringResource(MR.strings.action_display_comfortable_grid)) },
+                    leadingIcon = { Icon(imageVector = GlassIcons.LayoutComfortable, contentDescription = null) },
                     isChecked = displayMode == LibraryDisplayMode.ComfortableGrid,
                 ) {
                     selectingDisplayMode = false
@@ -244,6 +249,7 @@ fun BrowseSourceToolbar(
                 }
                 RadioMenuItem(
                     text = { Text(text = stringResource(MR.strings.action_display_grid)) },
+                    leadingIcon = { Icon(imageVector = GlassIcons.LayoutCompact, contentDescription = null) },
                     isChecked = displayMode == LibraryDisplayMode.CompactGrid,
                 ) {
                     selectingDisplayMode = false
@@ -252,6 +258,7 @@ fun BrowseSourceToolbar(
                 // KMK -->
                 RadioMenuItem(
                     text = { Text(text = stringResource(MR.strings.action_display_cover_only_grid)) },
+                    leadingIcon = { Icon(imageVector = GlassIcons.LayoutCovers, contentDescription = null) },
                     isChecked = displayMode == LibraryDisplayMode.CoverOnlyGrid,
                 ) {
                     selectingDisplayMode = false
@@ -260,6 +267,7 @@ fun BrowseSourceToolbar(
                 // KMK <--
                 RadioMenuItem(
                     text = { Text(text = stringResource(MR.strings.action_display_list)) },
+                    leadingIcon = { Icon(imageVector = GlassIcons.LayoutList, contentDescription = null) },
                     isChecked = displayMode == LibraryDisplayMode.List,
                 ) {
                     selectingDisplayMode = false
@@ -331,33 +339,55 @@ internal fun PanoramaStyleSection(
 ) {
     val stylePref = remember { Injekt.get<UiPreferences>().browsePanoramaStyle() }
     val style by stylePref.collectAsState()
-    HorizontalDivider()
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.width(300.dp).padding(vertical = 8.dp),
-    ) {
+    // KMK (r132): "Wide Covers (Panorama)" as a glass switch: each style with its icon and its name
+    Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
         Text(
-            text = stringResource(KMR.strings.browse_panorama),
-            style = MaterialTheme.typography.titleSmall,
+            text = stringResource(KMR.strings.wide_covers_panorama),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 4.dp, bottom = 6.dp),
         )
         Row(
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            modifier = Modifier.padding(top = 8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
+                .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.25f))
+                .padding(3.dp),
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
         ) {
             listOf(
-                KMR.strings.panorama_style_fill to PanoramaStyle.FILL,
-                KMR.strings.panorama_style_fit to PanoramaStyle.FIT,
-                KMR.strings.panorama_style_wide to PanoramaStyle.WIDE,
+                KMR.strings.panorama_short_fit to PanoramaStyle.FIT,
+                KMR.strings.panorama_short_fill to PanoramaStyle.FILL,
+                KMR.strings.panorama_short_wide to PanoramaStyle.WIDE,
             ).forEach { (label, value) ->
-                FilledTonalIconToggleButton(
-                    checked = displayMode == LibraryDisplayMode.ComfortableGridPanorama && style == value,
-                    onCheckedChange = {
-                        // KMK (r115): through WideCoverSync, so "Same everywhere" copies it to the other places
-                        WideCoverSync.pick(WideCoverPlace.BROWSE, WideCoverStyle.of(value))
-                        onDisplayModeChange(LibraryDisplayMode.ComfortableGridPanorama)
-                    },
+                val on = displayMode == LibraryDisplayMode.ComfortableGridPanorama && style == value
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(13.dp))
+                        .background(
+                            if (on) androidx.compose.ui.graphics.Color.White.copy(alpha = 0.16f) else androidx.compose.ui.graphics.Color.Transparent,
+                        )
+                        .clickable {
+                            // KMK (r115): through WideCoverSync, so "Same everywhere" copies it to the other places
+                            WideCoverSync.pick(WideCoverPlace.BROWSE, WideCoverStyle.of(value))
+                            onDisplayModeChange(LibraryDisplayMode.ComfortableGridPanorama)
+                        }
+                        .padding(vertical = 7.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Icon(imageVector = PanoramaIcons.of(value), contentDescription = stringResource(label))
+                    Icon(
+                        imageVector = PanoramaIcons.of(value),
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        tint = if (on) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = stringResource(label),
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1,
+                        color = if (on) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }

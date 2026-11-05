@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.pairsync
 
+import eu.kanade.presentation.components.GlassIcons
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
@@ -1787,7 +1788,7 @@ private fun ResultCard(
     val toInstall = summary.missing.size + summary.apks.size
     if (toInstall > 0) {
         OfferRow(
-            icon = Icons.Outlined.Download,
+            icon = GlassIcons.Download,
             title = if (toInstall == 1) "1 extension missing" else "$toInstall extensions missing",
             // KMK (r90): Retry stays after the installs were asked (one cancelled can be tried again)
             subtitle = if (result.missingAsked) {

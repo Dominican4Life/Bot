@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.anime.anilist
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -94,7 +95,7 @@ fun GlobalSearchModeRow(
             AniListTabChip(
                 selected = onSources && onlyShowHasResults,
                 label = stringResource(KMR.strings.anilist_results),
-                icon = Icons.Outlined.FilterList,
+                icon = GlassIcons.Filter,
                 onClick = {
                     if (onSources) onToggleHasResults() else onMode(GlobalSearchMode.RESULTS)
                 },
@@ -103,7 +104,7 @@ fun GlobalSearchModeRow(
                 AniListTabChip(
                     selected = mode == GlobalSearchMode.ANILIST,
                     label = stringResource(KMR.strings.anilist_tab),
-                    icon = Icons.Outlined.Public,
+                    icon = GlassIcons.WebView,
                     onClick = { onMode(GlobalSearchMode.ANILIST) },
                 )
             }

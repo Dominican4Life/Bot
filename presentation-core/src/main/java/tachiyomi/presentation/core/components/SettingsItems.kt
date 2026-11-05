@@ -1,5 +1,10 @@
 package tachiyomi.presentation.core.components
 
+import androidx.compose.material.icons.rounded.Remove
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.ui.draw.alpha
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -364,22 +369,8 @@ fun TriStateItem(
     ) {
         val stateAlpha = if (enabled && onClick != null) 1f else DISABLED_ALPHA
 
-        Icon(
-            imageVector = when (state) {
-                TriState.DISABLED -> Icons.Rounded.CheckBoxOutlineBlank
-                TriState.ENABLED_IS -> Icons.Rounded.CheckBox
-                TriState.ENABLED_NOT -> Icons.Rounded.DisabledByDefault
-            },
-            contentDescription = null,
-            tint = if (!enabled || state == TriState.DISABLED) {
-                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = stateAlpha)
-            } else {
-                when (onClick) {
-                    null -> MaterialTheme.colorScheme.onSurface.copy(alpha = DISABLED_ALPHA)
-                    else -> MaterialTheme.colorScheme.primary
-                }
-            },
-        )
+        // KMK (r132): a rounded glass box: gold with a tick = only these, red with a dash = hide these
+        GlassTriStateBox(state = state, alpha = stateAlpha)
         Text(
             text = label,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = stateAlpha),
@@ -484,5 +475,44 @@ private fun BaseSettingsItem(
             text = label,
             style = MaterialTheme.typography.bodyMedium,
         )
+    }
+}
+
+/** KMK (r132): the rounded box of the glass filter sheet */
+@Composable
+fun GlassTriStateBox(state: TriState, alpha: Float = 1f) {
+    val shape = androidx.compose.foundation.shape.RoundedCornerShape(7.dp)
+    androidx.compose.foundation.layout.Box(
+        modifier = Modifier
+            .size(22.dp)
+            .alpha(alpha)
+            .then(
+                when (state) {
+                    TriState.DISABLED -> Modifier.border(
+                        2.dp,
+                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
+                        shape,
+                    )
+                    TriState.ENABLED_IS -> Modifier.background(androidx.compose.ui.graphics.Color(0xFFF2C94C), shape)
+                    TriState.ENABLED_NOT -> Modifier.background(androidx.compose.ui.graphics.Color(0xFFE5484D), shape)
+                },
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        when (state) {
+            TriState.ENABLED_IS -> Icon(
+                imageVector = Icons.Rounded.Check,
+                contentDescription = null,
+                tint = androidx.compose.ui.graphics.Color(0xFF2A2105),
+                modifier = Modifier.size(17.dp),
+            )
+            TriState.ENABLED_NOT -> Icon(
+                imageVector = Icons.Rounded.Remove,
+                contentDescription = null,
+                tint = androidx.compose.ui.graphics.Color.White,
+                modifier = Modifier.size(17.dp),
+            )
+            TriState.DISABLED -> Unit
+        }
     }
 }

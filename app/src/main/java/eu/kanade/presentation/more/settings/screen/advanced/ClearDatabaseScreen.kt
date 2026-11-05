@@ -1,5 +1,6 @@
 package eu.kanade.presentation.more.settings.screen.advanced
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -144,12 +145,12 @@ class ClearDatabaseScreen : Screen() {
                                         actions = persistentListOf(
                                             AppBar.Action(
                                                 title = stringResource(MR.strings.action_select_all),
-                                                icon = Icons.Outlined.SelectAll,
+                                                icon = GlassIcons.SelectAll,
                                                 onClick = model::selectAll,
                                             ),
                                             AppBar.Action(
                                                 title = stringResource(MR.strings.action_select_inverse),
-                                                icon = Icons.Outlined.FlipToBack,
+                                                icon = GlassIcons.InvertSelection,
                                                 onClick = model::invertSelection,
                                             ),
                                         ),

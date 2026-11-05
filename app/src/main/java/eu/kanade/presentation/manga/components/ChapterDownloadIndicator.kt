@@ -1,5 +1,6 @@
 package eu.kanade.presentation.manga.components
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
@@ -99,7 +100,8 @@ private fun NotDownloadedIndicator(
         contentAlignment = Alignment.Center,
     ) {
         Icon(
-            painter = painterResource(R.drawable.ic_download_chapter_24dp),
+            // KMK (r132): the glass icon set (a solid arrow in a light ring)
+            imageVector = GlassIcons.ChapterDownload,
             contentDescription = stringResource(MR.strings.manga_download),
             modifier = Modifier.size(IndicatorSize),
             tint = MaterialTheme.colorScheme.primary, // KMK: onSurfaceVariant
@@ -132,32 +134,37 @@ private fun DownloadingIndicator(
         val downloadProgress = downloadProgressProvider()
         val indeterminate = downloadState == Download.State.QUEUE ||
             (downloadState == Download.State.DOWNLOADING && downloadProgress == 0)
-        if (indeterminate) {
+        // KMK (r132): queued = a dashed ring with a small clock; downloading = a light ring that fills in solid
+        if (downloadState == Download.State.QUEUE) {
+            arrowColor = Color.Transparent
+            Icon(
+                imageVector = GlassIcons.ChapterQueued,
+                contentDescription = null,
+                modifier = Modifier.size(IndicatorSize),
+                tint = strokeColor,
+            )
+        } else if (indeterminate) {
             arrowColor = strokeColor
             CircularProgressIndicator(
                 modifier = IndicatorModifier,
                 color = strokeColor,
                 strokeWidth = IndicatorStrokeWidth,
-                trackColor = Color.Transparent,
-                strokeCap = StrokeCap.Butt,
+                trackColor = strokeColor.copy(alpha = 0.3f),
+                strokeCap = StrokeCap.Round,
             )
         } else {
             val animatedProgress by animateFloatAsState(
                 targetValue = downloadProgress / 100f,
                 animationSpec = ProgressIndicatorDefaults.ProgressAnimationSpec,
             )
-            arrowColor = if (animatedProgress < 0.5f) {
-                strokeColor
-            } else {
-                MaterialTheme.colorScheme.background
-            }
+            arrowColor = strokeColor
             CircularProgressIndicator(
                 progress = { animatedProgress },
                 modifier = IndicatorModifier,
                 color = strokeColor,
-                strokeWidth = IndicatorSize / 2,
-                trackColor = Color.Transparent,
-                strokeCap = StrokeCap.Butt,
+                strokeWidth = IndicatorStrokeWidth,
+                trackColor = strokeColor.copy(alpha = 0.3f),
+                strokeCap = StrokeCap.Round,
                 gapSize = 0.dp,
             )
         }
@@ -178,7 +185,7 @@ private fun DownloadingIndicator(
             )
         }
         Icon(
-            imageVector = Icons.Outlined.ArrowDownward,
+            imageVector = GlassIcons.ChapterDownloadArrow,
             contentDescription = null,
             modifier = ArrowModifier,
             tint = arrowColor,
@@ -205,7 +212,7 @@ private fun DownloadedIndicator(
         contentAlignment = Alignment.Center,
     ) {
         Icon(
-            imageVector = Icons.Filled.CheckCircle,
+            imageVector = GlassIcons.ChapterDownloaded,
             contentDescription = null,
             modifier = Modifier.size(IndicatorSize),
             tint = MaterialTheme.colorScheme.primary, // KMK: onSurfaceVariant
@@ -240,7 +247,7 @@ private fun ErrorIndicator(
         contentAlignment = Alignment.Center,
     ) {
         Icon(
-            imageVector = Icons.Outlined.ErrorOutline,
+            imageVector = GlassIcons.ChapterDownloadError,
             contentDescription = stringResource(MR.strings.chapter_error),
             modifier = Modifier.size(IndicatorSize),
             tint = MaterialTheme.colorScheme.error,

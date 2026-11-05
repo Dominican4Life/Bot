@@ -82,6 +82,8 @@ class GlassSettingsScreen : Screen() {
         val readerOn by readerPref.collectAsState()
         val titlePref = remember { eu.kanade.presentation.components.TitleSheet.glass() }
         val titleOn by titlePref.collectAsState()
+        val bannerPref = remember { eu.kanade.presentation.components.TitleSheet.anilistBanner() }
+        val bannerOn by bannerPref.collectAsState()
         // Any change redraws the preview (the glass reads the settings as it draws)
         val revision = listOf(material, see, corners, knob, reduce, contrast).hashCode()
 
@@ -156,6 +158,8 @@ class GlassSettingsScreen : Screen() {
                     SwitchRow(stringResource(KMR.strings.preview_glass_pref), panelOn) { panelPref.set(it) }
                     SwitchRow(stringResource(KMR.strings.reader_glass_pref), readerOn) { readerPref.set(it) }
                     SwitchRow(stringResource(KMR.strings.title_sheet_glass_pref), titleOn) { titlePref.set(it) }
+                    // KMK (r132): the AniList banner behind title pages
+                    SwitchRow(stringResource(KMR.strings.title_anilist_banner_pref), bannerOn) { bannerPref.set(it) }
                     TextButtonRow(stringResource(KMR.strings.glass_reset)) {
                         materialPref.delete()
                         seePref.delete()

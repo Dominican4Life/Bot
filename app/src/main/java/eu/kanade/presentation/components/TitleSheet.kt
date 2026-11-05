@@ -112,6 +112,15 @@ object TitleSheet {
     /** KMK (r129): the sheet, its dock and the top buttons in glass over the cover and description */
     fun glass(): Preference<Boolean> = store.getBoolean("title_sheet_glass", true)
 
+    /** KMK (r132): the AniList banner picture behind the title page (looked up once per title) */
+    fun anilistBanner(): Preference<Boolean> = store.getBoolean("title_anilist_banner", true)
+
+    /** KMK (r132): tablet title page: the Preview card beside the chapters (the toggle in the top capsule) */
+    fun tabletPreview(): Preference<Boolean> = store.getBoolean("tablet_title_preview", true)
+
+    /** KMK (r132): tablet title page: the Suggestions row above the chapters */
+    fun tabletSuggestions(): Preference<Boolean> = store.getBoolean("tablet_title_suggestions", true)
+
     /** Where the sheet stopped last */
     fun lastStop(): Preference<Int> = store.getInt("title_sheet_last_stop", HALF)
 
@@ -390,13 +399,13 @@ private fun TitleSheetDock(
         ) {
             DockTab(
                 selected = tab == TitleSheetTab.LIST,
-                icon = Icons.AutoMirrored.Outlined.ViewList,
+                icon = GlassIcons.Chapters,
                 label = stringResource(KMR.strings.title_sheet_list),
                 onClick = { onTab(TitleSheetTab.LIST) },
             )
             DockTab(
                 selected = tab == TitleSheetTab.PREVIEW,
-                icon = Icons.Outlined.GridView,
+                icon = GlassIcons.Preview,
                 label = stringResource(KMR.strings.title_sheet_preview),
                 onClick = { onTab(TitleSheetTab.PREVIEW) },
             )

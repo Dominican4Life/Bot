@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.player.controls.components.dialogs
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -134,7 +135,7 @@ private fun EpisodeListItem(
     var isBookmarked by remember { mutableStateOf(episode.bookmark) }
     var textHeight by remember { mutableStateOf(0) }
 
-    val bookmarkIcon = if (isBookmarked) Icons.Filled.Bookmark else Icons.Outlined.Bookmark
+    val bookmarkIcon = if (isBookmarked) GlassIcons.Bookmark else GlassIcons.Bookmark
     val bookmarkAlpha = if (isBookmarked) 1f else DISABLED_ALPHA
     val episodeColor = if (isBookmarked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
     val textAlpha = if (episode.seen) DISABLED_ALPHA else 1f

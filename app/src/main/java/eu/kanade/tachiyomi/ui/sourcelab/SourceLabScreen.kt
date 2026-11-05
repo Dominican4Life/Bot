@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.sourcelab
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -610,7 +611,7 @@ internal class SourceLabScreen(
                                         }
                                     }
                                     // KMK (r116): the source's bot-check session and pace
-                                    MenuItem("Connection", Icons.Outlined.Public) {
+                                    MenuItem("Connection", GlassIcons.WebView) {
                                         showMenu = false
                                         connectionSheet = true
                                     }

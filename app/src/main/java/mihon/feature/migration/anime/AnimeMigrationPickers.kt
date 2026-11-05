@@ -1,5 +1,6 @@
 package mihon.feature.migration.anime
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -344,7 +345,7 @@ fun AnimeSourceToMigratePickerDialog(
                 )
                 IconButton(onClick = { picked = picked + ids }) {
                     Icon(
-                        imageVector = Icons.Outlined.SelectAll,
+                        imageVector = GlassIcons.SelectAll,
                         contentDescription = stringResource(MR.strings.action_select_all),
                     )
                 }
@@ -352,7 +353,7 @@ fun AnimeSourceToMigratePickerDialog(
                     picked = picked - ids.filter { it in picked }.toSet() + ids.filter { it !in picked }
                 }) {
                     Icon(
-                        imageVector = Icons.Outlined.FlipToBack,
+                        imageVector = GlassIcons.InvertSelection,
                         contentDescription = stringResource(MR.strings.action_select_inverse),
                     )
                 }

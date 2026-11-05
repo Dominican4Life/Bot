@@ -1,5 +1,6 @@
 package eu.kanade.presentation.browse.anime
 
+import eu.kanade.presentation.components.GlassIcons
 import android.graphics.drawable.Drawable
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.combinedClickable
@@ -225,7 +226,7 @@ fun AnimeSourcesPane(
             // Anime sources filter (languages / single sources), like the manga one
             IconButton(onClick = onClickFilter) {
                 Icon(
-                    imageVector = Icons.Outlined.FilterList,
+                    imageVector = GlassIcons.Filter,
                     contentDescription = stringResource(MR.strings.action_filter),
                     tint = if (state.filterActive) MaterialTheme.colorScheme.active else LocalContentColor.current,
                 )
@@ -413,7 +414,7 @@ fun AnimeExtensionsPane(
                             if (ext.sources.any { it.baseUrl.isNotBlank() }) {
                                 IconButton(onClick = { onOpenWebView(ext) }) {
                                     Icon(
-                                        Icons.Outlined.Public,
+                                        GlassIcons.WebView,
                                         contentDescription = stringResource(MR.strings.action_open_in_web_view),
                                     )
                                 }

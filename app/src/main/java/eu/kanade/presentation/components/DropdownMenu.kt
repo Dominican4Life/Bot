@@ -3,7 +3,11 @@ package eu.kanade.presentation.components
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowRight
@@ -50,8 +54,63 @@ fun DropdownMenu(
         offset = offset,
         scrollState = scrollState,
         properties = properties,
+        // KMK (r132): every menu is a piece of glass: rounder, a lit rim, the dark glass tint
+        shape = GlassMenuStyle.shape,
+        containerColor = GlassMenuStyle.container(),
+        tonalElevation = 0.dp,
+        shadowElevation = 18.dp,
+        border = GlassMenuStyle.rim(),
         content = content,
     )
+}
+
+/** KMK (r132): the look shared by the glass menus and windows (a menu is its own window, so it can't blur the page) */
+object GlassMenuStyle {
+    val shape = androidx.compose.foundation.shape.RoundedCornerShape(22.dp)
+
+    @Composable
+    fun container(): androidx.compose.ui.graphics.Color =
+        androidx.compose.ui.graphics.Color(0xFF1C1E27).copy(alpha = 0.96f)
+
+    fun rim() = androidx.compose.foundation.BorderStroke(
+        1.dp,
+        androidx.compose.ui.graphics.Brush.verticalGradient(
+            0f to androidx.compose.ui.graphics.Color.White.copy(alpha = 0.42f),
+            0.25f to androidx.compose.ui.graphics.Color.White.copy(alpha = 0.10f),
+            1f to androidx.compose.ui.graphics.Color.White.copy(alpha = 0.16f),
+        ),
+    )
+}
+
+/** KMK (r132): the round tick used by the glass menus: gold with a check when on, an empty ring when off */
+@Composable
+fun GlassTick(checked: Boolean, modifier: Modifier = Modifier) {
+    val gold = androidx.compose.ui.graphics.Color(0xFFF2C94C)
+    Box(
+        modifier = modifier
+            .size(22.dp)
+            .then(
+                if (checked) {
+                    Modifier.background(gold, androidx.compose.foundation.shape.CircleShape)
+                } else {
+                    Modifier.border(
+                        2.dp,
+                        androidx.compose.ui.graphics.Color.White.copy(alpha = 0.4f),
+                        androidx.compose.foundation.shape.CircleShape,
+                    )
+                },
+            ),
+        contentAlignment = androidx.compose.ui.Alignment.Center,
+    ) {
+        if (checked) {
+            Icon(
+                imageVector = Icons.Rounded.Check,
+                contentDescription = null,
+                tint = androidx.compose.ui.graphics.Color(0xFF2A2105),
+                modifier = Modifier.size(15.dp),
+            )
+        }
+    }
 }
 
 @Composable
@@ -68,20 +127,8 @@ fun RadioMenuItem(
         onClick = onClick,
         // KMK
         leadingIcon = leadingIcon,
-        trailingIcon = {
-            if (isChecked) {
-                Icon(
-                    imageVector = Icons.Outlined.RadioButtonChecked,
-                    contentDescription = stringResource(MR.strings.selected),
-                    tint = MaterialTheme.colorScheme.primary,
-                )
-            } else {
-                Icon(
-                    imageVector = Icons.Outlined.RadioButtonUnchecked,
-                    contentDescription = stringResource(MR.strings.not_selected),
-                )
-            }
-        },
+        // KMK (r132): the glass menus' round gold tick
+        trailingIcon = { GlassTick(checked = isChecked) },
         modifier = modifier,
     )
 }

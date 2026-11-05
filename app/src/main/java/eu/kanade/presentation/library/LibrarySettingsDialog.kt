@@ -325,8 +325,8 @@ private val displayModes = listOf(
 
 // KMK: "Panorama comfortable grid" in its three styles
 private val panoramaStyles = listOf(
-    KMR.strings.panorama_style_fill to PanoramaStyle.FILL,
     KMR.strings.panorama_style_fit to PanoramaStyle.FIT,
+    KMR.strings.panorama_style_fill to PanoramaStyle.FILL,
     KMR.strings.panorama_style_wide to PanoramaStyle.WIDE,
 )
 

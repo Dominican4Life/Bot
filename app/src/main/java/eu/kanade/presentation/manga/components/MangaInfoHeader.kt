@@ -1,5 +1,11 @@
 package eu.kanade.presentation.manga.components
 
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.border
+import eu.kanade.presentation.browse.components.liquidGlass
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.combinedClickable
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -190,7 +196,8 @@ fun MangaInfoBox(
                 .blur(7.dp)
                 // .blur(4.dp)
                 // KMK <--
-                .alpha(0.2f),
+                // KMK (r132): hidden when the AniList banner is behind the page (still loads for the cover ratio)
+                .alpha(if (LocalTitleBanner.current == null) 0.2f else 0f),
         )
 
         // Manga & source info
@@ -293,10 +300,11 @@ fun MangaActionRow(
             } else {
                 stringResource(MR.strings.add_to_library)
             },
-            icon = if (favorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+            icon = if (favorite) GlassIcons.InLibrary else GlassIcons.AddToLibrary,
             color = if (favorite) MaterialTheme.colorScheme.primary else defaultActionButtonColor,
             onClick = onAddToLibraryClicked,
             onLongClick = onEditCategory,
+            tinted = favorite,
         )
         MangaActionButton(
             title = when (nextUpdateDays) {
@@ -311,10 +319,10 @@ fun MangaActionRow(
                     nextUpdateDays,
                 )
             },
-            icon = Icons.Default.HourglassEmpty
+            icon = GlassIcons.NextUpdate
                 // KMK -->
                 .takeIf { nextUpdateDays != FetchInterval.MANUAL_DISABLE }
-                ?: Icons.Default.HourglassDisabled,
+                ?: GlassIcons.NextUpdateOff,
             // KMK <--
             color = if (isUserIntervalMode ||
                 // KMK -->
@@ -333,14 +341,14 @@ fun MangaActionRow(
             } else {
                 pluralStringResource(MR.plurals.num_trackers, count = trackingCount, trackingCount)
             },
-            icon = if (trackingCount == 0) Icons.Outlined.Sync else Icons.Outlined.Done,
+            icon = if (trackingCount == 0) GlassIcons.TrackerAdd else GlassIcons.Tracker,
             color = if (trackingCount == 0) defaultActionButtonColor else MaterialTheme.colorScheme.primary,
             onClick = onTrackingClicked,
         )
         if (onWebViewClicked != null) {
             MangaActionButton(
                 title = stringResource(MR.strings.action_web_view),
-                icon = Icons.Outlined.Public,
+                icon = GlassIcons.WebView,
                 color = MaterialTheme.colorScheme.primary, // KMK: defaultActionButtonColor
                 onClick = onWebViewClicked,
                 onLongClick = onWebViewLongClicked,
@@ -390,9 +398,14 @@ fun ExpandableMangaDescription(
             expanded = expanded,
             notes = notes,
             onEditNotesClicked = onEditNotes,
+            // KMK (r132): the description sits in a frosted box (no heading)
             modifier = Modifier
                 .padding(top = 8.dp)
                 .padding(horizontal = 16.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(Color(0xFF181A22).copy(alpha = 0.55f))
+                .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(18.dp))
+                .padding(horizontal = 14.dp, vertical = 10.dp)
                 .clickableNoIndication { onExpanded(!expanded) },
         )
         val tags = tagsProvider()
@@ -799,7 +812,7 @@ private fun ColumnScope.MangaContentInfo(
                 SManga.ONGOING.toLong() -> Icons.Outlined.Schedule
                 SManga.COMPLETED.toLong() -> Icons.Outlined.DoneAll
                 SManga.LICENSED.toLong() -> Icons.Outlined.AttachMoney
-                SManga.PUBLISHING_FINISHED.toLong() -> Icons.Outlined.Done
+                SManga.PUBLISHING_FINISHED.toLong() -> GlassIcons.Tracker
                 SManga.CANCELLED.toLong() -> Icons.Outlined.Close
                 SManga.ON_HIATUS.toLong() -> Icons.Outlined.Pause
                 else -> Icons.Outlined.Block
@@ -963,7 +976,8 @@ private fun MangaSummary(
             },
             {
                 // scrim
-                val colors = listOf(Color.Transparent, MaterialTheme.colorScheme.background)
+                // KMK (r132): no fade into the page colour; the frosted box clips the text
+                val colors = listOf(Color.Transparent, Color.Transparent)
                 // KMK (r131): expanded, only the arrow shows (no dark fade over the text)
                 Box(
                     modifier = if (expanded) Modifier else Modifier.background(Brush.verticalGradient(colors = colors)),
@@ -1018,26 +1032,44 @@ private fun RowScope.MangaActionButton(
     color: Color,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
+    tinted: Boolean = false,
 ) {
-    TextButton(
-        onClick = onClick,
-        modifier = Modifier.weight(1f),
-        onLongClick = onLongClick,
+    // KMK (r132): a round glass button with the new icon; the title under it. "On" buttons (in library, trackers)
+    // get a tint of their colour inside the glass
+    val active = tinted
+    val circle = androidx.compose.foundation.shape.CircleShape
+    Column(
+        modifier = Modifier
+            .weight(1f)
+            .clip(MaterialTheme.shapes.medium)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .padding(vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            modifier = Modifier
+                .size(46.dp)
+                .liquidGlass(circle)
+                .then(
+                    if (active) Modifier.background(Color(0xFFE85A78).copy(alpha = 0.55f), circle) else Modifier,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = color,
-                modifier = Modifier.size(20.dp),
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = title,
-                color = color,
-                fontSize = 12.sp,
-                textAlign = TextAlign.Center,
+                tint = if (active) Color.White else color,
+                modifier = Modifier.size(22.dp),
             )
         }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = title,
+            color = if (active) MaterialTheme.colorScheme.onSurface else color,
+            fontSize = 12.sp,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+        )
     }
 }
+

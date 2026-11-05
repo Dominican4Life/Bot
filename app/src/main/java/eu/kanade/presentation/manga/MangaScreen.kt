@@ -1,5 +1,14 @@
 package eu.kanade.presentation.manga
 
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.blur
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.produceState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.Color
+import eu.kanade.presentation.manga.components.DownloadMenuCounts
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.windowInsetsTopHeight
@@ -226,130 +235,141 @@ fun MangaScreen(
         }
     }
 
-    if (!isTabletUi) {
-        MangaScreenSmallImpl(
-            state = state,
-            snackbarHostState = snackbarHostState,
-            nextUpdate = nextUpdate,
-            chapterSwipeStartAction = chapterSwipeStartAction,
-            chapterSwipeEndAction = chapterSwipeEndAction,
-            navigateUp = navigateUp,
-            onChapterClicked = onChapterClicked,
-            onDownloadChapter = onDownloadChapter,
-            onAddToLibraryClicked = onAddToLibraryClicked,
-            onWebViewClicked = onWebViewClicked,
-            onWebViewLongClicked = onWebViewLongClicked,
-            onTrackingClicked = onTrackingClicked,
-            onTagSearch = onTagSearch,
-            onCopyTagToClipboard = onCopyTagToClipboard,
-            onFilterClicked = onFilterButtonClicked,
-            onRefresh = onRefresh,
-            onContinueReading = onContinueReading,
-            onSearch = onSearch,
-            onCoverClicked = onCoverClicked,
-            onShareClicked = onShareClicked,
-            onDownloadActionClicked = onDownloadActionClicked,
-            onEditCategoryClicked = onEditCategoryClicked,
-            onEditIntervalClicked = onEditFetchIntervalClicked,
-            onMigrateClicked = onMigrateClicked,
-            onEditNotesClicked = onEditNotesClicked,
-            // SY -->
-            onMetadataViewerClicked = onMetadataViewerClicked,
-            onEditInfoClicked = onEditInfoClicked,
-            onRecommendClicked = onRecommendClicked,
-            onMergedSettingsClicked = onMergedSettingsClicked,
-            onMergeClicked = onMergeClicked,
-            onMergeWithAnotherClicked = onMergeWithAnotherClicked,
-            onOpenPagePreview = onOpenPagePreview,
-            onMorePreviewsClicked = onMorePreviewsClicked,
-            previewsRowCount = previewsRowCount,
-            // SY <--
-            onMultiBookmarkClicked = onMultiBookmarkClicked,
-            onMultiMarkAsReadClicked = onMultiMarkAsReadClicked,
-            onMarkPreviousAsReadClicked = onMarkPreviousAsReadClicked,
-            onMultiDeleteClicked = onMultiDeleteClicked,
-            onChapterSwipe = onChapterSwipe,
-            onChapterSelected = onChapterSelected,
-            onAllChapterSelected = onAllChapterSelected,
-            onInvertSelection = onInvertSelection,
-            // KMK -->
-            getMangaState = getMangaState,
-            onClearManga = onClearManga,
-            onOpenMangaFolder = onOpenMangaFolder,
-            onRelatedMangasScreenClick = onRelatedMangasScreenClick,
-            onRelatedMangaClick = onRelatedMangaClick,
-            onRelatedMangaLongClick = onRelatedMangaLongClick,
-            librarySearch = librarySearch,
-            onSourceClick = onSourceClick,
-            onCoverLoaded = onCoverLoaded,
-            coverRatio = coverRatio,
-            onPaletteScreenClick = onPaletteScreenClick,
-            hazeState = hazeState,
-            sheetHooks = sheetHooks,
-            // KMK <--
-        )
-    } else {
-        MangaScreenLargeImpl(
-            state = state,
-            snackbarHostState = snackbarHostState,
-            chapterSwipeStartAction = chapterSwipeStartAction,
-            chapterSwipeEndAction = chapterSwipeEndAction,
-            nextUpdate = nextUpdate,
-            navigateUp = navigateUp,
-            onChapterClicked = onChapterClicked,
-            onDownloadChapter = onDownloadChapter,
-            onAddToLibraryClicked = onAddToLibraryClicked,
-            onWebViewClicked = onWebViewClicked,
-            onWebViewLongClicked = onWebViewLongClicked,
-            onTrackingClicked = onTrackingClicked,
-            onTagSearch = onTagSearch,
-            onCopyTagToClipboard = onCopyTagToClipboard,
-            onFilterButtonClicked = onFilterButtonClicked,
-            onRefresh = onRefresh,
-            onContinueReading = onContinueReading,
-            onSearch = onSearch,
-            onCoverClicked = onCoverClicked,
-            onShareClicked = onShareClicked,
-            onDownloadActionClicked = onDownloadActionClicked,
-            onEditCategoryClicked = onEditCategoryClicked,
-            onEditIntervalClicked = onEditFetchIntervalClicked,
-            onMigrateClicked = onMigrateClicked,
-            onEditNotesClicked = onEditNotesClicked,
-            // SY -->
-            onMetadataViewerClicked = onMetadataViewerClicked,
-            onEditInfoClicked = onEditInfoClicked,
-            onRecommendClicked = onRecommendClicked,
-            onMergedSettingsClicked = onMergedSettingsClicked,
-            onMergeClicked = onMergeClicked,
-            onMergeWithAnotherClicked = onMergeWithAnotherClicked,
-            onOpenPagePreview = onOpenPagePreview,
-            onMorePreviewsClicked = onMorePreviewsClicked,
-            previewsRowCount = previewsRowCount,
-            // SY <--
-            onMultiBookmarkClicked = onMultiBookmarkClicked,
-            onMultiMarkAsReadClicked = onMultiMarkAsReadClicked,
-            onMarkPreviousAsReadClicked = onMarkPreviousAsReadClicked,
-            onMultiDeleteClicked = onMultiDeleteClicked,
-            onChapterSwipe = onChapterSwipe,
-            onChapterSelected = onChapterSelected,
-            onAllChapterSelected = onAllChapterSelected,
-            onInvertSelection = onInvertSelection,
-            // KMK -->
-            getMangaState = getMangaState,
-            onClearManga = onClearManga,
-            onOpenMangaFolder = onOpenMangaFolder,
-            onRelatedMangasScreenClick = onRelatedMangasScreenClick,
-            onRelatedMangaClick = onRelatedMangaClick,
-            onRelatedMangaLongClick = onRelatedMangaLongClick,
-            librarySearch = librarySearch,
-            onSourceClick = onSourceClick,
-            onCoverLoaded = onCoverLoaded,
-            coverRatio = coverRatio,
-            onPaletteScreenClick = onPaletteScreenClick,
-            hazeState = hazeState,
-            // KMK <--
-        )
+    // KMK (r132): the AniList banner behind the whole page (looked up once per title; null = the cover's colours)
+    val banner by produceState<String?>(null, state.manga.id) {
+        value = eu.kanade.presentation.manga.components.AniListBanner.find(state.manga)
     }
+    CompositionLocalProvider(eu.kanade.presentation.manga.components.LocalTitleBanner provides banner) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        banner?.let { TitleBannerBackdrop(it) }
+        if (!isTabletUi) {
+            MangaScreenSmallImpl(
+                state = state,
+                snackbarHostState = snackbarHostState,
+                nextUpdate = nextUpdate,
+                chapterSwipeStartAction = chapterSwipeStartAction,
+                chapterSwipeEndAction = chapterSwipeEndAction,
+                navigateUp = navigateUp,
+                onChapterClicked = onChapterClicked,
+                onDownloadChapter = onDownloadChapter,
+                onAddToLibraryClicked = onAddToLibraryClicked,
+                onWebViewClicked = onWebViewClicked,
+                onWebViewLongClicked = onWebViewLongClicked,
+                onTrackingClicked = onTrackingClicked,
+                onTagSearch = onTagSearch,
+                onCopyTagToClipboard = onCopyTagToClipboard,
+                onFilterClicked = onFilterButtonClicked,
+                onRefresh = onRefresh,
+                onContinueReading = onContinueReading,
+                onSearch = onSearch,
+                onCoverClicked = onCoverClicked,
+                onShareClicked = onShareClicked,
+                onDownloadActionClicked = onDownloadActionClicked,
+                onEditCategoryClicked = onEditCategoryClicked,
+                onEditIntervalClicked = onEditFetchIntervalClicked,
+                onMigrateClicked = onMigrateClicked,
+                onEditNotesClicked = onEditNotesClicked,
+                // SY -->
+                onMetadataViewerClicked = onMetadataViewerClicked,
+                onEditInfoClicked = onEditInfoClicked,
+                onRecommendClicked = onRecommendClicked,
+                onMergedSettingsClicked = onMergedSettingsClicked,
+                onMergeClicked = onMergeClicked,
+                onMergeWithAnotherClicked = onMergeWithAnotherClicked,
+                onOpenPagePreview = onOpenPagePreview,
+                onMorePreviewsClicked = onMorePreviewsClicked,
+                previewsRowCount = previewsRowCount,
+                // SY <--
+                onMultiBookmarkClicked = onMultiBookmarkClicked,
+                onMultiMarkAsReadClicked = onMultiMarkAsReadClicked,
+                onMarkPreviousAsReadClicked = onMarkPreviousAsReadClicked,
+                onMultiDeleteClicked = onMultiDeleteClicked,
+                onChapterSwipe = onChapterSwipe,
+                onChapterSelected = onChapterSelected,
+                onAllChapterSelected = onAllChapterSelected,
+                onInvertSelection = onInvertSelection,
+                // KMK -->
+                getMangaState = getMangaState,
+                onClearManga = onClearManga,
+                onOpenMangaFolder = onOpenMangaFolder,
+                onRelatedMangasScreenClick = onRelatedMangasScreenClick,
+                onRelatedMangaClick = onRelatedMangaClick,
+                onRelatedMangaLongClick = onRelatedMangaLongClick,
+                librarySearch = librarySearch,
+                onSourceClick = onSourceClick,
+                onCoverLoaded = onCoverLoaded,
+                coverRatio = coverRatio,
+                onPaletteScreenClick = onPaletteScreenClick,
+                hazeState = hazeState,
+                sheetHooks = sheetHooks,
+                // KMK <--
+            )
+        } else {
+            MangaScreenLargeImpl(
+                state = state,
+                snackbarHostState = snackbarHostState,
+                chapterSwipeStartAction = chapterSwipeStartAction,
+                chapterSwipeEndAction = chapterSwipeEndAction,
+                nextUpdate = nextUpdate,
+                navigateUp = navigateUp,
+                onChapterClicked = onChapterClicked,
+                onDownloadChapter = onDownloadChapter,
+                onAddToLibraryClicked = onAddToLibraryClicked,
+                onWebViewClicked = onWebViewClicked,
+                onWebViewLongClicked = onWebViewLongClicked,
+                onTrackingClicked = onTrackingClicked,
+                onTagSearch = onTagSearch,
+                onCopyTagToClipboard = onCopyTagToClipboard,
+                onFilterButtonClicked = onFilterButtonClicked,
+                onRefresh = onRefresh,
+                onContinueReading = onContinueReading,
+                onSearch = onSearch,
+                onCoverClicked = onCoverClicked,
+                onShareClicked = onShareClicked,
+                onDownloadActionClicked = onDownloadActionClicked,
+                onEditCategoryClicked = onEditCategoryClicked,
+                onEditIntervalClicked = onEditFetchIntervalClicked,
+                onMigrateClicked = onMigrateClicked,
+                onEditNotesClicked = onEditNotesClicked,
+                // SY -->
+                onMetadataViewerClicked = onMetadataViewerClicked,
+                onEditInfoClicked = onEditInfoClicked,
+                onRecommendClicked = onRecommendClicked,
+                onMergedSettingsClicked = onMergedSettingsClicked,
+                onMergeClicked = onMergeClicked,
+                onMergeWithAnotherClicked = onMergeWithAnotherClicked,
+                onOpenPagePreview = onOpenPagePreview,
+                onMorePreviewsClicked = onMorePreviewsClicked,
+                previewsRowCount = previewsRowCount,
+                // SY <--
+                onMultiBookmarkClicked = onMultiBookmarkClicked,
+                onMultiMarkAsReadClicked = onMultiMarkAsReadClicked,
+                onMarkPreviousAsReadClicked = onMarkPreviousAsReadClicked,
+                onMultiDeleteClicked = onMultiDeleteClicked,
+                onChapterSwipe = onChapterSwipe,
+                onChapterSelected = onChapterSelected,
+                onAllChapterSelected = onAllChapterSelected,
+                onInvertSelection = onInvertSelection,
+                // KMK -->
+                getMangaState = getMangaState,
+                onClearManga = onClearManga,
+                onOpenMangaFolder = onOpenMangaFolder,
+                onRelatedMangasScreenClick = onRelatedMangasScreenClick,
+                onRelatedMangaClick = onRelatedMangaClick,
+                onRelatedMangaLongClick = onRelatedMangaLongClick,
+                librarySearch = librarySearch,
+                onSourceClick = onSourceClick,
+                onCoverLoaded = onCoverLoaded,
+                coverRatio = coverRatio,
+                onPaletteScreenClick = onPaletteScreenClick,
+                hazeState = hazeState,
+                sheetHooks = sheetHooks,
+                // KMK <--
+            )
+        }
+    }
+    }
+
 }
 
 @Composable
@@ -473,6 +493,12 @@ private fun MangaScreenSmallImpl(
     // of a solid bar
     val frostOn = useSheet && eu.kanade.presentation.components.TitleSheet.glass().get()
     Scaffold(
+        // KMK (r132): see-through over the AniList banner
+        containerColor = if (eu.kanade.presentation.manga.components.LocalTitleBanner.current != null) {
+            Color.Transparent
+        } else {
+            MaterialTheme.colorScheme.background
+        },
         topBar = {
             val selectedChapterCount: Int = remember(chapters) {
                 chapters.count { it.selected }
@@ -495,6 +521,7 @@ private fun MangaScreenSmallImpl(
             MangaToolbar(
                 title = state.manga.title,
                 hasFilters = state.filterActive,
+                downloadCounts = remember(state.chapters) { DownloadMenuCounts.of(state.chapters) },
                 navigateUp = navigateUp,
                 onClickFilter = onFilterClicked,
                 onClickShare = onShareClicked,
@@ -544,7 +571,10 @@ private fun MangaScreenSmallImpl(
                 fillFraction = 1f,
             )
         },
-        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
+        snackbarHost = {
+            // KMK (r132): messages (e.g. "Trackers updated") as a glass pill
+            SnackbarHost(hostState = snackbarHostState) { eu.kanade.presentation.components.GlassSnackbar(it) }
+        },
         floatingActionButton = {
             // KMK (r124): the sheet layout's dock has the Play button
             val isFABVisible = remember(chapters, useSheet) {
@@ -735,8 +765,7 @@ private fun MangaScreenSmallImpl(
                         contentType = MangaScreenItem.RELATED_MANGAS,
                     ) {
                         OutlinedButtonWithArrow(
-                            text = stringResource(KMR.strings.pref_source_related_mangas)
-                                .uppercase(),
+                            text = stringResource(KMR.strings.pref_source_related_mangas),
                             onClick = onRelatedMangasScreenClick,
                         )
                     }
@@ -925,10 +954,18 @@ private fun MangaScreenLargeImpl(
     coverRatio: MutableFloatState,
     onPaletteScreenClick: () -> Unit,
     hazeState: HazeState,
+    // KMK (r132): the Preview card (same hooks as the phone sheet)
+    sheetHooks: MangaSheetHooks? = null,
     // KMK <--
 ) {
     val layoutDirection = LocalLayoutDirection.current
     val density = LocalDensity.current
+    // KMK (r132): the glass tablet layout: Suggestions on top, chapters | Preview below, toggles in the capsule
+    val glassTablet = remember { eu.kanade.presentation.components.TitleSheet.glass().get() }
+    val previewPref = remember { eu.kanade.presentation.components.TitleSheet.tabletPreview() }
+    val suggestionsPref = remember { eu.kanade.presentation.components.TitleSheet.tabletSuggestions() }
+    val showPreview by previewPref.collectAsState()
+    val showSuggestions by suggestionsPref.collectAsState()
 
     val (chapters, listItem, isAnySelected) = remember(state) {
         Triple(
@@ -969,6 +1006,12 @@ private fun MangaScreenLargeImpl(
     })
 
     Scaffold(
+        // KMK (r132): see-through over the AniList banner
+        containerColor = if (eu.kanade.presentation.manga.components.LocalTitleBanner.current != null) {
+            Color.Transparent
+        } else {
+            MaterialTheme.colorScheme.background
+        },
         topBar = {
             val selectedChapterCount = remember(chapters) {
                 chapters.count { it.selected }
@@ -977,6 +1020,7 @@ private fun MangaScreenLargeImpl(
                 modifier = Modifier.onSizeChanged { topBarHeight = it.height },
                 title = state.manga.title,
                 hasFilters = state.filterActive,
+                downloadCounts = remember(state.chapters) { DownloadMenuCounts.of(state.chapters) },
                 navigateUp = navigateUp,
                 onClickFilter = onFilterButtonClicked,
                 onClickShare = onShareClicked,
@@ -1007,6 +1051,18 @@ private fun MangaScreenLargeImpl(
                 backgroundAlphaProvider = { 1f },
                 // KMK -->
                 onPaletteScreenClick = onPaletteScreenClick,
+                sheetHasActions = glassTablet,
+                glass = glassTablet,
+                previewToggle = if (glassTablet && sheetHooks != null) {
+                    showPreview to { previewPref.set(!showPreview) }
+                } else {
+                    null
+                },
+                suggestionsToggle = if (glassTablet && relatedMangasEnabled && state.manga.source != MERGED_SOURCE_ID) {
+                    showSuggestions to { suggestionsPref.set(!showSuggestions) }
+                } else {
+                    null
+                },
                 // KMK <--
             )
         },
@@ -1029,7 +1085,10 @@ private fun MangaScreenLargeImpl(
                 )
             }
         },
-        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
+        snackbarHost = {
+            // KMK (r132): messages (e.g. "Trackers updated") as a glass pill
+            SnackbarHost(hostState = snackbarHostState) { eu.kanade.presentation.components.GlassSnackbar(it) }
+        },
         floatingActionButton = {
             val isFABVisible = remember(chapters) {
                 chapters.fastAny { !it.chapter.read } && !isAnySelected
@@ -1076,7 +1135,10 @@ private fun MangaScreenLargeImpl(
                             }
                         }
                     },
-                containerColor = MaterialTheme.colorScheme.primary,
+                // KMK (r132): the glass tablet page: a tinted Resume capsule
+                containerColor = if (glassTablet) Color(0xFFF2C94C).copy(alpha = 0.88f) else MaterialTheme.colorScheme.primary,
+                contentColor = if (glassTablet) Color(0xFF2A2105) else MaterialTheme.colorScheme.onPrimary,
+                shape = RoundedCornerShape(if (glassTablet) 27.dp else 16.dp),
                 // KMK <--
             )
         },
@@ -1194,7 +1256,44 @@ private fun MangaScreenLargeImpl(
                         // SY <--
                     }
                 },
-                endContent = {
+                endContent = glassEnd@{
+                    if (glassTablet) {
+                        GlassTabletEnd(
+                            state = state,
+                            chapters = chapters,
+                            listItem = listItem,
+                            isAnySelected = isAnySelected,
+                            hooks = sheetHooks,
+                            showPreview = showPreview && sheetHooks != null,
+                            showSuggestions = showSuggestions && relatedMangasEnabled &&
+                                state.source !is StubSource && state.manga.source != MERGED_SOURCE_ID,
+                            topPadding = contentPadding.calculateTopPadding(),
+                            bottomPadding = contentPadding.calculateBottomPadding(),
+                            chapterListState = chapterListState,
+                            getMangaState = getMangaState,
+                            onRelatedMangasScreenClick = onRelatedMangasScreenClick,
+                            onRelatedMangaClick = onRelatedMangaClick,
+                            onRelatedMangaLongClick = onRelatedMangaLongClick,
+                            onFilterButtonClicked = onFilterButtonClicked,
+                            onDownloadActionClicked = onDownloadActionClicked,
+                            chapterItems = {
+                                sharedChapterItems(
+                                    manga = state.manga,
+                                    mergedData = state.mergedData,
+                                    chapters = listItem,
+                                    isAnyChapterSelected = chapters.fastAny { it.selected },
+                                    chapterSwipeStartAction = chapterSwipeStartAction,
+                                    chapterSwipeEndAction = chapterSwipeEndAction,
+                                    alwaysShowReadingProgress = state.alwaysShowReadingProgress,
+                                    onChapterClicked = onChapterClicked,
+                                    onDownloadChapter = onDownloadChapter,
+                                    onChapterSelected = onChapterSelected,
+                                    onChapterSwipe = onChapterSwipe,
+                                )
+                            },
+                        )
+                        return@glassEnd
+                    }
                     VerticalFastScroller(
                         listState = chapterListState,
                         topContentPadding = contentPadding.calculateTopPadding(),
@@ -1486,3 +1585,30 @@ fun metadataDescription(source: Source): MetadataDescriptionComposable? {
     }
 }
 // SY <--
+
+/** KMK (r132): the AniList banner filling the page, lightly blurred and dimmed so text stays readable */
+@Composable
+private fun TitleBannerBackdrop(url: String) {
+    Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        coil3.compose.AsyncImage(
+            model = url,
+            contentDescription = null,
+            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            modifier = Modifier
+                .fillMaxSize()
+                .blur(5.dp)
+                .alpha(0.62f),
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    androidx.compose.ui.graphics.Brush.verticalGradient(
+                        0f to Color.Black.copy(alpha = 0.05f),
+                        0.55f to Color.Black.copy(alpha = 0.35f),
+                        1f to Color.Black.copy(alpha = 0.6f),
+                    ),
+                ),
+        )
+    }
+}

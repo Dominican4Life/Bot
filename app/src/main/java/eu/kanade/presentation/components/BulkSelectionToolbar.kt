@@ -35,7 +35,7 @@ fun BulkSelectionToolbar(
                         add(
                             AppBar.Action(
                                 title = stringResource(MR.strings.action_select_all),
-                                icon = Icons.Filled.SelectAll,
+                                icon = GlassIcons.SelectAll,
                                 onClick = onSelectAll,
                             ),
                         )
@@ -44,7 +44,7 @@ fun BulkSelectionToolbar(
                         add(
                             AppBar.Action(
                                 title = stringResource(MR.strings.action_select_inverse),
-                                icon = Icons.Outlined.FlipToBack,
+                                icon = GlassIcons.InvertSelection,
                                 onClick = onReverseSelection,
                             ),
                         )
@@ -65,7 +65,7 @@ fun BulkSelectionToolbar(
                         add(
                             AppBar.Action(
                                 title = stringResource(MR.strings.add_to_library),
-                                icon = Icons.Filled.Favorite,
+                                icon = GlassIcons.InLibrary,
                                 onClick = {
                                     if (selectedCount > 0) {
                                         onChangeCategoryClick()

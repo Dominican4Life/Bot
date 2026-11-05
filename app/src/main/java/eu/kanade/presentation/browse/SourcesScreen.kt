@@ -1,5 +1,6 @@
 package eu.kanade.presentation.browse
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -132,7 +133,7 @@ fun SourcesScreen(
                 if (onClickFilter != null) {
                     IconButton(onClick = onClickFilter) {
                         Icon(
-                            imageVector = Icons.Outlined.FilterList,
+                            imageVector = GlassIcons.Filter,
                             contentDescription = stringResource(MR.strings.action_filter),
                         )
                     }

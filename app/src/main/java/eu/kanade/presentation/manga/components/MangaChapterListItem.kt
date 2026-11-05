@@ -1,5 +1,8 @@
 package eu.kanade.presentation.manga.components
 
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -72,7 +75,9 @@ fun MangaChapterListItem(
     trailing: (@Composable () -> Unit)? = null,
 ) {
     // KMK -->
-    val swipeBackground = MaterialTheme.colorScheme.primaryContainer
+    // KMK (r132): with glass on, the liquid-glass swipe draws itself (the library's coloured blocks are hidden)
+    val glassSwipe = remember { eu.kanade.presentation.components.TitleSheet.glass().get() }
+    val swipeBackground = if (glassSwipe) Color.Transparent else MaterialTheme.colorScheme.primaryContainer
     val swipeStart = remember(chapterSwipeStartAction, read, bookmark, downloadStateProvider()) {
         // KMK <--
         getSwipeAction(
@@ -82,6 +87,7 @@ fun MangaChapterListItem(
             downloadState = downloadStateProvider(),
             background = swipeBackground,
             onSwipe = { onChapterSwipe(chapterSwipeStartAction) },
+            hideIcon = glassSwipe,
         )
     }
     // KMK -->
@@ -94,18 +100,37 @@ fun MangaChapterListItem(
             downloadState = downloadStateProvider(),
             background = swipeBackground,
             onSwipe = { onChapterSwipe(chapterSwipeEndAction) },
+            hideIcon = glassSwipe,
         )
     }
 
+    var rootX by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+    var rowDx by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    androidx.compose.foundation.layout.Box(
+        modifier = modifier
+            .clipToBounds()
+            .onGloballyPositioned { rootX = it.positionInWindow().x },
+    ) {
+    if (glassSwipe) {
+        GlassSwipeLayer(
+            dx = { rowDx },
+            thresholdPx = with(density) { swipeActionThreshold.toPx() },
+            startIcon = swipeIconFor(chapterSwipeStartAction, read, bookmark, downloadStateProvider()),
+            startLabel = swipeLabelFor(chapterSwipeStartAction, read, bookmark, downloadStateProvider()),
+            endIcon = swipeIconFor(chapterSwipeEndAction, read, bookmark, downloadStateProvider()),
+            endLabel = swipeLabelFor(chapterSwipeEndAction, read, bookmark, downloadStateProvider()),
+        )
+    }
     SwipeableActionsBox(
-        modifier = modifier.clipToBounds(),
         startActions = listOfNotNull(swipeStart),
         endActions = listOfNotNull(swipeEnd),
         swipeThreshold = swipeActionThreshold,
-        backgroundUntilSwipeThreshold = MaterialTheme.colorScheme.surfaceContainerLowest,
+        backgroundUntilSwipeThreshold = if (glassSwipe) Color.Transparent else MaterialTheme.colorScheme.surfaceContainerLowest,
     ) {
         Row(
             modifier = Modifier
+                .onGloballyPositioned { rowDx = it.positionInWindow().x - rootX }
                 .selectedBackground(selected)
                 .combinedClickable(
                     onClick = onClick,
@@ -134,7 +159,7 @@ fun MangaChapterListItem(
                     }
                     if (bookmark) {
                         Icon(
-                            imageVector = Icons.Filled.Bookmark,
+                            imageVector = GlassIcons.Bookmark,
                             contentDescription = stringResource(MR.strings.action_filter_bookmarked),
                             modifier = Modifier
                                 .sizeIn(maxHeight = with(LocalDensity.current) { textHeight.toDp() - 2.dp }),
@@ -202,6 +227,15 @@ fun MangaChapterListItem(
             }
 
             trailing?.invoke()
+            // KMK (r132): read chapters show the eye (the glass icon set)
+            if (read) {
+                Icon(
+                    imageVector = GlassIcons.Read,
+                    contentDescription = null,
+                    modifier = Modifier.padding(start = 4.dp).size(18.dp),
+                    tint = LocalContentColor.current.copy(alpha = DISABLED_ALPHA),
+                )
+            }
             ChapterDownloadIndicator(
                 enabled = downloadIndicatorEnabled,
                 modifier = Modifier.padding(start = 4.dp),
@@ -210,6 +244,7 @@ fun MangaChapterListItem(
                 onClick = { onDownloadClick?.invoke(it) },
             )
         }
+    }
     }
 }
 
@@ -220,28 +255,32 @@ internal fun getSwipeAction(
     downloadState: Download.State,
     background: Color,
     onSwipe: () -> Unit,
+    hideIcon: Boolean = false,
 ): me.saket.swipe.SwipeAction? {
     return when (action) {
         LibraryPreferences.ChapterSwipeAction.ToggleRead -> swipeAction(
-            icon = if (!read) Icons.Outlined.Done else Icons.Outlined.RemoveDone,
+            icon = if (!read) GlassIcons.Read else GlassIcons.Unread,
             background = background,
             isUndo = read,
             onSwipe = onSwipe,
+            hideIcon = hideIcon,
         )
         LibraryPreferences.ChapterSwipeAction.ToggleBookmark -> swipeAction(
-            icon = if (!bookmark) Icons.Outlined.BookmarkAdd else Icons.Outlined.BookmarkRemove,
+            icon = if (!bookmark) GlassIcons.Bookmark else GlassIcons.BookmarkRemove,
             background = background,
             isUndo = bookmark,
             onSwipe = onSwipe,
+            hideIcon = hideIcon,
         )
         LibraryPreferences.ChapterSwipeAction.Download -> swipeAction(
             icon = when (downloadState) {
-                Download.State.NOT_DOWNLOADED, Download.State.ERROR -> Icons.Outlined.Download
+                Download.State.NOT_DOWNLOADED, Download.State.ERROR -> GlassIcons.Download
                 Download.State.QUEUE, Download.State.DOWNLOADING -> Icons.Outlined.FileDownloadOff
                 Download.State.DOWNLOADED -> Icons.Outlined.Delete
             },
             background = background,
             onSwipe = onSwipe,
+            hideIcon = hideIcon,
         )
         LibraryPreferences.ChapterSwipeAction.Disabled -> null
     }
@@ -252,6 +291,7 @@ internal fun swipeAction(
     icon: ImageVector,
     background: Color,
     isUndo: Boolean = false,
+    hideIcon: Boolean = false,
 ): me.saket.swipe.SwipeAction {
     return me.saket.swipe.SwipeAction(
         icon = {
@@ -260,7 +300,7 @@ internal fun swipeAction(
                     .padding(horizontal = 16.dp)
                     .size(IndicatorSize),
                 imageVector = icon,
-                tint = contentColorFor(background),
+                tint = if (hideIcon) Color.Transparent else contentColorFor(background),
                 contentDescription = null,
             )
         },
@@ -271,3 +311,40 @@ internal fun swipeAction(
 }
 
 internal val swipeActionThreshold = 56.dp
+
+/** KMK (r132): the icon of a swipe action, for the glass swipe's pill */
+internal fun swipeIconFor(
+    action: LibraryPreferences.ChapterSwipeAction,
+    read: Boolean,
+    bookmark: Boolean,
+    downloadState: Download.State,
+): ImageVector? = when (action) {
+    LibraryPreferences.ChapterSwipeAction.ToggleRead -> if (!read) GlassIcons.Read else GlassIcons.Unread
+    LibraryPreferences.ChapterSwipeAction.ToggleBookmark -> if (!bookmark) GlassIcons.Bookmark else GlassIcons.BookmarkRemove
+    LibraryPreferences.ChapterSwipeAction.Download -> when (downloadState) {
+        Download.State.NOT_DOWNLOADED, Download.State.ERROR -> GlassIcons.Download
+        Download.State.QUEUE, Download.State.DOWNLOADING -> Icons.Outlined.FileDownloadOff
+        Download.State.DOWNLOADED -> Icons.Outlined.Delete
+    }
+    LibraryPreferences.ChapterSwipeAction.Disabled -> null
+}
+
+/** KMK (r132): the name of a swipe action, for the glass swipe's pill */
+@Composable
+internal fun swipeLabelFor(
+    action: LibraryPreferences.ChapterSwipeAction,
+    read: Boolean,
+    bookmark: Boolean,
+    downloadState: Download.State,
+): String? = when (action) {
+    LibraryPreferences.ChapterSwipeAction.ToggleRead ->
+        stringResource(if (!read) MR.strings.action_mark_as_read else MR.strings.action_mark_as_unread)
+    LibraryPreferences.ChapterSwipeAction.ToggleBookmark ->
+        stringResource(if (!bookmark) MR.strings.action_bookmark else MR.strings.action_remove_bookmark)
+    LibraryPreferences.ChapterSwipeAction.Download -> when (downloadState) {
+        Download.State.NOT_DOWNLOADED, Download.State.ERROR -> stringResource(MR.strings.manga_download)
+        Download.State.QUEUE, Download.State.DOWNLOADING -> stringResource(MR.strings.action_cancel)
+        Download.State.DOWNLOADED -> stringResource(MR.strings.action_delete)
+    }
+    LibraryPreferences.ChapterSwipeAction.Disabled -> null
+}

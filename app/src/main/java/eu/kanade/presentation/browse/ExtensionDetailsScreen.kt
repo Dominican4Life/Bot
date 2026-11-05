@@ -1,5 +1,6 @@
 package eu.kanade.presentation.browse
 
+import eu.kanade.presentation.components.GlassIcons
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
@@ -110,7 +111,7 @@ fun ExtensionDetailsScreen(
                                     add(
                                         AppBar.Action(
                                             title = stringResource(MR.strings.action_open_in_web_view),
-                                            icon = Icons.Outlined.Public,
+                                            icon = GlassIcons.WebView,
                                             onClick = onOpenWebView,
                                         ),
                                     )

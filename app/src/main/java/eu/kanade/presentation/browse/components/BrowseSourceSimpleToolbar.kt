@@ -1,5 +1,7 @@
 package eu.kanade.presentation.browse.components
 
+import androidx.compose.material3.Icon
+import eu.kanade.presentation.components.GlassIcons
 import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ViewList
@@ -47,9 +49,9 @@ fun BrowseSourceSimpleToolbar(
                             AppBar.Action(
                                 title = stringResource(MR.strings.action_display_mode),
                                 icon = if (mode == LibraryDisplayMode.List) {
-                                    Icons.AutoMirrored.Filled.ViewList
+                                    GlassIcons.LayoutList
                                 } else {
-                                    Icons.Filled.ViewModule
+                                    GlassIcons.Display
                                 },
                                 onClick = { selectingDisplayMode = true },
                             ),
@@ -75,6 +77,7 @@ fun BrowseSourceSimpleToolbar(
                 // KMK -->
                 RadioMenuItem(
                     text = { Text(text = stringResource(MR.strings.action_display_comfortable_grid)) },
+                    leadingIcon = { Icon(imageVector = GlassIcons.LayoutComfortable, contentDescription = null) },
                     isChecked = displayMode == LibraryDisplayMode.ComfortableGrid,
                 ) {
                     selectingDisplayMode = false
@@ -82,6 +85,7 @@ fun BrowseSourceSimpleToolbar(
                 }
                 RadioMenuItem(
                     text = { Text(text = stringResource(MR.strings.action_display_grid)) },
+                    leadingIcon = { Icon(imageVector = GlassIcons.LayoutCompact, contentDescription = null) },
                     isChecked = displayMode == LibraryDisplayMode.CompactGrid,
                 ) {
                     selectingDisplayMode = false
@@ -90,6 +94,7 @@ fun BrowseSourceSimpleToolbar(
                 // KMK -->
                 RadioMenuItem(
                     text = { Text(text = stringResource(MR.strings.action_display_cover_only_grid)) },
+                    leadingIcon = { Icon(imageVector = GlassIcons.LayoutCovers, contentDescription = null) },
                     isChecked = displayMode == LibraryDisplayMode.CoverOnlyGrid,
                 ) {
                     selectingDisplayMode = false
@@ -98,6 +103,7 @@ fun BrowseSourceSimpleToolbar(
                 // KMK <--
                 RadioMenuItem(
                     text = { Text(text = stringResource(MR.strings.action_display_list)) },
+                    leadingIcon = { Icon(imageVector = GlassIcons.LayoutList, contentDescription = null) },
                     isChecked = displayMode == LibraryDisplayMode.List,
                 ) {
                     selectingDisplayMode = false

@@ -1,5 +1,6 @@
 package mihon.feature.migration.config
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -402,7 +403,7 @@ internal fun SourcesBox(
                 modifier = Modifier.weight(1f),
             )
         }
-        Icon(imageVector = Icons.AutoMirrored.Outlined.ArrowForward, contentDescription = null)
+        Icon(imageVector = GlassIcons.Arrow, contentDescription = null)
     }
 }
 

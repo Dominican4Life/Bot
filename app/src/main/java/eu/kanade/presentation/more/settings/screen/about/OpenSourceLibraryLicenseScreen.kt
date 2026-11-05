@@ -1,5 +1,6 @@
 package eu.kanade.presentation.more.settings.screen.about
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -45,7 +46,7 @@ class OpenSourceLibraryLicenseScreen(
                                 persistentListOf(
                                     AppBar.Action(
                                         title = stringResource(MR.strings.website),
-                                        icon = Icons.Default.Public,
+                                        icon = GlassIcons.WebView,
                                         onClick = { uriHandler.openUri(website) },
                                     ),
                                 ),

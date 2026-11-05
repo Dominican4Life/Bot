@@ -1,5 +1,11 @@
 package eu.kanade.presentation.components
 
+import androidx.compose.material3.Text
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -55,25 +61,50 @@ fun TabbedDialog(
 
         Column {
             Row {
-                PrimaryTabRow(
-                    modifier = Modifier.weight(1f),
-                    selectedTabIndex = pagerState.currentPage,
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    divider = {},
+                // KMK (r132): the tabs as a glass switch (Filter | Sort | Display)
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(start = 12.dp, top = 12.dp, end = if (tabOverflowMenuContent == null) 12.dp else 0.dp)
+                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(20.dp))
+                        .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.22f))
+                        .padding(4.dp),
+                    horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp),
                 ) {
                     tabTitles.fastForEachIndexed { index, tab ->
-                        Tab(
-                            selected = pagerState.currentPage == index,
-                            onClick = { scope.launch { pagerState.animateScrollToPage(index) } },
-                            text = { TabText(text = tab) },
-                            unselectedContentColor = MaterialTheme.colorScheme.onSurface,
-                        )
+                        val selected = pagerState.currentPage == index
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
+                                .background(
+                                    if (selected) {
+                                        androidx.compose.ui.graphics.Color.White.copy(alpha = 0.16f)
+                                    } else {
+                                        androidx.compose.ui.graphics.Color.Transparent
+                                    },
+                                )
+                                .clickable { scope.launch { pagerState.animateScrollToPage(index) } }
+                                .padding(vertical = 9.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = tab,
+                                style = MaterialTheme.typography.labelLarge,
+                                color = if (selected) {
+                                    MaterialTheme.colorScheme.onSurface
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                maxLines = 1,
+                            )
+                        }
                     }
                 }
 
                 tabOverflowMenuContent?.let { MoreMenu(it) }
             }
-            HorizontalDivider()
+            androidx.compose.foundation.layout.Spacer(Modifier.height(4.dp))
 
             HorizontalPager(
                 modifier = Modifier.animateContentSize(),

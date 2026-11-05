@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.anime.source
 
+import eu.kanade.presentation.components.GlassIcons
 import dev.chrisbanes.haze.hazeSource
 import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
@@ -708,8 +709,8 @@ private fun ListingChips(
                 BrowseTabChip(
                     selected = !panelOpen && shownTab == "popular",
                     label = tabs?.popularName ?: stringResource(MR.strings.popular),
-                    icon = Icons.Outlined.FavoriteBorder,
-                    filledIcon = Icons.Outlined.Favorite,
+                    icon = GlassIcons.AddToLibrary,
+                    filledIcon = GlassIcons.InLibrary,
                     onClick = tab("popular", onPopular),
                 )
                 if (supportsLatest) {
@@ -736,7 +737,7 @@ private fun ListingChips(
             BrowseTabChip(
                 selected = filterOpen || (!settingsOpen && shownTab == AnimeSourceScreenModel.FILTER_TAB),
                 label = stringResource(MR.strings.action_filter),
-                icon = Icons.Outlined.FilterList,
+                icon = GlassIcons.Filter,
                 onClick = onFilter,
             )
             if (onSettings != null) {

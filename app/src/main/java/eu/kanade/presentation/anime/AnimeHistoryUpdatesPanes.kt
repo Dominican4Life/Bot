@@ -1,5 +1,6 @@
 package eu.kanade.presentation.anime
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
@@ -205,7 +206,7 @@ internal fun AnimeUpdateRow(
                 }
                 if (item.bookmark) {
                     Icon(
-                        imageVector = Icons.Filled.Bookmark,
+                        imageVector = GlassIcons.Bookmark,
                         contentDescription = stringResource(KMR.strings.anime_library_filter_bookmarked),
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(14.dp),
@@ -299,26 +300,26 @@ internal fun AnimeUpdatesActionBar(
                     .padding(horizontal = 8.dp, vertical = 8.dp),
             ) {
                 if (selected.any { !it.bookmark }) {
-                    ActionBarButton(Icons.Outlined.BookmarkAdd, stringResource(KMR.strings.anime_action_bookmark_episode)) {
+                    ActionBarButton(GlassIcons.Bookmark, stringResource(KMR.strings.anime_action_bookmark_episode)) {
                         onBookmark(true)
                     }
                 } else {
-                    ActionBarButton(Icons.Outlined.BookmarkRemove, stringResource(KMR.strings.anime_action_remove_bookmark_episode)) {
+                    ActionBarButton(GlassIcons.BookmarkRemove, stringResource(KMR.strings.anime_action_remove_bookmark_episode)) {
                         onBookmark(false)
                     }
                 }
                 if (selected.any { !it.seen }) {
-                    ActionBarButton(Icons.Outlined.DoneAll, stringResource(KMR.strings.anime_action_mark_seen)) {
+                    ActionBarButton(GlassIcons.Read, stringResource(KMR.strings.anime_action_mark_seen)) {
                         onMarkSeen(true)
                     }
                 }
                 if (selected.any { it.seen || it.lastSecondSeen > 0L }) {
-                    ActionBarButton(Icons.Outlined.RemoveDone, stringResource(KMR.strings.anime_action_mark_unseen)) {
+                    ActionBarButton(GlassIcons.Unread, stringResource(KMR.strings.anime_action_mark_unseen)) {
                         onMarkSeen(false)
                     }
                 }
                 if (selected.any { it.episodeId !in downloaded }) {
-                    ActionBarButton(Icons.Outlined.Download, stringResource(MR.strings.action_download), onDownload)
+                    ActionBarButton(GlassIcons.Download, stringResource(MR.strings.action_download), onDownload)
                 }
                 if (selected.any { it.episodeId in downloaded }) {
                     ActionBarButton(Icons.Outlined.Delete, stringResource(MR.strings.action_delete), onDelete)

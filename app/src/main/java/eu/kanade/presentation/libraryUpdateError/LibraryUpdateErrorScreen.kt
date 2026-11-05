@@ -1,5 +1,6 @@
 package eu.kanade.presentation.libraryUpdateError
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.layout.Row
@@ -323,7 +324,7 @@ private fun LibraryUpdateErrorAppBar(
                     persistentListOf(
                         AppBar.Action(
                             title = stringResource(MR.strings.action_select_all),
-                            icon = Icons.Outlined.SelectAll,
+                            icon = GlassIcons.SelectAll,
                             onClick = onClickSelectAll,
                         ),
                     ),
@@ -342,12 +343,12 @@ private fun LibraryUpdateErrorAppBar(
                     ),
                     AppBar.Action(
                         title = stringResource(MR.strings.action_select_all),
-                        icon = Icons.Outlined.SelectAll,
+                        icon = GlassIcons.SelectAll,
                         onClick = onClickSelectAll,
                     ),
                     AppBar.Action(
                         title = stringResource(MR.strings.action_select_inverse),
-                        icon = Icons.Outlined.FlipToBack,
+                        icon = GlassIcons.InvertSelection,
                         onClick = onClickInvertSelection,
                     ),
                 ),

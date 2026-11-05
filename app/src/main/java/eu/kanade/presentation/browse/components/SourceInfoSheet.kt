@@ -1,5 +1,6 @@
 package eu.kanade.presentation.browse.components
 
+import eu.kanade.presentation.components.GlassIcons
 import android.webkit.WebStorage
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -138,7 +139,7 @@ fun SourceInfoSheet(
                             modifier = Modifier.fillMaxSize(),
                         )
                     } else {
-                        Icon(Icons.Outlined.Public, contentDescription = null, tint = MaterialTheme.colorScheme.outline)
+                        Icon(GlassIcons.WebView, contentDescription = null, tint = MaterialTheme.colorScheme.outline)
                     }
                 }
                 Column(

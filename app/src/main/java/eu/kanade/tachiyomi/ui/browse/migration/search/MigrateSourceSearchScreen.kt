@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.browse.migration.search
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.FilterList
@@ -136,7 +137,7 @@ data class MigrateSourceSearchScreen(
             floatingActionButton = {
                 SmallExtendedFloatingActionButton(
                     text = { Text(text = stringResource(MR.strings.action_filter)) },
-                    icon = { Icon(Icons.Outlined.FilterList, contentDescription = null) },
+                    icon = { Icon(GlassIcons.Filter, contentDescription = null) },
                     onClick = screenModel::openFilterSheet,
                     modifier = Modifier.animateFloatingActionButton(
                         visible = state.filters.isNotEmpty(),

@@ -1,5 +1,6 @@
 package eu.kanade.presentation.browse
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -521,7 +522,7 @@ private fun ExtensionItemActions(
                                 onClick = { onClickItemSecondaryAction(extension) },
                             ) {
                                 Icon(
-                                    imageVector = Icons.Outlined.Public,
+                                    imageVector = GlassIcons.WebView,
                                     contentDescription = stringResource(MR.strings.action_open_in_web_view),
                                 )
                             }

@@ -94,8 +94,17 @@ fun AdaptiveSheet(
                     .systemBarsPadding()
                     .padding(vertical = 16.dp)
                     .then(modifier),
-                shape = MaterialTheme.shapes.extraLarge,
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                // KMK (r132): sheets are glass windows: rounder, the glass tint, a lit rim
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.97f),
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    androidx.compose.ui.graphics.Brush.verticalGradient(
+                        0f to androidx.compose.ui.graphics.Color.White.copy(alpha = 0.38f),
+                        0.2f to androidx.compose.ui.graphics.Color.White.copy(alpha = 0.08f),
+                        1f to androidx.compose.ui.graphics.Color.White.copy(alpha = 0.12f),
+                    ),
+                ),
                 content = {
                     BackHandler(enabled = alpha > 0f, onBack = internalOnDismissRequest)
                     content()
@@ -177,8 +186,17 @@ fun AdaptiveSheet(
                     )
                     .navigationBarsPadding()
                     .statusBarsPadding(),
-                shape = MaterialTheme.shapes.extraLarge,
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                // KMK (r132): sheets are glass windows: rounder, the glass tint, a lit rim
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.97f),
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    androidx.compose.ui.graphics.Brush.verticalGradient(
+                        0f to androidx.compose.ui.graphics.Color.White.copy(alpha = 0.38f),
+                        0.2f to androidx.compose.ui.graphics.Color.White.copy(alpha = 0.08f),
+                        1f to androidx.compose.ui.graphics.Color.White.copy(alpha = 0.12f),
+                    ),
+                ),
                 content = {
                     BackHandler(
                         enabled = anchoredDraggableState.targetValue == 0,

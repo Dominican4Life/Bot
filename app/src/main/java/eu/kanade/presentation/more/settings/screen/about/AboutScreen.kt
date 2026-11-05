@@ -1,5 +1,6 @@
 package eu.kanade.presentation.more.settings.screen.about
 
+import eu.kanade.presentation.components.GlassIcons
 import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
@@ -260,7 +261,7 @@ class AboutScreen : Screen() {
                     ) {
                         LinkIcon(
                             label = stringResource(MR.strings.website),
-                            icon = Icons.Outlined.Public,
+                            icon = GlassIcons.WebView,
                             url = "https://komikku-app.github.io",
                         )
                         LinkIcon(

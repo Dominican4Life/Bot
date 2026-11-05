@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.player.controls.components.dialogs
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
@@ -270,7 +271,7 @@ private fun EpisodeRow(
         }
         IconButton(onClick = onToggleBookmark, modifier = Modifier.size(36.dp)) {
             Icon(
-                imageVector = if (bookmarked) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
+                imageVector = if (bookmarked) GlassIcons.Bookmark else Icons.Outlined.BookmarkBorder,
                 contentDescription = if (bookmarked) "Remove bookmark" else "Bookmark",
                 tint = if (bookmarked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(20.dp),
@@ -294,7 +295,7 @@ private fun EpisodeRow(
                     modifier = Modifier.size(20.dp),
                 )
                 else -> Icon(
-                    Icons.Outlined.Download,
+                    GlassIcons.Download,
                     contentDescription = "Download",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(20.dp),

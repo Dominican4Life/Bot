@@ -1,5 +1,6 @@
 package mihon.feature.migration.config
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -365,7 +366,7 @@ fun SourceToMigratePickerDialog(
                 // Select all / invert, like the old titles list
                 IconButton(onClick = { picked = picked + ids }) {
                     Icon(
-                        imageVector = Icons.Outlined.SelectAll,
+                        imageVector = GlassIcons.SelectAll,
                         contentDescription = stringResource(MR.strings.action_select_all),
                     )
                 }
@@ -373,7 +374,7 @@ fun SourceToMigratePickerDialog(
                     picked = picked - ids.filter { it in picked }.toSet() + ids.filter { it !in picked }
                 }) {
                     Icon(
-                        imageVector = Icons.Outlined.FlipToBack,
+                        imageVector = GlassIcons.InvertSelection,
                         contentDescription = stringResource(MR.strings.action_select_inverse),
                     )
                 }

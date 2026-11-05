@@ -484,9 +484,9 @@
     <string name="download_queue_anime_count">%d anime</string>
     <string name="download_queue_tab_all">All</string>
     <!-- Panorama comfortable grid styles -->
-    <string name="panorama_style_fill">Panorama: color fill</string>
-    <string name="panorama_style_fit">Panorama: fit width</string>
-    <string name="panorama_style_wide">Panorama: wide</string>
+    <string name="panorama_style_fill">Panorama: Color Fill</string>
+    <string name="panorama_style_fit">Panorama: Fit Width</string>
+    <string name="panorama_style_wide">Panorama: Wide</string>
     <!-- Feed tag mixes: one row from several sources and some genres or tags -->
     <string name="tag_mix_new">New tag mix</string>
     <string name="tag_mix_edit">Edit tag mix</string>
@@ -877,4 +877,16 @@
     <string name="glass_off">Off</string>
     <string name="glass_where">Where glass is used</string>
     <string name="glass_reset">Reset to defaults</string>
+    <!-- KMK (r132) glass windows -->
+    <string name="smart_update_next_in">Next chapter in ~%1$s</string>
+    <string name="smart_update_subtitle">Smart update guesses from past releases</string>
+    <string name="smart_update_today">Today</string>
+    <string name="smart_update_expected">Expected</string>
+    <string name="smart_update_checks_every">Checks for new chapters every %1$s</string>
+    <string name="action_got_it">Got it</string>
+    <string name="wide_covers_panorama">Wide Covers (Panorama)</string>
+    <string name="panorama_short_fit">Fit Width</string>
+    <string name="panorama_short_fill">Color Fill</string>
+    <string name="panorama_short_wide">Wide</string>
+    <string name="title_anilist_banner_pref">AniList banner behind title pages</string>
 </resources>

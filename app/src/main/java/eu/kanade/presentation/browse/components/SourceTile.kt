@@ -1,5 +1,6 @@
 package eu.kanade.presentation.browse.components
 
+import eu.kanade.presentation.components.GlassIcons
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -305,7 +306,7 @@ fun DefaultTileIcon() {
             .background(MaterialTheme.colorScheme.surfaceContainerHigh),
     ) {
         Icon(
-            imageVector = Icons.Outlined.Public,
+            imageVector = GlassIcons.WebView,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.outline,
             modifier = Modifier.size(26.dp),

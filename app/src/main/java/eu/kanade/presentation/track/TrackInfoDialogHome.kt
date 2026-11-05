@@ -216,55 +216,57 @@ private fun TrackInfoItem(
             )
         }
 
-        Box(
-            modifier = Modifier
-                .padding(top = 12.dp)
-                .clip(MaterialTheme.shapes.medium)
-                .background(MaterialTheme.colorScheme.surfaceContainerHighest)
-                .padding(8.dp)
-                .clip(RoundedCornerShape(6.dp)),
+        // KMK (r132): each detail is its own glass cell with a small label (Status, Chapters, Score, Started, Finished)
+        Column(
+            modifier = Modifier.padding(top = 12.dp),
+            verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
         ) {
-            Column {
-                Row(modifier = Modifier.height(IntrinsicSize.Min)) {
+            Row(
+                modifier = Modifier.height(IntrinsicSize.Min),
+                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+            ) {
+                TrackDetailsItem(
+                    modifier = Modifier.weight(1.2f),
+                    label = stringResource(MR.strings.status),
+                    text = status?.let { stringResource(it) } ?: "",
+                    onClick = onStatusClick,
+                )
+                TrackDetailsItem(
+                    modifier = Modifier.weight(1f),
+                    label = stringResource(MR.strings.chapters),
+                    text = chapters,
+                    onClick = onChaptersClick,
+                )
+                if (onScoreClick != null) {
                     TrackDetailsItem(
-                        modifier = Modifier.weight(1f),
-                        text = status?.let { stringResource(it) } ?: "",
-                        onClick = onStatusClick,
+                        modifier = Modifier.weight(0.9f),
+                        label = stringResource(MR.strings.score),
+                        text = score,
+                        placeholder = "–",
+                        onClick = onScoreClick,
                     )
-                    VerticalDivider()
-                    TrackDetailsItem(
-                        modifier = Modifier.weight(1f),
-                        text = chapters,
-                        onClick = onChaptersClick,
-                    )
-                    if (onScoreClick != null) {
-                        VerticalDivider()
-                        TrackDetailsItem(
-                            modifier = Modifier.weight(1f),
-                            text = score,
-                            placeholder = stringResource(MR.strings.score),
-                            onClick = onScoreClick,
-                        )
-                    }
                 }
+            }
 
-                if (onStartDateClick != null && onEndDateClick != null) {
-                    HorizontalDivider()
-                    Row(modifier = Modifier.height(IntrinsicSize.Min)) {
-                        TrackDetailsItem(
-                            modifier = Modifier.weight(1F),
-                            text = startDate,
-                            placeholder = stringResource(MR.strings.track_started_reading_date),
-                            onClick = onStartDateClick,
-                        )
-                        VerticalDivider()
-                        TrackDetailsItem(
-                            modifier = Modifier.weight(1F),
-                            text = endDate,
-                            placeholder = stringResource(MR.strings.track_finished_reading_date),
-                            onClick = onEndDateClick,
-                        )
-                    }
+            if (onStartDateClick != null && onEndDateClick != null) {
+                Row(
+                    modifier = Modifier.height(IntrinsicSize.Min),
+                    horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+                ) {
+                    TrackDetailsItem(
+                        modifier = Modifier.weight(1F),
+                        label = stringResource(MR.strings.track_started_reading_date),
+                        text = startDate,
+                        placeholder = "–",
+                        onClick = onStartDateClick,
+                    )
+                    TrackDetailsItem(
+                        modifier = Modifier.weight(1F),
+                        label = stringResource(MR.strings.track_finished_reading_date),
+                        text = endDate,
+                        placeholder = "–",
+                        onClick = onEndDateClick,
+                    )
                 }
             }
         }
@@ -278,21 +280,31 @@ private fun TrackDetailsItem(
     text: String?,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    label: String = "",
     placeholder: String = "",
 ) {
-    Box(
+    Column(
         modifier = modifier
-            .clickable(onClick = onClick)
             .fillMaxHeight()
-            .padding(12.dp),
-        contentAlignment = Alignment.Center,
+            .clip(RoundedCornerShape(16.dp))
+            .background(androidx.compose.ui.graphics.Color.White.copy(alpha = 0.07f))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
+        if (label.isNotEmpty()) {
+            Text(
+                text = label,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         Text(
             text = text ?: placeholder,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
-            style = MaterialTheme.typography.bodyMedium,
-            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (text == null) UNSET_TEXT_ALPHA else 1f),
         )
     }

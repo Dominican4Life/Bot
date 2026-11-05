@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.diagnostics
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -232,7 +233,7 @@ internal fun LogTab(model: DiagnosticsScreenModel, header: HeaderSlot) {
                 // KMK: select across lines (the newest ones) in Android's own text box
                 IconButton(onClick = { selecting.value = !selecting.value }) {
                     Icon(
-                        Icons.Outlined.SelectAll,
+                        GlassIcons.SelectAll,
                         contentDescription = "Select text",
                         tint = if (selecting.value) {
                             MaterialTheme.colorScheme.primary

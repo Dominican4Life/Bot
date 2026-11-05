@@ -1,5 +1,6 @@
 package eu.kanade.presentation.reader.appbars
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -310,7 +311,7 @@ internal fun GlassActionSheet(
                     run(onClickChapterList),
                 )
                 ActionTile(
-                    rememberVectorPainter(Icons.Outlined.GridView),
+                    rememberVectorPainter(GlassIcons.Preview),
                     stringResource(KMR.strings.reader_pages),
                     run(onClickPageGrid),
                 )
@@ -340,7 +341,7 @@ internal fun GlassActionSheet(
                 }
                 if (onClickWebView != null) {
                     ActionTile(
-                        rememberVectorPainter(Icons.Outlined.Public),
+                        rememberVectorPainter(GlassIcons.WebView),
                         stringResource(MR.strings.action_open_in_web_view),
                         run(onClickWebView),
                     )

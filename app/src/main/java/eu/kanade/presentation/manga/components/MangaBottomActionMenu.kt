@@ -1,5 +1,6 @@
 package eu.kanade.presentation.manga.components
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -119,7 +120,7 @@ fun MangaBottomActionMenu(
                 if (onBookmarkClicked != null) {
                     Button(
                         title = stringResource(MR.strings.action_bookmark),
-                        icon = Icons.Outlined.BookmarkAdd,
+                        icon = GlassIcons.Bookmark,
                         toConfirm = confirm[0],
                         onLongClick = { onLongClickItem(0) },
                         onClick = onBookmarkClicked,
@@ -128,7 +129,7 @@ fun MangaBottomActionMenu(
                 if (onRemoveBookmarkClicked != null) {
                     Button(
                         title = stringResource(MR.strings.action_remove_bookmark),
-                        icon = Icons.Outlined.BookmarkRemove,
+                        icon = GlassIcons.BookmarkRemove,
                         toConfirm = confirm[1],
                         onLongClick = { onLongClickItem(1) },
                         onClick = onRemoveBookmarkClicked,
@@ -137,7 +138,7 @@ fun MangaBottomActionMenu(
                 if (onMarkAsReadClicked != null) {
                     Button(
                         title = stringResource(MR.strings.action_mark_as_read),
-                        icon = Icons.Outlined.DoneAll,
+                        icon = GlassIcons.Read,
                         toConfirm = confirm[2],
                         onLongClick = { onLongClickItem(2) },
                         onClick = onMarkAsReadClicked,
@@ -146,7 +147,7 @@ fun MangaBottomActionMenu(
                 if (onMarkAsUnreadClicked != null) {
                     Button(
                         title = stringResource(MR.strings.action_mark_as_unread),
-                        icon = Icons.Outlined.RemoveDone,
+                        icon = GlassIcons.Unread,
                         toConfirm = confirm[3],
                         onLongClick = { onLongClickItem(3) },
                         onClick = onMarkAsUnreadClicked,
@@ -164,7 +165,7 @@ fun MangaBottomActionMenu(
                 if (onDownloadClicked != null) {
                     Button(
                         title = stringResource(MR.strings.action_download),
-                        icon = Icons.Outlined.Download,
+                        icon = GlassIcons.Download,
                         toConfirm = confirm[5],
                         onLongClick = { onLongClickItem(5) },
                         onClick = onDownloadClicked,
@@ -317,14 +318,14 @@ fun LibraryBottomActionMenu(
                 )
                 Button(
                     title = stringResource(MR.strings.action_mark_as_read),
-                    icon = Icons.Outlined.DoneAll,
+                    icon = GlassIcons.Read,
                     toConfirm = confirm[1],
                     onLongClick = { onLongClickItem(1) },
                     onClick = onMarkAsReadClicked,
                 )
                 Button(
                     title = stringResource(MR.strings.action_mark_as_unread),
-                    icon = Icons.Outlined.RemoveDone,
+                    icon = GlassIcons.Unread,
                     toConfirm = confirm[2],
                     onLongClick = { onLongClickItem(2) },
                     onClick = onMarkAsUnreadClicked,
@@ -333,7 +334,7 @@ fun LibraryBottomActionMenu(
                     var downloadExpanded by remember { mutableStateOf(false) }
                     Button(
                         title = stringResource(MR.strings.action_download),
-                        icon = Icons.Outlined.Download,
+                        icon = GlassIcons.Download,
                         toConfirm = confirm[3],
                         onLongClick = { onLongClickItem(3) },
                         onClick = { downloadExpanded = !downloadExpanded },

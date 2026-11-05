@@ -1,5 +1,6 @@
 package eu.kanade.presentation.history
 
+import eu.kanade.presentation.components.GlassIcons
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -505,12 +506,12 @@ private fun HistorySelectionToolbar(
                 persistentListOf(
                     AppBar.Action(
                         title = stringResource(MR.strings.action_select_all),
-                        icon = Icons.Outlined.SelectAll,
+                        icon = GlassIcons.SelectAll,
                         onClick = onClickSelectAll,
                     ),
                     AppBar.Action(
                         title = stringResource(MR.strings.action_select_inverse),
-                        icon = Icons.Outlined.FlipToBack,
+                        icon = GlassIcons.InvertSelection,
                         onClick = onClickInvertSelection,
                     ),
                     AppBar.Action(

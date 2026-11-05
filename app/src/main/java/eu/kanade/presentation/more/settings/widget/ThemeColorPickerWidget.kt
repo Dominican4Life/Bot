@@ -1,5 +1,6 @@
 package eu.kanade.presentation.more.settings.widget
 
+import eu.kanade.presentation.components.GlassIcons
 import android.graphics.Bitmap
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
@@ -149,7 +150,7 @@ internal fun ThemeColorPickerWidget(
                     }
 
                     Icon(
-                        imageVector = Icons.AutoMirrored.Outlined.ArrowForward,
+                        imageVector = GlassIcons.Arrow,
                         tint = Color.Gray,
                         modifier = Modifier
                             .size(64.dp)
