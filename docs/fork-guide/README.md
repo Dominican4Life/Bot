@@ -965,6 +965,29 @@ Two commits (the first failed CI: `openers += opener` on a `MutableSet<Element>`
   - **Episode rows** show the episode picture (source preview, else the cover) and a 2-line summary. When either shows, the hide / bookmark / download icons move onto the date line under the summary, right-aligned (option B on XPanelEp).
 - r123 was built once with all of this: earlier r123 runs were cancelled while items were added.
 
+## Changes in r124 (5 November 2026)
+
+- **Header B taken out** (owner's request): `MangaInfoHeader.kt` is back to the old cover header on phone and tablet; `MangaInfoHeaderB` is gone.
+- **Browse / Library preview panel** (`BrowsePreviewInfoHeader`): the r123 swipe card is gone. The panel uses the old title/author/status header with `MangaActionRow`, and the description and tags fold with `ExpandableMangaDescription`, like the title page.
+- **Anime panel thumbnails** (`AnimeBrowsePanel`): episode pictures come from AniList (`AniListEpisodeMatch.load`, only when the source's AniList switch is on) or the source's own preview (`EpisodePreview`). There is no cover fallback any more (it repeated the cover on every row); with no picture the row shows an empty tile. The summary comes from AniList, else the source.
+- **Left / Right Panel on phones:** `BrowseSourceScreen` (`previewEnabled`) and `AnimeSourceScreen` (`panelsAllowed`, `ListingChips(showPanelButtons)`) only use the panels when `isTabletUi()`. On a phone the two buttons are hidden and a cover tap opens the title page. The saved choice is kept for the tablet layout. Library panels are unchanged.
+- **Phone title page sheet** (Settings › Appearance › "Title page sheet on phones", pref `title_sheet_on`, default on; off = the classic list). Phones only (`MangaScreenSmallImpl`, `AnimeScreenSmall`); the tablet keeps two columns. Mockups: design canvas page "Phone: episode sheet & preview" (XSheet).
+  - **`presentation/components/TitleSheet.kt`:**
+    - `TitleSheetBox`: the page under the sheet, the sheet and the dock. The sheet has three stops (peek, half at 42 %, and full under the toolbar) and keeps the last one (`title_sheet_last_stop`). A nested-scroll connection moves the sheet before the list scrolls (finger drags only, `NestedScrollSource.UserInput`). Flings snap; Back from full goes to half; tapping the handle toggles full/half.
+    - The dock has ☰ / ▦ and a split Play button: the label, plus ⌄ with "Start from the first" and "Pick one…".
+    - `TitleSheetSizeMenu`: columns 1–6 and shape (Auto / Page 2:3 / Square / Strip slices). Both are saved per kind (`manga`, `strip`, `anime`), plus "Sheet opens at" (`title_sheet_open_at`).
+    - `pinchColumns`: pinch the grid to change the columns.
+  - **Manga** (`MangaTitleSheet.kt`, `MangaSheetHooks`):
+    - `MangaScreenSmallImpl`'s items are split into `infoItems` and `chapterItems`, so the classic list and the sheet share them.
+    - The sheet header has the count (tap = filter sheet), download Unread / All chapters / Bookmarked, the filter icon, and chips All / Unread / Downloaded (`setUnreadFilter` / `setDownloadedFilter`).
+    - ▦ is `TitlePagePreview`. It uses a second `BrowsePreviewScreenModel` (tag `title_sheet_preview`) with `select(…, refresh = false)`, so it reads only the saved chapters and never refreshes from the source next to the title page. It starts on the next unread chapter; the chip picks another (dialog).
+    - Long strips: a page taller than 2.2 × its width marks the chapter as a long strip ("Long strip" chip). Auto then cuts each page into screen-high (16:9) slices with `BiasAlignment`, numbered page·slice. A tap opens the reader at that page (videos play).
+  - **Anime** (`AnimeTitleSheet` / `AnimeSheetHeader` in `AnimeScreen.kt`):
+    - Header: the count, the display menu (thumbnail / summary with "Just this title / All titles", `AnimeActions.onDisplay`) or ⤢ on ▦, the download menu (Unseen / All / Bookmarked) and filter.
+    - ▦ shows `episodeItems(tiles = true)`: cards with the picture always and no summary, N per line (`TitleSheet.columns("anime")`, 1–4).
+    - Play ⌄ › "Start from the first" uses `AnimeScreenModel.firstEpisode()`.
+  - Don't change: the classic list path must stay as it was when the switch is off. Chapter rows in the sheet are the same `sharedChapterItems` (swipes, selection, the bottom action bar); the dock hides while chapters are selected.
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
