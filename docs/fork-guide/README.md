@@ -1058,6 +1058,28 @@ Two commits (the first failed CI: `openers += opener` on a `MutableSet<Element>`
 - **Floating player:** the 8 grips are replaced by one bottom-right grip (`resize(1, 1)`), like the floating log. `FloatingControls`' bottom row has end padding so the grip is free.
 - **Floating log pause:** pausing used `isScrollInProgress`, which was true during its own `scrollToItem` to the newest line, so a busy log paused itself. It now pauses only on `interactionSource.collectIsDraggedAsState()`, resumes 10 s after the drag, or at once when scrolled back to the bottom.
 
+## Changes in r129
+
+- **Preview grid animated tiles** (`TitlePagePreview`, used by the phone title sheet and the tablet glass panel):
+  - Tiles use `AnimatedThumbnail` (first-bytes GIF/animated-WebP check, still frame with ▶, only the playing tile decodes motion).
+  - The first tap on an animated page plays it with a 3 dp primary ring; the second opens it. One plays at a time, and it resets per chapter.
+  - SY `previewModels` and video pages stay plain.
+  - `AnimatedThumbnail` gained `alignment` (long-strip slices) and `onRatio`.
+- **Floating player:** the window keeps the video's aspect.
+  - `AnimePreviewSection(onAspect)` polls mpv `video-params/aspect`.
+  - `FloatingPlayerRect.aspect` holds it, `clamp` derives the height from the width, and the corner grip scales by the larger movement.
+- **Reader, after WWDC25 "Meet Liquid Glass":**
+  - `Modifier.glassPress(interactionSource, shape)` adds a gel scale (1.08, spring) and an inner glow on press. It's used on the back/⋮ buttons, the title pill and the ⋮ sheet tiles, with ripple off.
+  - The bars pop in with `scaleIn(0.86)` + fade from their edge instead of sliding.
+  - Top/bottom edge dimming gradients show under the floating controls.
+  - `liquidGlass(thick = true)` (a 12 dp, 1.09× lens rim) is used on the ⋮ sheet and the Chapters/Pages sheet.
+  - `glassReduceMotion()` (animator scale 0) turns off the flex and scale.
+- **Phone title page glass** (`TitleSheet.glass()`, `title_sheet_glass`, default on; a switch in Settings › Glass):
+  - `TitleSheetBox` puts the background (cover and description) under its own `hazeSource`.
+  - The sheet uses `liquidGlass(sheetShape, surfaceContainerLow, thick)` and turns solid past 55 % of the way to full.
+  - The dock is a glass capsule with Play still tinted.
+  - `AppBar(glassButtons)` → `MangaToolbar(glass)` puts the up/home and action buttons on glass capsules.
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
