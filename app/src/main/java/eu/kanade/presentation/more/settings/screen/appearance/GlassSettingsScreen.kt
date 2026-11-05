@@ -121,6 +121,9 @@ class GlassSettingsScreen : Screen() {
 
                     Group(stringResource(KMR.strings.glass_knob))
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Choice(knob == GlassStyle.KNOB_GLASS, stringResource(KMR.strings.glass_knob_glass)) {
+                            knobPref.set(GlassStyle.KNOB_GLASS)
+                        }
                         Choice(knob == GlassStyle.KNOB_CAPSULE, stringResource(KMR.strings.glass_knob_capsule)) {
                             knobPref.set(GlassStyle.KNOB_CAPSULE)
                         }

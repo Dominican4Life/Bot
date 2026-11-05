@@ -903,7 +903,7 @@ private fun AnimeFloatingPlayer(
                 update(intArrayOf(r[0] + drag.x.roundToInt(), r[1] + drag.y.roundToInt(), r[2], r[3]))
             }
         }
-        // Resize from an edge: sx / sy say which sides move (-1 the left / top side, +1 the right / bottom one)
+        // Resize: sx / sy say which sides move (+1 the right / bottom one)
         fun resize(sx: Int, sy: Int) = Modifier.pointerInput(sx, sy, minX, minY, maxX, maxY) {
             detectDragGestures { change, drag ->
                 change.consume()
@@ -939,8 +939,6 @@ private fun AnimeFloatingPlayer(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    // A thin ring around the video holds the resize grips
-                    .padding(8.dp)
                     .shadow(18.dp, shape)
                     .clip(shape)
                     .background(Color.Black)
@@ -971,58 +969,21 @@ private fun AnimeFloatingPlayer(
                     )
                 }
             }
-            // Resize grips: the four corners and the middle of each side
-            val grip = 22.dp
-            val bar = 34.dp
-            listOf(
-                Triple(Alignment.TopStart, -1, -1),
-                Triple(Alignment.TopEnd, 1, -1),
-                Triple(Alignment.BottomStart, -1, 1),
-                Triple(Alignment.BottomEnd, 1, 1),
-            ).forEach { (align, sx, sy) ->
+            // KMK (r128): one resize grip in the bottom-right corner, like the floating log window
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .size(26.dp)
+                    .then(resize(1, 1)),
+            ) {
                 Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier.align(align).size(grip).then(resize(sx, sy)),
-                ) {
-                    Box(
-                        Modifier
-                            .size(10.dp)
-                            .clip(androidx.compose.foundation.shape.CircleShape)
-                            .background(Color.White.copy(alpha = 0.75f)),
-                    )
-                }
-            }
-            listOf(
-                Triple(Alignment.TopCenter, 0, -1),
-                Triple(Alignment.BottomCenter, 0, 1),
-            ).forEach { (align, sx, sy) ->
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier.align(align).size(width = bar * 2, height = 18.dp).then(resize(sx, sy)),
-                ) {
-                    Box(
-                        Modifier
-                            .size(width = bar, height = 4.dp)
-                            .clip(androidx.compose.foundation.shape.CircleShape)
-                            .background(Color.White.copy(alpha = 0.6f)),
-                    )
-                }
-            }
-            listOf(
-                Triple(Alignment.CenterStart, -1, 0),
-                Triple(Alignment.CenterEnd, 1, 0),
-            ).forEach { (align, sx, sy) ->
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier.align(align).size(width = 18.dp, height = bar * 2).then(resize(sx, sy)),
-                ) {
-                    Box(
-                        Modifier
-                            .size(width = 4.dp, height = bar)
-                            .clip(androidx.compose.foundation.shape.CircleShape)
-                            .background(Color.White.copy(alpha = 0.6f)),
-                    )
-                }
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(5.dp)
+                        .size(11.dp)
+                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(topStart = 11.dp, bottomEnd = 3.dp))
+                        .background(Color.White.copy(alpha = 0.7f)),
+                )
             }
         }
     }

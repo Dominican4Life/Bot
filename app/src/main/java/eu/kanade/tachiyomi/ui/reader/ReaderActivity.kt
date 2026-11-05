@@ -371,10 +371,12 @@ class ReaderActivity : BaseActivity() {
                 var chapterListVersion by remember { mutableIntStateOf(0) }
                 val panelChapters = remember(
                     state.chapterListPanelOpen,
+                    state.pageGridPanelOpen,
                     state.currentChapter?.chapter?.id,
                     chapterListVersion,
                 ) {
-                    if (state.chapterListPanelOpen) {
+                    // KMK (r128): the glass sheet's chapter picker needs them on the Pages tab too
+                    if (state.chapterListPanelOpen || state.pageGridPanelOpen) {
                         viewModel.getChapters().toImmutableList()
                     } else {
                         persistentListOf()
@@ -425,12 +427,15 @@ class ReaderActivity : BaseActivity() {
                         subtitle = state.currentChapter?.chapter?.name,
                         cover = state.manga?.thumbnailUrl,
                         chapters = chapterListContent,
+                        pickerChapters = panelChapters,
+                        onPickChapter = viewModel::loadNewChapterFromDialog,
                         pages = {
                             androidx.compose.runtime.key(state.currentChapter?.chapter?.id) {
                                 eu.kanade.presentation.reader.PageGridContent(
                                     chapter = state.currentChapter,
                                     currentPage = state.currentPage,
                                     onClickPage = this@ReaderActivity::moveToPageIndex,
+                                    showTitle = false,
                                 )
                             }
                         },
@@ -778,6 +783,7 @@ class ReaderActivity : BaseActivity() {
         val glassBars by remember { eu.kanade.presentation.reader.appbars.ReaderGlass.enabled() }.collectAsState()
 
         ReaderAppBars(
+            sheetOpen = state.chapterListPanelOpen || state.pageGridPanelOpen,
             visible = state.menuVisible,
 
             mangaTitle = state.manga?.title,

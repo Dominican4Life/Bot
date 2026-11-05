@@ -9,6 +9,8 @@ import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.fadeIn
@@ -402,21 +404,30 @@ private fun ActionTile(painter: Painter, label: String, onClick: () -> Unit) {
 
 
 /**
- * KMK (r125): the glass slider knob: a frosted capsule with a bright top edge and a soft shadow that grows a little
- * while it's dragged (in place of Material's round dot).
+ * KMK (r125): the glass slider knob. KMK (r128): the Glass knob (default) is a clear lens like Apple's: the track
+ * shows through it magnified (accent on the left of its middle, the rest on the right), light on the top rim, a
+ * darker lower rim and a small highlight; it grows and magnifies a little more while dragged. [fraction] is where
+ * the knob sits on the track (0..1). Capsule / Large are the frosted pill, Dot is Material's.
  */
 @Composable
-fun GlassSliderThumb(interactionSource: androidx.compose.foundation.interaction.MutableInteractionSource) {
+fun GlassSliderThumb(
+    interactionSource: androidx.compose.foundation.interaction.MutableInteractionSource,
+    fraction: Float = 0.5f,
+) {
     // KMK (r126): Settings › Appearance › Glass › Slider knob
     val style = remember { eu.kanade.presentation.browse.components.GlassStyle.knob() }.get()
     if (style == eu.kanade.presentation.browse.components.GlassStyle.KNOB_DOT) {
         androidx.compose.material3.SliderDefaults.Thumb(interactionSource = interactionSource)
         return
     }
-    val large = style == eu.kanade.presentation.browse.components.GlassStyle.KNOB_LARGE
     val pressed by interactionSource.collectIsDraggedAsState()
     val pressedToo by interactionSource.collectIsPressedAsState()
     val active = pressed || pressedToo
+    if (style == eu.kanade.presentation.browse.components.GlassStyle.KNOB_GLASS) {
+        GlassLensKnob(active = active, fraction = fraction)
+        return
+    }
+    val large = style == eu.kanade.presentation.browse.components.GlassStyle.KNOB_LARGE
     val width by animateDpAsState(
         if (active) (if (large) 54.dp else 44.dp) else (if (large) 42.dp else 34.dp),
         label = "glassKnobWidth",
@@ -446,6 +457,101 @@ fun GlassSliderThumb(interactionSource: androidx.compose.foundation.interaction.
                 .size(width = width * 0.55f, height = 3.dp)
                 .clip(CircleShape)
                 .background(Color.White.copy(alpha = 0.9f)),
+        )
+    }
+}
+
+/** KMK (r128): the clear lens knob (see [GlassSliderThumb]) */
+@Composable
+private fun GlassLensKnob(active: Boolean, fraction: Float) {
+    val width by animateDpAsState(if (active) 50.dp else 40.dp, label = "lensWidth")
+    val height by animateDpAsState(if (active) 32.dp else 26.dp, label = "lensHeight")
+    val zoom by androidx.compose.animation.core.animateFloatAsState(if (active) 1.75f else 1.45f, label = "lensZoom")
+    val accent = ReaderGlass.accent
+    Box(
+        modifier = Modifier
+            .size(width = width, height = height)
+            .drawBehind {
+                val shape = androidx.compose.ui.geometry.CornerRadius(size.height / 2f)
+                // A soft shadow just under the lens
+                drawRoundRect(
+                    color = Color.Black.copy(alpha = if (active) 0.28f else 0.2f),
+                    topLeft = Offset(0f, 2.5f.dp.toPx()),
+                    size = size,
+                    cornerRadius = shape,
+                )
+            }
+            .clip(CircleShape)
+            .drawBehind {
+                val r = androidx.compose.ui.geometry.CornerRadius(size.height / 2f)
+                // The glass itself: nearly clear, a touch lighter
+                drawRoundRect(Color.White.copy(alpha = if (active) 0.08f else 0.13f), cornerRadius = r)
+                // The track seen through it, magnified: split where the knob sits
+                val track = 6.dp.toPx() * zoom
+                val cy = size.height / 2f
+                val split = size.width / 2f
+                drawRoundRect(
+                    color = accent,
+                    topLeft = Offset(-track, cy - track / 2f),
+                    size = androidx.compose.ui.geometry.Size(split + track, track),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(track / 2f),
+                )
+                drawRoundRect(
+                    color = Color.White.copy(alpha = 0.32f),
+                    topLeft = Offset(split, cy - track / 2f),
+                    size = androidx.compose.ui.geometry.Size(size.width - split + track, track),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(track / 2f),
+                )
+                // Light gathered at the rim (the glass is thicker there)
+                drawRoundRect(
+                    brush = Brush.radialGradient(
+                        0.55f to Color.Transparent,
+                        1f to Color.White.copy(alpha = 0.22f),
+                        center = center,
+                        radius = size.width * 0.62f,
+                    ),
+                    cornerRadius = r,
+                )
+                // The highlight in the upper half
+                drawRoundRect(
+                    brush = Brush.verticalGradient(
+                        0f to Color.White.copy(alpha = 0.55f),
+                        1f to Color.Transparent,
+                        startY = size.height * 0.08f,
+                        endY = size.height * 0.42f,
+                    ),
+                    topLeft = Offset(size.width * 0.2f, size.height * 0.08f),
+                    size = androidx.compose.ui.geometry.Size(size.width * 0.6f, size.height * 0.34f),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(size.height * 0.17f),
+                )
+                // Rim: bright on top, darker below
+                drawRoundRect(
+                    brush = Brush.verticalGradient(
+                        0f to Color.White.copy(alpha = 0.95f),
+                        0.5f to Color.White.copy(alpha = 0.35f),
+                        1f to Color.Black.copy(alpha = 0.35f),
+                    ),
+                    cornerRadius = r,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(1.4.dp.toPx()),
+                )
+            },
+    )
+}
+
+/**
+ * KMK (r128): the glass slider's track: one continuous bar (no gap around the knob) so the lens sits on it, the
+ * accent up to [fraction] and a faint rest.
+ */
+@Composable
+fun GlassSliderTrack(fraction: Float) {
+    val accent = ReaderGlass.accent
+    androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxWidth().height(6.dp)) {
+        val r = androidx.compose.ui.geometry.CornerRadius(size.height / 2f)
+        drawRoundRect(Color.White.copy(alpha = 0.22f), cornerRadius = r)
+        drawRoundRect(
+            accent,
+            size = androidx.compose.ui.geometry.Size(size.width * fraction.coerceIn(0f, 1f), size.height),
+            cornerRadius = r,
         )
     }
 }

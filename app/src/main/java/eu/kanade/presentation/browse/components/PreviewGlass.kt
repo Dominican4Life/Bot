@@ -299,6 +299,9 @@ object GlassStyle {
     const val KNOB_LARGE = 1
     const val KNOB_DOT = 2
 
+    /** KMK (r128): the clear lens (default) */
+    const val KNOB_GLASS = 3
+
     const val FOLLOW_SYSTEM = 0
     const val ON = 1
     const val OFF = 2
@@ -310,7 +313,7 @@ object GlassStyle {
 
     fun corners(): Preference<Int> = store.getInt("glass_corners", 24)
 
-    fun knob(): Preference<Int> = store.getInt("glass_knob", KNOB_CAPSULE)
+    fun knob(): Preference<Int> = store.getInt("glass_knob", KNOB_GLASS)
 
     fun reduceTransparency(): Preference<Boolean> = store.getBoolean("glass_reduce_transparency", false)
 

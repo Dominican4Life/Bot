@@ -177,9 +177,20 @@ fun ChapterNavigator(
                             colors = if (glass) glassSliderColors() else SliderDefaults.colors(),
                             thumb = {
                                 if (glass) {
-                                    GlassSliderThumb(interactionSource)
+                                    GlassSliderThumb(interactionSource, glassFraction(it))
                                 } else {
                                     SliderDefaults.Thumb(interactionSource = interactionSource)
+                                }
+                            },
+                            // KMK (r128): a whole track under the glass lens
+                            track = { state ->
+                                if (glass && glassLensKnob()) {
+                                    eu.kanade.presentation.reader.appbars.GlassSliderTrack(glassFraction(state))
+                                } else {
+                                    SliderDefaults.Track(
+                                        colors = if (glass) glassSliderColors() else SliderDefaults.colors(),
+                                        sliderState = state,
+                                    )
                                 }
                             },
                         )
@@ -325,9 +336,19 @@ fun ChapterNavigatorVert(
                     colors = if (glass) glassSliderColors() else SliderDefaults.colors(),
                     thumb = {
                         if (glass) {
-                            GlassSliderThumb(interactionSource)
+                            GlassSliderThumb(interactionSource, glassFraction(it))
                         } else {
                             SliderDefaults.Thumb(interactionSource = interactionSource)
+                        }
+                    },
+                    track = { state ->
+                        if (glass && glassLensKnob()) {
+                            eu.kanade.presentation.reader.appbars.GlassSliderTrack(glassFraction(state))
+                        } else {
+                            SliderDefaults.Track(
+                                colors = if (glass) glassSliderColors() else SliderDefaults.colors(),
+                                sliderState = state,
+                            )
                         }
                     },
                 )
@@ -392,3 +413,16 @@ private fun ChapterNavigatorPreview() {
         // KMK <--
     }
 }
+
+/** KMK (r128): where the knob sits on the track, 0..1 */
+private fun glassFraction(state: androidx.compose.material3.SliderState): Float {
+    val range = state.valueRange
+    val span = range.endInclusive - range.start
+    return if (span <= 0f) 0f else ((state.value - range.start) / span).coerceIn(0f, 1f)
+}
+
+/** KMK (r128): the Glass (lens) knob is chosen */
+@androidx.compose.runtime.Composable
+private fun glassLensKnob(): Boolean =
+    androidx.compose.runtime.remember { eu.kanade.presentation.browse.components.GlassStyle.knob() }.get() ==
+        eu.kanade.presentation.browse.components.GlassStyle.KNOB_GLASS

@@ -853,7 +853,8 @@ private fun FloatingControls(
                 Text(formatSeconds(duration), color = Color.White, style = MaterialTheme.typography.labelSmall)
             }
             if (!small) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 4.dp)) {
+                // The end padding leaves the window's resize corner free
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 4.dp, end = 18.dp)) {
                     IconButton(onClick = onToggleMute) {
                         Icon(
                             imageVector = if (muted) Icons.AutoMirrored.Outlined.VolumeOff else Icons.AutoMirrored.Outlined.VolumeUp,

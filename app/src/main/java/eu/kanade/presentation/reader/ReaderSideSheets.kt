@@ -40,6 +40,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.BrokenImage
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.ChevronLeft
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.SwapHoriz
@@ -216,7 +218,12 @@ fun ReaderGlassSheet(
     cover: Any?,
     chapters: @Composable () -> Unit,
     pages: @Composable () -> Unit,
+    // KMK (r128): tap the chapter name to switch chapter from a short list
+    pickerChapters: List<ReaderChapterItem> = emptyList(),
+    onPickChapter: ((Chapter) -> Unit)? = null,
 ) {
+    var picking by remember { mutableStateOf(false) }
+    LaunchedEffect(visible) { if (!visible) picking = false }
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val fullPx = constraints.maxHeight.toFloat()
         val density = androidx.compose.ui.platform.LocalDensity.current
@@ -318,13 +325,29 @@ fun ReaderGlassSheet(
                                 overflow = TextOverflow.Ellipsis,
                             )
                             if (!subtitle.isNullOrBlank()) {
-                                Text(
-                                    text = subtitle,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = eu.kanade.presentation.reader.appbars.ReaderGlass.content.copy(alpha = 0.72f),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .clickable(enabled = onPickChapter != null) { picking = !picking },
+                                ) {
+                                    Text(
+                                        text = subtitle,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = eu.kanade.presentation.reader.appbars.ReaderGlass.content.copy(alpha = 0.8f),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false),
+                                    )
+                                    if (onPickChapter != null) {
+                                        Icon(
+                                            imageVector = if (picking) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                                            contentDescription = null,
+                                            tint = eu.kanade.presentation.reader.appbars.ReaderGlass.accent,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                    }
+                                }
                             }
                         }
                         IconButton(onClick = onClose) {
@@ -377,6 +400,61 @@ fun ReaderGlassSheet(
                     }
                     Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
                         if (showPages) pages() else chapters()
+                        // KMK (r128): the chapter list over the sheet's content; a pick loads it and closes the list
+                        if (picking && onPickChapter != null) {
+                            val listState = androidx.compose.foundation.lazy.rememberLazyListState(
+                                (pickerChapters.indexOfFirst { it.isCurrent } - 2).coerceAtLeast(0),
+                            )
+                            androidx.compose.foundation.lazy.LazyColumn(
+                                state = listState,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 8.dp)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(Color(0xFF14161E).copy(alpha = 0.94f)),
+                            ) {
+                                items(pickerChapters.size) { index ->
+                                    val item = pickerChapters[index]
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .background(
+                                                if (item.isCurrent) {
+                                                    eu.kanade.presentation.reader.appbars.ReaderGlass.accent.copy(alpha = 0.18f)
+                                                } else {
+                                                    Color.Transparent
+                                                },
+                                            )
+                                            .clickable {
+                                                picking = false
+                                                if (!item.isCurrent) onPickChapter(item.chapter)
+                                            }
+                                            .padding(horizontal = 14.dp, vertical = 11.dp),
+                                    ) {
+                                        Text(
+                                            text = item.chapter.name,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = eu.kanade.presentation.reader.appbars.ReaderGlass.content.copy(
+                                                alpha = if (item.chapter.read && !item.isCurrent) 0.55f else 1f,
+                                            ),
+                                            fontWeight = if (item.isCurrent) FontWeight.SemiBold else null,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                        if (item.isCurrent) {
+                                            Icon(
+                                                Icons.Filled.PlayArrow,
+                                                contentDescription = null,
+                                                tint = eu.kanade.presentation.reader.appbars.ReaderGlass.accent,
+                                                modifier = Modifier.size(16.dp),
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -645,12 +723,14 @@ internal fun PageGridContent(
     chapter: ReaderChapter?,
     currentPage: Int,
     onClickPage: (Int) -> Unit,
+    // KMK (r128): the glass sheet shows the chapter in its top row instead
+    showTitle: Boolean = true,
 ) {
     val chapterState = chapter?.stateFlow?.collectAsState()?.value
     val pages = (chapterState as? ReaderChapter.State.Loaded)?.pages
 
     Column(modifier = Modifier.fillMaxSize()) {
-        if (chapter != null) {
+        if (chapter != null && showTitle) {
             Text(
                 text = chapter.chapter.name,
                 style = MaterialTheme.typography.titleSmall,

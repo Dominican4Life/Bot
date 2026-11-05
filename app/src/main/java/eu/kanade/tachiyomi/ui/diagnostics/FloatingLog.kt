@@ -1,5 +1,7 @@
 package eu.kanade.tachiyomi.ui.diagnostics
 
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import android.content.Context
 import android.content.res.Configuration
 import androidx.compose.foundation.background
@@ -250,13 +252,27 @@ private fun FloatingWindow(parent: IntSize) {
     LaunchedEffect(tail.size, paused) {
         if (!paused && tail.isNotEmpty()) listState.scrollToItem(tail.size - 1)
     }
-    // Touching the list pauses auto-scroll for 10 s
-    LaunchedEffect(listState.isScrollInProgress) {
-        if (listState.isScrollInProgress) {
+    // KMK (r128): only a finger dragging the list pauses it (its own scroll to the newest line used to count as a
+    // touch, so a busy log was paused most of the time); it goes on again after 10 s, or at once when scrolled back
+    // to the bottom
+    val dragged by listState.interactionSource.collectIsDraggedAsState()
+    LaunchedEffect(dragged) {
+        if (dragged) {
             FloatingLogState.paused.value = true
+        } else if (FloatingLogState.paused.value) {
             delay(10_000L)
             FloatingLogState.paused.value = false
         }
+    }
+    val atBottom by remember {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull()
+            last == null || last.index >= info.totalItemsCount - 1
+        }
+    }
+    LaunchedEffect(atBottom, dragged) {
+        if (atBottom && !dragged && FloatingLogState.paused.value) FloatingLogState.paused.value = false
     }
     val topTags = remember(tail) {
         tail.groupingBy { it.tag }.eachCount().entries.sortedByDescending { it.value }.take(3).map { it.key }

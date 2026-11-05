@@ -111,9 +111,12 @@ fun ReaderAppBars(
     // KMK (r125): the glass bars (Settings › Reader › "Glass reader bars")
     glass: Boolean = false,
     onSetReadingMode: ((ReadingMode) -> Unit)? = null,
+    // KMK (r128): the Chapters / Pages sheet is open (the slider steps aside)
+    sheetOpen: Boolean = false,
 ) {
     if (glass) {
         GlassReaderAppBars(
+            sheetOpen = sheetOpen,
             visible = visible,
             mangaTitle = mangaTitle,
             chapterTitle = chapterTitle,
@@ -349,6 +352,7 @@ fun ReaderAppBars(
 // KMK (r125) --> the glass bars: round back, title pill (tap = Chapters / Pages), ⋮ sheet, glass slider
 @Composable
 private fun GlassReaderAppBars(
+    sheetOpen: Boolean,
     visible: Boolean,
     mangaTitle: String?,
     chapterTitle: String?,
@@ -398,6 +402,8 @@ private fun GlassReaderAppBars(
     val isRtl = viewer is R2LPagerViewer
     var actionsOpen by remember { mutableStateOf(false) }
     val pageText = if (totalPages > 0) "$currentPageText / $totalPages" else null
+    // KMK (r128): the slider slides away while a sheet (Chapters / Pages, or ⋮) is open
+    val sliderVisible = visible && !sheetOpen && !actionsOpen
 
     CompositionLocalProvider(LocalReaderGlass provides true) {
         Column(modifier = Modifier.fillMaxHeight()) {
@@ -441,7 +447,7 @@ private fun GlassReaderAppBars(
             } else {
                 val fromStart = navBarType == NavBarType.VerticalLeft
                 AnimatedVisibility(
-                    visible = visible,
+                    visible = sliderVisible,
                     enter = slideInHorizontally(
                         initialOffsetX = { if (fromStart) -it else it },
                         animationSpec = readerBarsSlideAnimationSpec,
@@ -471,7 +477,7 @@ private fun GlassReaderAppBars(
             }
 
             AnimatedVisibility(
-                visible = visible && navBarType == NavBarType.Bottom,
+                visible = sliderVisible && navBarType == NavBarType.Bottom,
                 enter = slideInVertically(initialOffsetY = { it }, animationSpec = readerBarsSlideAnimationSpec) +
                     fadeIn(animationSpec = readerBarsFadeAnimationSpec),
                 exit = slideOutVertically(targetOffsetY = { it }, animationSpec = readerBarsSlideAnimationSpec) +
