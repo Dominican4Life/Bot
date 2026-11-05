@@ -1114,6 +1114,37 @@ Two commits (the first failed CI: `openers += opener` on a `MutableSet<Element>`
   - Chapter swipes use a soft white block (`primaryContainer` 20 % white) and a transparent background below the threshold.
   - The chapter picker uses `liquidGlass`.
 
+## Changes in r132 (5 November 2026)
+
+One build for the whole glass list (24 items). Mockups are on the design canvas (boards X*).
+
+### Icons
+- **`GlassIcons`** (`presentation/components/GlassIcons.kt`): the app's own icon set, generated from the mockups as SVG path data parsed with `PathParser` (24 × 24, tinted by `Icon`). Solid shapes with a lighter second layer; checks and marks are cut out with even-odd fill. Covers Chapters, Preview, Suggestions, Download, Filter, InLibrary / AddToLibrary, NextUpdate(Off), Tracker(Add), WebView, Bookmark(Remove), Read / Unread, Arrow, the chapter download states, SelectAll, InvertSelection, Display, the four layouts and the three Panorama styles.
+- They replaced the Material ones **everywhere the same meaning appears** (scripted: FilterList, Favorite, FavoriteBorder, Hourglass*, Public, Bookmark*, SelectAll, FlipToBack, ArrowForward, Outlined.Download; plus targeted DoneAll/RemoveDone → Read/Unread, GridView → Preview, ViewModule → Display). `PanoramaIcons` now returns the glass ones. Panorama order everywhere is **Fit Width, Color Fill, Wide** (names title-cased).
+
+### Glass menus and windows
+- `components/DropdownMenu.kt`: every menu is glass (`GlassMenuStyle`: 22 dp corners, lit rim, dark glass tint); `RadioMenuItem` uses the round gold `GlassTick`. Menus are separate windows, so they can't blur the page.
+- `AppBar` overflow: icons on items, no dividers, an 8 dp gap before a `destructive` item (Clear Data, red icon).
+- Download menu (`GlassDownloadMenuItems`): Unread / All chapters / Bookmarked with icons and how many chapters each would add (`DownloadMenuCounts.of`).
+- `TabbedDialog`: Filter | Sort | Display as a glass switch; `AdaptiveSheet` (presentation-core) is a glass window (28 dp, rim); `TriStateItem` uses `GlassTriStateBox` (gold ✓ only, red – hide).
+- Categories (`ChangeCategoryDialog`): pencil → edit categories, "Add category" row, Cancel / Save capsules (`GlassDialogButton`). Smart update (`SetIntervalDialog`): "Next chapter in ~N days", timeline, "Checks every N days", one **Got it** (the picker only in debug builds). Tracking: each detail is a glass cell with a label.
+
+### Title page
+- Round glass action buttons (In library tinted pink); description in a frosted box (no fade); tags are frosted chips (`TagsChip`, all screens); See Recommendations / Suggestions bar = one glass capsule with the new arrow; the Suggestions title arrow sits in a small round glass button.
+- Chapter rows: read chapters show the eye; download indicator redrawn (queued = dashed ring + clock, downloading = light ring filling, downloaded / failed = solid circle with the mark cut out).
+- **Tablet (glass on)**: `MangaTabletGlass.kt` – Suggestions across the top, then the chapters in a frosted panel (Download and Filter in its header, removed from the top bar) and the Preview card (`TitlePagePreview`, same hooks as the phone sheet). Toggles at the start of the top capsule (`TitleSheet.tabletPreview()` / `tabletSuggestions()`, keys `tablet_title_preview` / `tablet_title_suggestions`). Glass top buttons, gold Resume capsule.
+- **AniList banner** (`AniListBanner.kt`): behind the whole title page (blur 5, dimmed). Uses the AniList tracker's id, else a title search that keeps only an exact normalised name match; the answer is saved per title (`anilist_banner_<id>`, "-" = none; failures are not saved). Setting: Glass › "AniList banner behind title pages" (`title_anilist_banner`). With a banner the Scaffolds are transparent and the cover backdrop is hidden (it still loads for the cover ratio).
+- **Liquid-glass chapter swipe** (`GlassChapterSwipe.kt`, idea J2): with glass on, the library's coloured blocks are hidden (transparent, icons hidden) and `GlassSwipeLayer` draws the bar, the stuck piece and the waist; past the threshold the piece becomes the gold pill with the action's icon and name. Merge/split = blur + alpha-threshold `RenderEffect` (Android 12+). The row's offset is measured with `onGloballyPositioned` (the swipe library's state isn't used). Both directions.
+- Messages on the title page are a glass pill (`GlassSnackbar`).
+
+### Log window and reader
+- Floating log: denser frost; top/bottom fully between the bars (sides free); the bubble is a capsule with the warning (amber) and error (red) counts inside (`FloatingLogState.warningsSinceSeen` new), clear of the top bar (64 dp).
+- Reader: the tablet Chapters/Pages side sheet uses `sidePanelWidth`; the chapter picker is denser frost and closes when switching Chapters/Pages; tablets get the vertical slider for long strip / vertical pager (`smallestScreenWidthDp ≥ 600`).
+
+### Mistakes to avoid (learned in r132)
+- A string replace on a common block (`dismissButton = { … action_cancel …`) hit the **first** dialog in the file, not the one meant. Anchor such edits after the function name.
+- Adding a defaulted parameter **after** a lambda parameter steals callers' trailing lambdas (`getSwipeAction { … }` in AnimeScreen). New parameters go before the last lambda.
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
