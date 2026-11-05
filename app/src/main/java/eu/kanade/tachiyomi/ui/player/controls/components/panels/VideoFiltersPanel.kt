@@ -146,6 +146,8 @@ fun VideoFiltersPanel(
                     }
                 }
 
+                // KMK (r126): Filtered / Original / Split before-after, like the preview panel's View
+                FilterViewCard()
                 FilterPresetsCard()
                 FiltersCard()
                 DebandCard()
@@ -288,6 +290,8 @@ fun FiltersCard() {
                             // ANZ -->
                             applyFilter(mpv, filter, it.toInt(), decoderPreferences)
                             // ANZ <--
+                            // KMK (r126): Split / Original keep their own picture
+                            PlayerFilterView.reapply(mpv, decoderPreferences)
                         },
                         max = filter.max.toFloat(),
                         min = filter.min.toFloat(),
@@ -501,6 +505,97 @@ fun Anime4KCard() {
                             label = { Text(label) },
                         )
                     }
+                }
+            }
+        }
+    }
+}
+/**
+ * KMK (r126): the full player's View choice (as in the browse preview player): the filters on the whole picture,
+ * the untouched picture, or Split before / after (left half untouched, right half filtered). Kept while the app
+ * runs. Split needs copy-back decoding for its filter graph, so it switches `hwdec` to `mediacodec-copy` while on
+ * and puts the previous value back when you leave it.
+ */
+object PlayerFilterView {
+    enum class View { Filtered, Original, Split }
+
+    var view by androidx.compose.runtime.mutableStateOf(View.Filtered)
+        private set
+    private var savedHwdec: String? = null
+    private var savedVf: String? = null
+
+    fun set(mpv: `is`.xyz.mpv.MPV?, value: View, prefs: DecoderPreferences) {
+        view = value
+        reapply(mpv, prefs)
+    }
+
+    fun reapply(mpv: `is`.xyz.mpv.MPV?, prefs: DecoderPreferences) {
+        mpv ?: return
+        val values = VideoFilters.entries.associateWith { it.preference(prefs).get() }
+        runCatching {
+            when (view) {
+                View.Filtered -> {
+                    leaveSplit(mpv)
+                    values.forEach { (filter, value) -> mpv.setPropertyInt(filter.mpvProperty, value) }
+                }
+                View.Original -> {
+                    leaveSplit(mpv)
+                    VideoFilters.entries.forEach { mpv.setPropertyInt(it.mpvProperty, 0) }
+                }
+                View.Split -> {
+                    if (savedVf == null) {
+                        // Keep the player's own filter chain (deband etc.) to put back when Split ends
+                        savedVf = runCatching { mpv.getPropertyString("vf") }.getOrNull().orEmpty()
+                        val hw = runCatching { mpv.getPropertyString("hwdec") }.getOrNull()
+                        if (hw == "mediacodec" || hw == "auto" || hw == "yes") {
+                            savedHwdec = hw
+                            mpv.setPropertyString("hwdec", "mediacodec-copy")
+                        }
+                    }
+                    VideoFilters.entries.forEach { mpv.setPropertyInt(it.mpvProperty, 0) }
+                    mpv.command("vf", "set", eu.kanade.presentation.anime.splitGraph(values))
+                }
+            }
+        }
+    }
+
+    private fun leaveSplit(mpv: `is`.xyz.mpv.MPV) {
+        val vf = savedVf ?: return
+        savedVf = null
+        runCatching { mpv.command("vf", "set", vf) }
+        val previous = savedHwdec ?: return
+        savedHwdec = null
+        runCatching { mpv.setPropertyString("hwdec", previous) }
+    }
+}
+
+@Composable
+fun FilterViewCard() {
+    val decoderPreferences = remember { Injekt.get<DecoderPreferences>() }
+    val activity = LocalContext.current as? PlayerActivity
+    val mpv = activity?.viewModel?.mpv
+    Card(colors = panelCardsColors()) {
+        Column(modifier = Modifier.padding(MaterialTheme.padding.medium)) {
+            Text(
+                text = stringResource(tachiyomi.i18n.kmk.KMR.strings.anime_preview_view),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
+                modifier = Modifier
+                    .padding(top = MaterialTheme.padding.small)
+                    .horizontalScroll(rememberScrollState()),
+            ) {
+                listOf(
+                    PlayerFilterView.View.Filtered to tachiyomi.i18n.kmk.KMR.strings.anime_preview_filtered,
+                    PlayerFilterView.View.Original to tachiyomi.i18n.kmk.KMR.strings.anime_preview_original,
+                    PlayerFilterView.View.Split to tachiyomi.i18n.kmk.KMR.strings.anime_preview_split,
+                ).forEach { (option, label) ->
+                    androidx.compose.material3.FilterChip(
+                        selected = PlayerFilterView.view == option,
+                        onClick = { PlayerFilterView.set(mpv, option, decoderPreferences) },
+                        label = { Text(stringResource(label)) },
+                    )
                 }
             }
         }

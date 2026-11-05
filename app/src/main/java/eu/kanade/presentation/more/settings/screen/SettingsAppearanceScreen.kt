@@ -176,6 +176,7 @@ object SettingsAppearanceScreen : SearchableSettings {
         uiPreferences: UiPreferences,
     ): Preference.PreferenceGroup {
         val scope = rememberCoroutineScope()
+        val navigator = LocalNavigator.currentOrThrow
         val mangaInfoThemeCoverBased by remember {
             Injekt.get<UiPreferences>().themeCoverBased().asState(scope)
         }
@@ -226,6 +227,12 @@ object SettingsAppearanceScreen : SearchableSettings {
                     preference = eu.kanade.presentation.browse.components.PreviewGlass.enabled(),
                     title = stringResource(KMR.strings.preview_glass_pref),
                     subtitle = stringResource(KMR.strings.preview_glass_pref_summary),
+                ),
+                // KMK (r126): Glass look (material, see-through, corners, knob, accessibility) with a live preview
+                Preference.PreferenceItem.TextPreference(
+                    title = stringResource(KMR.strings.glass_title),
+                    subtitle = stringResource(KMR.strings.glass_title_summary),
+                    onClick = { navigator.push(eu.kanade.presentation.more.settings.screen.appearance.GlassSettingsScreen()) },
                 ),
                 // KMK (r115): the title-page panorama switch and "Align cover to top" moved to the Wide covers card
             ),

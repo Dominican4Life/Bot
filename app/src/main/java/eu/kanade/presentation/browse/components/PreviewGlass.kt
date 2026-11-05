@@ -76,10 +76,12 @@ enum class InfoHeaderPart { FULL, TOP, DETAILS }
 
 val LocalInfoHeaderPart = compositionLocalOf { InfoHeaderPart.FULL }
 
-internal val GlassPanelColor = Color(0xFF12141B).copy(alpha = 0.80f)
+// KMK (r126): follows Settings › Appearance › Glass
+internal val GlassPanelColor: Color
+    get() = GlassStyle.fill(Color(0xFF12141B))
 
 fun Modifier.panelGlassEdge(shape: androidx.compose.ui.graphics.Shape): Modifier = this
-    .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)), shape)
+    .border(BorderStroke(GlassStyle.edgeWidth(), GlassStyle.edgeColor()), shape)
     .background(
         Brush.linearGradient(
             0f to Color.White.copy(alpha = 0.10f),
@@ -275,4 +277,68 @@ internal fun GlassPanelPlay(label: String, onClick: () -> Unit, modifier: Modifi
             )
         }
     }
+}
+
+/**
+ * KMK (r126): the glass look, set in Settings › Appearance › Glass (live preview there). Follows Apple's Liquid
+ * Glass rules: glass only on the controls layer (reader bars, the preview panel, the floating player), the Regular /
+ * Clear / Solid materials, tint only on the main action, and accessibility switches (reduce transparency, increase
+ * contrast following Android's high-contrast text).
+ */
+object GlassStyle {
+    private val store get() = Injekt.get<PreferenceStore>()
+
+    const val REGULAR = 0
+    const val CLEAR = 1
+    const val SOLID = 2
+
+    const val KNOB_CAPSULE = 0
+    const val KNOB_LARGE = 1
+    const val KNOB_DOT = 2
+
+    const val FOLLOW_SYSTEM = 0
+    const val ON = 1
+    const val OFF = 2
+
+    fun material(): Preference<Int> = store.getInt("glass_material", REGULAR)
+
+    /** How much shows through Regular glass, 10–80 % */
+    fun seeThrough(): Preference<Int> = store.getInt("glass_see_through", 34)
+
+    fun corners(): Preference<Int> = store.getInt("glass_corners", 24)
+
+    fun knob(): Preference<Int> = store.getInt("glass_knob", KNOB_CAPSULE)
+
+    fun reduceTransparency(): Preference<Boolean> = store.getBoolean("glass_reduce_transparency", false)
+
+    fun contrast(): Preference<Int> = store.getInt("glass_contrast", FOLLOW_SYSTEM)
+
+    /** Android's "High contrast text", or the forced choice */
+    fun highContrast(): Boolean = when (contrast().get()) {
+        ON -> true
+        OFF -> false
+        else -> runCatching {
+            android.provider.Settings.Secure.getInt(
+                Injekt.get<android.app.Application>().contentResolver,
+                "high_text_contrast_enabled",
+                0,
+            ) == 1
+        }.getOrDefault(false)
+    }
+
+    /** The fill alpha of a glass surface */
+    fun fillAlpha(): Float = when {
+        highContrast() -> 0.96f
+        reduceTransparency().get() || material().get() == SOLID -> 0.97f
+        material().get() == CLEAR -> 0.30f
+        else -> (1f - seeThrough().get() / 100f).coerceIn(0.2f, 0.95f)
+    }
+
+    fun fill(base: Color): Color = if (highContrast()) Color.Black.copy(alpha = 0.96f) else base.copy(alpha = fillAlpha())
+
+    fun cornerDp(): androidx.compose.ui.unit.Dp = corners().get().coerceIn(8, 36).dp
+
+    fun edgeWidth(): androidx.compose.ui.unit.Dp = if (highContrast()) 2.dp else 1.dp
+
+    fun edgeColor(): Color = if (highContrast()) Color.White else Color.White.copy(alpha = 0.14f)
 }

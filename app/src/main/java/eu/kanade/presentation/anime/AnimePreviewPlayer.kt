@@ -138,6 +138,8 @@ fun AnimePreviewSection(
     playToken: Int,
     onOpenPlayer: (episode: Episode, positionMs: Long) -> Unit,
     modifier: Modifier = Modifier,
+    // KMK (r126): the floating window starts with the video settings folded
+    settingsInitiallyOpen: Boolean = true,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -159,7 +161,7 @@ fun AnimePreviewSection(
     var showControls by remember { mutableStateOf(true) }
     var view by remember { mutableStateOf(PreviewView.Filtered) }
     var comparing by remember { mutableStateOf(false) }
-    var settingsOpen by remember { mutableStateOf(true) }
+    var settingsOpen by remember { mutableStateOf(settingsInitiallyOpen) }
     var filterRevision by remember { mutableIntStateOf(0) }
     var loadJob by remember { mutableStateOf<Job?>(null) }
     var playingEpisode by remember { mutableStateOf<Episode?>(null) }
@@ -929,7 +931,7 @@ private fun NoteText(text: String, modifier: Modifier = Modifier) {
  * Left half untouched, right half run through ffmpeg filters that match the player's sliders
  * (mpv's own sliders only work on the whole picture).
  */
-private fun splitGraph(values: Map<VideoFilters, Int>): String {
+internal fun splitGraph(values: Map<VideoFilters, Int>): String {
     val brightness = (values[VideoFilters.BRIGHTNESS] ?: 0) / 100.0
     val contrast = 1 + (values[VideoFilters.CONTRAST] ?: 0) / 100.0
     val saturation = 1 + (values[VideoFilters.SATURATION] ?: 0) / 100.0

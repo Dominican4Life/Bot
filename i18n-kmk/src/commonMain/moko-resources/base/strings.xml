@@ -850,4 +850,25 @@
     <string name="preview_glass_details">Details</string>
     <string name="preview_glass_pref">Glass preview panel</string>
     <string name="preview_glass_pref_summary">Tablet browse and library: one see-through panel over the covers (they stay put) with Chapters, Preview and Details. Off: the old left and right panels</string>
+    <string name="glass_title">Glass</string>
+    <string name="glass_title_summary">Material, see-through, corners, slider knob and accessibility, with a live preview</string>
+    <string name="glass_material">Material</string>
+    <string name="glass_regular">Regular</string>
+    <string name="glass_clear">Clear</string>
+    <string name="glass_solid">Solid</string>
+    <string name="glass_material_note">Regular blurs and dims what is behind so text stays readable. Clear shows more of the covers behind. Solid is not see-through.</string>
+    <string name="glass_see_through">See-through</string>
+    <string name="glass_corners">Corners</string>
+    <string name="glass_knob">Slider knob</string>
+    <string name="glass_knob_capsule">Capsule</string>
+    <string name="glass_knob_large">Large</string>
+    <string name="glass_knob_dot">Dot</string>
+    <string name="glass_accessibility">Accessibility</string>
+    <string name="glass_reduce_transparency">Reduce transparency</string>
+    <string name="glass_contrast">Increase contrast</string>
+    <string name="glass_follow_system">Follow system</string>
+    <string name="glass_on">On</string>
+    <string name="glass_off">Off</string>
+    <string name="glass_where">Where glass is used</string>
+    <string name="glass_reset">Reset to defaults</string>
 </resources>

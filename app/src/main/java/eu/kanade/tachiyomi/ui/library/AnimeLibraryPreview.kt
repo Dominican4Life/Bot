@@ -169,7 +169,8 @@ class AnimeLibraryPreviewModel(
             anime,
             showEpisodes = eu.kanade.presentation.browse.components.PreviewGlass.isOn() ||
                 SourcePreferences.previewLeftOn(panels),
-            showPlayer = SourcePreferences.previewRightOn(panels),
+            showPlayer = !eu.kanade.presentation.browse.components.PreviewGlass.isOn() &&
+                SourcePreferences.previewRightOn(panels),
         )
         return true
     }

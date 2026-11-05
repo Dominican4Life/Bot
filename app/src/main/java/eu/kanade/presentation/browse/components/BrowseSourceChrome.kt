@@ -28,6 +28,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -136,18 +137,19 @@ fun RowScope.PreviewPanelButtons(
     onLeftChange: (Boolean) -> Unit,
     onRightChange: (Boolean) -> Unit,
 ) {
+    // KMK (r126): one button turns the preview panel on or off (the glass panel holds chapters, preview and
+    // details together); turning it off clears both old sides
+    val on = leftOn || rightOn
     PanelToggleButton(
-        checked = leftOn,
-        onCheckedChange = onLeftChange,
-        icon = PanelToggleIcons.Left,
-        label = stringResource(KMR.strings.browse_left_panel),
-    )
-    Spacer(modifier = Modifier.width(8.dp))
-    PanelToggleButton(
-        checked = rightOn,
-        onCheckedChange = onRightChange,
-        icon = PanelToggleIcons.Right,
-        label = stringResource(KMR.strings.browse_right_panel),
+        checked = on,
+        onCheckedChange = { checked ->
+            onLeftChange(checked)
+            if (!checked && rightOn) onRightChange(false)
+        },
+        icon = androidx.compose.ui.graphics.vector.ImageVector.vectorResource(
+            eu.kanade.tachiyomi.R.drawable.ic_preview_panel_24dp,
+        ),
+        label = stringResource(KMR.strings.preview_glass_pref),
     )
 }
 

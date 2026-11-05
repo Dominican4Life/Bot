@@ -19,6 +19,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -166,8 +169,11 @@ private fun FloatingWindow(parent: IntSize) {
     val minW = with(density) { MIN_W_DP.dp.roundToPx() }
     val minH = with(density) { MIN_H_DP.dp.roundToPx() }
     val margin = with(density) { 12.dp.roundToPx() }
-    val maxW = (parent.width - 2 * margin).coerceAtLeast(minW)
-    val maxH = (parent.height - 2 * margin).coerceAtLeast(minH)
+    // KMK (r126): kept inside the status bar, the navigation / gesture bar, a cutout and the keyboard, so the title
+    // bar can always be grabbed (it used to slide under the bars, where Android takes the touches)
+    val safe = rememberSafeInsets()
+    val maxW = (parent.width - safe.left - safe.right - 2 * margin).coerceAtLeast(minW)
+    val maxH = (parent.height - safe.top - safe.bottom - 2 * margin).coerceAtLeast(minH)
 
     // The rect for this orientation: the one saved for it, else the singleton's (same orientation only), else the
     // default corner
@@ -186,8 +192,10 @@ private fun FloatingWindow(parent: IntSize) {
     fun clamp(r: IntArray): IntArray {
         val w = r[2].coerceIn(minW, maxW)
         val h = r[3].coerceIn(minH, maxH)
-        val x = r[0].coerceIn(margin, (parent.width - w - margin).coerceAtLeast(margin))
-        val y = r[1].coerceIn(margin, (parent.height - h - margin).coerceAtLeast(margin))
+        val minX = safe.left + margin
+        val minY = safe.top + margin
+        val x = r[0].coerceIn(minX, (parent.width - safe.right - w - margin).coerceAtLeast(minX))
+        val y = r[1].coerceIn(minY, (parent.height - safe.bottom - h - margin).coerceAtLeast(minY))
         return intArrayOf(x, y, w, h)
     }
     fun persist() {
@@ -195,7 +203,7 @@ private fun FloatingWindow(parent: IntSize) {
         rectLandscape = landscape
         saveRect(context, landscape, rect)
     }
-    LaunchedEffect(parent) { rect = clamp(rect) }
+    LaunchedEffect(parent, safe) { rect = clamp(rect) }
 
     val strip by diag.strip.collectAsState()
     val recording by diag.recording.collectAsState()
@@ -270,7 +278,7 @@ private fun FloatingWindow(parent: IntSize) {
                 .fillMaxWidth()
                 .height(36.dp)
                 .background(MaterialTheme.colorScheme.surfaceContainerHighest)
-                .pointerInput(Unit) {
+                .pointerInput(parent, safe) {
                     detectDragGestures(onDragEnd = { persist() }) { change, drag ->
                         change.consume()
                         val r = rect
@@ -374,7 +382,7 @@ private fun FloatingWindow(parent: IntSize) {
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .size(24.dp)
-                    .pointerInput(Unit) {
+                    .pointerInput(parent, safe) {
                         detectDragGestures(onDragEnd = { persist() }) { change, drag ->
                             change.consume()
                             val r = rect
@@ -565,15 +573,20 @@ private fun FloatingBubble(parent: IntSize) {
     val density = LocalDensity.current
     val sizePx = with(density) { 52.dp.roundToPx() }
     val margin = with(density) { 12.dp.roundToPx() }
+    // KMK (r126): clear of the bars, the cutout and the keyboard, like the window
+    val safe = rememberSafeInsets()
+    val minX = safe.left + margin
+    val maxX = (parent.width - safe.right - sizePx - margin).coerceAtLeast(minX)
+    val minY = safe.top + margin
+    val maxY = (parent.height - safe.bottom - sizePx - margin).coerceAtLeast(minY)
     val errors by FloatingLogState.errorsSinceSeen.collectAsState()
     val recording by diag.recording.collectAsState()
     val saved = FloatingLogState.rect.value
-    var pos by remember(parent) {
+    var pos by remember(parent, safe) {
         mutableStateOf(
             IntOffset(
-                parent.width - sizePx - margin,
-                (saved?.getOrNull(1) ?: (parent.height * 2 / 3))
-                    .coerceIn(margin, (parent.height - sizePx - margin).coerceAtLeast(margin)),
+                maxX,
+                (saved?.getOrNull(1) ?: (parent.height * 2 / 3)).coerceIn(minY, maxY),
             ),
         )
     }
@@ -586,20 +599,18 @@ private fun FloatingBubble(parent: IntSize) {
             .clip(CircleShape)
             .background(MaterialTheme.colorScheme.primaryContainer)
             .then(if (recording != null) Modifier.border(3.dp, DiagColors.problem, CircleShape) else Modifier)
-            .pointerInput(Unit) {
+            .pointerInput(parent, safe) {
                 detectDragGestures(
                     onDragEnd = {
                         // Snap to the nearest side
-                        val x = if (pos.x + sizePx / 2 < parent.width / 2) margin else parent.width - sizePx - margin
+                        val x = if (pos.x + sizePx / 2 < parent.width / 2) minX else maxX
                         pos = IntOffset(x, pos.y)
                     },
                 ) { change, drag ->
                     change.consume()
                     pos = IntOffset(
-                        (pos.x + drag.x.roundToInt())
-                            .coerceIn(margin, (parent.width - sizePx - margin).coerceAtLeast(margin)),
-                        (pos.y + drag.y.roundToInt())
-                            .coerceIn(margin, (parent.height - sizePx - margin).coerceAtLeast(margin)),
+                        (pos.x + drag.x.roundToInt()).coerceIn(minX, maxX),
+                        (pos.y + drag.y.roundToInt()).coerceIn(minY, maxY),
                     )
                 }
             }
@@ -635,4 +646,20 @@ private fun loadRect(context: Context, landscape: Boolean): IntArray? {
 
 private fun saveRect(context: Context, landscape: Boolean, rect: IntArray) {
     diagPrefs(context).edit { putString(rectKey(landscape), rect.joinToString(",")) }
+}
+
+/** KMK (r126): the screen edges the floating window and bubble must stay clear of, in px */
+private data class SafeInsets(val left: Int, val top: Int, val right: Int, val bottom: Int)
+
+@Composable
+private fun rememberSafeInsets(): SafeInsets {
+    val density = LocalDensity.current
+    val insets = androidx.compose.foundation.layout.WindowInsets.safeDrawing
+        .union(androidx.compose.foundation.layout.WindowInsets.ime)
+    return SafeInsets(
+        left = insets.getLeft(density, androidx.compose.ui.unit.LayoutDirection.Ltr),
+        top = insets.getTop(density),
+        right = insets.getRight(density, androidx.compose.ui.unit.LayoutDirection.Ltr),
+        bottom = insets.getBottom(density),
+    )
 }

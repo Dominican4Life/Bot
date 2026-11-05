@@ -239,7 +239,7 @@ fun SlidingSidePanel(
             exit = slideOutHorizontally { it * direction },
             modifier = Modifier.align(if (fromStart) Alignment.CenterStart else Alignment.CenterEnd),
         ) {
-            val glassShape = RoundedCornerShape(24.dp)
+            val glassShape = RoundedCornerShape(eu.kanade.presentation.browse.components.GlassStyle.cornerDp())
             Surface(
                 modifier = Modifier
                     .then(if (glass) Modifier.padding(8.dp) else Modifier)

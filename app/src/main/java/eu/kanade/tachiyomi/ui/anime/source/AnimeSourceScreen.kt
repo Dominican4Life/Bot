@@ -487,7 +487,8 @@ class AnimeSourceScreen(
                                             anime,
                                             showEpisodes = eu.kanade.presentation.browse.components.PreviewGlass.isOn() ||
                                                 SourcePreferences.previewLeftOn(previewPanels),
-                                            showPlayer = SourcePreferences.previewRightOn(previewPanels),
+                                            showPlayer = !eu.kanade.presentation.browse.components.PreviewGlass.isOn() &&
+                                                SourcePreferences.previewRightOn(previewPanels),
                                         )
                                     } else {
                                         navigator.push(AnimeScreen(anime.id))

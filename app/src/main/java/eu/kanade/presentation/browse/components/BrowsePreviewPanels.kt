@@ -143,6 +143,28 @@ fun BrowseChapterPanel(
             val listState = rememberLazyListState()
             Box(modifier = Modifier.fillMaxSize()) {
             val showNumber = state.manga?.displayMode == Manga.CHAPTER_DISPLAY_NUMBER
+            // KMK (r126): glass Preview tab: the phone sheet's page grid (chapter chip + picker, Long strip badge,
+            // ⤢ columns / shape, pinch, long-strip slices) under the top and the tabs
+            val manga = state.manga
+            if (glass && tab == PreviewPanelTab.PREVIEW && onOpenPage != null && manga != null) {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    CompositionLocalProvider(LocalInfoHeaderPart provides InfoHeaderPart.TOP) { infoHeader(manga) }
+                    GlassPanelTabs(
+                        tab = tab,
+                        onTab = { tab = it },
+                        listLabel = stringResource(MR.strings.chapters),
+                        showPreview = true,
+                    )
+                    eu.kanade.presentation.manga.components.TitlePagePreview(
+                        state = state,
+                        source = pageSource,
+                        onSelectChapter = onSelectChapter,
+                        onOpenPage = onOpenPage,
+                        onRetry = onRetryPages,
+                        bottomSpace = 76.dp,
+                    )
+                }
+            } else
             // KMK: pull down to get the details and chapters from the source again
             PullRefresh(
                 refreshing = state.chaptersLoading && state.chapters.isNotEmpty(),

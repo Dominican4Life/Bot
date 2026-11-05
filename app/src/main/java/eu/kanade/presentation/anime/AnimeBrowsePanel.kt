@@ -1,17 +1,25 @@
 package eu.kanade.presentation.anime
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -21,9 +29,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Circle
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.outlined.AspectRatio
 import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.DragIndicator
+import androidx.compose.material.icons.outlined.OpenInFull
 import androidx.compose.material.icons.outlined.ViewAgenda
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.CircularProgressIndicator
@@ -41,6 +54,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -48,6 +62,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.browse.components.BrowsePreviewInfoHeader
@@ -68,6 +86,7 @@ import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.ui.anime.source.AnimeSourceScreenModel
 import java.text.DateFormat
 import java.util.Date
+import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.i18n.MR
@@ -104,6 +123,7 @@ fun AnimeEpisodePanel(
     // KMK (r125): the glass panel (Episodes / Details tabs, Play at the bottom)
     val glass by remember { PreviewGlass.enabled() }.collectAsPrefState()
     var tab by remember(preview.anime?.id) { mutableStateOf(PreviewPanelTab.LIST) }
+    val tileColumns by remember { eu.kanade.presentation.components.TitleSheet.columns("anime") }.collectAsPrefState()
     SlidingSidePanel(
         glass = glass,
         visible = preview.panelOpen,
@@ -130,10 +150,12 @@ fun AnimeEpisodePanel(
             val episodeInfo by produceState<eu.kanade.tachiyomi.ui.anime.anilist.AniListEpisodeInfo?>(
                 null,
                 anime.id,
-                showThumbs || showSummaries,
+                showThumbs || showSummaries || tab == PreviewPanelTab.PREVIEW,
                 preview.episodes.size,
             ) {
-                value = if ((showThumbs || showSummaries) && preview.episodes.isNotEmpty() &&
+                // KMK (r126): the glass panel's Preview tab needs the pictures too
+                val wantInfo = showThumbs || showSummaries || tab == PreviewPanelTab.PREVIEW
+                value = if (wantInfo && preview.episodes.isNotEmpty() &&
                     !eu.kanade.tachiyomi.data.anime.SourceInfoOnly.isOn(anime.source)
                 ) {
                     runCatching {
@@ -262,8 +284,58 @@ fun AnimeEpisodePanel(
                             tab = tab,
                             onTab = { tab = it },
                             listLabel = stringResource(KMR.strings.anime_episodes),
-                            showPreview = false,
+                            showPreview = true,
                         )
+                    }
+                    // KMK (r126): Preview: the episodes as picture tiles; a tap plays it in the floating window
+                    if (tab == PreviewPanelTab.PREVIEW) {
+                        item(key = "glass-preview-head") {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = stringResource(KMR.strings.anime_episodes_count, preview.episodes.size),
+                                    style = MaterialTheme.typography.titleSmall,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Box {
+                                    var sizeMenu by remember { mutableStateOf(false) }
+                                    IconButton(onClick = { sizeMenu = true }) {
+                                        Icon(
+                                            imageVector = Icons.Outlined.AspectRatio,
+                                            contentDescription = stringResource(KMR.strings.title_sheet_size),
+                                            tint = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
+                                    eu.kanade.presentation.components.TitleSheetSizeMenu(
+                                        expanded = sizeMenu,
+                                        onDismissRequest = { sizeMenu = false },
+                                        kind = "anime",
+                                        showShape = false,
+                                    )
+                                }
+                            }
+                        }
+                        val columns = tileColumns.coerceIn(1, 4)
+                        items(preview.episodes.chunked(columns), key = { "glass-tiles-${it.first().id}" }) { line ->
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                line.forEach { episode ->
+                                    AnimeEpisodeTile(
+                                        episode = episode,
+                                        aniList = episodeInfo?.of(episode.episodeNumber),
+                                        inLibrary = anime.favorite,
+                                        playing = episode.id == selectedEpisodeId,
+                                        onClick = { onSelectEpisode(episode) },
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
+                                repeat(columns - line.size) { Spacer(modifier = Modifier.weight(1f)) }
+                            }
+                        }
                     }
                     if (tab == PreviewPanelTab.DETAILS) {
                         item(key = "glass-details") {
@@ -441,6 +513,20 @@ fun AnimePlayerPanel(
     modifier: Modifier = Modifier,
 ) {
     val glass by remember { PreviewGlass.enabled() }.collectAsPrefState()
+    // KMK (r126): with the glass panel the episode plays in a floating window over the covers (no right panel)
+    if (glass) {
+        if (preview.playerPanelOpen && preview.anime != null) {
+            AnimeFloatingPlayer(
+                anime = preview.anime,
+                source = source,
+                episode = episode,
+                playToken = playToken,
+                onClose = onClose,
+                onOpenPlayer = onOpenPlayer,
+            )
+        }
+        return
+    }
     SlidingSidePanel(
         glass = glass,
         visible = preview.playerPanelOpen,
@@ -635,5 +721,201 @@ private fun AnimePanelEpisodeRow(
             }
         }
         if (!rich) icons()
+    }
+}
+
+
+/** KMK (r126): one episode as a picture tile in the glass panel's Preview tab */
+@Composable
+private fun AnimeEpisodeTile(
+    episode: Episode,
+    aniList: eu.kanade.tachiyomi.ui.anime.anilist.AniListEpisode?,
+    inLibrary: Boolean,
+    playing: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val image: Any? = aniList?.image ?: episode.previewUrl?.takeIf { it.isNotBlank() }?.let { url ->
+        eu.kanade.tachiyomi.data.coil.EpisodePreview(
+            animeId = episode.animeId,
+            key = eu.kanade.tachiyomi.data.coil.episodePreviewKey(episode.episodeNumber, episode.url),
+            url = url,
+            inLibrary = inLibrary,
+        )
+    }
+    val shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp)
+    Column(modifier = modifier.clickable(onClick = onClick)) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(16f / 9f)
+                .clip(shape)
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                .then(
+                    if (playing) {
+                        Modifier.border(2.dp, MaterialTheme.colorScheme.primary, shape)
+                    } else {
+                        Modifier
+                    },
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            coil3.compose.AsyncImage(
+                model = image,
+                contentDescription = null,
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                alpha = if (episode.seen) 0.55f else 1f,
+                modifier = Modifier.fillMaxSize(),
+            )
+            Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(androidx.compose.foundation.shape.CircleShape)
+                    .background(Color.Black.copy(alpha = 0.55f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+            }
+            val number = episode.episodeNumber
+            if (number >= 0) {
+                Text(
+                    text = "E" + (if (number % 1.0 == 0.0) number.toLong().toString() else number.toString()),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(4.dp)
+                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(4.dp))
+                        .background(Color.Black.copy(alpha = 0.6f))
+                        .padding(horizontal = 4.dp, vertical = 1.dp),
+                )
+            }
+            // Where you stopped
+            if (!episode.seen && episode.lastSecondSeen > 0 && episode.totalSeconds > 0) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .fillMaxWidth((episode.lastSecondSeen.toFloat() / episode.totalSeconds).coerceIn(0f, 1f))
+                        .height(3.dp)
+                        .background(MaterialTheme.colorScheme.primary),
+                )
+            }
+        }
+        Text(
+            text = (aniList?.title?.takeIf { it.isNotBlank() } ?: episode.name),
+            style = MaterialTheme.typography.labelMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            color = LocalContentColor.current.copy(alpha = if (episode.seen) DISABLED_ALPHA else 1f),
+            modifier = Modifier.padding(top = 4.dp),
+        )
+    }
+}
+
+/**
+ * KMK (r126): the floating player of the glass panel: the preview player (with its View, Looks and filter
+ * settings, split view included) in a window over the covers. Drag the title bar to move it, the corner to resize,
+ * ⤢ in the player for the full player at the same second, ✕ to stop. It stays inside the screen.
+ */
+@Composable
+private fun AnimeFloatingPlayer(
+    anime: Anime,
+    source: AnimeSource?,
+    episode: Episode?,
+    playToken: Int,
+    onClose: () -> Unit,
+    onOpenPlayer: (Episode, Long) -> Unit,
+) {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    androidx.compose.foundation.layout.BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val margin = with(density) { 12.dp.roundToPx() }
+        val parentW = constraints.maxWidth
+        val parentH = constraints.maxHeight
+        var widthPx by remember { mutableIntStateOf(with(density) { 420.dp.roundToPx() }.coerceAtMost(parentW - 2 * margin)) }
+        val minW = with(density) { 260.dp.roundToPx() }
+        val maxW = (parentW * 0.8f).toInt().coerceAtLeast(minW)
+        var windowH by remember { mutableIntStateOf(with(density) { 280.dp.roundToPx() }) }
+        var pos by remember { mutableStateOf<androidx.compose.ui.unit.IntOffset?>(null) }
+        fun clamp(p: androidx.compose.ui.unit.IntOffset) = androidx.compose.ui.unit.IntOffset(
+            p.x.coerceIn(margin, (parentW - widthPx - margin).coerceAtLeast(margin)),
+            p.y.coerceIn(margin, (parentH - windowH - margin).coerceAtLeast(margin)),
+        )
+        val at = clamp(pos ?: androidx.compose.ui.unit.IntOffset(parentW - widthPx - margin, parentH - windowH - margin))
+        val shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp)
+        Box(
+            modifier = Modifier
+                .offset { at }
+                .width(with(density) { widthPx.toDp() })
+                .heightIn(max = with(density) { (parentH - 2 * margin).toDp() })
+                .onSizeChanged { windowH = it.height }
+                .shadow(18.dp, shape)
+                .clip(shape)
+                .background(eu.kanade.presentation.browse.components.GlassPanelColor)
+                .border(1.dp, Color.White.copy(alpha = 0.16f), shape),
+        ) {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                // Title bar: drag to move
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .pointerInput(Unit) {
+                            detectDragGestures { change, drag ->
+                                change.consume()
+                                val base = pos ?: at
+                                pos = clamp(
+                                    androidx.compose.ui.unit.IntOffset(
+                                        base.x + drag.x.roundToInt(),
+                                        base.y + drag.y.roundToInt(),
+                                    ),
+                                )
+                            }
+                        }
+                        .padding(start = 12.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Outlined.DragIndicator, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Text(
+                        text = episode?.name.orEmpty(),
+                        style = MaterialTheme.typography.labelLarge,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f).padding(start = 6.dp),
+                    )
+                    IconButton(onClick = onClose) {
+                        Icon(Icons.Outlined.Close, contentDescription = stringResource(MR.strings.action_close))
+                    }
+                }
+                key(anime.id) {
+                    AnimePreviewSection(
+                        anime = anime,
+                        source = source,
+                        episode = episode,
+                        playToken = playToken,
+                        onOpenPlayer = onOpenPlayer,
+                        settingsInitiallyOpen = false,
+                    )
+                }
+            }
+            // Corner grip: drag to resize
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .size(28.dp)
+                    .pointerInput(Unit) {
+                        detectDragGestures { change, drag ->
+                            change.consume()
+                            widthPx = (widthPx + drag.x.roundToInt()).coerceIn(minW, maxW)
+                        }
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Outlined.OpenInFull,
+                    contentDescription = null,
+                    modifier = Modifier.size(14.dp),
+                    tint = Color.White.copy(alpha = 0.7f),
+                )
+            }
+        }
     }
 }

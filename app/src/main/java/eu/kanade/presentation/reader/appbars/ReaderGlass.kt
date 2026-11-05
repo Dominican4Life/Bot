@@ -41,6 +41,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -83,7 +84,9 @@ object ReaderGlass {
     fun enabled(): Preference<Boolean> = store.getBoolean("reader_glass_bars", true)
 
     /** The tint every glass surface of the reader uses: dark so white text reads on white pages too */
-    val tint = Color(0xFF14161E).copy(alpha = 0.66f)
+    // KMK (r126): follows Settings › Appearance › Glass
+    val tint: Color
+        get() = eu.kanade.presentation.browse.components.GlassStyle.fill(Color(0xFF14161E))
     val content = Color(0xFFE6E8EF)
     val accent = Color(0xFFA8C7FA)
     val accentOn = Color(0xFF062E6F)
@@ -103,7 +106,13 @@ fun Modifier.readerGlass(shape: Shape): Modifier = this
             1f to Color.White.copy(alpha = 0.05f),
         ),
     )
-    .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)), shape)
+    .border(
+        BorderStroke(
+            eu.kanade.presentation.browse.components.GlassStyle.edgeWidth(),
+            eu.kanade.presentation.browse.components.GlassStyle.edgeColor(),
+        ),
+        shape,
+    )
 
 @Composable
 internal fun GlassTopBar(
@@ -362,11 +371,24 @@ private fun ActionTile(painter: Painter, label: String, onClick: () -> Unit) {
  */
 @Composable
 fun GlassSliderThumb(interactionSource: androidx.compose.foundation.interaction.MutableInteractionSource) {
+    // KMK (r126): Settings › Appearance › Glass › Slider knob
+    val style = remember { eu.kanade.presentation.browse.components.GlassStyle.knob() }.get()
+    if (style == eu.kanade.presentation.browse.components.GlassStyle.KNOB_DOT) {
+        androidx.compose.material3.SliderDefaults.Thumb(interactionSource = interactionSource)
+        return
+    }
+    val large = style == eu.kanade.presentation.browse.components.GlassStyle.KNOB_LARGE
     val pressed by interactionSource.collectIsDraggedAsState()
     val pressedToo by interactionSource.collectIsPressedAsState()
     val active = pressed || pressedToo
-    val width by animateDpAsState(if (active) 44.dp else 34.dp, label = "glassKnobWidth")
-    val height by animateDpAsState(if (active) 28.dp else 22.dp, label = "glassKnobHeight")
+    val width by animateDpAsState(
+        if (active) (if (large) 54.dp else 44.dp) else (if (large) 42.dp else 34.dp),
+        label = "glassKnobWidth",
+    )
+    val height by animateDpAsState(
+        if (active) (if (large) 34.dp else 28.dp) else (if (large) 26.dp else 22.dp),
+        label = "glassKnobHeight",
+    )
     Box(
         modifier = Modifier
             .size(width = width, height = height)
