@@ -1019,6 +1019,31 @@ Two commits (the first failed CI: `openers += opener` on a `MutableSet<Element>`
 - **Settings › Appearance › Glass** (`GlassSettingsScreen`, `GlassStyle` in `PreviewGlass.kt`): material Regular/Clear/Solid, see-through, corners, slider knob Capsule/Large/Dot, reduce transparency, increase contrast (follow system / on / off), the two glass switches and reset, with a live preview. `GlassPanelColor`, `panelGlassEdge`, `ReaderGlass.tint`, `readerGlass`, `SlidingSidePanel` corners and `GlassSliderThumb` all read `GlassStyle`. Values are read when drawn, so panels already open pick up changes the next time they open.
 - Must not change: glass stays on the controls layer only; never glass on glass; covers stay put (grid padding 0 with glass).
 
+## Changes in r127
+
+- **Real glass** (`browse/components/LiquidGlass.kt`, `Modifier.liquidGlass(shape, base)`): shows what is behind, blurred and more saturated, with a lens rim (a 7 dp band drawn 6 % magnified), a bright top edge and a diagonal sheen. It gets "what is behind" from one of two places:
+  - Reader: `GlassBackdrop` records `viewer_container` into a 1/3-size `RenderNode` (blur and saturation `RenderEffect`, Android 12+) on pre-draw, but only while some glass is on screen. The overlay draws that node clipped to each shape. `ReaderActivity` provides it through `LocalGlassBackdrop`.
+  - Browse and anime source grids: the grid has `hazeSource(glassHaze)` and the panels get `LocalGlassHaze`.
+  - Fallback is the tinted `GlassStyle.fill`, used for Solid, Reduce transparency, high contrast, Android 11 and older, and screens with no source (library for now).
+  - `readerGlass()` now goes through `liquidGlass`. Glass `SlidingSidePanel`s use `shadow` + `liquidGlass` with a transparent `Surface`.
+- **Reader with glass on:**
+  - `ReaderGlassSheet` replaces the side panels. It opens at half or full height, and dragging it down or tapping above it closes it. It has a title row with the cover and Chapters | Pages tabs, using the same `ChapterListContent` and `PageGridContent`.
+  - The ⋮ sheet is in-window glass instead of a `ModalBottomSheet`.
+  - The ExhUtils ⌄ strip only shows when expanded; "Auto scroll and tools" in the ⋮ sheet opens it.
+- **Movable glass preview panel** (`SlidingSidePanel(movable, tuckKey, tuckCover)`):
+  - grip row with ⇄;
+  - drag across the middle to switch sides (pref `preview_glass_left`);
+  - drag or flick 30 % into the edge (or tap ‹) to tuck it into a slim glass tab with the cover;
+  - tap the tab or drag it out to restore it; another title (`tuckKey`) restores it too.
+- **Panel button icon:** option F (stacked sheets) in `ic_preview_panel_24dp`.
+- **Floating player:**
+  - `AnimePreviewSection(floating = true, dragHandle, onClose, onPrevious, onNext)` fills the window. `FloatingControls` has the title row (move), quality, speed, video settings, lock and ✕; previous / −10 / play / +10 / next; the seek bar, mute, View chips and the full player.
+  - Video settings open as a sheet inside the window.
+  - The window resizes from 4 corners and 4 edges, and is clamped to the safe area (status bar, nav bar, cutout, keyboard). Its rect is kept while the app runs.
+  - Previous/next go by episode number through `AnimePlayerPanel(onSelectEpisode)`.
+- **Crash fix:** the preview player's `BaseMPVView` stays attached while the player lives (keyed on the instance), instead of being removed during every load. Removing it during loads caused the native crashes when tapping tiles.
+- **Health:** `REASON_CRASH_NATIVE` exits save the printable runs of the tombstone as `health/anr-<ts>-native.txt` (bundled in Report).
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
