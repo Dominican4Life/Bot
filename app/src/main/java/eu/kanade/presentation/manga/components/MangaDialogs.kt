@@ -50,24 +50,26 @@ fun DeleteChaptersDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismissRequest,
-        dismissButton = if (showPicker) {
-            {
-                TextButton(onClick = onDismissRequest) {
-                    Text(text = stringResource(MR.strings.action_cancel))
-                }
+        dismissButton = {
+            TextButton(onClick = onDismissRequest) {
+                Text(text = stringResource(MR.strings.action_cancel))
             }
-        } else {
-            null
         },
         confirmButton = {
-            eu.kanade.presentation.category.components.GlassDialogButton(
-                text = stringResource(if (showPicker) MR.strings.action_ok else KMR.strings.action_got_it),
-                primary = true,
+            TextButton(
                 onClick = {
-                    onValueChanged?.invoke(selectedInterval)
                     onDismissRequest()
+                    onConfirm()
                 },
-            )
+            ) {
+                Text(text = stringResource(MR.strings.action_ok))
+            }
+        },
+        title = {
+            Text(text = stringResource(MR.strings.are_you_sure))
+        },
+        text = {
+            Text(text = stringResource(MR.strings.confirm_delete_chapters))
         },
     )
 }
@@ -308,18 +310,24 @@ fun SetIntervalDialog(
                 }
             }
         },
-        dismissButton = {
-            TextButton(onClick = onDismissRequest) {
-                Text(text = stringResource(MR.strings.action_cancel))
+        dismissButton = if (showPicker) {
+            {
+                TextButton(onClick = onDismissRequest) {
+                    Text(text = stringResource(MR.strings.action_cancel))
+                }
             }
+        } else {
+            null
         },
         confirmButton = {
-            TextButton(onClick = {
-                onValueChanged?.invoke(selectedInterval)
-                onDismissRequest()
-            }) {
-                Text(text = stringResource(MR.strings.action_ok))
-            }
+            eu.kanade.presentation.category.components.GlassDialogButton(
+                text = stringResource(if (showPicker) MR.strings.action_ok else KMR.strings.action_got_it),
+                primary = true,
+                onClick = {
+                    onValueChanged?.invoke(selectedInterval)
+                    onDismissRequest()
+                },
+            )
         },
     )
 }

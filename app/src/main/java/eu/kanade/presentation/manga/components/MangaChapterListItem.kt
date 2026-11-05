@@ -254,8 +254,8 @@ internal fun getSwipeAction(
     bookmark: Boolean,
     downloadState: Download.State,
     background: Color,
-    onSwipe: () -> Unit,
     hideIcon: Boolean = false,
+    onSwipe: () -> Unit,
 ): me.saket.swipe.SwipeAction? {
     return when (action) {
         LibraryPreferences.ChapterSwipeAction.ToggleRead -> swipeAction(
