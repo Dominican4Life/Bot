@@ -160,6 +160,8 @@ fun TitleSheetBox(
     sheetHeader: @Composable ColumnScope.() -> Unit,
     sheetContent: @Composable (bottomSpace: Dp) -> Unit,
     modifier: Modifier = Modifier,
+    // KMK (r130): a second blur source for the page (the frosted top bar)
+    frostSource: dev.chrisbanes.haze.HazeState? = null,
 ) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
@@ -259,7 +261,8 @@ fun TitleSheetBox(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .then(if (glass) Modifier.hazeSource(haze) else Modifier),
+                .then(if (glass) Modifier.hazeSource(haze) else Modifier)
+                .then(if (frostSource != null) Modifier.hazeSource(frostSource) else Modifier),
         ) {
             background(bottomSpace)
         }

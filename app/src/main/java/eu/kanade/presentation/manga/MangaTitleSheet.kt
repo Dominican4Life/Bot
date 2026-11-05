@@ -91,6 +91,8 @@ internal fun MangaTitleSheet(
     onContinueReading: () -> Unit,
     infoItems: LazyListScope.() -> Unit,
     chapterItems: LazyListScope.() -> Unit,
+    // KMK (r130): the page under the sheet also feeds the frosted top bar
+    frostSource: dev.chrisbanes.haze.HazeState? = null,
 ) {
     LaunchedEffect(sheetState.tab) {
         if (sheetState.tab == TitleSheetTab.PREVIEW) hooks.onOpenPreview()
@@ -105,6 +107,7 @@ internal fun MangaTitleSheet(
         TitleSheetTab.PREVIEW -> previewChapter?.let { stringResource(KMR.strings.title_sheet_read) + " · " + it.name }
     }
     TitleSheetBox(
+        frostSource = frostSource,
         state = sheetState,
         topInset = topPadding,
         showDock = !isAnySelected,
@@ -227,35 +230,5 @@ private fun ChapterSheetHeader(
             )
         }
     }
-    val unread = state.manga.unreadFilter
-    val downloaded = state.manga.downloadedFilter
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        FilterChip(
-            selected = unread == TriState.DISABLED && downloaded == TriState.DISABLED,
-            onClick = {
-                hooks.onUnreadFilter(TriState.DISABLED)
-                hooks.onDownloadedFilter(TriState.DISABLED)
-            },
-            label = { Text(stringResource(MR.strings.all)) },
-        )
-        FilterChip(
-            selected = unread == TriState.ENABLED_IS,
-            onClick = {
-                hooks.onUnreadFilter(if (unread == TriState.ENABLED_IS) TriState.DISABLED else TriState.ENABLED_IS)
-            },
-            label = { Text(stringResource(MR.strings.action_filter_unread)) },
-        )
-        FilterChip(
-            selected = downloaded == TriState.ENABLED_IS,
-            onClick = {
-                hooks.onDownloadedFilter(
-                    if (downloaded == TriState.ENABLED_IS) TriState.DISABLED else TriState.ENABLED_IS,
-                )
-            },
-            label = { Text(stringResource(MR.strings.label_downloaded)) },
-        )
-    }
+    // KMK (r130): the All / Unread / Downloaded chips were taken off (the filter button has them)
 }

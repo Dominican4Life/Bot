@@ -325,7 +325,13 @@ fun AppBarActions(
                         // KMK: a switch item stays open so its switch can be seen flipping
                         if (it.checked == null) showMenu = false
                     },
-                    text = { Text(it.title, fontWeight = FontWeight.Normal) },
+                    text = {
+                        Text(
+                            it.title,
+                            fontWeight = FontWeight.Normal,
+                            color = if (it.destructive) MaterialTheme.colorScheme.error else Color.Unspecified,
+                        )
+                    },
                     // KMK -->
                     leadingIcon = if (it.icon != null) {
                         { Icon(imageVector = it.icon, contentDescription = null) }
@@ -538,6 +544,8 @@ sealed interface AppBar {
         val painter: Painter? = null,
         /** Not null: a switch after the title, on or off */
         val checked: Boolean? = null,
+        /** KMK (r130): a destructive item, shown in the error colour */
+        val destructive: Boolean = false,
         // KMK <--
     ) : AppBarAction
 }

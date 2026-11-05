@@ -936,6 +936,20 @@ class MangaScreenModel(
         }
     }
 
+    /** KMK (r130): the title has a folder in the downloads location (downloads, or its saved cover and details) */
+    fun hasMangaFolder(): Boolean = runCatching {
+        val state = successState ?: return false
+        val merged = state.mergedData
+        if (merged == null) {
+            downloadProvider.findMangaDir(state.manga.ogTitle, state.source) != null
+        } else {
+            merged.manga.values.any { manga ->
+                val source = merged.sources.find { it.id == manga.source } ?: return@any false
+                downloadProvider.findMangaDir(manga.ogTitle, source) != null
+            }
+        }
+    }.getOrDefault(false)
+
     /**
      * Opens manga folder with the system's file manager.
      */

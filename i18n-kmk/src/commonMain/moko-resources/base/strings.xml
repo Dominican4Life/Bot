@@ -851,6 +851,9 @@
     <string name="preview_glass_pref">Glass preview panel</string>
     <string name="preview_glass_pref_summary">Tablet browse and library: one see-through panel over the covers (they stay put) with Chapters, Preview and Details. Off: the old left and right panels</string>
     <string name="glass_title">Glass</string>
+    <string name="action_edit_short">Edit</string>
+    <string name="action_files">Files</string>
+    <string name="action_clear_data">Clear Data</string>
     <string name="reader_glass_tools">Auto scroll and tools</string>
     <string name="glass_title_summary">Material, see-through, corners, slider knob and accessibility, with a live preview</string>
     <string name="glass_material">Material</string>

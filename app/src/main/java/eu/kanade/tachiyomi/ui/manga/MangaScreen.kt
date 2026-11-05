@@ -159,6 +159,15 @@ class MangaScreen(
 
         val successState = state as MangaScreenModel.State.Success
 
+        // KMK (r130): checked off the main thread; again when downloads change
+        val hasFolder by androidx.compose.runtime.produceState(
+            false,
+            successState.manga.id,
+            successState.chapters.count { it.downloadState == eu.kanade.tachiyomi.data.download.model.Download.State.DOWNLOADED },
+        ) {
+            value = withIOContext { screenModel.hasMangaFolder() }
+        }
+
         // KMK -->
         val bulkFavoriteScreenModel = rememberScreenModel { BulkFavoriteScreenModel() }
         val bulkFavoriteState by bulkFavoriteScreenModel.state.collectAsState()
@@ -411,7 +420,8 @@ class MangaScreen(
                     )
                 }
             }
-                .takeIf { successState.source !is StubSource },
+                // KMK (r130): "Files" only when the title has a folder
+                .takeIf { successState.source !is StubSource && hasFolder },
             onRelatedMangasScreenClick = {
                 if (successState.isRelatedMangasFetched == null) {
                     scope.launchIO { screenModel.fetchRelatedMangasFromSource(onDemand = true) }

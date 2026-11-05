@@ -1,5 +1,8 @@
 package eu.kanade.presentation.manga.components
 
+import eu.kanade.presentation.browse.components.liquidGlass
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.FilterList
@@ -73,6 +76,8 @@ fun MangaToolbar(
     onPaletteScreenClick: () -> Unit,
     // KMK (r129): glass buttons over the cover (phone title page with the glass sheet)
     glass: Boolean = false,
+    // KMK (r130): the title sheet shows download and filter itself
+    sheetHasActions: Boolean = false,
     // KMK <--
     modifier: Modifier = Modifier,
 ) {
@@ -89,6 +94,23 @@ fun MangaToolbar(
         titleContent = {
             if (isActionMode) {
                 AppBarTitle(actionModeCounter.toString())
+            } else if (glass) {
+                // KMK (r130): the title in its own glass pill as it appears
+                val pillShape = androidx.compose.foundation.shape.CircleShape
+                androidx.compose.foundation.layout.Box(
+                    modifier = Modifier
+                        .alpha(titleAlphaProvider())
+                        .clip(pillShape)
+                        .liquidGlass(pillShape, MaterialTheme.colorScheme.surfaceContainerHigh)
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                ) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    )
+                }
             } else {
                 AppBarTitle(title, modifier = Modifier.alpha(titleAlphaProvider()))
             }
@@ -153,37 +175,42 @@ fun MangaToolbar(
                         )
                         return@apply
                     }
-                    if (onClickDownload != null) {
+                    // KMK (r130): with the title sheet, download and filter are on the sheet only
+                    if (!sheetHasActions) {
+                        if (onClickDownload != null) {
+                            add(
+                                AppBar.Action(
+                                    title = stringResource(MR.strings.manga_download),
+                                    icon = Icons.Outlined.Download,
+                                    onClick = { downloadExpanded = !downloadExpanded },
+                                ),
+                            )
+                        }
                         add(
                             AppBar.Action(
-                                title = stringResource(MR.strings.manga_download),
-                                icon = Icons.Outlined.Download,
-                                onClick = { downloadExpanded = !downloadExpanded },
+                                title = stringResource(MR.strings.action_filter),
+                                icon = Icons.Outlined.FilterList,
+                                iconTint = filterTint,
+                                onClick = onClickFilter,
                             ),
                         )
                     }
-                    add(
-                        AppBar.Action(
-                            title = stringResource(MR.strings.action_filter),
-                            icon = Icons.Outlined.FilterList,
-                            iconTint = filterTint,
-                            onClick = onClickFilter,
-                        ),
-                    )
                     // KMK: no Refresh here; pull down on the page to refresh
-                    if (onClickEditCategory != null) {
+                    // KMK (r130): Edit, Files, Share, Notes, Merge, Migrate … Clear Data last in red. Edit categories
+                    // is gone from here (hold the heart)
+                    if (onClickEditInfo != null) {
                         add(
                             AppBar.OverflowAction(
-                                title = stringResource(MR.strings.action_edit_categories),
-                                onClick = onClickEditCategory,
+                                title = stringResource(KMR.strings.action_edit_short),
+                                onClick = onClickEditInfo,
                             ),
                         )
                     }
-                    if (onClickMigrate != null) {
+                    if (onOpenMangaFolder != null) {
                         add(
                             AppBar.OverflowAction(
-                                title = stringResource(MR.strings.action_migrate),
-                                onClick = onClickMigrate,
+                                title = stringResource(KMR.strings.action_files),
+                                onClick = onOpenMangaFolder,
                             ),
                         )
                     }
@@ -210,11 +237,12 @@ fun MangaToolbar(
                             ),
                         )
                     }
-                    if (onClickEditInfo != null) {
+                    // SY <--
+                    if (onClickMigrate != null) {
                         add(
                             AppBar.OverflowAction(
-                                title = stringResource(SYMR.strings.action_edit_info),
-                                onClick = onClickEditInfo,
+                                title = stringResource(MR.strings.action_migrate),
+                                onClick = onClickMigrate,
                             ),
                         )
                     }
@@ -246,20 +274,6 @@ fun MangaToolbar(
                     }
                     // SY <--
                     // KMK -->
-                    if (onOpenMangaFolder != null) {
-                        add(
-                            AppBar.OverflowAction(
-                                title = stringResource(KMR.strings.action_open_folder),
-                                onClick = onOpenMangaFolder,
-                            ),
-                        )
-                    }
-                    add(
-                        AppBar.OverflowAction(
-                            title = stringResource(KMR.strings.action_clear_manga),
-                            onClick = onClearManga,
-                        ),
-                    )
                     if (isDebugBuildType) {
                         add(
                             AppBar.OverflowAction(
@@ -268,6 +282,13 @@ fun MangaToolbar(
                             ),
                         )
                     }
+                    add(
+                        AppBar.OverflowAction(
+                            title = stringResource(KMR.strings.action_clear_data),
+                            onClick = onClearManga,
+                            destructive = true,
+                        ),
+                    )
                     // KMK <--
                 }
                     .build(),

@@ -1,5 +1,10 @@
 package eu.kanade.presentation.manga
 
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.windowInsetsTopHeight
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.ui.layout.layout
+import dev.chrisbanes.haze.hazeEffect
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -463,6 +468,10 @@ private fun MangaScreenSmallImpl(
         }
     })
 
+    // KMK (r130): the frosted top bar (Apple's scroll edge): the page blurs and fades under the glass buttons instead
+    // of a solid bar
+    val frostOn = useSheet && eu.kanade.presentation.components.TitleSheet.glass().get()
+    val frostState = remember { dev.chrisbanes.haze.HazeState() }
     Scaffold(
         topBar = {
             val selectedChapterCount: Int = remember(chapters) {
@@ -482,6 +491,35 @@ private fun MangaScreenSmallImpl(
                 if (!isFirstItemVisible || isFirstItemScrolled) 1f else 0f,
                 label = "Top Bar Background",
             )
+            if (frostOn) {
+                // The frost reaches a little below the buttons and fades out there
+                Box(
+                    modifier = Modifier
+                        .layout { measurable, constraints ->
+                            val placeable = measurable.measure(
+                                constraints.copy(minHeight = 0, maxHeight = androidx.compose.ui.unit.Constraints.Infinity),
+                            )
+                            layout(placeable.width, 0) { placeable.place(0, 0) }
+                        }
+                        .fillMaxWidth()
+                        .height(
+                            WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 64.dp + 44.dp,
+                        )
+                        .hazeEffect(state = frostState) {
+                            blurRadius = 20.dp
+                            alpha = backgroundAlpha
+                            tints = listOf(
+                                dev.chrisbanes.haze.HazeTint(
+                                    androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.28f),
+                                ),
+                            )
+                            progressive = dev.chrisbanes.haze.HazeProgressive.verticalGradient(
+                                startIntensity = 1f,
+                                endIntensity = 0f,
+                            )
+                        },
+                )
+            }
             MangaToolbar(
                 title = state.manga.title,
                 hasFilters = state.filterActive,
@@ -512,10 +550,11 @@ private fun MangaScreenSmallImpl(
                 onSelectAll = { onAllChapterSelected(true) },
                 onInvertSelection = { onInvertSelection() },
                 titleAlphaProvider = { titleAlpha },
-                backgroundAlphaProvider = { backgroundAlpha },
+                backgroundAlphaProvider = { if (frostOn) 0f else backgroundAlpha },
                 // KMK -->
                 onPaletteScreenClick = onPaletteScreenClick,
-                glass = useSheet && eu.kanade.presentation.components.TitleSheet.glass().get(),
+                glass = frostOn,
+                sheetHasActions = useSheet,
                 // KMK <--
             )
         },
@@ -809,6 +848,7 @@ private fun MangaScreenSmallImpl(
                 onContinueReading = onContinueReading,
                 infoItems = infoItems,
                 chapterItems = { chapterItems(this, false) },
+                frostSource = frostState.takeIf { frostOn },
             )
             return@Scaffold
         }
