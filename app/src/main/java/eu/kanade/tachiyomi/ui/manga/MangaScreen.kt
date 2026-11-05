@@ -159,15 +159,6 @@ class MangaScreen(
 
         val successState = state as MangaScreenModel.State.Success
 
-        // KMK (r130): checked off the main thread; again when downloads change
-        val hasFolder by androidx.compose.runtime.produceState(
-            false,
-            successState.manga.id,
-            successState.chapters.count { it.downloadState == eu.kanade.tachiyomi.data.download.model.Download.State.DOWNLOADED },
-        ) {
-            value = withIOContext { screenModel.hasMangaFolder() }
-        }
-
         // KMK -->
         val bulkFavoriteScreenModel = rememberScreenModel { BulkFavoriteScreenModel() }
         val bulkFavoriteState by bulkFavoriteScreenModel.state.collectAsState()
@@ -234,6 +225,15 @@ class MangaScreen(
         // KMK <--
         val haptic = LocalHapticFeedback.current
         val isHttpSource = remember { successState.source is HttpSource }
+        // KMK (r130): checked off the main thread; again when downloads change
+        val hasFolder by androidx.compose.runtime.produceState(
+            false,
+            successState.manga.id,
+            successState.chapters.count { it.downloadState == eu.kanade.tachiyomi.data.download.model.Download.State.DOWNLOADED },
+        ) {
+            value = withIOContext { screenModel.hasMangaFolder() }
+        }
+
 
         LaunchedEffect(successState.manga, screenModel.source) {
             if (isHttpSource) {

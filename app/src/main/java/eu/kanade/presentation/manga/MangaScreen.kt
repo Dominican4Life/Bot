@@ -1,5 +1,6 @@
 package eu.kanade.presentation.manga
 
+import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.layout.statusBars
