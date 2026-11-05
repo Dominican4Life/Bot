@@ -80,6 +80,41 @@ fun BrowsePreviewInfoHeader(
     onOpenDetails: () -> Unit,
     onSearch: (query: String, global: Boolean) -> Unit,
 ) {
+    // KMK (r125): the glass panel draws only its top here, or only the description and tags (Details tab)
+    when (LocalInfoHeaderPart.current) {
+        InfoHeaderPart.TOP -> {
+            GlassPanelTop(
+                manga = manga,
+                statusLine = listOfNotNull(statusText(manga.status), sourceName).joinToString(" • "),
+                onAddToLibrary = onAddToLibrary,
+                onWebView = onWebView,
+                onOpenDetails = onOpenDetails,
+            )
+            return
+        }
+        InfoHeaderPart.DETAILS -> {
+            val context = androidx.compose.ui.platform.LocalContext.current
+            val tags = remember(manga.genre) { manga.genre?.filter { it.isNotBlank() } }
+            eu.kanade.presentation.manga.components.ExpandableMangaDescription(
+                defaultExpandState = true,
+                description = manga.description,
+                tagsProvider = { tags },
+                notes = manga.notes,
+                onTagSearch = { onSearch(it, false) },
+                onCopyTagToClipboard = { tag ->
+                    context.getSystemService(android.content.ClipboardManager::class.java)
+                        ?.setPrimaryClip(android.content.ClipData.newPlainText(tag, tag))
+                },
+                onEditNotes = onOpenDetails,
+                searchMetadataChips = remember(manga.source, tags) {
+                    eu.kanade.presentation.manga.components.SearchMetadataChips(null, manga.source, tags)
+                },
+                doSearch = onSearch,
+            )
+            return
+        }
+        InfoHeaderPart.FULL -> Unit
+    }
     Column(modifier = Modifier.fillMaxWidth()) {
         // Title, author, status (no cover image)
         Column(

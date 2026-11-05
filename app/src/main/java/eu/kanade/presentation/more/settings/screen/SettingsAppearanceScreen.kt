@@ -221,6 +221,12 @@ object SettingsAppearanceScreen : SearchableSettings {
                     title = stringResource(KMR.strings.title_sheet_pref),
                     subtitle = stringResource(KMR.strings.title_sheet_pref_summary),
                 ),
+                // KMK (r125): the tablet glass preview panel
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = eu.kanade.presentation.browse.components.PreviewGlass.enabled(),
+                    title = stringResource(KMR.strings.preview_glass_pref),
+                    subtitle = stringResource(KMR.strings.preview_glass_pref_summary),
+                ),
                 // KMK (r115): the title-page panorama switch and "Align cover to top" moved to the Wide covers card
             ),
         )

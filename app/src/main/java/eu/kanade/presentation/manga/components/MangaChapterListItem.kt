@@ -68,6 +68,8 @@ fun MangaChapterListItem(
     onDownloadClick: ((ChapterDownloadAction) -> Unit)?,
     onChapterSwipe: (LibraryPreferences.ChapterSwipeAction) -> Unit,
     modifier: Modifier = Modifier,
+    // KMK (r125): extra buttons before the download one (the reader's eye / bookmark)
+    trailing: (@Composable () -> Unit)? = null,
 ) {
     // KMK -->
     val swipeBackground = MaterialTheme.colorScheme.primaryContainer
@@ -199,6 +201,7 @@ fun MangaChapterListItem(
                 }
             }
 
+            trailing?.invoke()
             ChapterDownloadIndicator(
                 enabled = downloadIndicatorEnabled,
                 modifier = Modifier.padding(start = 4.dp),

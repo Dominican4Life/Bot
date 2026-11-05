@@ -32,6 +32,7 @@ import eu.kanade.presentation.browse.components.BrowsePreviewInfoHeader
 import eu.kanade.presentation.browse.components.PreviewPanelButtons
 import eu.kanade.presentation.reader.sidePanelWidth
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.util.system.isTabletUi
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowsePreviewScreenModel
 import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchScreen
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
@@ -99,10 +100,12 @@ fun Screen.rememberLibraryMangaPreview(): LibraryMangaPreview {
     LaunchedEffect(model, preview.pending) {
         val manga = preview.pending ?: return@LaunchedEffect
         if (model == null || preview.modelSourceId != manga.source) return@LaunchedEffect
+        // KMK (r125): the glass panel is one panel with a Preview tab
+        val glassOn = eu.kanade.presentation.browse.components.PreviewGlass.isOn()
         model.select(
             manga,
-            showChapters = SourcePreferences.previewLeftOn(panels),
-            showPages = SourcePreferences.previewRightOn(panels),
+            showChapters = glassOn || SourcePreferences.previewLeftOn(panels),
+            showPages = !glassOn && SourcePreferences.previewRightOn(panels),
         )
         preview.pending = null
     }
@@ -113,6 +116,8 @@ fun Screen.rememberLibraryMangaPreview(): LibraryMangaPreview {
 fun LibraryMangaPreview.onCoverClick(manga: Manga): Boolean {
     val panels = Injekt.get<SourcePreferences>().libraryPreviewPanels().get()
     if (panels == SourcePreferences.PREVIEW_PANELS_NONE) return false
+    // KMK (r125): the panels are for tablets; on a phone a tap opens the title page as before
+    if (!libraryPanelsAllowed()) return false
     if (model?.state?.value?.manga?.id == manga.id) return false
     // KMK: a merged title's chapters belong to the titles it merges (and MergedSource has no page list), so the
     // panels can't show it: open its title page as before
@@ -129,6 +134,8 @@ fun LibraryMangaPreview.onCoverClick(manga: Manga): Boolean {
 fun LibraryMangaPreview.Buttons(scope: RowScope) {
     val pref = remember { Injekt.get<SourcePreferences>().libraryPreviewPanels() }
     val panels by pref.collectPrefAsState()
+    // KMK (r125): no Left / Right Panel buttons on a phone
+    if (!eu.kanade.presentation.util.isTabletUi()) return
     with(scope) {
         PreviewPanelButtons(
             leftOn = SourcePreferences.previewLeftOn(panels),
@@ -151,8 +158,13 @@ fun LibraryMangaPreview.Buttons(scope: RowScope) {
 fun LibraryMangaPreview.panelPadding(maxWidth: Dp): Pair<Dp, Dp> {
     val state = model?.state?.collectAsState()?.value
     val width = sidePanelWidth(maxWidth)
-    val start by animateDpAsState(if (state?.chapterPanelOpen == true) width else 0.dp, label = "libraryPanelStart")
-    val end by animateDpAsState(if (state?.pagePanelOpen == true) width else 0.dp, label = "libraryPanelEnd")
+    // KMK (r125): the glass panel floats over the covers; they keep their places
+    val glass by remember { eu.kanade.presentation.browse.components.PreviewGlass.enabled() }.collectPrefAsState()
+    val start by animateDpAsState(
+        if (state?.chapterPanelOpen == true && !glass) width else 0.dp,
+        label = "libraryPanelStart",
+    )
+    val end by animateDpAsState(if (state?.pagePanelOpen == true && !glass) width else 0.dp, label = "libraryPanelEnd")
     return start to end
 }
 
@@ -187,6 +199,14 @@ fun LibraryMangaPreview.Panels(scope: BoxScope, onToggleFavorite: (Manga) -> Uni
             onDownloadAction = model::runDownloadAction,
             onOpenFilters = { state.manga?.let { navigator.push(MangaScreen(it.id)) } },
             onRefresh = model::refresh,
+            pageSource = model.httpSource,
+            onOpenPage = { chapter, pageIndex, video ->
+                context.startActivity(
+                    ReaderActivity.newIntent(context, chapter.mangaId, chapter.id, pageIndex, playVideo = video),
+                )
+            },
+            onRetryPages = { state.selectedChapter?.let(model::selectChapter) },
+            onShowPages = model::openPagePanel,
             infoHeader = { manga ->
                 BrowsePreviewInfoHeader(
                     manga = manga,
@@ -279,3 +299,7 @@ fun LibraryMangaPreview.orderFreezeKey(freeze: LibraryOrderFreeze, vararg inputs
     val sort by sortPref.collectPrefAsState()
     return if (open && !freeze.released) listOf(sort, *inputs) else null
 }
+
+/** KMK (r125): the library's Left / Right Panels only open in the tablet layout */
+internal fun libraryPanelsAllowed(): Boolean =
+    Injekt.get<android.app.Application>().resources.configuration.isTabletUi()

@@ -1017,6 +1017,20 @@ class ReaderViewModel @JvmOverloads constructor(
         }
     }
 
+    // KMK (r125): the reader's chapter list eye button / swipe right
+    fun toggleRead(chapterId: Long, read: Boolean) {
+        val chapter = chapterList.find { it.chapter.id == chapterId }?.chapter ?: return
+        chapter.read = read
+        viewModelScope.launchNonCancellable {
+            updateChapter.await(
+                ChapterUpdate(
+                    id = chapterId,
+                    read = read,
+                ),
+            )
+        }
+    }
+
     // SY -->
     fun toggleBookmark(chapterId: Long, bookmarked: Boolean) {
         val chapter = chapterList.find { it.chapter.id == chapterId }?.chapter ?: return

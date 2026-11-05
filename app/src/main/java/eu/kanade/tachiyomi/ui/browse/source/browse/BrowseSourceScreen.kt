@@ -64,6 +64,7 @@ import eu.kanade.domain.manga.model.toSManga
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.presentation.browse.BrowseSourceContent
 import eu.kanade.presentation.browse.MissingSourceScreen
+import eu.kanade.presentation.browse.components.PreviewGlass
 import eu.kanade.presentation.browse.components.BrowseChapterPanel
 import eu.kanade.presentation.browse.components.BrowseOverlayPanel
 import eu.kanade.presentation.browse.components.BrowsePagePanel
@@ -544,12 +545,14 @@ data class BrowseSourceScreen(
                 BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                     // Shrink the grid to the space between the open panels so no cover is hidden behind them
                     val panelWidth = sidePanelWidth(maxWidth)
+                    // KMK (r125): the glass panel floats over the covers; they keep their places
+                    val glassPanel by remember { PreviewGlass.enabled() }.collectAsState()
                     val startPadding by animateDpAsState(
-                        if (previewState.chapterPanelOpen) panelWidth else 0.dp,
+                        if (previewState.chapterPanelOpen && !glassPanel) panelWidth else 0.dp,
                         label = "browseStartPadding",
                     )
                     val endPadding by animateDpAsState(
-                        if (previewState.pagePanelOpen) panelWidth else 0.dp,
+                        if (previewState.pagePanelOpen && !glassPanel) panelWidth else 0.dp,
                         label = "browseEndPadding",
                     )
                     val gridPadding = PaddingValues(
@@ -655,10 +658,12 @@ data class BrowseSourceScreen(
                                     previewScreenModel.state.value.manga?.id != manga.id
                                 ) {
                                     // First tap: highlight and preview. Second tap on the same cover: open it.
+                                    // KMK (r125): the glass panel is one panel with a Preview tab
+                                    val glassOn = PreviewGlass.isOn()
                                     previewScreenModel.select(
                                         manga,
-                                        showChapters = SourcePreferences.previewLeftOn(previewPanels),
-                                        showPages = SourcePreferences.previewRightOn(previewPanels),
+                                        showChapters = glassOn || SourcePreferences.previewLeftOn(previewPanels),
+                                        showPages = !glassOn && SourcePreferences.previewRightOn(previewPanels),
                                     )
                                 } else {
                                     // KMK <--
@@ -715,6 +720,14 @@ data class BrowseSourceScreen(
                             onDownloadAction = previewScreenModel::runDownloadAction,
                             onOpenFilters = { showChapterSettings = true },
                             onRefresh = previewScreenModel::refresh,
+                            pageSource = previewScreenModel.httpSource,
+                            onOpenPage = { chapter, pageIndex, video ->
+                                context.startActivity(
+                                    ReaderActivity.newIntent(context, chapter.mangaId, chapter.id, pageIndex, playVideo = video),
+                                )
+                            },
+                            onRetryPages = { previewState.selectedChapter?.let(previewScreenModel::selectChapter) },
+                            onShowPages = previewScreenModel::openPagePanel,
                             infoHeader = { manga ->
                                 BrowsePreviewInfoHeader(
                                     manga = manga,

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -44,10 +45,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -73,9 +75,9 @@ import eu.kanade.presentation.util.formatChapterNumber
 import eu.kanade.tachiyomi.data.coil.SourcePageThumbnail
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.model.Download
+import eu.kanade.tachiyomi.jssource.ReaderVideos
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.tachiyomi.jssource.ReaderVideos
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowsePreviewScreenModel
 import java.text.DateFormat
 import java.util.Date
@@ -90,6 +92,7 @@ import tachiyomi.presentation.core.components.material.PullRefresh
 import tachiyomi.presentation.core.components.material.SECONDARY_ALPHA
 import tachiyomi.presentation.core.i18n.pluralStringResource
 import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.util.collectAsState
 import tachiyomi.presentation.core.util.selectedBackground
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -115,7 +118,14 @@ fun BrowseChapterPanel(
     infoHeader: @Composable (Manga) -> Unit = {},
     /** Pull down: get the details and chapters from the source again */
     onRefresh: () -> Unit = {},
+    // KMK (r125): the glass panel's Preview tab (the pages of the selected chapter) and its Play button
+    pageSource: HttpSource? = null,
+    onOpenPage: ((Chapter, Int, Boolean) -> Unit)? = null,
+    onRetryPages: () -> Unit = {},
+    onShowPages: () -> Unit = {},
 ) {
+    val glassPref = remember { PreviewGlass.enabled() }
+    val glass by glassPref.collectAsState()
     SlidingSidePanel(
         visible = state.chapterPanelOpen,
         fromStart = true,
@@ -126,9 +136,12 @@ fun BrowseChapterPanel(
         showClose = false,
         squareTop = true,
         showHeader = false,
+        glass = glass,
     ) {
         key(state.manga?.id) {
+            var tab by remember { mutableStateOf(PreviewPanelTab.LIST) }
             val listState = rememberLazyListState()
+            Box(modifier = Modifier.fillMaxSize()) {
             val showNumber = state.manga?.displayMode == Manga.CHAPTER_DISPLAY_NUMBER
             // KMK: pull down to get the details and chapters from the source again
             PullRefresh(
@@ -138,11 +151,42 @@ fun BrowseChapterPanel(
             ) {
             LazyColumn(
                 state = listState,
-                contentPadding = PaddingValues(bottom = 8.dp),
+                contentPadding = PaddingValues(bottom = if (glass) 76.dp else 8.dp),
                 modifier = Modifier.fillMaxSize(),
             ) {
-                state.manga?.let { manga ->
-                    item(key = "info") { infoHeader(manga) }
+                // KMK (r125): glass: the top, the tabs, then the Chapters / Preview / Details content
+                if (glass) {
+                    state.manga?.let { manga ->
+                        item(key = "glass-top") {
+                            CompositionLocalProvider(LocalInfoHeaderPart provides InfoHeaderPart.TOP) {
+                                infoHeader(manga)
+                            }
+                        }
+                        item(key = "glass-tabs") {
+                            GlassPanelTabs(
+                                tab = tab,
+                                onTab = {
+                                    tab = it
+                                    if (it == PreviewPanelTab.PREVIEW) onShowPages()
+                                },
+                                listLabel = stringResource(MR.strings.chapters),
+                                showPreview = onOpenPage != null,
+                            )
+                        }
+                        if (tab == PreviewPanelTab.DETAILS) {
+                            item(key = "glass-details") {
+                                CompositionLocalProvider(LocalInfoHeaderPart provides InfoHeaderPart.DETAILS) {
+                                    infoHeader(manga)
+                                }
+                            }
+                        }
+                    }
+                    if (tab == PreviewPanelTab.PREVIEW && onOpenPage != null) {
+                        glassPreviewItems(state, pageSource, onRetryPages, onOpenPage)
+                    }
+                }
+                if (!glass || tab == PreviewPanelTab.LIST) state.manga?.let { manga ->
+                    if (!glass) item(key = "info") { infoHeader(manga) }
                     item(key = "chapters-header") {
                         HorizontalDivider()
                         // Chapter count with the download and filter buttons, right above the list
@@ -202,7 +246,7 @@ fun BrowseChapterPanel(
                         }
                     }
                 }
-                when {
+                if (!glass || tab == PreviewPanelTab.LIST) when {
                     state.chapters.isEmpty() && state.chaptersLoading -> item(key = "loading") {
                         Box(
                             modifier = Modifier.fillMaxWidth().padding(24.dp),
@@ -243,6 +287,139 @@ fun BrowseChapterPanel(
                     }
                 }
             }
+            }
+            // KMK (r125): Continue / Read at the bottom of the glass panel
+            if (glass) {
+                val chapters = state.chapters.map { it.chapter }
+                val previewChapter = state.selectedChapter
+                val next = if (tab == PreviewPanelTab.PREVIEW && previewChapter != null) {
+                    previewChapter
+                } else {
+                    chapters.filter { !it.read }.maxByOrNull { it.sourceOrder } ?: chapters.maxByOrNull { it.sourceOrder }
+                }
+                if (next != null) {
+                    val started = chapters.any { it.read || it.lastPageRead > 0 }
+                    GlassPanelPlay(
+                        label = stringResource(
+                            if (tab == PreviewPanelTab.PREVIEW) {
+                                KMR.strings.title_sheet_read
+                            } else if (started) {
+                                MR.strings.action_resume
+                            } else {
+                                MR.strings.action_start
+                            },
+                        ) + " · " + next.name,
+                        onClick = { onOpenChapter(next) },
+                        modifier = Modifier.align(Alignment.BottomCenter),
+                    )
+                }
+            }
+            }
+        }
+    }
+}
+
+/** KMK (r125): the glass panel's Preview tab, two pages a row inside the panel's list */
+private fun androidx.compose.foundation.lazy.LazyListScope.glassPreviewItems(
+    state: BrowsePreviewScreenModel.State,
+    source: HttpSource?,
+    onRetry: () -> Unit,
+    onOpenPage: (Chapter, Int, Boolean) -> Unit,
+) {
+    val chapter = state.selectedChapter
+    if (chapter != null) {
+        item(key = "glass-preview-chapter") {
+            Text(
+                text = chapter.name,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 6.dp),
+            )
+        }
+    }
+    val pages = state.pages
+    val localPages = state.localPages
+    when {
+        chapter != null && localPages != null -> {
+            items(localPages.indices.chunked(2), key = { "glass-local-${it.first()}" }) { row ->
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    row.forEach { index ->
+                        val page = localPages[index]
+                        Box(modifier = Modifier.weight(1f)) {
+                            PageThumbnailBox(
+                                model = page,
+                                number = index + 1,
+                                isVideo = page.isVideo,
+                                playing = false,
+                                onAnimated = {},
+                                onClick = { onOpenPage(chapter, index, page.isVideo) },
+                            )
+                        }
+                    }
+                    if (row.size == 1) Spacer(modifier = Modifier.weight(1f))
+                }
+            }
+        }
+        source == null -> item(key = "glass-no-source") {
+            Text(
+                text = stringResource(KMR.strings.browse_page_previews_unavailable),
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(24.dp),
+            )
+        }
+        state.pagesError != null -> item(key = "glass-pages-error") {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(text = state.pagesError ?: "", style = MaterialTheme.typography.bodyMedium)
+                TextButton(onClick = onRetry) { Text(stringResource(MR.strings.action_retry)) }
+            }
+        }
+        chapter == null || pages == null -> item(key = "glass-pages-loading") {
+            Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                if (state.pagesLoading || state.chaptersLoading) CircularProgressIndicator()
+            }
+        }
+        else -> {
+            val previews = state.previewModels
+            items(pages.indices.chunked(2), key = { "glass-page-${chapter.id}-${it.first()}" }) { row ->
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    row.forEach { index ->
+                        val preview = previews?.getOrNull(index)
+                        Box(modifier = Modifier.weight(1f)) {
+                            if (preview != null) {
+                                PageThumbnailBox(
+                                    model = preview,
+                                    number = index + 1,
+                                    isVideo = false,
+                                    playing = false,
+                                    onAnimated = {},
+                                    onClick = { onOpenPage(chapter, index, false) },
+                                    plain = preview is eu.kanade.domain.manga.model.PagePreview,
+                                )
+                            } else {
+                                SourcePageThumbnailItem(
+                                    source = source,
+                                    chapterUrl = chapter.url,
+                                    page = pages[index],
+                                    playing = false,
+                                    onAnimated = {},
+                                    onClick = { onOpenPage(chapter, index, false) },
+                                    onVideo = { onOpenPage(chapter, index, true) },
+                                )
+                            }
+                        }
+                    }
+                    if (row.size == 1) Spacer(modifier = Modifier.weight(1f))
+                }
             }
         }
     }
@@ -376,8 +553,11 @@ fun BrowsePagePanel(
     onOpenPage: (Chapter, Int, Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // KMK (r125): with the glass panel the pages are its Preview tab
+    val glassPref = remember { PreviewGlass.enabled() }
+    val glass by glassPref.collectAsState()
     SlidingSidePanel(
-        visible = state.pagePanelOpen,
+        visible = state.pagePanelOpen && !glass,
         fromStart = false,
         title = stringResource(KMR.strings.reader_pages),
         onClose = onClose,

@@ -162,10 +162,13 @@ class AnimeLibraryPreviewModel(
     fun onCoverClick(anime: Anime): Boolean {
         val panels = Injekt.get<SourcePreferences>().libraryPreviewPanels().get()
         if (panels == SourcePreferences.PREVIEW_PANELS_NONE) return false
+        // KMK (r125): the panels are for tablets; on a phone a tap opens the title page as before
+        if (!libraryPanelsAllowed()) return false
         if (_preview.value.anime?.id == anime.id) return false
         select(
             anime,
-            showEpisodes = SourcePreferences.previewLeftOn(panels),
+            showEpisodes = eu.kanade.presentation.browse.components.PreviewGlass.isOn() ||
+                SourcePreferences.previewLeftOn(panels),
             showPlayer = SourcePreferences.previewRightOn(panels),
         )
         return true
@@ -177,6 +180,8 @@ class AnimeLibraryPreviewModel(
 fun AnimeLibraryPreviewModel.Buttons(scope: RowScope) {
     val pref = remember { Injekt.get<SourcePreferences>().libraryPreviewPanels() }
     val panels by pref.collectPrefAsState()
+    // KMK (r125): no Left / Right Panel buttons on a phone
+    if (!eu.kanade.presentation.util.isTabletUi()) return
     with(scope) {
         PreviewPanelButtons(
             leftOn = SourcePreferences.previewLeftOn(panels),
@@ -198,8 +203,10 @@ fun AnimeLibraryPreviewModel.Buttons(scope: RowScope) {
 fun AnimeLibraryPreviewModel.panelPadding(maxWidth: Dp): Pair<Dp, Dp> {
     val state by preview.collectAsState()
     val width = sidePanelWidth(maxWidth)
-    val start by animateDpAsState(if (state.panelOpen) width else 0.dp, label = "animeLibraryPanelStart")
-    val end by animateDpAsState(if (state.playerPanelOpen) width else 0.dp, label = "animeLibraryPanelEnd")
+    // KMK (r125): the glass panels float over the covers; they keep their places
+    val glass by remember { eu.kanade.presentation.browse.components.PreviewGlass.enabled() }.collectPrefAsState()
+    val start by animateDpAsState(if (state.panelOpen && !glass) width else 0.dp, label = "animeLibraryPanelStart")
+    val end by animateDpAsState(if (state.playerPanelOpen && !glass) width else 0.dp, label = "animeLibraryPanelEnd")
     return start to end
 }
 
@@ -252,3 +259,4 @@ fun AnimeLibraryPreviewModel.Panels(scope: BoxScope) {
         )
     }
 }
+

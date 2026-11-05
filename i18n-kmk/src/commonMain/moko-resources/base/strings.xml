@@ -841,4 +841,13 @@
     <string name="title_sheet_pick_chapter">Pick a chapter</string>
     <string name="title_sheet_no_pages">No pages to show</string>
     <string name="title_sheet_download_all">All chapters</string>
+    <!-- KMK (r125): glass reader bars -->
+    <string name="reader_glass_pref">Glass reader bars</string>
+    <string name="reader_glass_pref_summary">Round back button, a title pill (tap it for chapters and pages), ⋮ for the reading modes and buttons, and a glass page slider. Off: the old bars</string>
+    <string name="reader_glass_this_series">for this series</string>
+    <!-- KMK (r125): tablet glass preview panel -->
+    <string name="anime_episodes">Episodes</string>
+    <string name="preview_glass_details">Details</string>
+    <string name="preview_glass_pref">Glass preview panel</string>
+    <string name="preview_glass_pref_summary">Tablet browse and library: one see-through panel over the covers (they stay put) with Chapters, Preview and Details. Off: the old left and right panels</string>
 </resources>

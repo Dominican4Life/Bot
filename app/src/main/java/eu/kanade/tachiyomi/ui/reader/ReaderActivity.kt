@@ -388,6 +388,15 @@ class ReaderActivity : BaseActivity() {
                     onDownloadAction = { chapter, action ->
                         viewModel.handleDownloadAction(chapter, action)
                     },
+                    // KMK (r125): eye button / swipe right, and the Pages button in the header
+                    onToggleRead = { chapter ->
+                        viewModel.toggleRead(chapter.id, !chapter.read)
+                        chapterListVersion++
+                    },
+                    onSwitchToPages = {
+                        viewModel.closeChapterListPanel()
+                        viewModel.openPageGridPanel()
+                    },
                 )
                 ReaderPageGridPanel(
                     visible = state.pageGridPanelOpen,
@@ -395,6 +404,10 @@ class ReaderActivity : BaseActivity() {
                     currentChapter = state.currentChapter,
                     currentPage = state.currentPage,
                     onClickPage = this@ReaderActivity::moveToPageIndex,
+                    onSwitchToChapters = {
+                        viewModel.closePageGridPanel()
+                        viewModel.openChapterListDialog()
+                    },
                 )
                 // KMK <--
                 // KMK (r97) -->
@@ -698,6 +711,7 @@ class ReaderActivity : BaseActivity() {
             else -> NavBarType.VerticalRight
         }
         // SY <--
+        val glassBars by remember { eu.kanade.presentation.reader.appbars.ReaderGlass.enabled() }.collectAsState()
 
         ReaderAppBars(
             visible = state.menuVisible,
@@ -776,6 +790,9 @@ class ReaderActivity : BaseActivity() {
             },
             onClickShiftPage = ::shiftDoublePages,
             // SY <--
+            // KMK (r125): the glass bars, and the ⋮ sheet's reading-mode row
+            glass = glassBars,
+            onSetReadingMode = viewModel::setMangaReadingMode,
         )
     }
 

@@ -75,6 +75,12 @@ object SettingsReaderScreen : SearchableSettings {
                 title = stringResource(KMR.strings.pref_viewer_nav_smaller_tap_zone),
             ),
             // KMK <--
+            // KMK (r125): the glass bars (title pill, ⋮ sheet, glass slider); off = the old bars
+            Preference.PreferenceItem.SwitchPreference(
+                preference = eu.kanade.presentation.reader.appbars.ReaderGlass.enabled(),
+                title = stringResource(KMR.strings.reader_glass_pref),
+                subtitle = stringResource(KMR.strings.reader_glass_pref_summary),
+            ),
             // SY -->
             Preference.PreferenceItem.SwitchPreference(
                 preference = readerPref.forceHorizontalSeekbar(),

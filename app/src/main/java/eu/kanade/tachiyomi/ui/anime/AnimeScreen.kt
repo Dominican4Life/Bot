@@ -846,12 +846,12 @@ private fun AnimeEpisodeSettingsDialog(
                     CheckboxItem(
                         label = stringResource(KMR.strings.anime_show_episode_thumbnail),
                         checked = anime.showPreviews,
-                        onClick = { askScope = true to !anime.showPreviews },
+                        onClick = { onDisplayForSource(true, !anime.showPreviews) }, // KMK (r125): no "which titles?" step
                     )
                     CheckboxItem(
                         label = stringResource(KMR.strings.anime_show_episode_summary),
                         checked = anime.showSummaries,
-                        onClick = { askScope = false to !anime.showSummaries },
+                        onClick = { onDisplayForSource(false, !anime.showSummaries) },
                     )
 
                     HorizontalDivider(
@@ -2446,7 +2446,7 @@ private fun AnimeSheetHeader(
                         },
                         onClick = {
                             displayMenu = false
-                            askScope = true to !anime.showPreviews
+                            actions.onDisplay(true, !anime.showPreviews, true) // KMK (r125): no "which titles?" step
                         },
                     )
                     DropdownMenuItem(
@@ -2456,7 +2456,7 @@ private fun AnimeSheetHeader(
                         },
                         onClick = {
                             displayMenu = false
-                            askScope = false to !anime.showSummaries
+                            actions.onDisplay(false, !anime.showSummaries, true)
                         },
                     )
                 }

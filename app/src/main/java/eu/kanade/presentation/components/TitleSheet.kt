@@ -387,9 +387,9 @@ private fun RowScope.DockTab(
 private fun SplitPlayButton(
     label: String,
     onPlay: () -> Unit,
-    menu: @Composable ColumnScope.(dismiss: () -> Unit) -> Unit,
+    // KMK (r125): the ⌄ menu was taken off (owner's request); the parameter stays for the callers
+    @Suppress("UNUSED_PARAMETER") menu: @Composable ColumnScope.(dismiss: () -> Unit) -> Unit,
 ) {
-    var menuOpen by remember { mutableStateOf(false) }
     Surface(
         shape = CircleShape,
         color = MaterialTheme.colorScheme.primary,
@@ -401,7 +401,7 @@ private fun SplitPlayButton(
                 modifier = Modifier
                     .fillMaxHeight()
                     .clickable(onClick = onPlay)
-                    .padding(start = 14.dp, end = 12.dp),
+                    .padding(start = 14.dp, end = 18.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(imageVector = Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
@@ -414,26 +414,6 @@ private fun SplitPlayButton(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.widthIn(max = 170.dp),
                 )
-            }
-            Box(
-                modifier = Modifier
-                    .width(1.dp)
-                    .height(24.dp)
-                    .background(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.3f)),
-            )
-            Box {
-                Box(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .clickable { menuOpen = true }
-                        .padding(horizontal = 8.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(imageVector = Icons.Filled.ArrowDropDown, contentDescription = null)
-                }
-                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    menu { menuOpen = false }
-                }
             }
         }
     }

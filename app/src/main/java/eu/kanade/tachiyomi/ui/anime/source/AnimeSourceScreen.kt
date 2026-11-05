@@ -351,12 +351,15 @@ class AnimeSourceScreen(
                 val layoutDirection = LocalLayoutDirection.current
                 BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                     val panelWidth = sidePanelWidth(maxWidth)
+                    // KMK (r125): the glass panels float over the covers; they keep their places
+                    val glassPanel by remember { eu.kanade.presentation.browse.components.PreviewGlass.enabled() }
+                        .collectAsState()
                     val startPadding by animateDpAsState(
-                        if (preview.panelOpen) panelWidth else 0.dp,
+                        if (preview.panelOpen && !glassPanel) panelWidth else 0.dp,
                         label = "animeBrowseStartPadding",
                     )
                     val endPadding by animateDpAsState(
-                        if (preview.playerPanelOpen) panelWidth else 0.dp,
+                        if (preview.playerPanelOpen && !glassPanel) panelWidth else 0.dp,
                         label = "animeBrowseEndPadding",
                     )
                     val gridPadding = PaddingValues(
@@ -482,7 +485,8 @@ class AnimeSourceScreen(
                                         // First tap: highlight and preview. Second tap on the same cover: open it.
                                         screenModel.selectPreview(
                                             anime,
-                                            showEpisodes = SourcePreferences.previewLeftOn(previewPanels),
+                                            showEpisodes = eu.kanade.presentation.browse.components.PreviewGlass.isOn() ||
+                                                SourcePreferences.previewLeftOn(previewPanels),
                                             showPlayer = SourcePreferences.previewRightOn(previewPanels),
                                         )
                                     } else {

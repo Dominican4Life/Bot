@@ -5,6 +5,14 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -22,18 +30,20 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
 import eu.kanade.tachiyomi.util.lang.toRelativeString
 import exh.metadata.MetadataUtil
 import exh.source.isEhBasedManga
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.ZonedDateTime
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.library.service.LibraryPreferences
+import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.source.local.isLocal
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import java.time.Instant
-import java.time.LocalDate
-import java.time.ZoneId
-import java.time.ZonedDateTime
 
 @Composable
 fun ChapterListDialog(
@@ -77,6 +87,8 @@ fun ChapterListContent(
     dateRelativeTime: Boolean,
     onDownloadAction: ((Chapter, ChapterDownloadAction) -> Unit)?,
     modifier: Modifier = Modifier,
+    // KMK (r125): the eye / bookmark buttons on every row, swipe right = seen, swipe left = bookmark
+    onToggleRead: ((Chapter) -> Unit)? = null,
 ) {
     val manga by screenModel.mangaFlow.collectAsState()
     val context = LocalContext.current
@@ -144,7 +156,11 @@ fun ChapterListContent(
                 // KMK <--
                 downloadStateProvider = { downloadState },
                 downloadProgressProvider = { progress },
-                chapterSwipeStartAction = LibraryPreferences.ChapterSwipeAction.ToggleBookmark,
+                chapterSwipeStartAction = if (onToggleRead != null) {
+                    LibraryPreferences.ChapterSwipeAction.ToggleRead
+                } else {
+                    LibraryPreferences.ChapterSwipeAction.ToggleBookmark
+                },
                 chapterSwipeEndAction = LibraryPreferences.ChapterSwipeAction.ToggleBookmark,
                 onLongClick = { /*TODO*/ },
                 onClick = { onClickChapter(chapterItem.chapter) },
@@ -155,8 +171,46 @@ fun ChapterListContent(
                     null
                 },
                 // KMK <--
-                onChapterSwipe = {
-                    onBookmark(chapterItem.chapter)
+                onChapterSwipe = { action ->
+                    if (action == LibraryPreferences.ChapterSwipeAction.ToggleRead && onToggleRead != null) {
+                        onToggleRead(chapterItem.chapter)
+                    } else {
+                        onBookmark(chapterItem.chapter)
+                    }
+                },
+                trailing = if (onToggleRead != null) {
+                    {
+                        IconButton(onClick = { onToggleRead(chapterItem.chapter) }) {
+                            Icon(
+                                imageVector = if (chapterItem.chapter.read) {
+                                    Icons.Outlined.VisibilityOff
+                                } else {
+                                    Icons.Outlined.Visibility
+                                },
+                                contentDescription = stringResource(
+                                    if (chapterItem.chapter.read) MR.strings.action_mark_as_unread else MR.strings.action_mark_as_read,
+                                ),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        IconButton(onClick = { onBookmark(chapterItem.chapter) }) {
+                            Icon(
+                                imageVector = if (chapterItem.chapter.bookmark) {
+                                    Icons.Filled.Bookmark
+                                } else {
+                                    Icons.Outlined.BookmarkBorder
+                                },
+                                contentDescription = stringResource(MR.strings.action_bookmark),
+                                tint = if (chapterItem.chapter.bookmark) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                            )
+                        }
+                    }
+                } else {
+                    null
                 },
             )
         }

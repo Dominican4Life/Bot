@@ -1,8 +1,8 @@
 package eu.kanade.presentation.anime
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -36,6 +36,7 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -50,6 +51,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.browse.components.BrowsePreviewInfoHeader
+import eu.kanade.presentation.browse.components.GlassPanelPlay
+import eu.kanade.presentation.browse.components.GlassPanelTabs
+import eu.kanade.presentation.browse.components.InfoHeaderPart
+import eu.kanade.presentation.browse.components.LocalInfoHeaderPart
+import eu.kanade.presentation.browse.components.PreviewGlass
+import eu.kanade.presentation.browse.components.PreviewPanelTab
 import eu.kanade.presentation.manga.DownloadAction
 import eu.kanade.presentation.manga.components.ChapterDownloadAction
 import eu.kanade.presentation.reader.SlidingSidePanel
@@ -59,18 +66,19 @@ import eu.kanade.tachiyomi.data.anime.Episode
 import eu.kanade.tachiyomi.data.anime.download.AnimeDownloadManager
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.ui.anime.source.AnimeSourceScreenModel
+import java.text.DateFormat
+import java.util.Date
+import kotlinx.coroutines.launch
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.components.material.DISABLED_ALPHA
 import tachiyomi.presentation.core.components.material.SECONDARY_ALPHA
 import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.util.collectAsState as collectAsPrefState
 import tachiyomi.presentation.core.util.selectedBackground
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import kotlinx.coroutines.launch
-import java.text.DateFormat
-import java.util.Date
 
 /**
  * KMK: Left panel on the anime browse screen, like the manga one: the anime's details on top, its episodes below.
@@ -93,7 +101,11 @@ fun AnimeEpisodePanel(
     onSelectEpisode: (Episode) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // KMK (r125): the glass panel (Episodes / Details tabs, Play at the bottom)
+    val glass by remember { PreviewGlass.enabled() }.collectAsPrefState()
+    var tab by remember(preview.anime?.id) { mutableStateOf(PreviewPanelTab.LIST) }
     SlidingSidePanel(
+        glass = glass,
         visible = preview.panelOpen,
         fromStart = true,
         title = stringResource(KMR.strings.anime_episodes_count, preview.episodes.size),
@@ -224,22 +236,51 @@ fun AnimeEpisodePanel(
                 }
                 if (picked.isNotEmpty()) downloadManager.enqueue(anime, picked)
             }
+            Box(modifier = Modifier.fillMaxSize()) {
             LazyColumn(
                 state = listState,
-                contentPadding = PaddingValues(bottom = 8.dp),
+                contentPadding = PaddingValues(bottom = if (glass) 76.dp else 8.dp),
                 modifier = Modifier.fillMaxSize(),
             ) {
                 item(key = "info") {
-                    BrowsePreviewInfoHeader(
-                        manga = displayManga,
-                        sourceName = sourceName,
-                        onAddToLibrary = { onAddToLibrary(anime) },
-                        onWebView = { onWebView(anime) },
-                        onOpenDetails = { onOpenDetails(anime) },
-                        onSearch = { query, _ -> onSearch(query) },
-                    )
+                    CompositionLocalProvider(
+                        LocalInfoHeaderPart provides if (glass) InfoHeaderPart.TOP else InfoHeaderPart.FULL,
+                    ) {
+                        BrowsePreviewInfoHeader(
+                            manga = displayManga,
+                            sourceName = sourceName,
+                            onAddToLibrary = { onAddToLibrary(anime) },
+                            onWebView = { onWebView(anime) },
+                            onOpenDetails = { onOpenDetails(anime) },
+                            onSearch = { query, _ -> onSearch(query) },
+                        )
+                    }
                 }
-                item(key = "episodes-header") {
+                if (glass) {
+                    item(key = "glass-tabs") {
+                        GlassPanelTabs(
+                            tab = tab,
+                            onTab = { tab = it },
+                            listLabel = stringResource(KMR.strings.anime_episodes),
+                            showPreview = false,
+                        )
+                    }
+                    if (tab == PreviewPanelTab.DETAILS) {
+                        item(key = "glass-details") {
+                            CompositionLocalProvider(LocalInfoHeaderPart provides InfoHeaderPart.DETAILS) {
+                                BrowsePreviewInfoHeader(
+                                    manga = displayManga,
+                                    sourceName = sourceName,
+                                    onAddToLibrary = { onAddToLibrary(anime) },
+                                    onWebView = { onWebView(anime) },
+                                    onOpenDetails = { onOpenDetails(anime) },
+                                    onSearch = { query, _ -> onSearch(query) },
+                                )
+                            }
+                        }
+                    }
+                }
+                if (!glass || tab == PreviewPanelTab.LIST) item(key = "episodes-header") {
                     HorizontalDivider()
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -268,7 +309,7 @@ fun AnimeEpisodePanel(
                                     },
                                     onClick = {
                                         showDisplayMenu = false
-                                        askScope = true to !showThumbs
+                                        applyDisplay(true, !showThumbs, true) // KMK (r125): straight to every title of the source
                                     },
                                 )
                                 DropdownMenuItem(
@@ -278,7 +319,7 @@ fun AnimeEpisodePanel(
                                     },
                                     onClick = {
                                         showDisplayMenu = false
-                                        askScope = false to !showSummaries
+                                        applyDisplay(false, !showSummaries, true)
                                     },
                                 )
                             }
@@ -325,7 +366,7 @@ fun AnimeEpisodePanel(
                         }
                     }
                 }
-                when {
+                if (!glass || tab == PreviewPanelTab.LIST) when {
                     preview.episodes.isEmpty() && preview.loading -> item(key = "loading") {
                         Box(
                             modifier = Modifier.fillMaxWidth().padding(24.dp),
@@ -366,6 +407,21 @@ fun AnimeEpisodePanel(
                     }
                 }
             }
+            // KMK (r125): Continue / Start at the bottom of the glass panel
+            if (glass) {
+                val next = preview.episodes.filter { !it.seen }.maxByOrNull { it.sourceOrder }
+                    ?: preview.episodes.maxByOrNull { it.sourceOrder }
+                if (next != null) {
+                    val started = preview.episodes.any { it.seen }
+                    GlassPanelPlay(
+                        label = stringResource(if (started) MR.strings.action_resume else MR.strings.action_start) +
+                            " · " + next.name,
+                        onClick = { onPlay(next) },
+                        modifier = Modifier.align(Alignment.BottomCenter),
+                    )
+                }
+            }
+            }
         }
     }
 }
@@ -384,7 +440,9 @@ fun AnimePlayerPanel(
     onOpenPlayer: (Episode, Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val glass by remember { PreviewGlass.enabled() }.collectAsPrefState()
     SlidingSidePanel(
+        glass = glass,
         visible = preview.playerPanelOpen,
         fromStart = false,
         title = episode?.name.orEmpty(),

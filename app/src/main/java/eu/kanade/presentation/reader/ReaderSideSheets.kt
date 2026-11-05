@@ -40,6 +40,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.BrokenImage
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.FormatListNumbered
+import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -68,6 +70,7 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
+import eu.kanade.presentation.browse.components.panelGlassEdge
 import eu.kanade.presentation.manga.components.ChapterDownloadAction
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.jssource.ReaderVideos
@@ -107,6 +110,9 @@ fun ReaderChapterListPanel(
     dateRelativeTime: Boolean,
     onDownloadAction: ((Chapter, ChapterDownloadAction) -> Unit)?,
     modifier: Modifier = Modifier,
+    // KMK (r125): eye / bookmark buttons and swipes on the rows; the header's Pages button
+    onToggleRead: ((Chapter) -> Unit)? = null,
+    onSwitchToPages: (() -> Unit)? = null,
 ) {
     SlidingSidePanel(
         visible = visible,
@@ -114,6 +120,17 @@ fun ReaderChapterListPanel(
         title = stringResource(MR.strings.chapters),
         onClose = onClose,
         modifier = modifier,
+        actions = {
+            if (onSwitchToPages != null) {
+                IconButton(onClick = onSwitchToPages) {
+                    Icon(
+                        imageVector = Icons.Outlined.GridView,
+                        contentDescription = stringResource(KMR.strings.reader_pages),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+        },
     ) {
         // Re-create the list when the current chapter changes so it scrolls to it
         key(chapters.firstOrNull { it.isCurrent }?.chapter?.id) {
@@ -125,6 +142,7 @@ fun ReaderChapterListPanel(
                 dateRelativeTime = dateRelativeTime,
                 onDownloadAction = onDownloadAction,
                 modifier = Modifier.fillMaxSize(),
+                onToggleRead = onToggleRead,
             )
         }
     }
@@ -138,6 +156,8 @@ fun ReaderPageGridPanel(
     currentPage: Int,
     onClickPage: (pageIndex: Int) -> Unit,
     modifier: Modifier = Modifier,
+    // KMK (r125): the header's Chapters button (glass reader)
+    onSwitchToChapters: (() -> Unit)? = null,
 ) {
     SlidingSidePanel(
         visible = visible,
@@ -145,6 +165,17 @@ fun ReaderPageGridPanel(
         title = stringResource(KMR.strings.reader_pages),
         onClose = onClose,
         modifier = modifier,
+        actions = {
+            if (onSwitchToChapters != null) {
+                IconButton(onClick = onSwitchToChapters) {
+                    Icon(
+                        imageVector = Icons.Outlined.FormatListNumbered,
+                        contentDescription = stringResource(MR.strings.chapters),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+        },
     ) {
         // Start fresh (scrolled to the current page) whenever another chapter is opened
         key(currentChapter?.chapter?.id) {
@@ -162,8 +193,9 @@ fun ReaderPageGridPanel(
  */
 fun sidePanelWidth(containerWidth: Dp): Dp {
     return if (containerWidth < 600.dp) {
-        // On phones leave room so both panels can be open at once
-        containerWidth * 0.48f
+        // KMK (r125): on phones one panel at a time (the header switches Chapters / Pages), wide enough for the
+        // eye / bookmark / download buttons on each chapter
+        containerWidth * 0.88f
     } else {
         // Narrow drawer like Usagi: about a quarter of a tablet screen
         (containerWidth * 0.27f).coerceIn(300.dp, 380.dp)
@@ -191,6 +223,8 @@ fun SlidingSidePanel(
     actions: @Composable RowScope.() -> Unit = {},
     /** Show the title bar at the top of the panel */
     showHeader: Boolean = true,
+    /** KMK (r125): a floating glass card (rounded on every side, a margin, see-through) instead of a docked sheet */
+    glass: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     // +1 slides towards the right edge, -1 towards the left edge
@@ -205,20 +239,35 @@ fun SlidingSidePanel(
             exit = slideOutHorizontally { it * direction },
             modifier = Modifier.align(if (fromStart) Alignment.CenterStart else Alignment.CenterEnd),
         ) {
+            val glassShape = RoundedCornerShape(24.dp)
             Surface(
                 modifier = Modifier
+                    .then(if (glass) Modifier.padding(8.dp) else Modifier)
                     .width(panelWidth)
                     .fillMaxHeight()
                     // Keep touches on the panel from reaching the reader underneath
-                    .pointerInput(Unit) {},
-                shape = if (fromStart) {
-                    RoundedCornerShape(topEnd = if (squareTop) 0.dp else 28.dp, bottomEnd = 28.dp)
-                } else {
-                    RoundedCornerShape(topStart = if (squareTop) 0.dp else 28.dp, bottomStart = 28.dp)
+                    .pointerInput(Unit) {}
+                    .then(
+                        if (glass) {
+                            Modifier.then(
+                                Modifier.panelGlassEdge(glassShape),
+                            )
+                        } else {
+                            Modifier
+                        },
+                    ),
+                shape = when {
+                    glass -> glassShape
+                    fromStart -> RoundedCornerShape(topEnd = if (squareTop) 0.dp else 28.dp, bottomEnd = 28.dp)
+                    else -> RoundedCornerShape(topStart = if (squareTop) 0.dp else 28.dp, bottomStart = 28.dp)
                 },
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                tonalElevation = 1.dp,
-                shadowElevation = 8.dp,
+                color = if (glass) {
+                    eu.kanade.presentation.browse.components.GlassPanelColor
+                } else {
+                    MaterialTheme.colorScheme.surfaceContainerLow
+                },
+                tonalElevation = if (glass) 0.dp else 1.dp,
+                shadowElevation = if (glass) 14.dp else 8.dp,
             ) {
                 Column(
                     modifier = Modifier

@@ -11,6 +11,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.SliderDefaults
+import eu.kanade.presentation.reader.appbars.GlassSliderThumb
+import eu.kanade.presentation.reader.appbars.LocalReaderGlass
+import eu.kanade.presentation.reader.appbars.glassSliderColors
+import eu.kanade.presentation.reader.appbars.ReaderGlass
+import eu.kanade.presentation.reader.appbars.readerGlass
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.SkipNext
@@ -83,26 +90,33 @@ fun ChapterNavigator(
     val horizontalPadding = if (isTabletUi) 24.dp else 8.dp
     val layoutDirection = if (isRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
     val haptic = LocalHapticFeedback.current
+    // KMK (r125): one glass pill around the buttons and the slider
+    val glass = LocalReaderGlass.current
 
     // Match with toolbar background color set in ReaderActivity
-    val backgroundColor = MaterialTheme.colorScheme
-        .surfaceColorAtElevation(3.dp)
-        .copy(alpha = if (isSystemInDarkTheme()) 0.9f else 0.95f)
+    val backgroundColor = if (glass) {
+        Color.Transparent
+    } else {
+        MaterialTheme.colorScheme
+            .surfaceColorAtElevation(3.dp)
+            .copy(alpha = if (isSystemInDarkTheme()) 0.9f else 0.95f)
+    }
     val buttonColor = IconButtonDefaults.filledIconButtonColors(
         containerColor = backgroundColor,
         disabledContainerColor = backgroundColor,
         // KMK -->
-        contentColor = MaterialTheme.colorScheme.primary,
+        contentColor = if (glass) ReaderGlass.content else MaterialTheme.colorScheme.primary,
         // KMK <--
     )
-    val textColor = MaterialTheme.colorScheme.onSurface
+    val textColor = if (glass) ReaderGlass.content else MaterialTheme.colorScheme.onSurface
 
     // We explicitly handle direction based on the reader viewer rather than the system direction
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = horizontalPadding),
+                .padding(horizontal = horizontalPadding)
+                .then(if (glass) Modifier.readerGlass(CircleShape).padding(4.dp) else Modifier),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             FilledIconButton(
@@ -159,6 +173,15 @@ fun ChapterNavigator(
                                 onPageIndexChange(it - 1)
                             },
                             interactionSource = interactionSource,
+                            // KMK (r125): the glass knob and track
+                            colors = if (glass) glassSliderColors() else SliderDefaults.colors(),
+                            thumb = {
+                                if (glass) {
+                                    GlassSliderThumb(interactionSource)
+                                } else {
+                                    SliderDefaults.Thumb(interactionSource = interactionSource)
+                                }
+                            },
                         )
 
                         Text(
@@ -207,24 +230,31 @@ fun ChapterNavigatorVert(
 
     val haptic = LocalHapticFeedback.current
 
+    // KMK (r125): one glass bar around the buttons and the slider
+    val glass = LocalReaderGlass.current
     Column(
         modifier = Modifier
             .fillMaxHeight()
-            .padding(vertical = verticalPadding, horizontal = 8.dp),
+            .padding(vertical = verticalPadding, horizontal = 8.dp)
+            .then(if (glass) Modifier.readerGlass(RoundedCornerShape(28.dp)).padding(vertical = 4.dp) else Modifier),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         // Match with toolbar background color set in ReaderActivity
-        val backgroundColor = MaterialTheme.colorScheme
-            .surfaceColorAtElevation(3.dp)
-            .copy(alpha = if (isSystemInDarkTheme()) 0.9f else 0.95f)
+        val backgroundColor = if (glass) {
+            Color.Transparent
+        } else {
+            MaterialTheme.colorScheme
+                .surfaceColorAtElevation(3.dp)
+                .copy(alpha = if (isSystemInDarkTheme()) 0.9f else 0.95f)
+        }
         val buttonColor = IconButtonDefaults.filledIconButtonColors(
             containerColor = backgroundColor,
             disabledContainerColor = backgroundColor,
             // KMK -->
-            contentColor = MaterialTheme.colorScheme.primary,
+            contentColor = if (glass) ReaderGlass.content else MaterialTheme.colorScheme.primary,
             // KMK <--
         )
-        val textColor = MaterialTheme.colorScheme.onSurface
+        val textColor = if (glass) ReaderGlass.content else MaterialTheme.colorScheme.onSurface
 
         FilledIconButton(
             enabled = enabledPrevious,
@@ -291,6 +321,15 @@ fun ChapterNavigatorVert(
                         onPageIndexChange(it - 1)
                     },
                     interactionSource = interactionSource,
+                    // KMK (r125): the glass knob and track
+                    colors = if (glass) glassSliderColors() else SliderDefaults.colors(),
+                    thumb = {
+                        if (glass) {
+                            GlassSliderThumb(interactionSource)
+                        } else {
+                            SliderDefaults.Thumb(interactionSource = interactionSource)
+                        }
+                    },
                 )
 
                 Text(
