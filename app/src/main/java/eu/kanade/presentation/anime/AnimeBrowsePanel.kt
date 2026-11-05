@@ -2,6 +2,7 @@ package eu.kanade.presentation.anime
 
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -112,6 +113,27 @@ fun AnimeEpisodePanel(
             var showThumbs by remember { mutableStateOf(anime.showPreviews) }
             var showSummaries by remember { mutableStateOf(anime.showSummaries) }
             var askScope by remember { mutableStateOf<Pair<Boolean, Boolean>?>(null) }
+            // KMK (r124): episode pictures / summaries from AniList, like the title page, when this source has
+            // AniList switched on; the source's own otherwise. No cover stand-in for missing pictures.
+            val episodeInfo by produceState<eu.kanade.tachiyomi.ui.anime.anilist.AniListEpisodeInfo?>(
+                null,
+                anime.id,
+                showThumbs || showSummaries,
+                preview.episodes.size,
+            ) {
+                value = if ((showThumbs || showSummaries) && preview.episodes.isNotEmpty() &&
+                    !eu.kanade.tachiyomi.data.anime.SourceInfoOnly.isOn(anime.source)
+                ) {
+                    runCatching {
+                        eu.kanade.tachiyomi.ui.anime.anilist.AniListEpisodeMatch.load(
+                            anime,
+                            preview.episodes.map { it.episodeNumber },
+                        )
+                    }.getOrNull()
+                } else {
+                    null
+                }
+            }
             val scope = androidx.compose.runtime.rememberCoroutineScope()
             val applyDisplay: (Boolean, Boolean, Boolean) -> Unit = { previews, show, wholeSource ->
                 if (previews) showThumbs = show else showSummaries = show
@@ -327,7 +349,8 @@ fun AnimeEpisodePanel(
                             onToggleBookmark = { onToggleBookmark(episode) },
                             showThumb = showThumbs,
                             showSummary = showSummaries,
-                            fallbackImage = displayManga.thumbnailUrl,
+                            aniList = episodeInfo?.of(episode.episodeNumber),
+                            inLibrary = anime.favorite,
                             downloaded = episode.id in downloadedIds,
                             queued = queuedById[episode.id],
                             onDownload = { action ->
@@ -407,7 +430,9 @@ private fun AnimePanelEpisodeRow(
     /** KMK (r123): the episode's picture on the left / its summary under the title (the title's Display switches) */
     showThumb: Boolean,
     showSummary: Boolean,
-    fallbackImage: String?,
+    /** KMK (r124): this episode's AniList entry (picture / summary) when the source has AniList on */
+    aniList: eu.kanade.tachiyomi.ui.anime.anilist.AniListEpisode?,
+    inLibrary: Boolean,
     downloaded: Boolean,
     queued: AnimeDownloadManager.Item?,
     onDownload: (ChapterDownloadAction) -> Unit,
@@ -418,7 +443,11 @@ private fun AnimePanelEpisodeRow(
             episode.scanlator?.takeIf { it.isNotBlank() },
         ).joinToString(" • ")
     }
-    val summaryText = episode.summary?.takeIf { showSummary && it.isNotBlank() }
+    val summaryText = if (showSummary) {
+        aniList?.summary?.takeIf { it.isNotBlank() } ?: episode.summary?.takeIf { it.isNotBlank() }
+    } else {
+        null
+    }
     val rich = showThumb || summaryText != null
     // KMK (r123): hide / bookmark / download; with a picture or summary shown they sit on the date line, right-aligned
     // (the title and summary keep the full width beside the picture), otherwise at the row's end as before
@@ -465,7 +494,16 @@ private fun AnimePanelEpisodeRow(
             .padding(start = 16.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
     ) {
         if (showThumb) {
-            val image = episode.previewUrl?.takeIf { it.isNotBlank() } ?: fallbackImage
+            // KMK (r124): the same picture the title page shows (AniList, else the source's preview through the
+            // app's preview loader); none -> an empty tile, never the cover repeated on every row
+            val image: Any? = aniList?.image ?: episode.previewUrl?.takeIf { it.isNotBlank() }?.let { url ->
+                eu.kanade.tachiyomi.data.coil.EpisodePreview(
+                    animeId = episode.animeId,
+                    key = eu.kanade.tachiyomi.data.coil.episodePreviewKey(episode.episodeNumber, episode.url),
+                    url = url,
+                    inLibrary = inLibrary,
+                )
+            }
             coil3.compose.AsyncImage(
                 model = image,
                 contentDescription = null,
@@ -474,7 +512,8 @@ private fun AnimePanelEpisodeRow(
                 modifier = Modifier
                     .padding(end = 12.dp)
                     .size(width = 112.dp, height = 63.dp)
-                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp)),
+                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
             )
         }
         Column(

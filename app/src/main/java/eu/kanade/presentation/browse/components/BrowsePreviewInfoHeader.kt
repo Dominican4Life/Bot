@@ -1,25 +1,48 @@
 package eu.kanade.presentation.browse.components
 
-import androidx.compose.foundation.background
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.PersonOutline
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SuggestionChip
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.manga.components.MangaActionRow
+import eu.kanade.presentation.manga.components.onHold
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.getNameForMangaInfo
+import eu.kanade.tachiyomi.source.model.SManga
 import tachiyomi.domain.manga.model.Manga
+import tachiyomi.i18n.MR
+import tachiyomi.i18n.kmk.KMR
+import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.util.secondaryItemAlpha
 
 /**
  * KMK: The top of the details page (title, author, status, library/WebView buttons, description and tags),
@@ -57,26 +80,34 @@ fun BrowsePreviewInfoHeader(
     onOpenDetails: () -> Unit,
     onSearch: (query: String, global: Boolean) -> Unit,
 ) {
-    // KMK (r123): the title page's own left-pane pieces, so the Browse / Library preview panel looks like it: the
-    // header (B with "Title page header" on: the whole cover with title / author / source on it), the buttons, and
-    // the description with the grouped tag rows (label on the left, values beside it)
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val coverRatio = remember(manga.id) { androidx.compose.runtime.mutableFloatStateOf(1f) }
     Column(modifier = Modifier.fillMaxWidth()) {
-        eu.kanade.presentation.manga.components.MangaInfoBox(
-            isTabletUi = true,
-            appBarPadding = 0.dp,
-            manga = manga,
-            sourceName = sourceName,
-            isStubSource = false,
-            isSourceIncognito = false,
-            onCoverClick = onOpenDetails,
-            doSearch = onSearch,
-            librarySearch = { onSearch(it, false) },
-            onSourceClick = onOpenDetails,
-            onCoverLoaded = {},
-            coverRatio = coverRatio,
-        )
+        // Title, author, status (no cover image)
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onOpenDetails)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+        ) {
+            Text(
+                text = manga.title,
+                style = MaterialTheme.typography.titleLarge,
+                textAlign = TextAlign.Center,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+            )
+            val author = listOfNotNull(manga.author, manga.artist?.takeIf { it != manga.author })
+                .filter { it.isNotBlank() }
+                .joinToString(", ")
+            if (author.isNotEmpty()) {
+                InfoLine(icon = { Icon(Icons.Outlined.PersonOutline, null, Modifier.size(16.dp)) }, text = author)
+            }
+            InfoLine(
+                icon = { Icon(Icons.Outlined.Schedule, null, Modifier.size(16.dp)) },
+                text = listOfNotNull(statusText(manga.status), sourceName).joinToString(" • "),
+            )
+        }
 
         MangaActionRow(
             favorite = manga.favorite,
@@ -95,125 +126,52 @@ fun BrowsePreviewInfoHeader(
             interval = manga.fetchInterval,
         )
 
-        // KMK (r123): the text and the tag rows in ONE swipe card (page 1 text, page 2 tags), dots under it, no
-        // headings; the card keeps one height so the episode list below doesn't jump
-        val tags = remember(manga.genre) { manga.genre?.filter { it.isNotBlank() }.orEmpty() }
-        val chips = remember(manga.source, tags) {
-            eu.kanade.presentation.manga.components.SearchMetadataChips(null, manga.source, tags)
-        }
-        val description = manga.description?.takeIf { it.isNotBlank() }
-        SwipeInfoCard(
-            description = description,
-            tags = tags,
-            chips = chips,
-            onSearch = onSearch,
-            onCopy = { tag ->
+        // KMK (r124): the description and tags fold the way the title page does it (the arrow under the text that
+        // opens both), with the grouped tag rows; no section headings and no swipe card
+        val context = androidx.compose.ui.platform.LocalContext.current
+        val tags = remember(manga.genre) { manga.genre?.filter { it.isNotBlank() } }
+        eu.kanade.presentation.manga.components.ExpandableMangaDescription(
+            defaultExpandState = false,
+            description = manga.description,
+            tagsProvider = { tags },
+            notes = manga.notes,
+            onTagSearch = { onSearch(it, false) },
+            onCopyTagToClipboard = { tag ->
                 context.getSystemService(android.content.ClipboardManager::class.java)
                     ?.setPrimaryClip(android.content.ClipData.newPlainText(tag, tag))
             },
+            // Notes are edited on the full title page
+            onEditNotes = onOpenDetails,
+            searchMetadataChips = remember(manga.source, tags) {
+                eu.kanade.presentation.manga.components.SearchMetadataChips(null, manga.source, tags)
+            },
+            doSearch = onSearch,
         )
         HorizontalDivider(modifier = Modifier.padding(top = 8.dp))
     }
 }
 
-/** KMK (r123): which page of the swipe card shows when a panel opens (kept while the app is open) */
-private var swipeCardPage = 0
-
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SwipeInfoCard(
-    description: String?,
-    tags: List<String>,
-    chips: eu.kanade.presentation.manga.components.SearchMetadataChips?,
-    onSearch: (query: String, global: Boolean) -> Unit,
-    onCopy: (String) -> Unit,
-) {
-    val pages = buildList {
-        if (description != null) add(0)
-        if (tags.isNotEmpty()) add(1)
-    }
-    if (pages.isEmpty()) return
-    val pagerState = androidx.compose.foundation.pager.rememberPagerState(
-        initialPage = swipeCardPage.coerceIn(0, pages.size - 1),
-    ) { pages.size }
-    androidx.compose.runtime.LaunchedEffect(pagerState.currentPage) { swipeCardPage = pagerState.currentPage }
-    val shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp)
-    androidx.compose.foundation.pager.HorizontalPager(
-        state = pagerState,
-        pageSpacing = 12.dp,
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 6.dp)
-            .height(CardHeight),
-    ) { index ->
-        androidx.compose.foundation.layout.Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .clip(shape)
-                .background(androidx.compose.material3.MaterialTheme.colorScheme.surfaceContainerHigh)
-                .verticalScroll(androidx.compose.foundation.rememberScrollState())
-                .padding(vertical = 10.dp),
-        ) {
-            when (pages[index]) {
-                0 -> androidx.compose.foundation.text.selection.SelectionContainer {
-                    androidx.compose.material3.Text(
-                        text = description.orEmpty(),
-                        style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(horizontal = 12.dp),
-                    )
-                }
-                else -> if (chips != null) {
-                    // grouped rows: label on the left, its values beside it (like the title page)
-                    eu.kanade.presentation.manga.components.NamespaceTags(
-                        tags = chips,
-                        onClick = { onSearch(it, false) },
-                        onLongClick = { onSearch(it, true) },
-                        onDoubleClick = onCopy,
-                    )
-                } else {
-                    androidx.compose.foundation.layout.FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier.padding(horizontal = 12.dp),
-                    ) {
-                        tags.forEach { tag ->
-                            eu.kanade.presentation.manga.components.TagsChip(
-                                text = tag,
-                                onClick = { onSearch(tag, false) },
-                                onLongClick = { onSearch(tag, true) },
-                                onDoubleClick = { onCopy(tag) },
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-    if (pages.size > 1) {
-        androidx.compose.foundation.layout.Row(
-            horizontalArrangement = Arrangement.spacedBy(6.dp, androidx.compose.ui.Alignment.CenterHorizontally),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp),
-        ) {
-            pages.indices.forEach { i ->
-                val selected = pagerState.currentPage == i
-                androidx.compose.foundation.layout.Box(
-                    Modifier
-                        .height(7.dp)
-                        .width(if (selected) 18.dp else 7.dp)
-                        .clip(androidx.compose.foundation.shape.CircleShape)
-                        .background(
-                            if (selected) {
-                                androidx.compose.material3.MaterialTheme.colorScheme.primary
-                            } else {
-                                androidx.compose.material3.MaterialTheme.colorScheme.outlineVariant
-                            },
-                        ),
-                )
-            }
-        }
+private fun InfoLine(icon: @Composable () -> Unit, text: String) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier.secondaryItemAlpha(),
+    ) {
+        icon()
+        Text(text = text, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }
 
-private val CardHeight = 150.dp
+@Composable
+private fun statusText(status: Long): String? {
+    return when (status.toInt()) {
+        SManga.ONGOING -> stringResource(MR.strings.ongoing)
+        SManga.COMPLETED -> stringResource(MR.strings.completed)
+        SManga.LICENSED -> stringResource(MR.strings.licensed)
+        SManga.PUBLISHING_FINISHED -> stringResource(MR.strings.publishing_finished)
+        SManga.CANCELLED -> stringResource(MR.strings.cancelled)
+        SManga.ON_HIATUS -> stringResource(MR.strings.on_hiatus)
+        else -> null
+    }
+}
