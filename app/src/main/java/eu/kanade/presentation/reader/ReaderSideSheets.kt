@@ -55,6 +55,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.material.icons.outlined.FormatListNumbered
@@ -684,7 +685,7 @@ fun SlidingSidePanel(
                         }
                     }
                     .pointerInput(roomPx) {
-                        androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress(
+                        detectDragGesturesAfterLongPress(
                             onDragStart = {
                                 lifted = true
                                 haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
