@@ -252,6 +252,11 @@ fun AnimeLibraryPreviewModel.Panels(scope: BoxScope) {
             episode = chosenEpisode ?: state.episodes.firstOrNull(),
             playToken = playToken,
             onClose = ::closePlayerPanel,
+            // KMK (r127): previous / next in the floating window
+            onSelectEpisode = { episode ->
+                chosenEpisode = episode
+                playToken++
+            },
             onOpenPlayer = { episode, positionMs ->
                 savePosition(episode.id, positionMs) {
                     context.startActivity(PlayerActivity.newIntent(context, episode.animeId, episode.id))

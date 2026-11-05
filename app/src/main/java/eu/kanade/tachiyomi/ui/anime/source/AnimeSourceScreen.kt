@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.anime.source
 
+import dev.chrisbanes.haze.hazeSource
 import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateDpAsState
@@ -440,7 +441,9 @@ class AnimeSourceScreen(
                     } else {
                         Modifier
                     }
-                    Box(modifier = Modifier.fillMaxSize().then(swipeModifier)) {
+                    // KMK (r127): the covers are what the glass panel blurs
+                    val glassHaze = remember { dev.chrisbanes.haze.HazeState() }
+                    Box(modifier = Modifier.fillMaxSize().then(swipeModifier).hazeSource(glassHaze)) {
                         when {
                             source == null -> EmptyScreen(
                                 message = stringResource(MR.strings.source_not_installed, sourceId.toString()),
@@ -507,7 +510,8 @@ class AnimeSourceScreen(
                     }
 
                     // The panel starts below the toolbar and the Popular / Latest / Filter row
-                    Box(
+                    androidx.compose.runtime.CompositionLocalProvider(eu.kanade.presentation.browse.components.LocalGlassHaze provides glassHaze) {
+Box(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(top = paddingValues.calculateTopPadding()),
@@ -548,6 +552,11 @@ class AnimeSourceScreen(
                             episode = chosenEpisode ?: preview.episodes.firstOrNull(),
                             playToken = playToken,
                             onClose = screenModel::closePlayerPanel,
+                            // KMK (r127): previous / next in the floating window
+                            onSelectEpisode = { episode ->
+                                chosenEpisode = episode
+                                playToken++
+                            },
                             onOpenPlayer = { episode, positionMs ->
                                 screenModel.savePreviewPosition(episode.id, positionMs) {
                                     context.startActivity(
@@ -618,6 +627,7 @@ class AnimeSourceScreen(
                                 )
                             }
                         }
+                    }
                     }
                 }
             }

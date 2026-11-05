@@ -66,6 +66,11 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.union
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.browse.components.BrowsePreviewInfoHeader
@@ -126,6 +131,17 @@ fun AnimeEpisodePanel(
     val tileColumns by remember { eu.kanade.presentation.components.TitleSheet.columns("anime") }.collectAsPrefState()
     SlidingSidePanel(
         glass = glass,
+        // KMK (r127): drag to either side, ⇄, or tuck into the edge
+        movable = true,
+        tuckKey = preview.anime?.id,
+        tuckCover = {
+            coil3.compose.AsyncImage(
+                model = preview.anime?.thumbnailUrl,
+                contentDescription = null,
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        },
         visible = preview.panelOpen,
         fromStart = true,
         title = stringResource(KMR.strings.anime_episodes_count, preview.episodes.size),
@@ -511,6 +527,7 @@ fun AnimePlayerPanel(
     onClose: () -> Unit,
     onOpenPlayer: (Episode, Long) -> Unit,
     modifier: Modifier = Modifier,
+    onSelectEpisode: ((Episode) -> Unit)? = null,
 ) {
     val glass by remember { PreviewGlass.enabled() }.collectAsPrefState()
     // KMK (r126): with the glass panel the episode plays in a floating window over the covers (no right panel)
@@ -523,6 +540,8 @@ fun AnimePlayerPanel(
                 playToken = playToken,
                 onClose = onClose,
                 onOpenPlayer = onOpenPlayer,
+                episodes = preview.episodes,
+                onSelectEpisode = onSelectEpisode,
             )
         }
         return
@@ -812,10 +831,15 @@ private fun AnimeEpisodeTile(
     }
 }
 
+/** KMK (r127): where the floating player was left (x, y, width, height in px), kept while the app runs */
+private object FloatingPlayerRect {
+    var rect: IntArray? = null
+}
+
 /**
- * KMK (r126): the floating player of the glass panel: the preview player (with its View, Looks and filter
- * settings, split view included) in a window over the covers. Drag the title bar to move it, the corner to resize,
- * ⤢ in the player for the full player at the same second, ✕ to stop. It stays inside the screen.
+ * KMK (r126, r127): the floating player of the glass panel: the preview player with the normal player's buttons in a
+ * window over the covers. Drag the title row to move it; drag any corner or edge to resize it (the video keeps its
+ * shape inside). It stays between the status bar and the navigation bar (and clear of a cutout or the keyboard).
  */
 @Composable
 private fun AnimeFloatingPlayer(
@@ -825,66 +849,103 @@ private fun AnimeFloatingPlayer(
     playToken: Int,
     onClose: () -> Unit,
     onOpenPlayer: (Episode, Long) -> Unit,
+    episodes: List<Episode>,
+    onSelectEpisode: ((Episode) -> Unit)?,
 ) {
     val density = androidx.compose.ui.platform.LocalDensity.current
-    androidx.compose.foundation.layout.BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val margin = with(density) { 12.dp.roundToPx() }
+    val rootView = androidx.compose.ui.platform.LocalView.current.rootView
+    val safeInsets = androidx.compose.foundation.layout.WindowInsets.safeDrawing
+        .union(androidx.compose.foundation.layout.WindowInsets.ime)
+    val safeLeft = safeInsets.getLeft(density, androidx.compose.ui.unit.LayoutDirection.Ltr)
+    val safeTop = safeInsets.getTop(density)
+    val safeRight = safeInsets.getRight(density, androidx.compose.ui.unit.LayoutDirection.Ltr)
+    val safeBottom = safeInsets.getBottom(density)
+    var parentInWindow by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    androidx.compose.foundation.layout.BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxSize()
+            .onGloballyPositioned { parentInWindow = it.positionInWindow() },
+    ) {
+        val margin = with(density) { 8.dp.roundToPx() }
         val parentW = constraints.maxWidth
         val parentH = constraints.maxHeight
-        var widthPx by remember { mutableIntStateOf(with(density) { 420.dp.roundToPx() }.coerceAtMost(parentW - 2 * margin)) }
-        val minW = with(density) { 260.dp.roundToPx() }
-        val maxW = (parentW * 0.8f).toInt().coerceAtLeast(minW)
-        var windowH by remember { mutableIntStateOf(with(density) { 280.dp.roundToPx() }) }
-        var pos by remember { mutableStateOf<androidx.compose.ui.unit.IntOffset?>(null) }
-        fun clamp(p: androidx.compose.ui.unit.IntOffset) = androidx.compose.ui.unit.IntOffset(
-            p.x.coerceIn(margin, (parentW - widthPx - margin).coerceAtLeast(margin)),
-            p.y.coerceIn(margin, (parentH - windowH - margin).coerceAtLeast(margin)),
-        )
-        val at = clamp(pos ?: androidx.compose.ui.unit.IntOffset(parentW - widthPx - margin, parentH - windowH - margin))
-        val shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp)
+        // The usable area inside this box, in its own px
+        val minX = (safeLeft - parentInWindow.x.roundToInt()).coerceAtLeast(0) + margin
+        val minY = (safeTop - parentInWindow.y.roundToInt()).coerceAtLeast(0) + margin
+        val maxX = (minOf(parentW, rootView.width - safeRight - parentInWindow.x.roundToInt()) - margin)
+            .coerceAtLeast(minX + 1)
+        val maxY = (minOf(parentH, rootView.height - safeBottom - parentInWindow.y.roundToInt()) - margin)
+            .coerceAtLeast(minY + 1)
+        val minW = with(density) { 240.dp.roundToPx() }
+        val minH = with(density) { 150.dp.roundToPx() }
+        fun clamp(r: IntArray): IntArray {
+            val w = r[2].coerceIn(minW.coerceAtMost(maxX - minX), (maxX - minX).coerceAtLeast(1))
+            val h = r[3].coerceIn(minH.coerceAtMost(maxY - minY), (maxY - minY).coerceAtLeast(1))
+            val x = r[0].coerceIn(minX, (maxX - w).coerceAtLeast(minX))
+            val y = r[1].coerceIn(minY, (maxY - h).coerceAtLeast(minY))
+            return intArrayOf(x, y, w, h)
+        }
+        var rect by remember {
+            val w = with(density) { 440.dp.roundToPx() }
+            val h = w * 9 / 16 + with(density) { 8.dp.roundToPx() }
+            mutableStateOf(FloatingPlayerRect.rect ?: intArrayOf(Int.MAX_VALUE, Int.MAX_VALUE, w, h))
+        }
+        val at = clamp(rect)
+        fun update(r: IntArray) {
+            rect = clamp(r)
+            FloatingPlayerRect.rect = rect
+        }
+        val shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp)
+        val moveHandle = Modifier.pointerInput(minX, minY, maxX, maxY) {
+            detectDragGestures { change, drag ->
+                change.consume()
+                val r = clamp(rect)
+                update(intArrayOf(r[0] + drag.x.roundToInt(), r[1] + drag.y.roundToInt(), r[2], r[3]))
+            }
+        }
+        // Resize from an edge: sx / sy say which sides move (-1 the left / top side, +1 the right / bottom one)
+        fun resize(sx: Int, sy: Int) = Modifier.pointerInput(sx, sy, minX, minY, maxX, maxY) {
+            detectDragGestures { change, drag ->
+                change.consume()
+                val r = clamp(rect)
+                var (x, y, w, h) = listOf(r[0], r[1], r[2], r[3])
+                val dx = drag.x.roundToInt()
+                val dy = drag.y.roundToInt()
+                if (sx > 0) w += dx
+                if (sx < 0) {
+                    val nw = (w - dx).coerceAtLeast(minW)
+                    x += w - nw
+                    w = nw
+                }
+                if (sy > 0) h += dy
+                if (sy < 0) {
+                    val nh = (h - dy).coerceAtLeast(minH)
+                    y += h - nh
+                    h = nh
+                }
+                update(intArrayOf(x, y, w, h))
+            }
+        }
+        // The list runs newest first or oldest first; "next" is the following episode number
+        val sorted = remember(episodes) { episodes.sortedBy { it.episodeNumber } }
+        val pos = sorted.indexOfFirst { it.id == episode?.id }
+        val previous = sorted.getOrNull(pos - 1)?.takeIf { pos >= 0 }
+        val next = sorted.getOrNull(pos + 1)?.takeIf { pos >= 0 }
         Box(
             modifier = Modifier
-                .offset { at }
-                .width(with(density) { widthPx.toDp() })
-                .heightIn(max = with(density) { (parentH - 2 * margin).toDp() })
-                .onSizeChanged { windowH = it.height }
-                .shadow(18.dp, shape)
-                .clip(shape)
-                .background(eu.kanade.presentation.browse.components.GlassPanelColor)
-                .border(1.dp, Color.White.copy(alpha = 0.16f), shape),
+                .offset { androidx.compose.ui.unit.IntOffset(at[0], at[1]) }
+                .size(with(density) { at[2].toDp() }, with(density) { at[3].toDp() }),
         ) {
-            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                // Title bar: drag to move
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .pointerInput(Unit) {
-                            detectDragGestures { change, drag ->
-                                change.consume()
-                                val base = pos ?: at
-                                pos = clamp(
-                                    androidx.compose.ui.unit.IntOffset(
-                                        base.x + drag.x.roundToInt(),
-                                        base.y + drag.y.roundToInt(),
-                                    ),
-                                )
-                            }
-                        }
-                        .padding(start = 12.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(Icons.Outlined.DragIndicator, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Text(
-                        text = episode?.name.orEmpty(),
-                        style = MaterialTheme.typography.labelLarge,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f).padding(start = 6.dp),
-                    )
-                    IconButton(onClick = onClose) {
-                        Icon(Icons.Outlined.Close, contentDescription = stringResource(MR.strings.action_close))
-                    }
-                }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    // A thin ring around the video holds the resize grips
+                    .padding(8.dp)
+                    .shadow(18.dp, shape)
+                    .clip(shape)
+                    .background(Color.Black)
+                    .border(1.dp, Color.White.copy(alpha = 0.16f), shape),
+            ) {
                 key(anime.id) {
                     AnimePreviewSection(
                         anime = anime,
@@ -893,28 +954,75 @@ private fun AnimeFloatingPlayer(
                         playToken = playToken,
                         onOpenPlayer = onOpenPlayer,
                         settingsInitiallyOpen = false,
+                        floating = true,
+                        dragHandle = moveHandle,
+                        onClose = onClose,
+                        onPrevious = if (previous != null && onSelectEpisode != null) {
+                            { onSelectEpisode(previous) }
+                        } else {
+                            null
+                        },
+                        onNext = if (next != null && onSelectEpisode != null) {
+                            { onSelectEpisode(next) }
+                        } else {
+                            null
+                        },
+                        modifier = Modifier.fillMaxSize(),
                     )
                 }
             }
-            // Corner grip: drag to resize
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .size(28.dp)
-                    .pointerInput(Unit) {
-                        detectDragGestures { change, drag ->
-                            change.consume()
-                            widthPx = (widthPx + drag.x.roundToInt()).coerceIn(minW, maxW)
-                        }
-                    },
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.Outlined.OpenInFull,
-                    contentDescription = null,
-                    modifier = Modifier.size(14.dp),
-                    tint = Color.White.copy(alpha = 0.7f),
-                )
+            // Resize grips: the four corners and the middle of each side
+            val grip = 22.dp
+            val bar = 34.dp
+            listOf(
+                Triple(Alignment.TopStart, -1, -1),
+                Triple(Alignment.TopEnd, 1, -1),
+                Triple(Alignment.BottomStart, -1, 1),
+                Triple(Alignment.BottomEnd, 1, 1),
+            ).forEach { (align, sx, sy) ->
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.align(align).size(grip).then(resize(sx, sy)),
+                ) {
+                    Box(
+                        Modifier
+                            .size(10.dp)
+                            .clip(androidx.compose.foundation.shape.CircleShape)
+                            .background(Color.White.copy(alpha = 0.75f)),
+                    )
+                }
+            }
+            listOf(
+                Triple(Alignment.TopCenter, 0, -1),
+                Triple(Alignment.BottomCenter, 0, 1),
+            ).forEach { (align, sx, sy) ->
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.align(align).size(width = bar * 2, height = 18.dp).then(resize(sx, sy)),
+                ) {
+                    Box(
+                        Modifier
+                            .size(width = bar, height = 4.dp)
+                            .clip(androidx.compose.foundation.shape.CircleShape)
+                            .background(Color.White.copy(alpha = 0.6f)),
+                    )
+                }
+            }
+            listOf(
+                Triple(Alignment.CenterStart, -1, 0),
+                Triple(Alignment.CenterEnd, 1, 0),
+            ).forEach { (align, sx, sy) ->
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.align(align).size(width = 18.dp, height = bar * 2).then(resize(sx, sy)),
+                ) {
+                    Box(
+                        Modifier
+                            .size(width = 4.dp, height = bar)
+                            .clip(androidx.compose.foundation.shape.CircleShape)
+                            .background(Color.White.copy(alpha = 0.6f)),
+                    )
+                }
             }
         }
     }

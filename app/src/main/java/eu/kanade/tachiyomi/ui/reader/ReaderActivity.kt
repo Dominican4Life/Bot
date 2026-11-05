@@ -342,6 +342,12 @@ class ReaderActivity : BaseActivity() {
                 )
             }
 
+            // KMK (r127): the glass surfaces show the pages behind them, blurred (a live copy of the viewer)
+            val glassBackdrop = remember { eu.kanade.presentation.browse.components.GlassBackdrop() }
+            eu.kanade.presentation.browse.components.GlassBackdropSource(glassBackdrop, viewerContainer)
+            androidx.compose.runtime.CompositionLocalProvider(
+                eu.kanade.presentation.browse.components.LocalGlassBackdrop provides glassBackdrop,
+            ) {
             Box(modifier = Modifier.fillMaxSize()) {
                 if (!state.menuVisible && showPageNumber) {
                     ReaderPageIndicator(
@@ -374,46 +380,104 @@ class ReaderActivity : BaseActivity() {
                         persistentListOf()
                     }
                 }
+                // KMK (r127): with the glass reader, Chapters and Pages are one glass sheet from the bottom
+                val glassReader by remember { eu.kanade.presentation.reader.appbars.ReaderGlass.enabled() }.collectAsState()
+                if (glassReader) {
+                    val chapterListContent: @Composable () -> Unit = {
+                        androidx.compose.runtime.key(panelChapters.firstOrNull { it.isCurrent }?.chapter?.id) {
+                            eu.kanade.presentation.reader.ChapterListContent(
+                                screenModel = settingsScreenModel,
+                                chapters = panelChapters,
+                                onClickChapter = viewModel::loadNewChapterFromDialog,
+                                onBookmark = { chapter ->
+                                    viewModel.toggleBookmark(chapter.id, !chapter.bookmark)
+                                    chapterListVersion++
+                                },
+                                dateRelativeTime = state.dateRelativeTime,
+                                onDownloadAction = { chapter, action ->
+                                    viewModel.handleDownloadAction(chapter, action)
+                                },
+                                modifier = Modifier.fillMaxSize(),
+                                onToggleRead = { chapter ->
+                                    viewModel.toggleRead(chapter.id, !chapter.read)
+                                    chapterListVersion++
+                                },
+                            )
+                        }
+                    }
+                    eu.kanade.presentation.reader.ReaderGlassSheet(
+                        visible = state.chapterListPanelOpen || state.pageGridPanelOpen,
+                        showPages = state.pageGridPanelOpen && !state.chapterListPanelOpen,
+                        onShowPages = { pages ->
+                            if (pages) {
+                                viewModel.closeChapterListPanel()
+                                viewModel.openPageGridPanel()
+                            } else {
+                                viewModel.closePageGridPanel()
+                                viewModel.openChapterListDialog()
+                            }
+                        },
+                        onClose = {
+                            viewModel.closeChapterListPanel()
+                            viewModel.closePageGridPanel()
+                        },
+                        title = state.manga?.title,
+                        subtitle = state.currentChapter?.chapter?.name,
+                        cover = state.manga?.thumbnailUrl,
+                        chapters = chapterListContent,
+                        pages = {
+                            androidx.compose.runtime.key(state.currentChapter?.chapter?.id) {
+                                eu.kanade.presentation.reader.PageGridContent(
+                                    chapter = state.currentChapter,
+                                    currentPage = state.currentPage,
+                                    onClickPage = this@ReaderActivity::moveToPageIndex,
+                                )
+                            }
+                        },
+                    )
+                } else {
                 ReaderChapterListPanel(
-                    visible = state.chapterListPanelOpen,
-                    onClose = viewModel::closeChapterListPanel,
-                    screenModel = settingsScreenModel,
-                    chapters = panelChapters,
-                    onClickChapter = viewModel::loadNewChapterFromDialog,
-                    onBookmark = { chapter ->
-                        viewModel.toggleBookmark(chapter.id, !chapter.bookmark)
-                        chapterListVersion++
-                    },
-                    dateRelativeTime = state.dateRelativeTime,
-                    onDownloadAction = { chapter, action ->
-                        viewModel.handleDownloadAction(chapter, action)
-                    },
-                    // KMK (r125): eye button / swipe right, and the Pages button in the header
-                    onToggleRead = { chapter ->
-                        viewModel.toggleRead(chapter.id, !chapter.read)
-                        chapterListVersion++
-                    },
-                    onSwitchToPages = {
-                        viewModel.closeChapterListPanel()
-                        viewModel.openPageGridPanel()
-                    },
-                )
-                ReaderPageGridPanel(
-                    visible = state.pageGridPanelOpen,
-                    onClose = viewModel::closePageGridPanel,
-                    currentChapter = state.currentChapter,
-                    currentPage = state.currentPage,
-                    onClickPage = this@ReaderActivity::moveToPageIndex,
-                    onSwitchToChapters = {
-                        viewModel.closePageGridPanel()
-                        viewModel.openChapterListDialog()
-                    },
-                )
+                        visible = state.chapterListPanelOpen,
+                        onClose = viewModel::closeChapterListPanel,
+                        screenModel = settingsScreenModel,
+                        chapters = panelChapters,
+                        onClickChapter = viewModel::loadNewChapterFromDialog,
+                        onBookmark = { chapter ->
+                            viewModel.toggleBookmark(chapter.id, !chapter.bookmark)
+                            chapterListVersion++
+                        },
+                        dateRelativeTime = state.dateRelativeTime,
+                        onDownloadAction = { chapter, action ->
+                            viewModel.handleDownloadAction(chapter, action)
+                        },
+                        // KMK (r125): eye button / swipe right, and the Pages button in the header
+                        onToggleRead = { chapter ->
+                            viewModel.toggleRead(chapter.id, !chapter.read)
+                            chapterListVersion++
+                        },
+                        onSwitchToPages = {
+                            viewModel.closeChapterListPanel()
+                            viewModel.openPageGridPanel()
+                        },
+                    )
+                    ReaderPageGridPanel(
+                        visible = state.pageGridPanelOpen,
+                        onClose = viewModel::closePageGridPanel,
+                        currentChapter = state.currentChapter,
+                        currentPage = state.currentPage,
+                        onClickPage = this@ReaderActivity::moveToPageIndex,
+                        onSwitchToChapters = {
+                            viewModel.closePageGridPanel()
+                            viewModel.openChapterListDialog()
+                        },
+                    )
+                }
                 // KMK <--
                 // KMK (r97) -->
                 // The Diagnostics floating log window over the reader; composes nothing while hidden
                 eu.kanade.tachiyomi.ui.diagnostics.FloatingLogHost()
                 // KMK <--
+            }
             }
 
             // KMK -->

@@ -9,6 +9,15 @@ import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.material.icons.outlined.Build
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -42,6 +51,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import eu.kanade.presentation.browse.components.liquidGlass
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -95,24 +105,13 @@ object ReaderGlass {
 /** True inside the reader's bars while the glass look is on (the slider reads it) */
 val LocalReaderGlass = staticCompositionLocalOf { false }
 
-/** A glass surface: the dark tint, a soft light from the top-left and a thin bright edge */
+/**
+ * A glass surface. KMK (r127): real glass (the page behind blurred, a lens edge, light on the rim) through
+ * [eu.kanade.presentation.browse.components.liquidGlass]; the tinted look where that isn't available.
+ */
 fun Modifier.readerGlass(shape: Shape): Modifier = this
     .clip(shape)
-    .background(ReaderGlass.tint)
-    .background(
-        Brush.linearGradient(
-            0f to Color.White.copy(alpha = 0.13f),
-            0.45f to Color.White.copy(alpha = 0.02f),
-            1f to Color.White.copy(alpha = 0.05f),
-        ),
-    )
-    .border(
-        BorderStroke(
-            eu.kanade.presentation.browse.components.GlassStyle.edgeWidth(),
-            eu.kanade.presentation.browse.components.GlassStyle.edgeColor(),
-        ),
-        shape,
-    )
+    .liquidGlass(shape, Color(0xFF14161E))
 
 @Composable
 internal fun GlassTopBar(
@@ -214,20 +213,48 @@ internal fun GlassActionSheet(
     onClickShare: (() -> Unit)?,
     onClickPageLayout: () -> Unit,
     onClickShiftPage: () -> Unit,
+    onClickTools: (() -> Unit)? = null,
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
-        onDismissRequest = onDismissRequest,
-        sheetState = sheetState,
-        containerColor = Color(0xFF181B24).copy(alpha = 0.94f),
-        contentColor = ReaderGlass.content,
-        scrimColor = Color.Black.copy(alpha = 0.25f),
-    ) {
+    // KMK (r127): drawn in the reader's own window (not a dialog) so it can be real glass over the page
+    androidx.activity.compose.BackHandler(onBack = onDismissRequest)
+    val sheetShape = RoundedCornerShape(eu.kanade.presentation.browse.components.GlassStyle.cornerDp() + 6.dp)
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { shown = true }
+    Box(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.18f))
+                .pointerInput(Unit) { detectTapGestures { onDismissRequest() } },
+        )
         fun run(action: () -> Unit): () -> Unit = {
             onDismissRequest()
             action()
         }
-        Column(modifier = Modifier.navigationBarsPadding().padding(bottom = 12.dp)) {
+        androidx.compose.animation.AnimatedVisibility(
+            visible = shown,
+            enter = slideInVertically { it } + fadeIn(),
+            modifier = Modifier.align(Alignment.BottomCenter),
+        ) {
+        Column(
+            modifier = Modifier
+                .navigationBarsPadding()
+                .padding(8.dp)
+                .sizeIn(maxWidth = 640.dp)
+                .fillMaxWidth()
+                .shadow(18.dp, sheetShape)
+                .liquidGlass(sheetShape, Color(0xFF14161E))
+                .pointerInput(Unit) {}
+                .padding(top = 10.dp, bottom = 12.dp),
+        ) {
+            Box(
+                Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .padding(bottom = 12.dp)
+                    .size(width = 40.dp, height = 5.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.6f)),
+            )
             // Reading modes for this series
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
@@ -321,6 +348,14 @@ internal fun GlassActionSheet(
                         run(onClickShare),
                     )
                 }
+                // KMK (r127): auto scroll, retry all, boost page (was the ⌄ strip under the top bar)
+                if (onClickTools != null) {
+                    ActionTile(
+                        rememberVectorPainter(Icons.Outlined.Build),
+                        stringResource(KMR.strings.reader_glass_tools),
+                        run(onClickTools),
+                    )
+                }
                 ActionTile(
                     rememberVectorPainter(Icons.Outlined.Settings),
                     stringResource(MR.strings.action_settings),
@@ -328,6 +363,7 @@ internal fun GlassActionSheet(
                 )
             }
             Spacer(modifier = Modifier.height(4.dp))
+        }
         }
     }
 }

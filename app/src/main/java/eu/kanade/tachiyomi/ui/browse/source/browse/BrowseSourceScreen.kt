@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.browse.source.browse
 
+import dev.chrisbanes.haze.hazeSource
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.graphics.res.animatedVectorResource
@@ -630,7 +631,9 @@ data class BrowseSourceScreen(
                     } else {
                         Modifier
                     }
-                    Box(modifier = Modifier.fillMaxSize().then(swipeModifier)) {
+                    // KMK (r127): the covers are what the glass panel blurs
+                    val glassHaze = remember { dev.chrisbanes.haze.HazeState() }
+                    Box(modifier = Modifier.fillMaxSize().then(swipeModifier).hazeSource(glassHaze)) {
                         BrowseSourceContent(
                             source = screenModel.source,
                             mangaList = mangaList,
@@ -702,7 +705,8 @@ data class BrowseSourceScreen(
 
                     // KMK -->
                     // The panels start below the toolbar and the Popular / Latest / Filter row
-                    Box(
+                    androidx.compose.runtime.CompositionLocalProvider(eu.kanade.presentation.browse.components.LocalGlassHaze provides glassHaze) {
+Box(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(top = paddingValues.calculateTopPadding()),
@@ -839,6 +843,7 @@ data class BrowseSourceScreen(
                                 )
                             }
                         }
+                    }
                     }
 
                     if (showChapterSettings) {

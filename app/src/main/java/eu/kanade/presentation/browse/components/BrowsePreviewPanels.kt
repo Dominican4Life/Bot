@@ -137,6 +137,17 @@ fun BrowseChapterPanel(
         squareTop = true,
         showHeader = false,
         glass = glass,
+        // KMK (r127): drag to either side, ⇄, or tuck into the edge
+        movable = true,
+        tuckKey = state.manga?.id,
+        tuckCover = {
+            coil3.compose.AsyncImage(
+                model = state.manga?.thumbnailUrl,
+                contentDescription = null,
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        },
     ) {
         key(state.manga?.id) {
             var tab by remember { mutableStateOf(PreviewPanelTab.LIST) }

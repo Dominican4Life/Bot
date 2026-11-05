@@ -26,6 +26,19 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.runtime.key
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.DragIndicator
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.LockOpen
+import androidx.compose.material.icons.outlined.Replay10
+import androidx.compose.material.icons.outlined.Forward10
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.verticalScroll
+import tachiyomi.i18n.MR
 import androidx.compose.material.icons.automirrored.outlined.VolumeOff
 import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import androidx.compose.material.icons.filled.Pause
@@ -140,6 +153,14 @@ fun AnimePreviewSection(
     modifier: Modifier = Modifier,
     // KMK (r126): the floating window starts with the video settings folded
     settingsInitiallyOpen: Boolean = true,
+    // KMK (r127): the floating window: the video fills the window, the normal player's buttons over it, the video
+    // settings as a sheet inside it. [dragHandle] moves the window (put on the title row), [onClose] is its ✕,
+    // [onPrevious] / [onNext] play the neighbouring episodes.
+    floating: Boolean = false,
+    dragHandle: Modifier = Modifier,
+    onClose: (() -> Unit)? = null,
+    onPrevious: (() -> Unit)? = null,
+    onNext: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -165,6 +186,8 @@ fun AnimePreviewSection(
     var filterRevision by remember { mutableIntStateOf(0) }
     var loadJob by remember { mutableStateOf<Job?>(null) }
     var playingEpisode by remember { mutableStateOf<Episode?>(null) }
+    var locked by remember { mutableStateOf(false) }
+    var speed by remember { mutableDoubleStateOf(playerPreferences.playerSpeed().get().toDouble()) }
 
     fun releasePlayer() {
         val instance = mpv ?: return
@@ -324,8 +347,8 @@ fun AnimePreviewSection(
     LaunchedEffect(view, comparing, filterRevision, mpv) { applyView(mpv) }
 
     // Hide the controls a few seconds after the last touch while playing
-    LaunchedEffect(showControls, paused, phase) {
-        if (showControls && !paused && phase == PreviewPhase.Playing) {
+    LaunchedEffect(showControls, paused, phase, locked, settingsOpen) {
+        if (showControls && !paused && !locked && !(floating && settingsOpen) && phase == PreviewPhase.Playing) {
             delay(3000)
             showControls = false
         }
@@ -342,6 +365,235 @@ fun AnimePreviewSection(
         }
     }
 
+    val togglePause = {
+        showControls = true
+        runCatching { mpv?.setPropertyBoolean("pause", !paused) }
+        Unit
+    }
+    val toggleMute = {
+        muted = !muted
+        runCatching { mpv?.setPropertyBoolean("mute", muted) }
+        Unit
+    }
+    val seekTo = { seconds: Double ->
+        showControls = true
+        position = seconds
+        runCatching { mpv?.command("seek", seconds.toString(), "absolute") }
+        Unit
+    }
+    val pickVideo = { index: Int -> playingEpisode?.let { startVideo(index, videos, it) }; Unit }
+    val openFull = open@{
+        val ep = playingEpisode ?: return@open
+        val positionMs = (position * 1000).toLong()
+        loadJob?.cancel()
+        phase = PreviewPhase.Idle
+        releasePlayer()
+        onOpenPlayer(ep, positionMs)
+    }
+    val stage: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit = {
+        val instance = mpv
+        // KMK (r127): the video view stays attached for as long as the player lives, also while the next
+        // episode or quality loads; taking it off and back on during a load could crash the video engine
+        if (instance != null) {
+            key(instance) {
+                AndroidView(
+                    factory = { ctx -> BaseMPVView(ctx, null).also { it.mpv = instance; it.setVo("gpu") } },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            if (phase == PreviewPhase.Playing && view == PreviewView.Split && !comparing) {
+                SplitLabels()
+            }
+        }
+        if (phase != PreviewPhase.Playing) {
+            if (instance == null || phase != PreviewPhase.Loading) {
+                AsyncImage(
+                    model = anime.thumbnailUrl,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)))
+        }
+
+        when (val p = phase) {
+            PreviewPhase.Idle -> IdleOverlay(
+                episodeName = episode?.name,
+                onClick = { episode?.let(::loadEpisode) },
+            )
+            PreviewPhase.Loading -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(color = Color.White)
+                Spacer(Modifier.height(8.dp))
+                Text(stringResource(KMR.strings.anime_preview_loading), color = Color.White)
+            }
+            PreviewPhase.NoVideos -> Text(
+                text = stringResource(KMR.strings.anime_preview_no_videos),
+                color = Color.White,
+                modifier = Modifier.padding(16.dp),
+            )
+            is PreviewPhase.Failed -> Text(
+                text = p.message,
+                color = Color.White,
+                maxLines = 4,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(16.dp),
+            )
+                PreviewPhase.Playing -> {
+                    if (buffering && !paused) CircularProgressIndicator(color = Color.White)
+                }
+            }
+            androidx.compose.animation.AnimatedVisibility(
+                visible = phase == PreviewPhase.Playing && (showControls || paused || locked),
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                if (floating) {
+                    FloatingControls(
+                        title = anime.title,
+                        episodeName = (playingEpisode ?: episode)?.name.orEmpty(),
+                        dragHandle = dragHandle,
+                        paused = paused,
+                        muted = muted,
+                        locked = locked,
+                        speed = speed,
+                        position = position,
+                        duration = duration,
+                        videos = videos,
+                        servers = servers,
+                        videoIndex = videoIndex,
+                        view = view,
+                        settingsOpen = settingsOpen,
+                        onTogglePause = togglePause,
+                        onToggleMute = toggleMute,
+                        onToggleLock = { locked = !locked },
+                        onSpeed = { value ->
+                            speed = value
+                            runCatching { mpv?.setPropertyDouble("speed", value) }
+                        },
+                        onSeek = seekTo,
+                        onSkip = { delta -> seekTo((position + delta).coerceIn(0.0, duration.coerceAtLeast(0.0))) },
+                        onPickVideo = pickVideo,
+                        onView = { view = it },
+                        onToggleSettings = { settingsOpen = !settingsOpen },
+                        onOpenPlayer = openFull,
+                        onClose = onClose,
+                        onPrevious = onPrevious,
+                        onNext = onNext,
+                    )
+                } else {
+                    PlayerControls(
+                        paused = paused,
+                        muted = muted,
+                        position = position,
+                        duration = duration,
+                        videos = videos,
+                        servers = servers,
+                        videoIndex = videoIndex,
+                        onTogglePause = togglePause,
+                        onToggleMute = toggleMute,
+                        onSeek = seekTo,
+                        onPickVideo = pickVideo,
+                        onOpenPlayer = openFull,
+                    )
+                }
+            }
+    }
+    val settingsContent: @Composable () -> Unit = {
+        VideoSettings(
+            view = view,
+            onViewChange = { view = it },
+            onComparePressed = { comparing = it },
+            decoderPreferences = decoderPreferences,
+            playerPreferences = playerPreferences,
+            onFiltersChanged = { filterRevision++ },
+            onSpeedChanged = { value ->
+                speed = value
+                runCatching { mpv?.setPropertyDouble("speed", value) }
+            },
+        )
+    }
+
+    if (floating) {
+        // KMK (r127): the floating window: the video fills it (mpv keeps the picture's shape), the controls over it,
+        // and the video settings as a sheet over the lower part of the window
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .background(Color.Black)
+                .clickable(
+                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                    indication = null,
+                ) { showControls = !showControls },
+            contentAlignment = Alignment.Center,
+        ) {
+            stage()
+            // Before anything plays, the title row still lets the window be moved and closed
+            if (phase != PreviewPhase.Playing) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().then(dragHandle)
+                        .padding(start = 10.dp, end = 4.dp),
+                ) {
+                    Icon(Icons.Outlined.DragIndicator, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                    Text(
+                        text = anime.title,
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelLarge,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f).padding(start = 6.dp),
+                    )
+                    if (onClose != null) {
+                        IconButton(onClick = onClose) {
+                            Icon(Icons.Outlined.Close, contentDescription = stringResource(MR.strings.action_close), tint = Color.White)
+                        }
+                    }
+                }
+            }
+            androidx.compose.animation.AnimatedVisibility(
+                visible = settingsOpen,
+                enter = androidx.compose.animation.slideInVertically { it } + fadeIn(),
+                exit = androidx.compose.animation.slideOutVertically { it } + fadeOut(),
+                modifier = Modifier.align(Alignment.BottomCenter),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .fillMaxHeight(0.62f)
+                        .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
+                        .background(Color(0xFF12141B).copy(alpha = 0.92f))
+                        .clickable(
+                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                            indication = null,
+                        ) {},
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp),
+                    ) {
+                        Icon(Icons.Outlined.Tune, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Text(
+                            text = stringResource(KMR.strings.anime_preview_video_settings),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White,
+                            modifier = Modifier.weight(1f).padding(start = 12.dp),
+                        )
+                        IconButton(onClick = { settingsOpen = false }) {
+                            Icon(Icons.Outlined.ExpandMore, contentDescription = null, tint = Color.White)
+                        }
+                    }
+                    Column(modifier = Modifier.verticalScroll(rememberScrollState()).padding(bottom = 12.dp)) {
+                        settingsContent()
+                    }
+                }
+            }
+        }
+        return
+    }
+
     Column(modifier = modifier) {
         // Player
         Box(
@@ -352,89 +604,7 @@ fun AnimePreviewSection(
                 .clickable { showControls = !showControls },
             contentAlignment = Alignment.Center,
         ) {
-            val instance = mpv
-            if (phase == PreviewPhase.Playing && instance != null) {
-                AndroidView(
-                    factory = { ctx -> BaseMPVView(ctx, null).also { it.mpv = instance; it.setVo("gpu") } },
-                    modifier = Modifier.fillMaxSize(),
-                )
-                if (view == PreviewView.Split && !comparing) {
-                    SplitLabels()
-                }
-            } else {
-                AsyncImage(
-                    model = anime.thumbnailUrl,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
-                Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)))
-            }
-
-            when (val p = phase) {
-                PreviewPhase.Idle -> IdleOverlay(
-                    episodeName = episode?.name,
-                    onClick = { episode?.let(::loadEpisode) },
-                )
-                PreviewPhase.Loading -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    CircularProgressIndicator(color = Color.White)
-                    Spacer(Modifier.height(8.dp))
-                    Text(stringResource(KMR.strings.anime_preview_loading), color = Color.White)
-                }
-                PreviewPhase.NoVideos -> Text(
-                    text = stringResource(KMR.strings.anime_preview_no_videos),
-                    color = Color.White,
-                    modifier = Modifier.padding(16.dp),
-                )
-                is PreviewPhase.Failed -> Text(
-                    text = p.message,
-                    color = Color.White,
-                    maxLines = 4,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(16.dp),
-                )
-                PreviewPhase.Playing -> {
-                    if (buffering && !paused) CircularProgressIndicator(color = Color.White)
-                    androidx.compose.animation.AnimatedVisibility(
-                        visible = showControls || paused,
-                        enter = fadeIn(),
-                        exit = fadeOut(),
-                        modifier = Modifier.fillMaxSize(),
-                    ) {
-                        PlayerControls(
-                            paused = paused,
-                            muted = muted,
-                            position = position,
-                            duration = duration,
-                            videos = videos,
-                            servers = servers,
-                            videoIndex = videoIndex,
-                            onTogglePause = {
-                                showControls = true
-                                runCatching { mpv?.setPropertyBoolean("pause", !paused) }
-                            },
-                            onToggleMute = {
-                                muted = !muted
-                                runCatching { mpv?.setPropertyBoolean("mute", muted) }
-                            },
-                            onSeek = { seconds ->
-                                showControls = true
-                                position = seconds
-                                runCatching { mpv?.command("seek", seconds.toString(), "absolute") }
-                            },
-                            onPickVideo = { index -> playingEpisode?.let { startVideo(index, videos, it) } },
-                            onOpenPlayer = {
-                                val ep = playingEpisode ?: return@PlayerControls
-                                val positionMs = (position * 1000).toLong()
-                                loadJob?.cancel()
-                                phase = PreviewPhase.Idle
-                                releasePlayer()
-                                onOpenPlayer(ep, positionMs)
-                            },
-                        )
-                    }
-                }
-            }
+            stage()
         }
 
         // Video settings
@@ -460,19 +630,284 @@ fun AnimePreviewSection(
             )
         }
         AnimatedVisibility(visible = settingsOpen) {
-            VideoSettings(
-                view = view,
-                onViewChange = { view = it },
-                onComparePressed = { comparing = it },
-                decoderPreferences = decoderPreferences,
-                playerPreferences = playerPreferences,
-                onFiltersChanged = { filterRevision++ },
-                onSpeedChanged = { speed -> runCatching { mpv?.setPropertyDouble("speed", speed) } },
-            )
+            settingsContent()
         }
         HorizontalDivider()
     }
 }
+
+
+/** The quality menu of the preview player (grouped by server like the full player's Qualities sheet) */
+@Composable
+private fun QualityButton(videos: List<Video>, servers: List<String?>, videoIndex: Int, onPickVideo: (Int) -> Unit) {
+    if (videos.size <= 1) return
+    Box {
+        var open by remember { mutableStateOf(false) }
+        IconButton(onClick = { open = true }) {
+            Icon(
+                Icons.Outlined.HighQuality,
+                contentDescription = stringResource(KMR.strings.anime_preview_quality),
+                tint = Color.White,
+            )
+        }
+        // KMK (r88): grouped under server headers like the full player's Qualities sheet, each server's
+        // videos in QualityOrder (SUB then DUB, highest first). Every pick is still an index into [videos].
+        val groups = remember(videos, servers) {
+            val byServer = LinkedHashMap<String?, MutableList<Int>>()
+            videos.indices.forEach { byServer.getOrPut(servers.getOrNull(it)) { mutableListOf() } += it }
+            byServer.map { (server, members) ->
+                server to QualityOrder.of(members.map { videos[it] }).map { members[it] }
+            }
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            groups.forEachIndexed { groupIndex, (server, indexes) ->
+                if (server != null) {
+                    if (groupIndex > 0) HorizontalDivider()
+                    Text(
+                        text = server,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    )
+                }
+                indexes.forEach { index ->
+                    val video = videos[index]
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = video.videoTitle.ifBlank { video.videoUrl },
+                                fontWeight = if (index == videoIndex) FontWeight.Bold else null,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        },
+                        onClick = {
+                            open = false
+                            onPickVideo(index)
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * KMK (r127): the floating window's controls, laid out like the full player: title row (move the window by it) with
+ * quality, speed, video settings, lock and close; previous / −10 / play / +10 / next in the middle; the seek bar,
+ * mute, View and the full player at the bottom. Locked: they stay on screen.
+ */
+@Composable
+private fun FloatingControls(
+    title: String,
+    episodeName: String,
+    dragHandle: Modifier,
+    paused: Boolean,
+    muted: Boolean,
+    locked: Boolean,
+    speed: Double,
+    position: Double,
+    duration: Double,
+    videos: List<Video>,
+    servers: List<String?>,
+    videoIndex: Int,
+    view: PreviewView,
+    settingsOpen: Boolean,
+    onTogglePause: () -> Unit,
+    onToggleMute: () -> Unit,
+    onToggleLock: () -> Unit,
+    onSpeed: (Double) -> Unit,
+    onSeek: (Double) -> Unit,
+    onSkip: (Double) -> Unit,
+    onPickVideo: (Int) -> Unit,
+    onView: (PreviewView) -> Unit,
+    onToggleSettings: () -> Unit,
+    onOpenPlayer: () -> Unit,
+    onClose: (() -> Unit)?,
+    onPrevious: (() -> Unit)?,
+    onNext: (() -> Unit)?,
+) {
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                androidx.compose.ui.graphics.Brush.verticalGradient(
+                    0f to Color.Black.copy(alpha = 0.6f),
+                    0.3f to Color.Transparent,
+                    0.62f to Color.Transparent,
+                    1f to Color.Black.copy(alpha = 0.7f),
+                ),
+            ),
+    ) {
+        val compact = maxWidth < 360.dp
+        val small = maxHeight < 200.dp
+        // Top: title (drag here to move the window) and the buttons
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().padding(start = 8.dp, end = 2.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f).then(dragHandle).padding(vertical = 6.dp),
+            ) {
+                Icon(Icons.Outlined.DragIndicator, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                Column(modifier = Modifier.padding(start = 6.dp)) {
+                    Text(
+                        text = title,
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelLarge,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (!small && episodeName.isNotBlank()) {
+                        Text(
+                            text = episodeName,
+                            color = Color.White.copy(alpha = 0.8f),
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+            QualityButton(videos, servers, videoIndex, onPickVideo)
+            if (!compact) {
+                Box {
+                    var open by remember { mutableStateOf(false) }
+                    TextButton(onClick = { open = true }) {
+                        Text("${formatSpeed(speed)}×", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                    }
+                    DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                        listOf(0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0).forEach { value ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        "${formatSpeed(value)}×",
+                                        fontWeight = if (value == speed) FontWeight.Bold else null,
+                                    )
+                                },
+                                onClick = {
+                                    open = false
+                                    onSpeed(value)
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+            IconButton(onClick = onToggleSettings) {
+                Icon(
+                    Icons.Outlined.Tune,
+                    contentDescription = stringResource(KMR.strings.anime_preview_video_settings),
+                    tint = if (settingsOpen) MaterialTheme.colorScheme.primary else Color.White,
+                )
+            }
+            IconButton(onClick = onToggleLock) {
+                Icon(
+                    imageVector = if (locked) Icons.Outlined.Lock else Icons.Outlined.LockOpen,
+                    contentDescription = null,
+                    tint = if (locked) MaterialTheme.colorScheme.primary else Color.White,
+                )
+            }
+            if (onClose != null) {
+                IconButton(onClick = onClose) {
+                    Icon(Icons.Outlined.Close, contentDescription = stringResource(MR.strings.action_close), tint = Color.White)
+                }
+            }
+        }
+        // Middle: previous, −10, play / pause, +10, next
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 14.dp),
+            modifier = Modifier.align(Alignment.Center),
+        ) {
+            if (onPrevious != null) RoundButton(Icons.Filled.SkipPrevious, 40.dp, onPrevious)
+            RoundButton(Icons.Outlined.Replay10, 44.dp) { onSkip(-10.0) }
+            RoundButton(if (paused) Icons.Filled.PlayArrow else Icons.Filled.Pause, 58.dp, onTogglePause)
+            RoundButton(Icons.Outlined.Forward10, 44.dp) { onSkip(10.0) }
+            if (onNext != null) RoundButton(Icons.Filled.SkipNext, 40.dp, onNext)
+        }
+        // Bottom: time and seek bar; mute, View, full player
+        Column(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(formatSeconds(position), color = Color.White, style = MaterialTheme.typography.labelSmall)
+                var dragging by remember { mutableStateOf<Float?>(null) }
+                Slider(
+                    value = dragging ?: position.toFloat().coerceIn(0f, duration.toFloat().coerceAtLeast(0.1f)),
+                    onValueChange = { dragging = it },
+                    onValueChangeFinished = {
+                        dragging?.let { onSeek(it.toDouble()) }
+                        dragging = null
+                    },
+                    valueRange = 0f..duration.toFloat().coerceAtLeast(0.1f),
+                    colors = SliderDefaults.colors(
+                        thumbColor = Color.White,
+                        activeTrackColor = MaterialTheme.colorScheme.primary,
+                        inactiveTrackColor = Color.White.copy(alpha = 0.3f),
+                    ),
+                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                )
+                Text(formatSeconds(duration), color = Color.White, style = MaterialTheme.typography.labelSmall)
+            }
+            if (!small) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 4.dp)) {
+                    IconButton(onClick = onToggleMute) {
+                        Icon(
+                            imageVector = if (muted) Icons.AutoMirrored.Outlined.VolumeOff else Icons.AutoMirrored.Outlined.VolumeUp,
+                            contentDescription = stringResource(
+                                if (muted) KMR.strings.anime_preview_unmute else KMR.strings.anime_preview_mute,
+                            ),
+                            tint = Color.White,
+                        )
+                    }
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                    ) {
+                        listOf(
+                            PreviewView.Filtered to KMR.strings.anime_preview_filtered,
+                            PreviewView.Original to KMR.strings.anime_preview_original,
+                            PreviewView.Split to KMR.strings.anime_preview_split,
+                        ).forEach { (option, label) ->
+                            FilterChip(
+                                selected = view == option,
+                                onClick = { onView(option) },
+                                label = { Text(stringResource(label), color = Color.White) },
+                            )
+                        }
+                    }
+                    IconButton(onClick = onOpenPlayer) {
+                        Icon(
+                            Icons.Outlined.Fullscreen,
+                            contentDescription = stringResource(KMR.strings.anime_preview_open_player),
+                            tint = Color.White,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RoundButton(icon: androidx.compose.ui.graphics.vector.ImageVector, size: androidx.compose.ui.unit.Dp, onClick: () -> Unit) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(size)
+            .clip(CircleShape)
+            .background(Color.Black.copy(alpha = 0.4f))
+            .clickable(onClick = onClick),
+    ) {
+        Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(size * 0.55f))
+    }
+}
+
+private fun formatSpeed(value: Double): String =
+    if (value % 1.0 == 0.0) value.toInt().toString() else value.toString().trimEnd('0')
 
 @Composable
 private fun IdleOverlay(episodeName: String?, onClick: () -> Unit) {
@@ -557,60 +992,7 @@ private fun PlayerControls(
                 .align(Alignment.TopEnd)
                 .padding(4.dp),
         ) {
-            if (videos.size > 1) {
-                Box {
-                    var open by remember { mutableStateOf(false) }
-                    IconButton(onClick = { open = true }) {
-                        Icon(
-                            Icons.Outlined.HighQuality,
-                            contentDescription = stringResource(KMR.strings.anime_preview_quality),
-                            tint = Color.White,
-                        )
-                    }
-                    // KMK (r88): grouped under server headers like the full player's Qualities sheet, each server's
-                    // videos in QualityOrder (SUB then DUB, highest first). Every pick is still an index into [videos].
-                    val groups = remember(videos, servers) {
-                        val byServer = LinkedHashMap<String?, MutableList<Int>>()
-                        videos.indices.forEach { byServer.getOrPut(servers.getOrNull(it)) { mutableListOf() } += it }
-                        byServer.map { (server, members) ->
-                            server to QualityOrder.of(members.map { videos[it] }).map { members[it] }
-                        }
-                    }
-                    DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-                        groups.forEachIndexed { groupIndex, (server, indexes) ->
-                            if (server != null) {
-                                if (groupIndex > 0) HorizontalDivider()
-                                Text(
-                                    text = server,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                                )
-                            }
-                            indexes.forEach { index ->
-                                val video = videos[index]
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            text = video.videoTitle.ifBlank { video.videoUrl },
-                                            fontWeight = if (index == videoIndex) FontWeight.Bold else null,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                    },
-                                    onClick = {
-                                        open = false
-                                        onPickVideo(index)
-                                    },
-                                )
-                            }
-                        }
-                    }
-                }
-            }
+            QualityButton(videos, servers, videoIndex, onPickVideo)
             IconButton(onClick = onToggleMute) {
                 Icon(
                     imageVector = if (muted) Icons.AutoMirrored.Outlined.VolumeOff else Icons.AutoMirrored.Outlined.VolumeUp,

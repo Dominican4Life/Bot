@@ -67,6 +67,9 @@ object PreviewGlass {
     fun enabled(): Preference<Boolean> = store.getBoolean("preview_glass_panel", true)
 
     fun isOn(): Boolean = enabled().get()
+
+    /** KMK (r127): the side the panel sits on (true: left), changed by dragging it or with ⇄ */
+    fun leftSide(): Preference<Boolean> = store.getBoolean("preview_glass_left", true)
 }
 
 enum class PreviewPanelTab { LIST, PREVIEW, DETAILS }

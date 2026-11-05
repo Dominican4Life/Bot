@@ -266,7 +266,10 @@ internal object Health {
                 val kind = kindOf(exit.reason)
                 val reason = reasonText(exit)
                 var traceFile: String? = null
-                if (exit.reason == ApplicationExitInfo.REASON_ANR) {
+                // KMK (r127): native crashes keep their crash report too (the readable part of Android's tombstone)
+                if (exit.reason == ApplicationExitInfo.REASON_ANR ||
+                    exit.reason == ApplicationExitInfo.REASON_CRASH_NATIVE
+                ) {
                     traceFile = runCatching { saveTrace(context, exit) }.getOrNull()
                 }
                 val rssMb = exit.rss / 1024
@@ -341,20 +344,43 @@ internal object Health {
     private fun saveTrace(context: Context, exit: ApplicationExitInfo): String? {
         val input = exit.traceInputStream ?: return null
         val dir = File(context.cacheDir, DiagPaths.HEALTH_DIR).apply { mkdirs() }
-        val name = "anr-${exit.timestamp}.txt"
+        val native = exit.reason == ApplicationExitInfo.REASON_CRASH_NATIVE
+        // Kept under the anr- name so the report bundles it like the freeze traces
+        val name = "anr-${exit.timestamp}${if (native) "-native" else ""}.txt"
         val out = File(dir, name)
         input.use { ins ->
             out.outputStream().use { os ->
                 val buf = ByteArray(16 * 1024)
                 var total = 0L
+                // A native tombstone is binary (protobuf): keep its readable runs (signal, abort message, the
+                // backtrace's library and function names), one per line
+                val run = java.io.ByteArrayOutputStream()
+                fun flushRun() {
+                    if (run.size() >= 4 && total < DiagBudget.ANR_TRACE_MAX_BYTES) {
+                        val bytes = run.toByteArray()
+                        os.write(bytes)
+                        os.write('\n'.code)
+                        total += bytes.size + 1
+                    }
+                    run.reset()
+                }
                 while (true) {
                     val n = ins.read(buf)
                     if (n < 0) break
-                    val keep = minOf(n.toLong(), DiagBudget.ANR_TRACE_MAX_BYTES - total).toInt()
-                    if (keep <= 0) break
-                    os.write(buf, 0, keep)
-                    total += keep
+                    if (native) {
+                        for (i in 0 until n) {
+                            val b = buf[i].toInt() and 0xFF
+                            if (b in 0x20..0x7E) run.write(b) else flushRun()
+                        }
+                        if (total >= DiagBudget.ANR_TRACE_MAX_BYTES) break
+                    } else {
+                        val keep = minOf(n.toLong(), DiagBudget.ANR_TRACE_MAX_BYTES - total).toInt()
+                        if (keep <= 0) break
+                        os.write(buf, 0, keep)
+                        total += keep
+                    }
                 }
+                if (native) flushRun()
             }
         }
         // Five kept

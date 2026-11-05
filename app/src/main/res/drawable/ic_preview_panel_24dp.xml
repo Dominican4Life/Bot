@@ -1,33 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- KMK (r126): the glass preview panel toggle: covers with a card floating over them -->
+<!-- KMK (r127): the preview panel button: stacked glass sheets (option F) -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
     <path
-        android:pathData="M4.2,3h2.6a1.2,1.2 0,0 1,1.2 1.2v4.6a1.2,1.2 0,0 1,-1.2 1.2h-2.6a1.2,1.2 0,0 1,-1.2 -1.2v-4.6a1.2,1.2 0,0 1,1.2 -1.2z"
-        android:strokeWidth="1.6"
-        android:strokeColor="#FF000000"
+        android:pathData="M12,3L21,8L12,13L3,8Z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.8"
+        android:strokeLineJoin="round"
         android:fillColor="#00000000" />
     <path
-        android:pathData="M11.2,3h2.6a1.2,1.2 0,0 1,1.2 1.2v4.6a1.2,1.2 0,0 1,-1.2 1.2h-2.6a1.2,1.2 0,0 1,-1.2 -1.2v-4.6a1.2,1.2 0,0 1,1.2 -1.2z"
-        android:strokeWidth="1.6"
-        android:strokeColor="#FF000000"
+        android:pathData="M3,12L12,17L21,12"
+        android:strokeColor="#BFFFFFFF"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
         android:fillColor="#00000000" />
     <path
-        android:pathData="M18.2,3h1.6a1.2,1.2 0,0 1,1.2 1.2v4.6a1.2,1.2 0,0 1,-1.2 1.2h-1.6a1.2,1.2 0,0 1,-1.2 -1.2v-4.6a1.2,1.2 0,0 1,1.2 -1.2z"
-        android:strokeWidth="1.6"
-        android:strokeColor="#FF000000"
+        android:pathData="M3,16L12,21L21,16"
+        android:strokeColor="#73FFFFFF"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
         android:fillColor="#00000000" />
-    <path
-        android:pathData="M5.4,12h6.2a2.4,2.4 0,0 1,2.4 2.4v4.2a2.4,2.4 0,0 1,-2.4 2.4h-6.2a2.4,2.4 0,0 1,-2.4 -2.4v-4.2a2.4,2.4 0,0 1,2.4 -2.4z"
-        android:strokeWidth="1.6"
-        android:strokeColor="#FF000000"
-        android:fillColor="#59000000" />
-    <path
-        android:pathData="M6,15h5M6,18h3"
-        android:strokeWidth="1.5"
-        android:strokeColor="#FF000000"
-        android:strokeLineCap="round" />
 </vector>

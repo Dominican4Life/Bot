@@ -417,7 +417,8 @@ private fun GlassReaderAppBars(
                         onClickTitle = onClickChapterList,
                         onClickMore = { actionsOpen = true },
                     )
-                    ExhUtils(
+                    // KMK (r127): no ⌄ strip under the glass top bar; the tools open from the ⋮ sheet
+                    if (isExhToolsVisible) ExhUtils(
                         isVisible = isExhToolsVisible,
                         onSetExhUtilsVisibility = onSetExhUtilsVisibility,
                         backgroundColor = ReaderGlass.tint,
@@ -520,6 +521,7 @@ private fun GlassReaderAppBars(
             onClickShare = onShare,
             onClickPageLayout = onClickPageLayout,
             onClickShiftPage = onClickShiftPage,
+            onClickTools = { onSetExhUtilsVisibility(true) },
         )
     }
 }
