@@ -1093,6 +1093,27 @@ Two commits (the first failed CI: `openers += opener` on a `MutableSet<Element>`
   - The top bar slot draws a zero-height-reporting frost box (status bar + 64 dp + 44 dp) with `hazeEffect` (20 dp blur, dark tint, a top-to-bottom progressive gradient, alpha following the old background alpha).
   - The toolbar's own background stays transparent. The title shows in a glass pill (`MangaToolbar(glass)`).
 
+## Changes in r131
+
+- **Title page top bar (option B):** the r130 frost and the title pill are gone. The toolbar background stays transparent with the glass sheet (`frostOn`), and only the glass back/⋮ capsules float over the page. `TitleSheetBox(frostSource)` is still there but unused.
+- **Library glass panels:** `LibraryContent` and `AnimeLibraryContent` put the pager under its own `hazeSource(glassHaze)` and provide `LocalGlassHaze` to `panels()`, so the panel is frosted.
+- **Glass `SlidingSidePanel`:** the card is padded by the navigation bar and cutout (bottom + its side) before its 8 dp margin, so it stops above the nav bar. The inner column then only adds the top inset.
+- **Description:** `MangaInfoHeader`'s scrim draws the gradient and the radial behind the caret only while collapsed.
+- **Tuck tab:**
+  - 68 dp wide with a bigger cover and a shadow.
+  - `detectDragGesturesAfterLongPress` lifts it (haptic, 1.08×) and moves it vertically. The position is saved as `PreviewGlass.tabY()` (`preview_glass_tab_y`, 0..1).
+- **Floating log:**
+  - The window clamp lets it move anywhere, as long as 96 dp stays on screen sideways and the title bar stays inside the safe area.
+  - The bubble keeps its position (`bubblePos`, not reset when the insets change) and no longer snaps to a side.
+  - Window and bubble use `liquidGlass` (real blur in the reader, tinted elsewhere) under a light-on-dark colour scheme.
+  - The bubble icon is `LiveIcon(Logs)`, which plays when it appears. The main rail's Logs item also uses `LiveIcon(Logs)` and plays on tap.
+- **Knob pref:** the key is now `glass_knob2`, so devices that stored a knob before the lens start on the lens.
+- **Tablet reader:**
+  - On `isTabletUi()`, `ReaderGlassSheet` is a 420 dp glass side panel (status + nav + taskbar insets). It has a ⇄ in the header and remembers its side in `ReaderGlass.sheetLeft()` (`reader_glass_sheet_left`).
+  - The sheet also clears `WindowInsets.tappableElement` (a taskbar over the immersive reader).
+  - Chapter swipes use a soft white block (`primaryContainer` 20 % white) and a transparent background below the threshold.
+  - The chapter picker uses `liquidGlass`.
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
