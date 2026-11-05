@@ -47,6 +47,9 @@ import tachiyomi.presentation.core.util.collectAsState as collectPrefState
 import androidx.compose.foundation.layout.height
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.shadow
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.material.icons.outlined.FormatListNumbered
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material3.CircularProgressIndicator
@@ -265,7 +268,7 @@ fun ReaderGlassSheet(
                             .fillMaxWidth()
                             .height(22.dp)
                             .pointerInput(full) {
-                                androidx.compose.foundation.gestures.detectVerticalDragGestures(
+                                detectVerticalDragGestures(
                                     onDragEnd = {
                                         val now = fullPx * fraction - drag.value
                                         scope.launch {
@@ -382,7 +385,7 @@ fun ReaderGlassSheet(
 }
 
 private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.detectTapGesturesCompat(onTap: () -> Unit) {
-    androidx.compose.foundation.gestures.detectTapGestures(onTap = { onTap() })
+    detectTapGestures(onTap = { onTap() })
 }
 
 /**
@@ -456,7 +459,7 @@ fun SlidingSidePanel(
                     .fillMaxWidth()
                     .height(30.dp)
                     .pointerInput(start, containerPx, panelPx) {
-                        androidx.compose.foundation.gestures.detectHorizontalDragGestures(
+                        detectHorizontalDragGestures(
                             onDragEnd = {
                                 val offset = dragX.value
                                 val outward = if (start) -offset else offset
@@ -529,7 +532,7 @@ fun SlidingSidePanel(
                     .liquidGlass(tabShape)
                     .clickable { tucked = false }
                     .pointerInput(start) {
-                        androidx.compose.foundation.gestures.detectHorizontalDragGestures { change, amount ->
+                        detectHorizontalDragGestures { change, amount ->
                             change.consume()
                             if ((start && amount > 6f) || (!start && amount < -6f)) tucked = false
                         }
