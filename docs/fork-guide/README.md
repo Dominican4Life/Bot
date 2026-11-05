@@ -1044,6 +1044,20 @@ Two commits (the first failed CI: `openers += opener` on a `MutableSet<Element>`
 - **Crash fix:** the preview player's `BaseMPVView` stays attached while the player lives (keyed on the instance), instead of being removed during every load. Removing it during loads caused the native crashes when tapping tiles.
 - **Health:** `REASON_CRASH_NATIVE` exits save the printable runs of the tombstone as `health/anr-<ts>-native.txt` (bundled in Report).
 
+## Changes in r128
+
+- **Glass lens knob** (`GlassSliderThumb(interactionSource, fraction)` → `GlassLensKnob`): `GlassStyle.KNOB_GLASS` (3) is the new default for `glass_knob`.
+  - It is a clear capsule that draws the track magnified through it: accent left of centre, faint right, 1.45× at rest and 1.75× while dragged. It also has rim light, a top highlight, a bright-top/dark-bottom rim stroke and a soft offset shadow.
+  - With the lens, `ChapterNavigator` uses `GlassSliderTrack(fraction)`, one continuous bar with no thumb gap. `glassFraction(SliderState)` gives the position.
+  - Settings › Glass has a "Glass" knob chip (`glass_knob_glass`).
+- **Reader glass sheet:**
+  - `PageGridContent(showTitle = false)` drops the chapter-name row.
+  - The chapter name in the sheet's top row has ⌄. It opens a chapter list over the sheet body (`pickerChapters`, `onPickChapter` → `loadNewChapterFromDialog`).
+  - `panelChapters` now also load while the Pages tab is open.
+- **Slider under sheets:** `ReaderAppBars(sheetOpen)` → `GlassReaderAppBars`. `sliderVisible = visible && !sheetOpen && !actionsOpen` hides the bottom/side slider while the Chapters/Pages or ⋮ sheet is open.
+- **Floating player:** the 8 grips are replaced by one bottom-right grip (`resize(1, 1)`), like the floating log. `FloatingControls`' bottom row has end padding so the grip is free.
+- **Floating log pause:** pausing used `isScrollInProgress`, which was true during its own `scrollToItem` to the newest line, so a busy log paused itself. It now pauses only on `interactionSource.collectIsDraggedAsState()`, resumes 10 s after the drag, or at once when scrolled back to the bottom.
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
