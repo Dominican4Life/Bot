@@ -177,6 +177,10 @@ fun TitlePagePreview(
                 }
             }
             else -> key(chapter.id) {
+                // KMK (r129): animated pages as in the old preview panel: still with ▶, first tap plays it (framed),
+                // second tap opens it; one plays at a time
+                var playingPage by remember { mutableStateOf<Int?>(null) }
+                val animatedPages = remember { mutableStateMapOf<Int, Boolean>() }
                 val count = localPages?.size ?: pages?.size ?: 0
                 val tiles = remember(count, sliced, ratios.toMap()) {
                     (0 until count).flatMap { page ->
@@ -219,7 +223,17 @@ fun TitlePagePreview(
                             ratio = tileRatio,
                             isVideo = isVideo,
                             onRatio = { if (tile.slice == 0) ratios[tile.page] = it },
-                            onClick = { onOpenPage(chapter, tile.page, isVideo) },
+                            onClick = {
+                                if (!isVideo && animatedPages[tile.page] == true && playingPage != tile.page) {
+                                    playingPage = tile.page
+                                } else {
+                                    onOpenPage(chapter, tile.page, isVideo)
+                                }
+                            },
+                            // SY's preview images (previewModels) stay plain pictures, as in the old panel
+                            animatedTile = state.previewModels == null && !isVideo,
+                            playing = playingPage == tile.page,
+                            onAnimated = { animatedPages[tile.page] = it },
                         )
                     }
                 }
@@ -248,6 +262,9 @@ private fun PreviewTileBox(
     isVideo: Boolean,
     onRatio: (Float) -> Unit,
     onClick: () -> Unit,
+    animatedTile: Boolean = false,
+    playing: Boolean = false,
+    onAnimated: (Boolean) -> Unit = {},
 ) {
     val context = LocalContext.current
     val shape = RoundedCornerShape(8.dp)
@@ -258,10 +275,23 @@ private fun PreviewTileBox(
             .aspectRatio(ratio)
             .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+            .then(
+                if (playing) Modifier.border(BorderStroke(3.dp, MaterialTheme.colorScheme.primary), shape) else Modifier,
+            )
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        if (request != null) {
+        if (model != null && animatedTile) {
+            val bias = if (tile.slices <= 1) -1f else -1f + 2f * tile.slice / (tile.slices - 1)
+            eu.kanade.presentation.components.AnimatedThumbnail(
+                model = model,
+                playing = playing,
+                onAnimated = onAnimated,
+                alignment = BiasAlignment(0f, bias),
+                onRatio = onRatio,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else if (request != null) {
             // Slice i of n shows the i-th part of the page, top to bottom
             val bias = if (tile.slices <= 1) -1f else -1f + 2f * tile.slice / (tile.slices - 1)
             AsyncImage(

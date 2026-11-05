@@ -161,6 +161,8 @@ fun AnimePreviewSection(
     onClose: (() -> Unit)? = null,
     onPrevious: (() -> Unit)? = null,
     onNext: (() -> Unit)? = null,
+    // KMK (r129): the video's width / height once known (the floating window takes its shape)
+    onAspect: ((Float) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -339,6 +341,9 @@ fun AnimePreviewSection(
                 paused = instance.getPropertyBoolean("pause") ?: false
                 buffering = instance.getPropertyBoolean("paused-for-cache") == true ||
                     instance.getPropertyBoolean("core-idle") == true && !paused
+                if (onAspect != null) {
+                    instance.getPropertyDouble("video-params/aspect")?.let { onAspect(it.toFloat()) }
+                }
             }
             delay(400)
         }

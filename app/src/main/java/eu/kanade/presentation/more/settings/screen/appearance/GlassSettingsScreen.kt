@@ -80,6 +80,8 @@ class GlassSettingsScreen : Screen() {
         val panelOn by panelPref.collectAsState()
         val readerPref = remember { ReaderGlass.enabled() }
         val readerOn by readerPref.collectAsState()
+        val titlePref = remember { eu.kanade.presentation.components.TitleSheet.glass() }
+        val titleOn by titlePref.collectAsState()
         // Any change redraws the preview (the glass reads the settings as it draws)
         val revision = listOf(material, see, corners, knob, reduce, contrast).hashCode()
 
@@ -153,6 +155,7 @@ class GlassSettingsScreen : Screen() {
                     Group(stringResource(KMR.strings.glass_where))
                     SwitchRow(stringResource(KMR.strings.preview_glass_pref), panelOn) { panelPref.set(it) }
                     SwitchRow(stringResource(KMR.strings.reader_glass_pref), readerOn) { readerPref.set(it) }
+                    SwitchRow(stringResource(KMR.strings.title_sheet_glass_pref), titleOn) { titlePref.set(it) }
                     TextButtonRow(stringResource(KMR.strings.glass_reset)) {
                         materialPref.delete()
                         seePref.delete()

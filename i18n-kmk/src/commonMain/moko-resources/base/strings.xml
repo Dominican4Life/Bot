@@ -862,6 +862,7 @@
     <string name="glass_corners">Corners</string>
     <string name="glass_knob">Slider knob</string>
     <string name="glass_knob_glass">Glass</string>
+    <string name="title_sheet_glass_pref">Phone title page (sheet, dock, top buttons)</string>
     <string name="glass_knob_capsule">Capsule</string>
     <string name="glass_knob_large">Large</string>
     <string name="glass_knob_dot">Dot</string>

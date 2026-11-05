@@ -14,6 +14,9 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -405,14 +408,74 @@ private fun GlassReaderAppBars(
     // KMK (r128): the slider slides away while a sheet (Chapters / Pages, or ⋮) is open
     val sliderVisible = visible && !sheetOpen && !actionsOpen
 
+    // KMK (r129): like WWDC25's Liquid Glass, the glass appears by growing out of nothing (not sliding in), and the
+    // page dims softly at the top and bottom edges under the floating controls so they stay clear ("scroll edge")
+    val still = remember { eu.kanade.presentation.browse.components.glassReduceMotion() }
+    val popIn = { origin: androidx.compose.ui.graphics.TransformOrigin ->
+        if (still) {
+            fadeIn(animationSpec = readerBarsFadeAnimationSpec)
+        } else {
+            androidx.compose.animation.scaleIn(
+                initialScale = 0.86f,
+                transformOrigin = origin,
+                animationSpec = androidx.compose.animation.core.spring(dampingRatio = 0.7f, stiffness = 500f),
+            ) + fadeIn(animationSpec = readerBarsFadeAnimationSpec)
+        }
+    }
+    val popOut = { origin: androidx.compose.ui.graphics.TransformOrigin ->
+        if (still) {
+            fadeOut(animationSpec = readerBarsFadeAnimationSpec)
+        } else {
+            androidx.compose.animation.scaleOut(targetScale = 0.9f, transformOrigin = origin) +
+                fadeOut(animationSpec = readerBarsFadeAnimationSpec)
+        }
+    }
+    val topOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0f)
+    val bottomOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 1f)
+
     CompositionLocalProvider(LocalReaderGlass provides true) {
+        Box(modifier = Modifier.fillMaxSize()) {
+        AnimatedVisibility(
+            visible = visible,
+            enter = fadeIn(animationSpec = readerBarsFadeAnimationSpec),
+            exit = fadeOut(animationSpec = readerBarsFadeAnimationSpec),
+            modifier = Modifier.align(Alignment.TopCenter),
+        ) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(150.dp)
+                    .background(
+                        androidx.compose.ui.graphics.Brush.verticalGradient(
+                            0f to Color.Black.copy(alpha = 0.55f),
+                            1f to Color.Transparent,
+                        ),
+                    ),
+            )
+        }
+        AnimatedVisibility(
+            visible = sliderVisible && navBarType == NavBarType.Bottom,
+            enter = fadeIn(animationSpec = readerBarsFadeAnimationSpec),
+            exit = fadeOut(animationSpec = readerBarsFadeAnimationSpec),
+            modifier = Modifier.align(Alignment.BottomCenter),
+        ) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(130.dp)
+                    .background(
+                        androidx.compose.ui.graphics.Brush.verticalGradient(
+                            0f to Color.Transparent,
+                            1f to Color.Black.copy(alpha = 0.5f),
+                        ),
+                    ),
+            )
+        }
         Column(modifier = Modifier.fillMaxHeight()) {
             AnimatedVisibility(
                 visible = visible,
-                enter = slideInVertically(initialOffsetY = { -it }, animationSpec = readerBarsSlideAnimationSpec) +
-                    fadeIn(animationSpec = readerBarsFadeAnimationSpec),
-                exit = slideOutVertically(targetOffsetY = { -it }, animationSpec = readerBarsSlideAnimationSpec) +
-                    fadeOut(animationSpec = readerBarsFadeAnimationSpec),
+                enter = popIn(topOrigin),
+                exit = popOut(topOrigin),
             ) {
                 Column {
                     GlassTopBar(
@@ -478,10 +541,8 @@ private fun GlassReaderAppBars(
 
             AnimatedVisibility(
                 visible = sliderVisible && navBarType == NavBarType.Bottom,
-                enter = slideInVertically(initialOffsetY = { it }, animationSpec = readerBarsSlideAnimationSpec) +
-                    fadeIn(animationSpec = readerBarsFadeAnimationSpec),
-                exit = slideOutVertically(targetOffsetY = { it }, animationSpec = readerBarsSlideAnimationSpec) +
-                    fadeOut(animationSpec = readerBarsFadeAnimationSpec),
+                enter = popIn(bottomOrigin),
+                exit = popOut(bottomOrigin),
             ) {
                 Box(
                     modifier = Modifier
@@ -502,6 +563,7 @@ private fun GlassReaderAppBars(
                     )
                 }
             }
+        }
         }
     }
 

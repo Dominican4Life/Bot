@@ -834,6 +834,9 @@ private fun AnimeEpisodeTile(
 /** KMK (r127): where the floating player was left (x, y, width, height in px), kept while the app runs */
 private object FloatingPlayerRect {
     var rect: IntArray? = null
+
+    /** KMK (r129): width / height of the last video shown */
+    var aspect: Float = 16f / 9f
 }
 
 /**
@@ -877,18 +880,21 @@ private fun AnimeFloatingPlayer(
         val maxY = (minOf(parentH, rootView.height - safeBottom - parentInWindow.y.roundToInt()) - margin)
             .coerceAtLeast(minY + 1)
         val minW = with(density) { 240.dp.roundToPx() }
-        val minH = with(density) { 150.dp.roundToPx() }
+        // KMK (r129): the window keeps the video's shape (no black bars); the corner grip scales it as a whole
+        var aspect by remember { mutableStateOf(FloatingPlayerRect.aspect) }
         fun clamp(r: IntArray): IntArray {
-            val w = r[2].coerceIn(minW.coerceAtMost(maxX - minX), (maxX - minX).coerceAtLeast(1))
-            val h = r[3].coerceIn(minH.coerceAtMost(maxY - minY), (maxY - minY).coerceAtLeast(1))
+            val roomW = (maxX - minX).coerceAtLeast(1)
+            val roomH = (maxY - minY).coerceAtLeast(1)
+            val largest = minOf(roomW.toFloat(), roomH * aspect)
+            val w = r[2].toFloat().coerceIn(minOf(minW.toFloat(), largest), largest).roundToInt()
+            val h = (w / aspect).roundToInt().coerceAtMost(roomH)
             val x = r[0].coerceIn(minX, (maxX - w).coerceAtLeast(minX))
             val y = r[1].coerceIn(minY, (maxY - h).coerceAtLeast(minY))
             return intArrayOf(x, y, w, h)
         }
         var rect by remember {
             val w = with(density) { 440.dp.roundToPx() }
-            val h = w * 9 / 16 + with(density) { 8.dp.roundToPx() }
-            mutableStateOf(FloatingPlayerRect.rect ?: intArrayOf(Int.MAX_VALUE, Int.MAX_VALUE, w, h))
+            mutableStateOf(FloatingPlayerRect.rect ?: intArrayOf(Int.MAX_VALUE, Int.MAX_VALUE, w, (w / aspect).roundToInt()))
         }
         val at = clamp(rect)
         fun update(r: IntArray) {
@@ -896,34 +902,27 @@ private fun AnimeFloatingPlayer(
             FloatingPlayerRect.rect = rect
         }
         val shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp)
-        val moveHandle = Modifier.pointerInput(minX, minY, maxX, maxY) {
+        val moveHandle = Modifier.pointerInput(minX, minY, maxX, maxY, aspect) {
             detectDragGestures { change, drag ->
                 change.consume()
                 val r = clamp(rect)
                 update(intArrayOf(r[0] + drag.x.roundToInt(), r[1] + drag.y.roundToInt(), r[2], r[3]))
             }
         }
-        // Resize: sx / sy say which sides move (+1 the right / bottom one)
-        fun resize(sx: Int, sy: Int) = Modifier.pointerInput(sx, sy, minX, minY, maxX, maxY) {
+        // The corner grip: the bigger of the two movements sets the new size, the shape stays the video's
+        val cornerResize = Modifier.pointerInput(minX, minY, maxX, maxY, aspect) {
             detectDragGestures { change, drag ->
                 change.consume()
                 val r = clamp(rect)
-                var (x, y, w, h) = listOf(r[0], r[1], r[2], r[3])
-                val dx = drag.x.roundToInt()
-                val dy = drag.y.roundToInt()
-                if (sx > 0) w += dx
-                if (sx < 0) {
-                    val nw = (w - dx).coerceAtLeast(minW)
-                    x += w - nw
-                    w = nw
-                }
-                if (sy > 0) h += dy
-                if (sy < 0) {
-                    val nh = (h - dy).coerceAtLeast(minH)
-                    y += h - nh
-                    h = nh
-                }
-                update(intArrayOf(x, y, w, h))
+                val grow = if (kotlin.math.abs(drag.x) >= kotlin.math.abs(drag.y * aspect)) drag.x else drag.y * aspect
+                update(intArrayOf(r[0], r[1], r[2] + grow.roundToInt(), r[3]))
+            }
+        }
+        val onAspect: (Float) -> Unit = { value ->
+            if (value > 0.3f && value < 4f && kotlin.math.abs(value - aspect) > 0.01f) {
+                aspect = value
+                FloatingPlayerRect.aspect = value
+                update(rect)
             }
         }
         // The list runs newest first or oldest first; "next" is the following episode number
@@ -954,6 +953,7 @@ private fun AnimeFloatingPlayer(
                         settingsInitiallyOpen = false,
                         floating = true,
                         dragHandle = moveHandle,
+                        onAspect = onAspect,
                         onClose = onClose,
                         onPrevious = if (previous != null && onSelectEpisode != null) {
                             { onSelectEpisode(previous) }
@@ -974,7 +974,7 @@ private fun AnimeFloatingPlayer(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .size(26.dp)
-                    .then(resize(1, 1)),
+                    .then(cornerResize),
             ) {
                 Box(
                     modifier = Modifier

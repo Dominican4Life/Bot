@@ -515,6 +515,7 @@ private fun MangaScreenSmallImpl(
                 backgroundAlphaProvider = { backgroundAlpha },
                 // KMK -->
                 onPaletteScreenClick = onPaletteScreenClick,
+                glass = useSheet && eu.kanade.presentation.components.TitleSheet.glass().get(),
                 // KMK <--
             )
         },

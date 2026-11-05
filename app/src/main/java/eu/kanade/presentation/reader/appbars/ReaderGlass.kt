@@ -54,6 +54,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import eu.kanade.presentation.browse.components.liquidGlass
+import eu.kanade.presentation.browse.components.glassPress
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -138,12 +139,15 @@ internal fun GlassTopBar(
             contentDescription = stringResource(MR.strings.action_bar_up_description),
             onClick = navigateUp,
         )
+        // KMK (r129): glass flexes and lights up when touched (no ripple)
+        val titlePress = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
         Column(
             modifier = Modifier
                 .weight(1f)
                 .height(46.dp)
+                .glassPress(titlePress, CircleShape)
                 .readerGlass(CircleShape)
-                .clickable(onClick = onClickTitle)
+                .clickable(interactionSource = titlePress, indication = null, onClick = onClickTitle)
                 .padding(horizontal = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
@@ -177,11 +181,13 @@ internal fun GlassTopBar(
 
 @Composable
 private fun GlassRoundButton(painter: Painter, contentDescription: String?, onClick: () -> Unit) {
+    val press = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     Box(
         modifier = Modifier
             .size(44.dp)
+            .glassPress(press, CircleShape)
             .readerGlass(CircleShape)
-            .clickable(onClick = onClick),
+            .clickable(interactionSource = press, indication = null, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Icon(painter = painter, contentDescription = contentDescription, tint = ReaderGlass.content)
@@ -245,7 +251,7 @@ internal fun GlassActionSheet(
                 .sizeIn(maxWidth = 640.dp)
                 .fillMaxWidth()
                 .shadow(18.dp, sheetShape)
-                .liquidGlass(sheetShape, Color(0xFF14161E))
+                .liquidGlass(sheetShape, Color(0xFF14161E), thick = true)
                 .pointerInput(Unit) {}
                 .padding(top = 10.dp, bottom = 12.dp),
         ) {
@@ -372,16 +378,18 @@ internal fun GlassActionSheet(
 
 @Composable
 private fun ActionTile(painter: Painter, label: String, onClick: () -> Unit) {
+    val press = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     Column(
         modifier = Modifier
             .width(82.dp)
             .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick)
+            .clickable(interactionSource = press, indication = null, onClick = onClick)
             .padding(vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
             modifier = Modifier
+                .glassPress(press, CircleShape)
                 .size(48.dp)
                 .clip(CircleShape)
                 .background(Color.White.copy(alpha = 0.08f))

@@ -5,6 +5,9 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.draw.clip
+import eu.kanade.presentation.browse.components.liquidGlass
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
@@ -137,6 +140,8 @@ fun AppBar(
 
     // KMK -->
     goHome: (() -> Boolean?)? = null,
+    // KMK (r129): the up / home buttons and the actions sit on floating glass capsules (the phone title page)
+    glassButtons: Boolean = false,
     // KMK <--
 
     scrollBehavior: TopAppBarScrollBehavior? = null,
@@ -155,7 +160,16 @@ fun AppBar(
                     }
                 } else {
                     // KMK -->
-                    Row {
+                    Row(
+                        modifier = if (glassButtons) {
+                            Modifier
+                                .padding(start = 4.dp)
+                                .clip(androidx.compose.foundation.shape.CircleShape)
+                                .liquidGlass(androidx.compose.foundation.shape.CircleShape, MaterialTheme.colorScheme.surfaceContainerHigh)
+                        } else {
+                            Modifier
+                        },
+                    ) {
                         // KMK <--
                         navigateUp?.let {
                             IconButton(onClick = it) {
@@ -173,7 +187,20 @@ fun AppBar(
                 }
             },
             title = titleContent,
-            actions = actions,
+            actions = {
+                if (glassButtons) {
+                    androidx.compose.foundation.layout.Row(
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                        modifier = Modifier
+                            .padding(end = 8.dp)
+                            .clip(androidx.compose.foundation.shape.CircleShape)
+                            .liquidGlass(androidx.compose.foundation.shape.CircleShape, MaterialTheme.colorScheme.surfaceContainerHigh),
+                        content = actions,
+                    )
+                } else {
+                    actions()
+                }
+            },
             colors = TopAppBarDefaults.topAppBarColors(
                 containerColor = backgroundColor ?: MaterialTheme.colorScheme.surfaceColorAtElevation(
                     elevation = if (isActionMode) 3.dp else 0.dp,

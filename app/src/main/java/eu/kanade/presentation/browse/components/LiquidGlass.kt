@@ -16,6 +16,10 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -162,7 +166,7 @@ internal fun glassOverlay(base: Color): Color = when (GlassStyle.material().get(
  * A glass surface in [shape] with its [base] colour. Draws the backdrop (when there is one), the tint and the light;
  * the content goes on top. Use instead of `clip + background`.
  */
-fun Modifier.liquidGlass(shape: Shape, base: Color = Color(0xFF12141B)): Modifier = composed {
+fun Modifier.liquidGlass(shape: Shape, base: Color = Color(0xFF12141B), thick: Boolean = false): Modifier = composed {
     val backdrop = LocalGlassBackdrop.current
     val haze = LocalGlassHaze.current
     val density = LocalDensity.current
@@ -176,7 +180,9 @@ fun Modifier.liquidGlass(shape: Shape, base: Color = Color(0xFF12141B)): Modifie
         }
     }
     val position = remember { androidx.compose.runtime.mutableStateOf(Offset.Zero) }
-    val lens = with(density) { 7.dp.toPx() }
+    // KMK (r129): larger pieces (sheets) are thicker glass: a wider, stronger lens rim
+    val lens = with(density) { (if (thick) 12.dp else 7.dp).toPx() }
+    val zoom = if (thick) 1.09f else 1.06f
     val edge = with(density) { GlassStyle.edgeWidth().toPx() }
     var m: Modifier = Modifier
         .onGloballyPositioned {
@@ -199,7 +205,7 @@ fun Modifier.liquidGlass(shape: Shape, base: Color = Color(0xFF12141B)): Modifie
         Modifier.drawBehind {
             val outline = shape.createOutline(size, layoutDirection, this)
             if (useBackdrop && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                drawBackdrop(backdrop!!, outline, position.value, lens)
+                drawBackdrop(backdrop!!, outline, position.value, lens, zoom)
                 drawOutline(outline, glassOverlay(base))
             } else if (!useHaze) {
                 drawOutline(outline, GlassStyle.fill(base))
@@ -210,7 +216,7 @@ fun Modifier.liquidGlass(shape: Shape, base: Color = Color(0xFF12141B)): Modifie
 }
 
 @RequiresApi(Build.VERSION_CODES.S)
-private fun DrawScope.drawBackdrop(backdrop: GlassBackdrop, outline: Outline, at: Offset, lens: Float) {
+private fun DrawScope.drawBackdrop(backdrop: GlassBackdrop, outline: Outline, at: Offset, lens: Float, zoom: Float) {
     val node = backdrop.node()
     val source = backdrop.sourceInWindow()
     val shift = Offset(source.x - at.x, source.y - at.y)
@@ -238,7 +244,7 @@ private fun DrawScope.drawBackdrop(backdrop: GlassBackdrop, outline: Outline, at
             val cx = size.width / 2f
             val cy = size.height / 2f
             native.translate(cx, cy)
-            native.scale(1.06f, 1.06f)
+            native.scale(zoom, zoom)
             native.translate(-cx, -cy)
             native.translate(shift.x, shift.y)
             native.scale(1f / backdrop.scale, 1f / backdrop.scale)
@@ -300,4 +306,56 @@ private fun DrawScope.drawGlassLight(outline: Outline, edge: Float) {
         ),
         style = Stroke(edge * 1.2f),
     )
+}
+
+/** KMK (r129): Android's "Remove animations" (animator duration scale 0): the glass stops flexing */
+fun glassReduceMotion(): Boolean = runCatching {
+    android.provider.Settings.Global.getFloat(
+        uy.kohesive.injekt.Injekt.get<android.app.Application>().contentResolver,
+        android.provider.Settings.Global.ANIMATOR_DURATION_SCALE,
+        1f,
+    ) == 0f
+}.getOrDefault(false)
+
+/**
+ * KMK (r129): how glass answers a touch (WWDC25 "Meet Liquid Glass"): it flexes like a gel (grows a little while
+ * pressed and springs back) and lights up from within. Pair it with `clickable(interactionSource, indication = null)`
+ * on the same [interactionSource].
+ */
+fun Modifier.glassPress(
+    interactionSource: androidx.compose.foundation.interaction.InteractionSource,
+    shape: Shape,
+): Modifier = composed {
+    val pressed by interactionSource.collectIsPressedAsState()
+    val still = remember { glassReduceMotion() }
+    val scale by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (pressed && !still) 1.08f else 1f,
+        animationSpec = androidx.compose.animation.core.spring(dampingRatio = 0.45f, stiffness = 600f),
+        label = "glassPress",
+    )
+    val glow by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (pressed) 1f else 0f,
+        animationSpec = androidx.compose.animation.core.tween(if (pressed) 90 else 260),
+        label = "glassGlow",
+    )
+    this
+        .graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+        }
+        .drawWithContent {
+            drawContent()
+            if (glow > 0.01f) {
+                val outline = shape.createOutline(size, layoutDirection, this)
+                drawOutline(
+                    outline,
+                    Brush.radialGradient(
+                        0f to Color.White.copy(alpha = 0.32f * glow),
+                        1f to Color.White.copy(alpha = 0.06f * glow),
+                        center = center,
+                        radius = size.maxDimension * 0.7f,
+                    ),
+                )
+            }
+        }
 }

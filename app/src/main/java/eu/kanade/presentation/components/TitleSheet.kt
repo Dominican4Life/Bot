@@ -1,5 +1,9 @@
 package eu.kanade.presentation.components
 
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.shadow
+import eu.kanade.presentation.browse.components.liquidGlass
+import dev.chrisbanes.haze.hazeSource
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.spring
@@ -104,6 +108,9 @@ object TitleSheet {
 
     /** Settings › Appearance: the sheet on phones (off = the classic list) */
     fun enabled(): Preference<Boolean> = store.getBoolean("title_sheet_on", true)
+
+    /** KMK (r129): the sheet, its dock and the top buttons in glass over the cover and description */
+    fun glass(): Preference<Boolean> = store.getBoolean("title_sheet_glass", true)
 
     /** Where the sheet stopped last */
     fun lastStop(): Preference<Int> = store.getInt("title_sheet_last_stop", HALF)
@@ -243,17 +250,53 @@ fun TitleSheetBox(
         }
 
         val bottomSpace = with(density) { (fullHeightPx - peekY).toDp() }
-        background(bottomSpace)
+        // KMK (r129): glass (WWDC25): the cover and description stay the content layer; the sheet, the dock and the
+        // top buttons float over it as glass that shows them blurred. The sheet turns solid as it reaches full height
+        // (as a full sheet does), so the list reads like a page.
+        val glassPref = remember { TitleSheet.glass() }
+        val glass by glassPref.collectAsState()
+        val haze = remember { dev.chrisbanes.haze.HazeState() }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .then(if (glass) Modifier.hazeSource(haze) else Modifier),
+        ) {
+            background(bottomSpace)
+        }
 
+        val sheetShape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp)
+        val surfaceColor = MaterialTheme.colorScheme.surfaceContainerLow
+        androidx.compose.runtime.CompositionLocalProvider(
+            eu.kanade.presentation.browse.components.LocalGlassHaze provides haze.takeIf { glass },
+        ) {
         Surface(
-            shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
-            tonalElevation = 2.dp,
-            shadowElevation = 12.dp,
+            shape = sheetShape,
+            color = if (glass) androidx.compose.ui.graphics.Color.Transparent else surfaceColor,
+            tonalElevation = if (glass) 0.dp else 2.dp,
+            shadowElevation = if (glass) 0.dp else 12.dp,
             modifier = Modifier
                 .offset { IntOffset(0, sheetY.roundToInt()) }
                 .fillMaxWidth()
                 .height(with(density) { (fullHeightPx - fullY).toDp() })
+                .then(
+                    if (glass) {
+                        Modifier
+                            .shadow(16.dp, sheetShape)
+                            .liquidGlass(sheetShape, surfaceColor, thick = true)
+                            .drawBehind {
+                                // Solid as it nears full height (read here, so a drag only redraws)
+                                val fullness = if (peekY - fullY > 1f) {
+                                    ((peekY - sheetY) / (peekY - fullY)).coerceIn(0f, 1f)
+                                } else {
+                                    1f
+                                }
+                                val solid = (fullness - 0.55f).coerceAtLeast(0f) / 0.45f
+                                if (solid > 0f) drawRect(surfaceColor.copy(alpha = 0.9f * solid))
+                            }
+                    } else {
+                        Modifier
+                    },
+                )
                 .nestedScroll(connection),
         ) {
             Column {
@@ -297,6 +340,7 @@ fun TitleSheetBox(
 
         if (showDock) {
             TitleSheetDock(
+                glass = glass,
                 tab = state.tab,
                 onTab = { tab ->
                     state.tab = tab
@@ -311,11 +355,13 @@ fun TitleSheetBox(
                     .padding(horizontal = 12.dp, vertical = 10.dp),
             )
         }
+        }
     }
 }
 
 @Composable
 private fun TitleSheetDock(
+    glass: Boolean,
     tab: TitleSheetTab,
     onTab: (TitleSheetTab) -> Unit,
     playLabel: String?,
@@ -323,11 +369,16 @@ private fun TitleSheetDock(
     playMenu: @Composable ColumnScope.(dismiss: () -> Unit) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val dockColor = MaterialTheme.colorScheme.surfaceContainerHighest
     Surface(
         shape = CircleShape,
-        color = MaterialTheme.colorScheme.surfaceContainerHighest,
-        shadowElevation = 8.dp,
-        modifier = modifier.fillMaxWidth().height(56.dp),
+        color = if (glass) androidx.compose.ui.graphics.Color.Transparent else dockColor,
+        shadowElevation = if (glass) 0.dp else 8.dp,
+        modifier = modifier
+            .fillMaxWidth()
+            .height(56.dp)
+            // KMK (r129): a glass capsule; only Play keeps its colour (tint only the main action)
+            .then(if (glass) Modifier.shadow(10.dp, CircleShape).liquidGlass(CircleShape, dockColor) else Modifier),
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 6.dp),

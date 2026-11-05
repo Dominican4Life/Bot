@@ -65,6 +65,10 @@ fun AnimatedThumbnail(
     playing: Boolean,
     modifier: Modifier = Modifier,
     onAnimated: (Boolean) -> Unit = {},
+    // KMK (r129): the title page / glass panel's Preview grid: where the picture sits in the tile (long-strip
+    // slices) and its height / width once known
+    alignment: Alignment = Alignment.TopCenter,
+    onRatio: ((Float) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val key = remember(model) { thumbKeyOf(model) }
@@ -100,10 +104,14 @@ fun AnimatedThumbnail(
             },
             contentDescription = null,
             contentScale = ContentScale.Crop,
-            alignment = Alignment.TopCenter,
+            alignment = alignment,
             onState = { state ->
                 val success = state as? AsyncImagePainter.State.Success
                 drawable = success?.result?.image?.asDrawable(context.resources)
+                if (success != null && onRatio != null) {
+                    val size = success.painter.intrinsicSize
+                    if (size.width > 0f && size.height > 0f) onRatio(size.height / size.width)
+                }
                 if (success != null && !play) stillKey = success.result.memoryCacheKey
             },
             modifier = Modifier.matchParentSize(),

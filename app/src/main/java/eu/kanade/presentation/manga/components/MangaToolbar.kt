@@ -71,6 +71,8 @@ fun MangaToolbar(
     backgroundAlphaProvider: () -> Float,
     // KMK -->
     onPaletteScreenClick: () -> Unit,
+    // KMK (r129): glass buttons over the cover (phone title page with the glass sheet)
+    glass: Boolean = false,
     // KMK <--
     modifier: Modifier = Modifier,
 ) {
@@ -106,6 +108,7 @@ fun MangaToolbar(
         },
         // KMK <--
         navigateUp = navigateUp,
+        glassButtons = glass && !isActionMode,
         actions = {
             var downloadExpanded by remember { mutableStateOf(false) }
             if (onClickDownload != null) {

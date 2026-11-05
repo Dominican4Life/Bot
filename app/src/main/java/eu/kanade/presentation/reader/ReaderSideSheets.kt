@@ -265,7 +265,7 @@ fun ReaderGlassSheet(
                         .fillMaxWidth()
                         .height(with(density) { heightPx.toDp() })
                         .shadow(18.dp, shape)
-                        .liquidGlass(shape, Color(0xFF14161E))
+                        .liquidGlass(shape, Color(0xFF14161E), thick = true)
                         .pointerInput(Unit) {},
                 ) {
                     // Handle: drag up for full height, down for half, further down to close
