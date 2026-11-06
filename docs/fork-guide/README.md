@@ -1158,6 +1158,22 @@ One build for the whole glass list (24 items). Mockups are on the design canvas 
 - **Source browsing**: see-through bar with glass buttons and a glass source-name capsule, glass chips (`BrowseTabChip`), new chip / menu / catalog icons, panel button `PreviewPanel(On)`, Filter / Settings panels as glass cards (`LocalGlassPanel` → glass switches and filter fields).
 - **Coming Up** in glass with a Days Ahead slider (pref `coming_up_days_ahead`, default 7). **Log**: window can't leave the sides; bubble can go up to the status bar.
 
+## Changes in r134 (6 November 2026)
+
+One build for the owner's r134 list (items 1–26). Mockups: canvas boards "r134 decisions" and "Filter & Settings panels" (owner picked Z2, H1, S1, P1).
+
+- **Preview Size:** `GlassIcons.PreviewSize` is the original Aspect Ratio frame redrawn (Z2), with no glass circle behind it (manga sheet, anime sheet and the anime browse panel). `TitleSheetSizeMenu` uses the material3 menu with `GlassMenuStyle` (the 196 dp glass `DropdownMenu` is too narrow) at 340 dp. `GlassChoiceSwitch` names wrap to two lines ("Strip Slices").
+- **Reader knob:** `GlassSliderThumb` (every style but Dot) is a white capsule at rest and the clear lens (`GlassLensKnob`) while held, springing between them.
+- **Chapter rows:** `MangaChapterListItem` centres its row vertically; the leading eye / bookmark are skipped when `trailing` is given (reader list). `ReadOff` / `BookmarkOff` are brighter everywhere.
+- **Title page (glass):** `MangaInfoBox` hides its cover backdrop (the dark box) and adds a soft top fade; the title gets a shadow (`glassTitleTop()`). The dividers around Suggestions are dropped (`glassSuggestions`). The description caret is gone everywhere; in the preview panel's Details tab the tags always wrap. A long author line (anime genres) stops at two lines.
+- **Source browsing:** `AppBar` / `SearchToolbar` take `glassBase`; browse passes `BrowseGlassBase` (dark) for the capsules, the title capsule, `BrowseTabChip` and the panel button. No language line under the source name; no divider under the buttons. `BrowseBarHide` (`rememberBrowseBarHide`, `Modifier.browseBarHide`) slides the top away while scrolling down (manga and anime; held while a panel or selection is open). The anime browse top is see-through with glass too.
+- **Filter / Source Settings panels (P1):** `SlidingSidePanel(glassDim)` darkens the glass (0.78); `FilterCard` is transparent inside a glass panel; the page behind is dimmed 0.2.
+- **Picked cover (S1):** with glass, `GridItemSelectable` no longer fills a block; `MangaGridCover` draws `glowRing` in the accent (`LocalGlowSelected`). This also applies to library multi-select.
+- **Bot checks (detection only):** `BotCheckReporter.isCheckPage` spots a check page sent back as 200 (cf-mitigated, or Cloudflare / DDoS-Guard HTML with challenge markers in the first 16 KB) and the interceptor waits for the user's pass like a 403. `SlowLoadingScreen` shows "Still Loading" after 8 s with Keep Waiting / Open In WebView; coming back from WebView opened there reloads the list. Nothing is solved or clicked by the app.
+- **Panel video:** `AnimePreviewSection.playsThroughApp` mirrors `PlayerActivity`: a JS source's plain file goes through `HlsRelay.wrapFile`, and User-Agent goes in mpv's `user-agent` option.
+- **Panel player:** glass icons (new `GlassIcons` Pause, SkipNext/Previous, Back10/Forward10, Close, Lock/LockOpen, Tune, Quality, Fullscreen, VolumeOn/Off, ChevronUp/Left/Right, SwapSides, DragHandle), `GlassChip` instead of `FilterChip`, glass quality/speed menus (max 380 dp, tick on the playing quality), the buffering spinner moves above the controls when they show.
+- **Anime:** panel episode rows use the glass eye / bookmark and header icons (`GlassPanelTop(authorIcon)`; anime pass `isAnime`); title page uses `MangaToolbar(glass)`; episode cards get eye / bookmark buttons; the AniList info line is brighter; sheet labels Title Case ("Filler Episodes", "Source Title").
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
