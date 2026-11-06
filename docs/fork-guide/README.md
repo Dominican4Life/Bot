@@ -20,6 +20,7 @@ Written 28–29 October 2026, at r84 (commit a693dc09), and updated for r85 (014
 | 6 | [06-library-downloads-backup.md](06-library-downloads-backup.md) | **Database migrations the fork added**, backup contents and restore order, downloads, library refresh, tracking, pair sync, the Logs screen |
 | 7 | [07-settings-catalog.md](07-settings-catalog.md) | **Every setting**: title, key, default, what reads it, fork-added or not; hidden keys; dead settings; settings that conflict; restart-only settings |
 | 8 | [08-writing-js-json-sources.md](08-writing-js-json-sources.md) | The rules guide for writing JS/JSON sources (for source authors), including "Mistakes to avoid" |
+| 9 | [09-glass-design-memory.md](09-glass-design-memory.md) | **The glass redesign's memory card**: how the owner and AI work on design (mockups, picks, "go"), how glass icons are drawn and every one made so far, colour rules (accent, W rule, tinted glass), reusable glass components, layout decisions to keep, mockup checklist. **Read before any UI change.** |
 
 ## Ten rules that would have prevented most past problems
 
