@@ -1,6 +1,6 @@
 # 09 · Glass design memory (icons, colours, menus, sheets)
 
-**What this is:** the "memory card" for the glass redesign (r125–r136). An AI session that touches the UI should read this first, then make new things look like they belong. The owner can also paste this file into a new conversation. When the code and this file disagree, the code wins; update this file in the same docs-only push that ships the change.
+**What this is:** the "memory card" for the glass redesign (r125–r137). An AI session that touches the UI should read this first, then make new things look like they belong. The owner can also paste this file into a new conversation. When the code and this file disagree, the code wins; update this file in the same docs-only push that ships the change.
 
 ## 1. How the owner and the AI work on design
 
@@ -61,7 +61,8 @@ Rules that every icon follows:
 | Source browsing | Search, Popular / PopularOn, Latest / LatestOn, SourceSettings, EditSource (E2), EditableCopy (K8a), Help, Retry, PreviewPanel / PreviewPanelOn (X6, one toggle that doesn't flip sides) |
 | Catalog tabs (Family A) | TabTrending, TabHot, TabTop, TabCalendar, TabNew, TabRecent, TabFavourite, TabPeople, TabFeatured, TabSubtitles, TabMovie |
 | Preview player (r134) | Pause, SkipNext / SkipPrevious, Back10 / Forward10, Close, Lock / LockOpen, Tune, Quality ("HD" in a faint frame), Fullscreen, VolumeOn / VolumeOff, DragHandle |
-| Navigation bits | ChevronUp / Down / Left / Right, SwapSides |
+| Navigation bits | ChevronUp / Down / Left / Right, SwapSides, ArrowBack (mirror of Arrow), Home (HC, r137) |
+| r137 | SortNewest / SortOldest (SF: rounded sort bars with the direction arrow on the left), Finished (double tick) |
 | Drawables | AniList (N9: the A solid and the L faint; faint with a slash when off), incognito (G1) |
 
 **Still Material (candidates for later):** some anime title-page and settings-screen icons, `Icons.Default.Save` in the filter sheet, and anything a source draws itself.
@@ -81,6 +82,7 @@ Rules that every icon follows:
   - `tintedGlass(alpha, base = 0xFF181A22, amount = 0.26)` is dark glass washed with the accent; use it for panels, tags, the description box, action buttons, See Recommendations and side panels;
   - `liquidGlass(shape, base)` (browse components) is the refractive capsule; its default base is `0xFF12141B`;
   - while browsing a source, the floating pieces use `BrowseGlassBase` (`0xFF14161C`, dark frosted) so they read over busy covers.
+- **Panels:** `SlidingSidePanel(deepTint = alpha)` washes a side panel with `tintedGlass(alpha)`: 0.62 for previews, 0.86 for Filter / Source Settings (r137). Dialogs (`AdaptiveSheet`) are tinted dark glass in dark themes only.
 - **No edge lines or dividers on glass** (removed in r133 / r134). Separate things with spacing or a slightly darker card (black 0.25).
 
 ## 4. Components to reuse (don't rebuild these)
@@ -117,7 +119,9 @@ Rules that every icon follows:
   - it slides up to just under the button row;
   - it moves **only up and down** (full / half, remembered), and dragging it down closes it;
   - Save / Clear / Apply sit at the bottom.
-- **Tablet:** Filter / Settings are the side panels (`SlidingSidePanel`), dark frosted with `glassDim` 0.78.
+- **Tablet:** Filter / Settings are the side panels (`SlidingSidePanel`), tinted (r137, was dark frosted). The title page has the cover blurred behind it, tinted panels, and Start / Resume inside the chapter or episode panel; manga rows have eye / bookmark / download (r137).
+- **Filter content (r137, 4A):** groups are glass rows with a pill of what's picked, the header counts "N set", Save / Clear / Apply at the bottom on phone and tablet.
+- **Labels are Title Case** ("3868 Chapters", "Add Anyway").
 - **Bot checks:** the app **never** solves, clicks or bypasses a check. It may only notice one sooner (`isCheckPage`, `SlowLoadingScreen`) and send the user to WebView to solve it themselves.
 
 ## 6. Mockup checklist (copy this)

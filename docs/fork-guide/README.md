@@ -1199,6 +1199,19 @@ Owner's r136 list. Mockups: canvas boards "r136 phone sheets" and "r136 item 8".
 - **Source settings switches:** painted in `onCreateAdapter` (a `PreferenceGroupAdapter` that styles each bound row); the r135 attach listener didn't take.
 - **Title page:** See Recommendations (`OutlinedButtonWithArrow`) is cover-tinted; the Suggestions → has no round button (the ← keeps its circle); the dock's Start / Resume uses `GlassIcons.Play`.
 
+## Changes in r137 (6 November 2026)
+
+- **Menus (Phone + Tablet):** glass `DropdownMenu` and `TopAlignedGlassMenu` grow to fit (196–300 dp).
+- **Search (Phone + Tablet):** `SearchToolbar` keeps the glass buttons while searching; the box is a dark 48 dp capsule with only the text and a ✕ (clears, or closes when empty). Glass ← (`GlassIcons.ArrowBack`) and 🏠 (`GlassIcons.Home`, HC).
+- **Filter panel 4A (Phone + Tablet, `SourceFilterDialog`):** the tablet panel uses `SlidingSidePanel(deepTint = 0.86f)` instead of the dark `glassDim`; with `LocalGlassPanel` the header shows "N set" and Save / Clear / Apply sit at the bottom; check-box groups are glass rows (`CollapsibleBox(glassRow, summary)`) with a pill of what's picked; headers are small grey notes and separators are hidden.
+- **Slider (Phone + Tablet):** `GlassStepSlider` maps 0–1 onto the track inset by half the knob (`SliderKnobRest = 40.dp`), so the knob never hangs off the ends.
+- **Title page (Phone + Tablet):** the drawWithContent fade under the cover only draws while the backdrop shows (the dark box); anime author line uses the info icon (`LocalAuthorLineIcon`); completed titles show "Finished" (`GlassIcons.Finished`) instead of the next update; the duplicate list button is gone from the anime sheet header (Phone).
+- **Anime (Phone + Tablet):** glass download menu with icons; watched episodes show a small glass eye next to the bookmark (`AnimeEpisodeCard`, `RichEpisodeItem`); the browse panel's Episodes header is download → filter (thumbnails / summaries, glass ticks) → sort (`GlassIcons.SortNewest` / `SortOldest`, flips with `sortAscending`).
+- **Preview panels (Phone + Tablet):** `SlidingSidePanel(deepTint = 0.62f)`: the same cover-tinted glass as the title page.
+- **Tablet title page (Tablet only, manga + anime):** cover blurred behind the page (`TitleCoverBackdrop`) with a see-through Scaffold; anime episodes sit in a `frostedPanel`; Start / Resume is a `GlassButton` at the bottom of the chapter / episode panel (the FAB is hidden); manga rows get eye and bookmark buttons (`sharedChapterItems(rowButtons = true)` → `ChapterRowButtons`, using the swipe actions).
+- **Dialogs (Phone + Tablet):** `AdaptiveSheet` is tinted dark glass in dark themes (light themes keep the surface); Possible Duplicates (manga + anime) with glass buttons; Add Tracking is a glass row; the tracker search (AniList info) sheet is glass with white ← / ✕, no line, glass cards and a glass Track button.
+- **Strings:** Title Case for "N Chapters", "N Episodes", "Add Anyway", "Possible Duplicates", "Add Tracking", "Start Date", "Finish Date", "Already in Your Library", "All Episodes".
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
