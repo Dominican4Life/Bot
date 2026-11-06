@@ -1188,6 +1188,16 @@ Owner's r135 list (15 items). Mockups: canvas boards "Phone Filter & Settings, M
 - **Accent:** `appGlassAccent` (the app theme's primary, brightened) is provided by `TachiyomiTheme`; `glassAccentFor(seed, primary, fallback)` falls back to it for no / colourless covers. Gold is no longer used.
 - **Glass tint and white icons (W):** `tintedGlass()` (dark glass washed with the accent) for description, tags, frosted panels, action buttons and glass side panels; action buttons and preview round icons are white, the accent fills "on" states; the not-downloaded indicator is white.
 
+## Changes in r136 (6 November 2026)
+
+Owner's r136 list. Mockups: canvas boards "r136 phone sheets" and "r136 item 8".
+
+- **Top-aligned menus:** `TopAlignedGlassMenu` (DropdownMenu.kt) is a glass `Popup` whose top-right corner sits on its anchor's top-right corner. `AppBarActions` uses it inside a glass capsule (source browsing and title page ⋮: the menu opens on the top row, where the hidden capsule was); `TabbedDialog`'s ⋮ (chapter sheet Set As Default / Reset) uses it so the menu's top is level with the tabs row. The window itself doesn't move.
+- **Phone Filter / Settings sheet:** `PhoneSideSheet` is now built like the chapter sheet: bottom edge, full width, rounded top corners, handle, `tintedGlass`; slides up from the bottom to just under the button row; vertical drag only (`detectVerticalDragGestures`) between full and half (`browse_phone_sheet_half`) or down to close; no ✕, no sideways swipe.
+- **Filter fields:** Author / Artist / Genres / Tags use `FilledFilterField` ("Any") like Order By.
+- **Source settings switches:** painted in `onCreateAdapter` (a `PreferenceGroupAdapter` that styles each bound row); the r135 attach listener didn't take.
+- **Title page:** See Recommendations (`OutlinedButtonWithArrow`) is cover-tinted; the Suggestions → has no round button (the ← keeps its circle); the dock's Start / Resume uses `GlassIcons.Play`.
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
