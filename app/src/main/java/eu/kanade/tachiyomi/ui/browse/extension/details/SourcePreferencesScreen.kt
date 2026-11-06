@@ -16,6 +16,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.fragment.app.FragmentActivity
@@ -143,6 +144,12 @@ fun SourceSettingsContent(
     anime: Boolean = false,
 ) {
     val context = LocalContext.current
+    // KMK (r135): glass switches in the glass panel
+    SourcePreferencesFragment.glassAccent = if (eu.kanade.presentation.components.LocalGlassPanel.current) {
+        tachiyomi.presentation.core.components.LocalGlassAccent.current.toArgb()
+    } else {
+        null
+    }
     val fragmentManager = (context as FragmentActivity).supportFragmentManager
     val containerId = remember { View.generateViewId() }
     val tag = remember(sourceId, anime) { "source_settings_panel_${if (anime) "anime" else "manga"}_$sourceId" }
@@ -235,6 +242,8 @@ class SourcePreferencesFragment : PreferenceFragmentCompat() {
                 if (pref is PreferenceGroup) pref.tidyUp()
                 pref.isIconSpaceReserved = false
                 pref.isSingleLineTitle = false
+                // KMK (r135): setting names in Title Case, like the rest of the app
+                pref.title = pref.title?.toString()?.let(::titleCase)
                 if (pref is DialogPreference && pref.dialogTitle.isNullOrEmpty()) {
                     pref.dialogTitle = pref.title
                 }
@@ -251,7 +260,52 @@ class SourcePreferencesFragment : PreferenceFragmentCompat() {
         }
     }
 
+    // KMK (r135): in the glass panel the switches are glass ones: the accent when on, faint glass when off
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        val accent = glassAccent ?: return
+        listView.addOnChildAttachStateChangeListener(
+            object : androidx.recyclerview.widget.RecyclerView.OnChildAttachStateChangeListener {
+                override fun onChildViewAttachedToWindow(child: View) = styleSwitches(child, accent)
+                override fun onChildViewDetachedFromWindow(child: View) = Unit
+            },
+        )
+    }
+
+    private fun styleSwitches(view: View, accent: Int) {
+        if (view is androidx.appcompat.widget.SwitchCompat) {
+            val states = arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf())
+            view.thumbTintList = android.content.res.ColorStateList(states, intArrayOf(0xFFFFFFFF.toInt(), 0xFFE6E8EE.toInt()))
+            view.trackTintList = android.content.res.ColorStateList(states, intArrayOf(accent, 0x40FFFFFF))
+            (view as? com.google.android.material.materialswitch.MaterialSwitch)?.apply {
+                trackDecorationTintList = android.content.res.ColorStateList.valueOf(0x00000000)
+                thumbIconTintList = android.content.res.ColorStateList.valueOf(accent)
+            }
+            return
+        }
+        if (view is android.view.ViewGroup) {
+            for (i in 0 until view.childCount) styleSwitches(view.getChildAt(i), accent)
+        }
+    }
+
     companion object {
+        /** KMK (r135): the glass accent to paint the switches with (set by the glass panel), null = the theme's */
+        @Volatile
+        var glassAccent: Int? = null
+
+        /** KMK (r135): "Pause between tag pages" -> "Pause Between Tag Pages" (small words stay small) */
+        fun titleCase(text: String): String {
+            val small = setOf("a", "an", "and", "or", "of", "the", "to", "in", "on", "for", "by", "at", "vs")
+            return text.split(" ").mapIndexed { i, word ->
+                val bare = word.trimStart { !it.isLetter() }
+                if (bare.isEmpty() || (i > 0 && bare.lowercase() in small) || !bare[0].isLowerCase()) {
+                    word
+                } else {
+                    word.substring(0, word.length - bare.length) + bare.replaceFirstChar { it.uppercase() }
+                }
+            }.joinToString(" ")
+        }
+
         private const val SOURCE_ID = "source_id"
         private const val ANIME = "anime"
 

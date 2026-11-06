@@ -193,7 +193,15 @@ fun MangaInfoBox(
                     )
                 }
                 // KMK -->
-                .background(MaterialTheme.colorScheme.surfaceTint.copy(alpha = 0.4f))
+                // KMK (r135): the tint sits outside .alpha() below, so it showed even with the picture hidden (the dark
+                // box under the cover); it's left out whenever the picture is
+                .then(
+                    if (LocalTitleBanner.current == null && !glassTop) {
+                        Modifier.background(MaterialTheme.colorScheme.surfaceTint.copy(alpha = 0.4f))
+                    } else {
+                        Modifier
+                    },
+                )
                 .blur(7.dp)
                 // .blur(4.dp)
                 // KMK <--
@@ -414,7 +422,7 @@ fun ExpandableMangaDescription(
                 .padding(top = 8.dp)
                 .padding(horizontal = 16.dp)
                 .clip(RoundedCornerShape(18.dp))
-                .background(Color(0xFF181A22).copy(alpha = 0.55f))
+                .background(tachiyomi.presentation.core.components.tintedGlass(0.55f)) // KMK (r135): cover-tinted glass
                 .padding(horizontal = 14.dp, vertical = 10.dp)
                 .clickableNoIndication { onExpanded(!expanded) },
         )
@@ -1071,26 +1079,33 @@ private fun RowScope.MangaActionButton(
             .padding(vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        // KMK (r135, W): cover-tinted glass with a white icon; an "on" button is filled with the accent
+        val accent = tachiyomi.presentation.core.components.LocalGlassAccent.current
+        val glassOn = glassTitleTop()
         Box(
             modifier = Modifier
                 .size(46.dp)
-                .liquidGlass(circle)
+                .liquidGlass(circle, if (glassOn) tachiyomi.presentation.core.components.tintedGlass(1f, Color(0xFF12141B)) else Color(0xFF12141B))
                 .then(
-                    if (active) Modifier.background(Color(0xFFE85A78).copy(alpha = 0.55f), circle) else Modifier,
+                    if (active) Modifier.background(accent.copy(alpha = 0.6f), circle) else Modifier,
                 ),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = if (active) Color.White else color,
+                tint = if (active || glassOn) Color.White else color,
                 modifier = Modifier.size(22.dp),
             )
         }
         Spacer(Modifier.height(6.dp))
         Text(
             text = title,
-            color = if (active) MaterialTheme.colorScheme.onSurface else color,
+            color = when {
+                active -> MaterialTheme.colorScheme.onSurface
+                glassOn -> Color.White.copy(alpha = 0.85f)
+                else -> color
+            },
             fontSize = 12.sp,
             textAlign = TextAlign.Center,
             maxLines = 1,

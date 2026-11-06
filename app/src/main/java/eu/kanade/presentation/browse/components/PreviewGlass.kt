@@ -203,7 +203,7 @@ private fun RoundIcon(icon: ImageVector, description: String?, selected: Boolean
             icon,
             contentDescription = description,
             modifier = Modifier.size(19.dp),
-            tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            tint = if (selected) tachiyomi.presentation.core.components.LocalGlassAccent.current else Color.White,
         )
     }
 }

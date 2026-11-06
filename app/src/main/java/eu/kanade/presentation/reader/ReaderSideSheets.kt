@@ -767,7 +767,8 @@ fun SlidingSidePanel(
                         if (glass) {
                             Modifier
                                 .shadow(14.dp, glassShape)
-                                .liquidGlass(glassShape)
+                                // KMK (r135, W): the glass takes a wash of the cover's colour (previews, reader)
+                                .liquidGlass(glassShape, tachiyomi.presentation.core.components.tintedGlass(1f, Color(0xFF12141B), 0.22f))
                                 .then(
                                     if (glassDim > 0f) {
                                         Modifier.drawBehind {

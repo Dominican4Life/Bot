@@ -56,9 +56,13 @@ import tachiyomi.presentation.core.i18n.stringResource
 /** KMK (r132): the frosted panels of the tablet title page (chapters, Preview) */
 internal val GlassPanelShape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp)
 
-internal fun Modifier.frostedPanel(shape: androidx.compose.ui.graphics.Shape = GlassPanelShape): Modifier = this
-    .clip(shape)
-    .background(Color(0xFF181A22).copy(alpha = 0.62f))
+internal fun Modifier.frostedPanel(shape: androidx.compose.ui.graphics.Shape = GlassPanelShape): Modifier = composed {
+    // KMK (r135, W): washed with the cover's colour
+    val tint = tachiyomi.presentation.core.components.tintedGlass(0.62f)
+    this
+        .clip(shape)
+        .background(tint)
+}
 // KMK (r133): no edge line, just the frost
 
 /** KMK (r133): Suggestions in their own frosted panel (like the chapters) when the glass design is on */

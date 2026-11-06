@@ -251,7 +251,7 @@ fun TagsChip(
                 },
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(15.dp),
                 colors = SuggestionChipDefaultsM3.suggestionChipColors(
-                    containerColor = androidx.compose.ui.graphics.Color(0xFF181A22).copy(alpha = 0.58f),
+                    containerColor = tachiyomi.presentation.core.components.tintedGlass(0.58f), // KMK (r135): cover-tinted glass
                     labelColor = androidx.compose.ui.graphics.Color(0xFFECEEF2),
                 ),
                 // KMK (r133): no edge line, just the frost

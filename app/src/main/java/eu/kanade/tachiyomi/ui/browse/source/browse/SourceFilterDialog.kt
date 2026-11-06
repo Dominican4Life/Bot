@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -137,9 +138,19 @@ fun SourceFilterContent(
     // KMK (r107): the cards, in the order their first filter comes
     val sections = sectionsOf(filters)
 
-    run {
-        LazyColumn {
-            stickyHeader(
+    // KMK (r135): in the phone side sheet the sheet has its own title / ✕, and Save, Clear and Apply sit in a bar at
+    // the bottom (M4)
+    val phoneSheet = eu.kanade.presentation.browse.components.LocalPhoneSheet.current
+    val doClear = {
+        resetDirectories(filters)
+        onReset()
+    }
+    val doApply = {
+        onFilter()
+        onDismissRequest()
+    }
+    val listContent: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = {
+            if (!phoneSheet) stickyHeader(
                 key = "$STICKY_HEADER_KEY_PREFIX-title",
             ) {
                 // KMK (r107): "Filters", then Clear (text), Save (when allowed) and Apply (filled)
@@ -252,7 +263,42 @@ fun SourceFilterContent(
                 }
             }
             // KMK <--
+    }
+    if (phoneSheet) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(modifier = Modifier.weight(1f), content = listContent)
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+            ) {
+                if (shouldShowSavingButton) {
+                    eu.kanade.presentation.components.GlassButton(
+                        text = stringResource(MR.strings.action_save),
+                        primary = false,
+                        onClick = onSave,
+                        icon = Icons.Default.Save,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                eu.kanade.presentation.components.GlassButton(
+                    text = stringResource(KMR.strings.action_clear_filters),
+                    primary = false,
+                    onClick = doClear,
+                    modifier = Modifier.weight(1f),
+                )
+                eu.kanade.presentation.components.GlassButton(
+                    text = stringResource(MR.strings.action_apply),
+                    primary = true,
+                    onClick = doApply,
+                    modifier = Modifier.weight(1.4f),
+                )
+            }
         }
+    } else {
+        LazyColumn(content = listContent)
     }
 }
 

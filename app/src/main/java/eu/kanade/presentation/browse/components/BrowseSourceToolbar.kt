@@ -38,6 +38,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.height
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -132,11 +133,14 @@ fun BrowseSourceToolbar(
         titleContent = {
             // KMK: the source's icon and language next to its name
             androidx.compose.foundation.layout.Box(
+                // KMK (r135): as tall as the round glass buttons beside it (48 dp)
+                contentAlignment = Alignment.CenterStart,
                 modifier = if (glass) {
                     Modifier
+                        .height(48.dp)
                         .clip(androidx.compose.foundation.shape.CircleShape)
                         .liquidGlass(androidx.compose.foundation.shape.CircleShape, BrowseGlassBase)
-                        .padding(start = 6.dp, end = 16.dp, top = 4.dp, bottom = 4.dp)
+                        .padding(start = 6.dp, end = 16.dp)
                 } else {
                     Modifier
                 },

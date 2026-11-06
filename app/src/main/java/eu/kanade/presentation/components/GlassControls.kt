@@ -74,7 +74,11 @@ fun GlassStepSlider(
     val steps = (range.last - range.first).coerceAtLeast(1)
     val current by rememberUpdatedState(value.coerceIn(range))
     val onChange by rememberUpdatedState(onValueChange)
-    var pressed by remember { mutableStateOf(false) }
+    // KMK (r135): held and dragging are tracked apart: when a drag starts the tap detector gives up and used to
+    // clear the one flag, so the lens vanished while the finger was still down
+    var held by remember { mutableStateOf(false) }
+    var dragging by remember { mutableStateOf(false) }
+    val pressed = held || dragging
     val frac = (current - range.first).toFloat() / steps
     val animFrac by animateFloatAsState(
         targetValue = frac,
@@ -104,20 +108,20 @@ fun GlassStepSlider(
                     }
                     detectDragGestures(
                         onDragStart = {
-                            pressed = true
+                            dragging = true
                             pick(it.x)
                         },
-                        onDragEnd = { pressed = false },
-                        onDragCancel = { pressed = false },
+                        onDragEnd = { dragging = false },
+                        onDragCancel = { dragging = false },
                         onDrag = { change, _ -> pick(change.position.x) },
                     )
                 }
                 .pointerInput(range) {
                     detectTapGestures(
                         onPress = {
-                            pressed = true
+                            held = true
                             tryAwaitRelease()
-                            pressed = false
+                            held = false
                         },
                         onTap = { o ->
                             val f = (o.x / size.width).coerceIn(0f, 1f)

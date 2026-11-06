@@ -68,9 +68,10 @@ fun FilterCard(
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(18.dp),
-        // KMK (r134): no solid (purple) box inside the glass Filter panel: plain rows on the dark frosted glass
+        // KMK (r134): no solid (purple) box inside the glass Filter panel. KMK (r135): each section is its own dark
+        // glass card (M4)
         color = if (eu.kanade.presentation.components.LocalGlassPanel.current) {
-            Color.Transparent
+            Color.Black.copy(alpha = 0.25f)
         } else {
             MaterialTheme.colorScheme.surfaceContainer
         },

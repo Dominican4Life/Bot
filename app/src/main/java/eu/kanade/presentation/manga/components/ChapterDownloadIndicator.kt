@@ -104,7 +104,8 @@ private fun NotDownloadedIndicator(
             imageVector = GlassIcons.ChapterDownload,
             contentDescription = stringResource(MR.strings.manga_download),
             modifier = Modifier.size(IndicatorSize),
-            tint = MaterialTheme.colorScheme.primary, // KMK: onSurfaceVariant
+            // KMK (r135, W): white while not downloaded; the colour is kept for "on" (downloaded)
+            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.9f),
         )
     }
 }

@@ -38,6 +38,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.util.collectAsState
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.drawOutline
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.shadow
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Column
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeJoin
@@ -203,6 +215,11 @@ fun BrowseOverlayPanel(
     content: @Composable () -> Unit,
 ) {
     val glassPanel = remember { eu.kanade.presentation.components.TitleSheet.glass().get() }
+    // KMK (r135): phones get the M4 side sheet: full width, just under the button row, slides in from its side
+    if (glassPanel && androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 600) {
+        PhoneSideSheet(visible, fromStart, title, onDismiss, content)
+        return
+    }
     Box(modifier = Modifier.fillMaxSize()) {
         AnimatedVisibility(visible = visible, enter = fadeIn(), exit = fadeOut()) {
             Box(
@@ -285,39 +302,163 @@ object PanelToggleIcons {
     }
 }
 
-/**
- * KMK (r134): the floating top of a source's Browse screen slides away while scrolling down through the covers and
- * comes back on the way up; the covers pass under it. [keepShown] (a panel is open, glass is off) holds it in place.
- */
-@androidx.compose.runtime.Stable
-class BrowseBarHide {
-    var height by androidx.compose.runtime.mutableIntStateOf(0)
-    var offset by androidx.compose.runtime.mutableFloatStateOf(0f)
-    var enabled = true
+/** KMK (r135): true inside the phone side sheet (the Filter content then puts Save / Clear / Apply at the bottom) */
+val LocalPhoneSheet = androidx.compose.runtime.compositionLocalOf { false }
 
-    val connection = object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
-        override fun onPreScroll(
-            available: androidx.compose.ui.geometry.Offset,
-            source: androidx.compose.ui.input.nestedscroll.NestedScrollSource,
-        ): androidx.compose.ui.geometry.Offset {
-            if (enabled && height > 0) {
-                offset = (offset + available.y).coerceIn(-height.toFloat(), 0f)
+/** KMK (r135): the phone sheet's height: full (under the buttons) or half; remembered */
+private val phoneSheetHalf by lazy {
+    uy.kohesive.injekt.Injekt.get<tachiyomi.core.common.preference.PreferenceStore>()
+        .getBoolean("browse_phone_sheet_half", false)
+}
+
+/**
+ * KMK (r135): Filter / Source Settings on a phone (M4): dark frosted glass, full width, from just under the button row
+ * to the bottom. Filter slides in from the left, Settings from the right. Drag the handle down for half height (or
+ * further to close) and up again for full; swipe it sideways, tap ✕ or the covers to close.
+ */
+@Composable
+private fun PhoneSideSheet(
+    visible: Boolean,
+    fromStart: Boolean,
+    title: String,
+    onDismiss: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    val half by phoneSheetHalf.collectAsState()
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    Box(modifier = Modifier.fillMaxSize()) {
+        AnimatedVisibility(visible = visible, enter = fadeIn(), exit = fadeOut()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.2f))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onDismiss,
+                    ),
+            )
+        }
+        AnimatedVisibility(
+            visible = visible,
+            enter = androidx.compose.animation.slideInHorizontally { if (fromStart) -it else it },
+            exit = androidx.compose.animation.slideOutHorizontally { if (fromStart) -it else it },
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            androidx.compose.foundation.layout.BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                val fullPx = constraints.maxHeight.toFloat()
+                var dragY by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+                var dragX by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+                var dragging by remember { mutableStateOf(false) }
+                val targetPx = if (half) fullPx * 0.5f else fullPx
+                val heightPx by androidx.compose.animation.core.animateFloatAsState(
+                    targetValue = (targetPx - dragY).coerceIn(fullPx * 0.2f, fullPx),
+                    animationSpec = if (dragging) {
+                        androidx.compose.animation.core.snap<Float>()
+                    } else {
+                        androidx.compose.animation.core.spring<Float>(dampingRatio = 0.8f)
+                    },
+                    label = "phoneSheetHeight",
+                )
+                val shape = RoundedCornerShape(26.dp)
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .height(with(density) { heightPx.toDp() })
+                        .graphicsLayer { translationX = dragX }
+                        .windowInsetsPadding(
+                            androidx.compose.foundation.layout.WindowInsets.navigationBars.only(
+                                androidx.compose.foundation.layout.WindowInsetsSides.Bottom,
+                            ),
+                        )
+                        .padding(start = 6.dp, end = 6.dp, top = 4.dp, bottom = 6.dp)
+                        .shadow(14.dp, shape)
+                        .liquidGlass(shape)
+                        .drawBehind {
+                            drawOutline(shape.createOutline(size, layoutDirection, this), Color(0xFF0E0F13).copy(alpha = 0.78f))
+                        }
+                        // Keep touches on the sheet from reaching the covers
+                        .pointerInput(Unit) {},
+                ) {
+                    // The handle and title: drag up / down for the height, sideways to close
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .pointerInput(fullPx, half) {
+                                androidx.compose.foundation.gestures.detectDragGestures(
+                                    onDragStart = {
+                                        dragging = true
+                                        dragX = 0f
+                                        dragY = 0f
+                                    },
+                                    onDragEnd = {
+                                        dragging = false
+                                        val sideways = kotlin.math.abs(dragX) > kotlin.math.abs(dragY)
+                                        val now = (targetPx - dragY)
+                                        when {
+                                            sideways && kotlin.math.abs(dragX) > 96.dp.toPx() -> onDismiss()
+                                            !sideways && now < fullPx * 0.3f -> onDismiss()
+                                            !sideways -> phoneSheetHalf.set(now < fullPx * 0.75f)
+                                        }
+                                        dragX = 0f
+                                        dragY = 0f
+                                    },
+                                    onDragCancel = {
+                                        dragging = false
+                                        dragX = 0f
+                                        dragY = 0f
+                                    },
+                                    onDrag = { change, amount ->
+                                        change.consume()
+                                        dragX += amount.x
+                                        dragY += amount.y
+                                    },
+                                )
+                            },
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .padding(top = 8.dp, bottom = 2.dp)
+                                .align(Alignment.CenterHorizontally)
+                                .size(width = 40.dp, height = 5.dp)
+                                .clip(androidx.compose.foundation.shape.CircleShape)
+                                .background(Color.White.copy(alpha = 0.35f)),
+                        )
+                        androidx.compose.foundation.layout.Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth().padding(start = 18.dp, end = 10.dp, bottom = 4.dp),
+                        ) {
+                            Text(
+                                text = title,
+                                style = MaterialTheme.typography.titleLarge,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(androidx.compose.foundation.shape.CircleShape)
+                                    .background(Color.White.copy(alpha = 0.10f))
+                                    .clickable(onClick = onDismiss),
+                            ) {
+                                Icon(
+                                    imageVector = GlassIcons.Close,
+                                    contentDescription = stringResource(MR.strings.action_close),
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                        }
+                    }
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        androidx.compose.runtime.CompositionLocalProvider(
+                            eu.kanade.presentation.components.LocalGlassPanel provides true,
+                            LocalPhoneSheet provides true,
+                            content = content,
+                        )
+                    }
+                }
             }
-            return androidx.compose.ui.geometry.Offset.Zero
         }
     }
 }
-
-@Composable
-fun rememberBrowseBarHide(keepShown: Boolean): BrowseBarHide {
-    val glass = remember { eu.kanade.presentation.components.TitleSheet.glass().get() }
-    val hide = remember { BrowseBarHide() }
-    hide.enabled = glass && !keepShown
-    LaunchedEffect(hide.enabled) { if (!hide.enabled) hide.offset = 0f }
-    return hide
-}
-
-/** KMK (r134): put on the top bar's Column */
-fun Modifier.browseBarHide(hide: BrowseBarHide): Modifier = this
-    .onSizeChanged { hide.height = it.height }
-    .offset { androidx.compose.ui.unit.IntOffset(0, kotlin.math.round(hide.offset).toInt()) }

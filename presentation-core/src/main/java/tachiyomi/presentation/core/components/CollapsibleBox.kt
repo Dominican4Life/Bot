@@ -19,6 +19,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.layout.size
 import androidx.compose.ui.unit.dp
 import tachiyomi.presentation.core.theme.header
 
@@ -46,10 +48,33 @@ fun CollapsibleBox(
 
             Spacer(modifier = Modifier.weight(1f))
 
-            Icon(
-                imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                contentDescription = null,
+            // KMK (r135): the glass chevron (round-ended stroke) that turns over as the group opens
+            val turn by androidx.compose.animation.core.animateFloatAsState(
+                if (expanded) 180f else 0f,
+                label = "collapsibleChevron",
             )
+            val tint = androidx.compose.material3.LocalContentColor.current
+            androidx.compose.foundation.Canvas(
+                modifier = Modifier
+                    .size(24.dp)
+                    .graphicsLayer { rotationZ = turn },
+            ) {
+                val w = size.width
+                val path = androidx.compose.ui.graphics.Path().apply {
+                    moveTo(w * 0.25f, w * 0.40f)
+                    lineTo(w * 0.5f, w * 0.65f)
+                    lineTo(w * 0.75f, w * 0.40f)
+                }
+                drawPath(
+                    path,
+                    color = tint,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(
+                        width = 2.2.dp.toPx(),
+                        cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                        join = androidx.compose.ui.graphics.StrokeJoin.Round,
+                    ),
+                )
+            }
         }
 
         AnimatedVisibility(visible = expanded) {

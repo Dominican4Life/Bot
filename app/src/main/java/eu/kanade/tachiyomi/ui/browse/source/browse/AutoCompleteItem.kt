@@ -1,5 +1,7 @@
 package eu.kanade.tachiyomi.ui.browse.source.browse
 
+import tachiyomi.i18n.kmk.KMR
+import tachiyomi.presentation.core.i18n.stringResource
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
@@ -350,35 +352,56 @@ fun AutoCompleteTextField(
         onExpandedChange = { },
     ) {
         Box {
-            OutlinedTextField(
-                value = TextFieldValue(""),
-                onValueChange = { },
-                label = if (label != null) {
-                    { Text(label) }
-                } else {
-                    null
-                },
-                placeholder = if (placeholder != null) {
-                    { Text(placeholder) }
-                } else {
-                    null
-                },
-                modifier = Modifier
-                    .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
-                    .fillMaxWidth()
-                    .onGloballyPositioned {
-                        anchorWidth = it.size.width
-                        anchorX = it.positionInWindow().x.roundToInt()
+            val anchor = Modifier
+                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                .fillMaxWidth()
+                .onGloballyPositioned {
+                    anchorWidth = it.size.width
+                    anchorX = it.positionInWindow().x.roundToInt()
+                }
+            // KMK (r135): in the glass Filter panel, the same filled glass box as Order By (name small above,
+            // "Any" until something is picked) instead of the outlined Material box
+            if (eu.kanade.presentation.components.LocalGlassPanel.current) {
+                eu.kanade.presentation.browse.components.FilterFieldBox(
+                    label = label.orEmpty(),
+                    value = placeholder ?: stringResource(KMR.strings.filter_any),
+                    open = expanded,
+                    set = false,
+                    onClick = {},
+                    dimValue = true,
+                    modifier = anchor,
+                )
+            } else {
+                OutlinedTextField(
+                    value = TextFieldValue(""),
+                    onValueChange = { },
+                    label = if (label != null) {
+                        { Text(label) }
+                    } else {
+                        null
                     },
-                singleLine = true,
-                readOnly = true,
-                trailingIcon = {
-                    ExposedDropdownMenuDefaults.TrailingIcon(
-                        expanded = expanded,
-                    )
-                },
-                colors = ExposedDropdownMenuDefaults.textFieldColors(),
-            )
+                    placeholder = if (placeholder != null) {
+                        { Text(placeholder) }
+                    } else {
+                        null
+                    },
+                    modifier = Modifier
+                        .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                        .fillMaxWidth()
+                        .onGloballyPositioned {
+                            anchorWidth = it.size.width
+                            anchorX = it.positionInWindow().x.roundToInt()
+                        },
+                    singleLine = true,
+                    readOnly = true,
+                    trailingIcon = {
+                        ExposedDropdownMenuDefaults.TrailingIcon(
+                            expanded = expanded,
+                        )
+                    },
+                    colors = ExposedDropdownMenuDefaults.textFieldColors(),
+                )
+            }
             // Covers the box: tap = the list (or the typing bar when there's no list), hold = the typing bar
             Box(
                 modifier = Modifier

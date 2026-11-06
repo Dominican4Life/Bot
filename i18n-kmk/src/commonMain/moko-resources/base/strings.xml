@@ -827,6 +827,7 @@
     <string name="title_sheet_shape_auto">Auto</string>
     <string name="title_sheet_shape_page">Page 2:3</string>
     <string name="title_sheet_shape_square">Square</string>
+    <string name="filter_any">Any</string>
     <string name="browse_slow_title">Still Loading</string>
     <string name="browse_slow_text">Nothing has come back yet. The site may be showing a check the app can\'t see: open it in WebView to look, and solve it there if it asks. The list loads again when you come back.</string>
     <string name="browse_slow_keep_waiting">Keep Waiting</string>

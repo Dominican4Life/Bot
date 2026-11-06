@@ -37,6 +37,8 @@ fun CoverSeedTheme(
             )
         }
     }
+    // KMK (r135): nothing previewed / a colourless cover: the app colour from around this screen
+    val appAccent = tachiyomi.presentation.core.components.LocalGlassAccent.current
     MaterialTheme(
         colorScheme = seededScheme ?: baseScheme,
         typography = MaterialTheme.typography,
@@ -45,7 +47,11 @@ fun CoverSeedTheme(
         content = {
             androidx.compose.runtime.CompositionLocalProvider(
                 tachiyomi.presentation.core.components.LocalGlassAccent provides
-                    tachiyomi.presentation.core.components.glassAccentFor(seedColor, MaterialTheme.colorScheme.primary),
+                    tachiyomi.presentation.core.components.glassAccentFor(
+                            seedColor,
+                            MaterialTheme.colorScheme.primary,
+                            fallback = appAccent,
+                        ),
                 content = content,
             )
         },

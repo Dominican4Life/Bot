@@ -46,6 +46,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -193,14 +194,21 @@ fun AppBar(
             title = titleContent,
             actions = {
                 if (glassButtons) {
+                    // KMK (r135): the capsule hides while its ⋮ menu is open (the menu can't sit higher than the
+                    // screen's top margin, so the capsule's edge peeked out above it)
+                    val overflowOpen = remember { mutableStateOf(false) }
                     androidx.compose.foundation.layout.Row(
                         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
                         modifier = Modifier
                             .padding(end = 8.dp)
+                            .graphicsLayer { alpha = if (overflowOpen.value) 0f else 1f }
                             .clip(androidx.compose.foundation.shape.CircleShape)
                             .liquidGlass(androidx.compose.foundation.shape.CircleShape, glassBase ?: MaterialTheme.colorScheme.surfaceContainerHigh),
-                        content = actions,
-                    )
+                    ) {
+                        androidx.compose.runtime.CompositionLocalProvider(LocalOverflowOpen provides overflowOpen) {
+                            actions()
+                        }
+                    }
                 } else {
                     actions()
                 }
@@ -243,11 +251,18 @@ fun AppBarTitle(
     }
 }
 
+/** KMK (r135): set while an [AppBarActions] ⋮ menu inside a glass capsule is open */
+private val LocalOverflowOpen =
+    androidx.compose.runtime.compositionLocalOf<androidx.compose.runtime.MutableState<Boolean>?> { null }
+
 @Composable
 fun AppBarActions(
     actions: ImmutableList<AppBar.AppBarAction>,
 ) {
     var showMenu by remember { mutableStateOf(false) }
+    // KMK (r135): tells a glass capsule around these buttons to hide while the menu is open
+    val overflowOpen = LocalOverflowOpen.current
+    androidx.compose.runtime.SideEffect { overflowOpen?.value = showMenu }
 
     actions.filterIsInstance<AppBar.Action>().map {
         TooltipBox(

@@ -48,7 +48,14 @@ fun TachiyomiTheme(
     BaseTachiyomiTheme(
         appTheme = appTheme ?: uiPreferences.appTheme().get(),
         isAmoled = amoled ?: uiPreferences.themeDarkAmoled().get(),
-        content = content,
+        // KMK (r135): glass controls use the app colour (Settings › Appearance) wherever no cover gives one
+        content = {
+            androidx.compose.runtime.CompositionLocalProvider(
+                tachiyomi.presentation.core.components.LocalGlassAccent provides
+                    tachiyomi.presentation.core.components.appGlassAccent(MaterialTheme.colorScheme.primary),
+                content = content,
+            )
+        },
     )
 }
 
@@ -67,6 +74,8 @@ fun TachiyomiTheme(
     } else {
         val uiPreferences = Injekt.get<UiPreferences>()
         val isAmoled = amoled ?: uiPreferences.themeDarkAmoled().get()
+        // KMK (r135): a colourless cover falls back to the app colour around this page
+        val appAccent = tachiyomi.presentation.core.components.LocalGlassAccent.current
         DynamicMaterialExpressiveTheme(
             seedColor = seedColor,
             isAmoled = isAmoled,
@@ -77,7 +86,11 @@ fun TachiyomiTheme(
             content = {
                 androidx.compose.runtime.CompositionLocalProvider(
                     tachiyomi.presentation.core.components.LocalGlassAccent provides
-                        tachiyomi.presentation.core.components.glassAccentFor(seedColor, MaterialTheme.colorScheme.primary),
+                        tachiyomi.presentation.core.components.glassAccentFor(
+                            seedColor,
+                            MaterialTheme.colorScheme.primary,
+                            fallback = appAccent,
+                        ),
                     content = content,
                 )
             },

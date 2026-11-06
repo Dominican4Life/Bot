@@ -58,8 +58,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import eu.kanade.presentation.browse.components.browseBarHide
-import eu.kanade.presentation.browse.components.rememberBrowseBarHide
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -228,15 +226,12 @@ class AnimeSourceScreen(
             }
         }
 
-        // KMK (r134): the floating top slides away while scrolling down, back on the way up
-        val barHide = rememberBrowseBarHide(keepShown = showFilters || showSettings || state.selectionMode)
+        // KMK (r135): the top bar never moves (owner picked C); the covers scroll under it
         CoverSeedTheme(seedColor = preview.seedColor) {
             Scaffold(
-                modifier = Modifier.nestedScroll(barHide.connection),
                 topBar = {
                     Column(
                         modifier = Modifier
-                            .browseBarHide(barHide)
                             // KMK (r134): see-through with glass, like manga sources (the buttons float)
                             .background(
                                 if (eu.kanade.presentation.components.TitleSheet.glass().get()) {
