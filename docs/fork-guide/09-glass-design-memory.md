@@ -6,6 +6,7 @@
 
 - **The owner is visual.** Every design choice is shown as a mockup before it's built. Show 2–4 options, the current look marked "Now" (dashed outline), and **the original icon next to every redrawn one** so the difference is visible. Recommend one ("✓ my pick") and say why in plain words.
 - Mockups live on the design canvas artifact (claude.ai/artifact/4eAwQG3q2mVnJTJVzcs4Kh, page "glass"). Each board is a `project/X….dc.html` file plus an entry in `canvas.json` (`boards` and `order`). They use placeholder art only (generated scenes), with neutral titles. The owner's videos and screenshots may contain adult content, so nothing from them goes into a mockup.
+- **Phone and tablet both.** Every item applies to both the phone and the tablet layout unless it only makes sense on one. Each list item says which (Phone + Tablet / Phone only / Tablet only). If unsure, ask the owner before building. Past misses: the phone sheet (r135/r136) and the sliding bar (r134) were done for one layout without asking about the other.
 - **Collect a list, then build once.** Items are numbered (r134 1–26, r135 1–15 …). Nothing is pushed until the owner says **"go"**. Any push of non-`.md` files starts a CI build and a release. To save work without building, push to a branch outside `master` / `feature/**` (e.g. `wip/rN`).
 - **Read requests carefully and ask when unsure.** Past mistakes:
   - "Can scroll up still have header" was read as "hide the header" (r134), then removed (r135, option C).
