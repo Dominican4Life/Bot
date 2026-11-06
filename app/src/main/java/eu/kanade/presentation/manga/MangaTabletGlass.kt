@@ -104,6 +104,9 @@ internal fun GlassTabletEnd(
     onRelatedMangaLongClick: (Manga) -> Unit,
     onFilterButtonClicked: () -> Unit,
     onDownloadActionClicked: ((DownloadAction) -> Unit)?,
+    // KMK (r137, item 17): Start / Resume inside the chapter panel, at its bottom (null = hidden)
+    continueLabel: String? = null,
+    onContinueReading: () -> Unit = {},
     chapterItems: LazyListScope.() -> Unit,
 ) {
     if (showPreview && hooks != null) {
@@ -152,13 +155,27 @@ internal fun GlassTabletEnd(
                     onFilterButtonClicked = onFilterButtonClicked,
                     onDownloadActionClicked = onDownloadActionClicked,
                 )
-                VerticalFastScroller(listState = chapterListState) {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxHeight(),
-                        state = chapterListState,
-                        contentPadding = PaddingValues(bottom = bottomPadding + 72.dp),
-                    ) {
-                        chapterItems()
+                Box(modifier = Modifier.weight(1f)) {
+                    VerticalFastScroller(listState = chapterListState) {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxHeight(),
+                            state = chapterListState,
+                            contentPadding = PaddingValues(bottom = bottomPadding + 72.dp),
+                        ) {
+                            chapterItems()
+                        }
+                    }
+                    if (continueLabel != null) {
+                        eu.kanade.presentation.components.GlassButton(
+                            text = continueLabel,
+                            primary = true,
+                            onClick = onContinueReading,
+                            icon = GlassIcons.Play,
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .fillMaxWidth()
+                                .padding(start = 14.dp, end = 14.dp, bottom = bottomPadding + 12.dp),
+                        )
                     }
                 }
             }

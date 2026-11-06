@@ -22,6 +22,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.heightIn
@@ -54,7 +55,8 @@ fun DropdownMenu(
     ComposeDropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismissRequest,
-        modifier = modifier.sizeIn(minWidth = 196.dp, maxWidth = 196.dp),
+        // KMK (r137): grows to fit its longest item ("Refresh Missing Covers") instead of wrapping
+        modifier = modifier.sizeIn(minWidth = 196.dp, maxWidth = 300.dp),
         offset = offset,
         scrollState = scrollState,
         properties = properties,
@@ -215,7 +217,7 @@ fun TopAlignedGlassMenu(
             ) {
                 androidx.compose.foundation.layout.Column(
                     modifier = Modifier
-                        .width(196.dp)
+                        .widthIn(min = 196.dp, max = 300.dp)
                         .heightIn(max = 480.dp)
                         .verticalScroll(androidx.compose.foundation.rememberScrollState())
                         .padding(vertical = 8.dp),

@@ -741,17 +741,18 @@ private fun ListingChips(
                 BrowseTabChip(
                     selected = !panelOpen && shownTab == "popular",
                     label = tabs?.popularName ?: stringResource(MR.strings.popular),
-                    icon = GlassIcons.AddToLibrary,
-                    filledIcon = GlassIcons.InLibrary,
+                    // KMK (r137): the same glass icons as manga sources
+                    icon = GlassIcons.Popular,
+                    filledIcon = GlassIcons.PopularOn,
                     onClick = tab("popular", onPopular),
                 )
                 if (supportsLatest) {
                     BrowseTabChip(
                         selected = !panelOpen && shownTab == "latest",
                         label = tabs?.latestName ?: stringResource(MR.strings.latest),
-                        icon = Icons.Outlined.NewReleases,
+                        icon = GlassIcons.Latest,
                         // KMK: no animation here (only the nav bar animates): the filled icon when picked
-                                            filledIcon = Icons.Filled.NewReleases,
+                        filledIcon = GlassIcons.LatestOn,
                         onClick = tab("latest", onLatest),
                     )
                 }
@@ -776,7 +777,7 @@ private fun ListingChips(
                 BrowseTabChip(
                     selected = settingsOpen,
                     label = stringResource(MR.strings.action_settings),
-                    icon = Icons.Outlined.Settings,
+                    icon = GlassIcons.SourceSettings,
                     onClick = onSettings,
                 )
             }

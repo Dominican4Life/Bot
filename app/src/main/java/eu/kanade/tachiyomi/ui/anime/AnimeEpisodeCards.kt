@@ -171,6 +171,16 @@ internal fun AnimeEpisodeCard(
                         )
                         Spacer(modifier = Modifier.width(3.dp))
                     }
+                    // KMK (r137): watched episodes show the eye next to the bookmark, like manga rows
+                    if (seen) {
+                        Icon(
+                            imageVector = GlassIcons.Read,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(13.dp),
+                        )
+                        Spacer(modifier = Modifier.width(3.dp))
+                    }
                     Text(
                         text = info.orEmpty(),
                         fontSize = 10.sp,

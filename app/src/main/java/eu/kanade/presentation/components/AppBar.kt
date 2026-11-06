@@ -46,6 +46,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
@@ -181,13 +183,14 @@ fun AppBar(
                         // KMK <--
                         navigateUp?.let {
                             IconButton(onClick = it) {
-                                UpIcon(navigationIcon = navigationIcon)
+                                // KMK (r137): the glass arrow (the Suggestions one, pointing back) on glass bars
+                                UpIcon(navigationIcon = navigationIcon ?: GlassIcons.ArrowBack.takeIf { glassButtons })
                             }
                         }
                         // KMK -->
                         goHome?.let {
                             IconButton(onClick = { it.invoke() }) {
-                                UpIcon(navigationIcon = Icons.Filled.Home)
+                                UpIcon(navigationIcon = if (glassButtons) GlassIcons.Home else Icons.Filled.Home) // KMK (r137): HC
                             }
                         }
                         // KMK <--
@@ -444,7 +447,8 @@ fun SearchToolbar(
 
     AppBar(
         modifier = modifier,
-        glassButtons = glassButtons && searchQuery == null,
+        // KMK (r137): the glass stays while searching (← and the display / ⋮ capsule keep it)
+        glassButtons = glassButtons,
         glassBase = glassBase,
         backgroundColor = backgroundColor,
         titleContent = {
@@ -461,11 +465,27 @@ fun SearchToolbar(
                 focusManager.moveFocus(FocusDirection.Next)
             }
 
+            // KMK (r137): with glass, the field sits in a dark frosted glass box (3A: just the text, ✕ at the end)
+            val glassSearch = glassButtons
+            val accentCursor = tachiyomi.presentation.core.components.LocalGlassAccent.current
+            androidx.compose.foundation.layout.Row(
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                modifier = if (glassSearch) {
+                    Modifier
+                        .padding(end = 4.dp)
+                        .height(48.dp)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .background(Color(0xFF0E0F14).copy(alpha = 0.88f))
+                        .padding(start = 18.dp, end = 4.dp)
+                } else {
+                    Modifier
+                },
+            ) {
             BasicTextField(
                 value = searchQuery,
                 onValueChange = onChangeSearchQuery,
                 modifier = Modifier
-                    .fillMaxWidth()
+                    .weight(1f)
                     .focusRequester(focusRequester)
                     .runOnEnterKeyPressed(action = searchAndClearFocus)
                     .showSoftKeyboard(remember { searchQuery.isEmpty() })
@@ -478,7 +498,7 @@ fun SearchToolbar(
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { searchAndClearFocus() }),
                 singleLine = true,
-                cursorBrush = SolidColor(MaterialTheme.colorScheme.onBackground),
+                cursorBrush = SolidColor(if (glassSearch) accentCursor else MaterialTheme.colorScheme.onBackground),
                 visualTransformation = visualTransformation,
                 interactionSource = interactionSource,
                 decorationBox = { innerTextField ->
@@ -502,9 +522,31 @@ fun SearchToolbar(
                             )
                         },
                         container = {},
+                        contentPadding = if (glassSearch) PaddingValues(0.dp) else TextFieldDefaults.contentPaddingWithoutLabel(),
                     )
                 },
             )
+            if (glassSearch) {
+                // ✕: clears the text, or closes the search when it's already empty
+                androidx.compose.foundation.layout.Box(
+                    contentAlignment = androidx.compose.ui.Alignment.Center,
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .background(Color.White.copy(alpha = 0.10f))
+                        .clickable {
+                            if (searchQuery.isEmpty()) {
+                                onClickCloseSearch()
+                            } else {
+                                onChangeSearchQuery("")
+                                focusRequester.requestFocus()
+                            }
+                        },
+                ) {
+                    Icon(GlassIcons.Close, contentDescription = stringResource(MR.strings.action_reset), modifier = Modifier.size(18.dp))
+                }
+            }
+            }
         },
         navigateUp = if (searchQuery == null) navigateUp else onClickCloseSearch,
         actions = {
@@ -534,7 +576,7 @@ fun SearchToolbar(
                             )
                         }
                     }
-                } else if (searchQuery.isNotEmpty()) {
+                } else if (searchQuery.isNotEmpty() && !glassButtons) {
                     TooltipBox(
                         positionProvider = rememberTooltipPositionProvider(TooltipAnchorPosition.Above),
                         tooltip = {

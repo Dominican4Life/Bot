@@ -123,7 +123,9 @@ fun DuplicateMangaDialog(
         ) {
             Text(
                 text = stringResource(MR.strings.possible_duplicates_title),
-                style = MaterialTheme.typography.headlineMedium,
+                // KMK (r137, item 18): a smaller, bolder glass-dialog title
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
                 modifier = Modifier
                     .then(horizontalPaddingModifier)
                     .padding(top = MaterialTheme.padding.small),
@@ -252,33 +254,28 @@ fun DuplicateMangaDialog(
                 }
             } else {
                 // KMK <--
-                Column(modifier = horizontalPaddingModifier) {
-                    HorizontalDivider()
-
-                    TextPreferenceWidget(
-                        title = stringResource(MR.strings.action_add_anyway),
-                        icon = Icons.Outlined.Add,
-                        onPreferenceClick = {
-                            onDismissRequest()
-                            onConfirm()
-                        },
-                        modifier = Modifier.clip(CircleShape),
-                    )
-                }
-
-                OutlinedButton(
-                    onClick = onDismissRequest,
+                // KMK (r137, item 18): Cancel and Add Anyway as glass buttons side by side
+                Row(
                     modifier = Modifier
                         .then(horizontalPaddingModifier)
                         .padding(bottom = MaterialTheme.padding.medium)
-                        .heightIn(min = minHeight)
                         .fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    Text(
-                        modifier = Modifier.padding(vertical = MaterialTheme.padding.extraSmall),
+                    eu.kanade.presentation.components.GlassButton(
                         text = stringResource(MR.strings.action_cancel),
-                        color = MaterialTheme.colorScheme.primary,
-                        style = MaterialTheme.typography.bodyLarge,
+                        primary = false,
+                        onClick = onDismissRequest,
+                        modifier = Modifier.weight(1f),
+                    )
+                    eu.kanade.presentation.components.GlassButton(
+                        text = stringResource(MR.strings.action_add_anyway),
+                        primary = true,
+                        onClick = {
+                            onDismissRequest()
+                            onConfirm()
+                        },
+                        modifier = Modifier.weight(1f),
                     )
                 }
             }

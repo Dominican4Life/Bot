@@ -251,8 +251,8 @@ fun BrowseOverlayPanel(
             actions = actions,
             // KMK (r133): a glass card with the glass design on; switches and fields inside turn glass too
             glass = glassPanel,
-            // KMK (r134): dark frosted (P1) so Filter and Source Settings read over the covers
-            glassDim = 0.78f,
+            // KMK (r137, 4A): cover/app-tinted glass like the title page sheet, deep enough to read over covers
+            deepTint = 0.86f,
             content = {
                 androidx.compose.runtime.CompositionLocalProvider(
                     eu.kanade.presentation.components.LocalGlassPanel provides glassPanel,

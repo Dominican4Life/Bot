@@ -578,6 +578,8 @@ fun SlidingSidePanel(
     tuckCover: (@Composable () -> Unit)? = null,
     /** KMK (r134): extra dark tint over the glass (0..1) so text reads over busy covers (Filter / Source Settings) */
     glassDim: Float = 0f,
+    // KMK (r137, item 15): previews take the same deep cover-tinted glass as the title page sheet
+    deepTint: Float = 0f,
     content: @Composable () -> Unit,
 ) {
     val canMove = glass && movable
@@ -743,6 +745,7 @@ fun SlidingSidePanel(
                 .graphicsLayer { translationX = dragX.value },
         ) {
             val glassShape = RoundedCornerShape(eu.kanade.presentation.browse.components.GlassStyle.cornerDp())
+            val deepTintColor = tachiyomi.presentation.core.components.tintedGlass(deepTint.coerceAtLeast(0.01f))
             Surface(
                 modifier = Modifier
                     // KMK (r131): the glass card stops above the navigation bar (and clear of a cutout)
@@ -770,11 +773,11 @@ fun SlidingSidePanel(
                                 // KMK (r135, W): the glass takes a wash of the cover's colour (previews, reader)
                                 .liquidGlass(glassShape, tachiyomi.presentation.core.components.tintedGlass(1f, Color(0xFF12141B), 0.22f))
                                 .then(
-                                    if (glassDim > 0f) {
+                                    if (glassDim > 0f || deepTint > 0f) {
                                         Modifier.drawBehind {
                                             drawOutline(
                                                 glassShape.createOutline(size, layoutDirection, this),
-                                                Color(0xFF0E0F13).copy(alpha = glassDim),
+                                                if (deepTint > 0f) deepTintColor else Color(0xFF0E0F13).copy(alpha = glassDim),
                                             )
                                         }
                                     } else {

@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -96,7 +97,7 @@ fun AdaptiveSheet(
                     .then(modifier),
                 // KMK (r132): sheets are glass windows: rounder, the glass tint, a lit rim
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.97f),
+                color = sheetGlassColor(), // KMK (r137, item 18): dark glass washed with the cover / app colour
                 border = androidx.compose.foundation.BorderStroke(
                     1.dp,
                     androidx.compose.ui.graphics.Brush.verticalGradient(
@@ -188,7 +189,7 @@ fun AdaptiveSheet(
                     .statusBarsPadding(),
                 // KMK (r132): sheets are glass windows: rounder, the glass tint, a lit rim
                 shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.97f),
+                color = sheetGlassColor(), // KMK (r137, item 18): dark glass washed with the cover / app colour
                 border = androidx.compose.foundation.BorderStroke(
                     1.dp,
                     androidx.compose.ui.graphics.Brush.verticalGradient(
@@ -266,4 +267,15 @@ private fun <T> AnchoredDraggableState<T>.preUpPostDownNestedScrollConnection(
 
     @JvmName("offsetToFloat")
     private fun Offset.toFloat(): Float = this.y
+}
+
+/** KMK (r137, item 18): dialogs and sheets as tinted dark glass (dark themes); light themes keep their surface */
+@Composable
+private fun sheetGlassColor(): androidx.compose.ui.graphics.Color {
+    val surface = MaterialTheme.colorScheme.surfaceContainerHigh
+    return if (surface.luminance() < 0.5f) {
+        tintedGlass(0.97f, androidx.compose.ui.graphics.Color(0xFF1C1E27), 0.24f)
+    } else {
+        surface.copy(alpha = 0.97f)
+    }
 }

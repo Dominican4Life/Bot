@@ -519,6 +519,49 @@ object GlassIcons {
         }
     }
 
+    // KMK (r137): sort direction (SF, arrow on the left): solid arrow, bars fading from long to short
+    val SortNewest: ImageVector by lazy {
+        icon("SortNewest") {
+            line("M5.5 4.5v14.5M2.5 16l3 3 3-3", width = 2.1f)
+            fill("M11.4 5h8.2a1.4 1.4 0 0 1 1.4 1.4v0a1.4 1.4 0 0 1 -1.4 1.4h-8.2a1.4 1.4 0 0 1 -1.4 -1.4v-0a1.4 1.4 0 0 1 1.4 -1.4z")
+            fill("M11.4 10.6h5.2a1.4 1.4 0 0 1 1.4 1.4v0a1.4 1.4 0 0 1 -1.4 1.4h-5.2a1.4 1.4 0 0 1 -1.4 -1.4v-0a1.4 1.4 0 0 1 1.4 -1.4z", alpha = 0.7f)
+            fill("M11.4 16.2h2.2a1.4 1.4 0 0 1 1.4 1.4v0a1.4 1.4 0 0 1 -1.4 1.4h-2.2a1.4 1.4 0 0 1 -1.4 -1.4v-0a1.4 1.4 0 0 1 1.4 -1.4z", alpha = 0.45f)
+        }
+    }
+
+    val SortOldest: ImageVector by lazy {
+        icon("SortOldest") {
+            line("M5.5 19.5V5M2.5 8l3-3 3 3", width = 2.1f)
+            fill("M11.4 5h2.2a1.4 1.4 0 0 1 1.4 1.4v0a1.4 1.4 0 0 1 -1.4 1.4h-2.2a1.4 1.4 0 0 1 -1.4 -1.4v-0a1.4 1.4 0 0 1 1.4 -1.4z", alpha = 0.45f)
+            fill("M11.4 10.6h5.2a1.4 1.4 0 0 1 1.4 1.4v0a1.4 1.4 0 0 1 -1.4 1.4h-5.2a1.4 1.4 0 0 1 -1.4 -1.4v-0a1.4 1.4 0 0 1 1.4 -1.4z", alpha = 0.7f)
+            fill("M11.4 16.2h8.2a1.4 1.4 0 0 1 1.4 1.4v0a1.4 1.4 0 0 1 -1.4 1.4h-8.2a1.4 1.4 0 0 1 -1.4 -1.4v-0a1.4 1.4 0 0 1 1.4 -1.4z")
+        }
+    }
+
+    // KMK (r137): "Finished" under the next-update button: a double tick, the second faint
+    val Finished: ImageVector by lazy {
+        icon("Finished") {
+            line("M2.5 12.5l4.2 4.2 7.3-8.2", width = 2.3f)
+            line("M10.5 15.8l.9.9 9.6-10.2", width = 2.3f, alpha = 0.5f)
+        }
+    }
+
+    // KMK (r137): the Suggestions arrow pointing back (glass back buttons)
+    val ArrowBack: ImageVector by lazy {
+        icon("ArrowBack") {
+            line("M19.5 12H6", width = 2.5f)
+            line("M11 6.5L5.5 12l5.5 5.5", width = 2.5f)
+        }
+    }
+
+    // KMK (r137): the home button (HC): a solid rounded house with a faint glass door
+    val Home: ImageVector by lazy {
+        icon("Home") {
+            fill("M3.6 11.3L12 4.1l8.4 7.2a.9 .9 0 0 1 -.6 1.6H19V19a1.5 1.5 0 0 1 -1.5 1.5H14v-4.5a2 2 0 0 0 -4 0v4.5H6.5A1.5 1.5 0 0 1 5 19v-6.1H4.2a.9 .9 0 0 1 -.6 -1.6z")
+            fill("M10 20.5v-4.5a2 2 0 0 1 4 0v4.5z", alpha = 0.38f)
+        }
+    }
+
     // KMK (r134): the preview player's controls
     val Pause: ImageVector by lazy {
         icon("Pause") {

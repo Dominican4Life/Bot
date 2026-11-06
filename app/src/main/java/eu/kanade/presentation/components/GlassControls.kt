@@ -99,7 +99,7 @@ fun GlassStepSlider(
                 .padding(horizontal = 14.dp)
                 .pointerInput(range) {
                     fun pick(x: Float) {
-                        val f = (x / size.width).coerceIn(0f, 1f)
+                        val f = fracAt(x, size.width.toFloat())
                         val v = range.first + (f * steps).roundToInt()
                         if (v != current) {
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -124,7 +124,7 @@ fun GlassStepSlider(
                             held = false
                         },
                         onTap = { o ->
-                            val f = (o.x / size.width).coerceIn(0f, 1f)
+                            val f = fracAt(o.x, size.width.toFloat())
                             val v = range.first + (f * steps).roundToInt()
                             if (v != current) {
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -144,9 +144,11 @@ fun GlassStepSlider(
                     .clip(CircleShape)
                     .background(Color(0x5C78787F)),
             )
+            // KMK (r137): the knob stays fully inside the bar: its centre travels from half a knob in from each end
+            val span = w - SliderKnobRest
             Box(
                 Modifier
-                    .width(w * animFrac)
+                    .width(SliderKnobRest / 2 + span * animFrac)
                     .height(8.dp)
                     .clip(CircleShape)
                     .background(accent),
@@ -156,7 +158,7 @@ fun GlassStepSlider(
                 for (i in 0..steps) {
                     Box(
                         Modifier
-                            .offset(x = w * (i.toFloat() / steps) - 2.dp)
+                            .offset(x = SliderKnobRest / 2 + span * (i.toFloat() / steps) - 2.dp)
                             .size(4.dp)
                             .clip(CircleShape)
                             .background(Color.White.copy(alpha = 0.55f)),
@@ -169,7 +171,7 @@ fun GlassStepSlider(
             val knobH = 22.dp + 14.dp * lens
             Box(
                 Modifier
-                    .offset { IntOffset(with(density) { (w * animFrac - knobW / 2).roundToPx() }, 0) }
+                    .offset { IntOffset(with(density) { (SliderKnobRest / 2 + span * animFrac - knobW / 2).roundToPx() }, 0) }
                     .size(knobW, knobH)
                     .graphicsLayer {
                         scaleX = stretch
@@ -205,7 +207,7 @@ fun GlassStepSlider(
                         maxLines = 1,
                         modifier = Modifier
                             .width(40.dp)
-                            .offset(x = w * f - 20.dp),
+                            .offset(x = SliderKnobRest / 2 + (w - SliderKnobRest) * f - 20.dp),
                     )
                 }
             }
@@ -382,3 +384,12 @@ fun GlassColumnsSlider(columns: Int, onChange: (Int) -> Unit, modifier: Modifier
  * and filter fields into glass boxes there.
  */
 val LocalGlassPanel = androidx.compose.runtime.staticCompositionLocalOf { false }
+
+/** KMK (r137): the slider knob's width at rest; its centre travels between half of this from each end */
+private val SliderKnobRest = 40.dp
+
+/** KMK (r137): the step fraction for a touch at [x] on a bar [width] px wide, with the knob's inset at each end */
+private fun androidx.compose.ui.input.pointer.PointerInputScope.fracAt(x: Float, width: Float): Float {
+    val inset = SliderKnobRest.toPx() / 2
+    return ((x - inset) / (width - inset * 2).coerceAtLeast(1f)).coerceIn(0f, 1f)
+}

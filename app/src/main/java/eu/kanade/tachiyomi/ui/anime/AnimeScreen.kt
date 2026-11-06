@@ -94,6 +94,7 @@ import eu.kanade.presentation.components.rememberTitleSheetState
 import eu.kanade.presentation.library.components.MangaComfortableGridItem
 import eu.kanade.presentation.manga.DownloadAction
 import eu.kanade.presentation.manga.ScanlatorFilterItem
+import eu.kanade.presentation.manga.frostedPanel
 import eu.kanade.presentation.manga.components.ChapterDownloadAction
 import eu.kanade.presentation.manga.components.ExpandableMangaDescription
 import eu.kanade.presentation.manga.components.MangaActionRow
@@ -471,6 +472,11 @@ class AnimeScreen(private val animeId: Long) : Screen() {
             androidx.compose.runtime.CompositionLocalProvider(eu.kanade.presentation.manga.components.LocalTitleBanner provides banner) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     banner?.let { eu.kanade.presentation.manga.TitleBannerBackdrop(it) }
+                    // KMK (r137, item 17): the glass tablet page shows the cover, blurred, behind everything
+                    val glassPage = remember { eu.kanade.presentation.components.TitleSheet.glass().get() }
+                    if (banner == null && isTabletUi() && glassPage) {
+                        eu.kanade.presentation.manga.TitleCoverBackdrop(anime.asMangaCover())
+                    }
                     if (isTabletUi()) {
                         AnimeScreenLarge(state, anime, actions, screenModel.source, listState)
                     } else {
@@ -683,6 +689,8 @@ private fun AnimeToolbar(
     actions: AnimeActions,
     titleAlphaProvider: () -> Float,
     backgroundAlphaProvider: () -> Float,
+    // KMK (r137): the episode sheet's header has download and filter, so the top capsule leaves them out
+    sheetHasActions: Boolean = false,
 ) {
     val uiPreferences = remember { Injekt.get<UiPreferences>() }
     val expandRelated by uiPreferences.expandRelatedMangas().collectAsState()
@@ -713,6 +721,7 @@ private fun AnimeToolbar(
         onPaletteScreenClick = {},
         // KMK (r134): glass like the manga page: no black bar or title, the buttons float on glass capsules
         glass = remember { TitleSheet.glass().get() },
+        sheetHasActions = sheetHasActions,
     )
 }
 
@@ -969,21 +978,25 @@ private fun AnimeInfo(
         )
     }
     Column {
-        MangaInfoBox(
-            isTabletUi = isTablet,
-            appBarPadding = appBarPadding,
-            manga = displayManga,
-            sourceName = state.sourceName ?: anime.source.toString(),
-            isStubSource = state.sourceMissing,
-            isSourceIncognito = sourceIncognito,
-            onCoverClick = actions.onCoverClick,
-            doSearch = { query, global -> if (global) actions.onGlobalSearch(query) else actions.onSearch(query) },
-            librarySearch = { actions.onSearch(it) },
-            onSourceClick = actions.onSourceClick,
-            onCoverLoaded = {},
-            coverRatio = coverRatio,
-            forcePanoramaCover = false,
-        )
+        androidx.compose.runtime.CompositionLocalProvider(
+            eu.kanade.presentation.manga.components.LocalAuthorLineIcon provides GlassIcons.Details,
+        ) {
+            MangaInfoBox(
+                isTabletUi = isTablet,
+                appBarPadding = appBarPadding,
+                manga = displayManga,
+                sourceName = state.sourceName ?: anime.source.toString(),
+                isStubSource = state.sourceMissing,
+                isSourceIncognito = sourceIncognito,
+                onCoverClick = actions.onCoverClick,
+                doSearch = { query, global -> if (global) actions.onGlobalSearch(query) else actions.onSearch(query) },
+                librarySearch = { actions.onSearch(it) },
+                onSourceClick = actions.onSourceClick,
+                onCoverLoaded = {},
+                coverRatio = coverRatio,
+                forcePanoramaCover = false,
+            )
+        }
         MangaActionRow(
             favorite = anime.favorite,
             trackingCount = trackCount.size,
@@ -1076,6 +1089,7 @@ private fun AnimeScreenSmall(
                 actions = actions,
                 titleAlphaProvider = { titleAlpha },
                 backgroundAlphaProvider = { backgroundAlpha },
+                sheetHasActions = sheetEnabled,
             )
         },
         bottomBar = { EpisodeSelectionBar(actions) },
@@ -1135,8 +1149,10 @@ private fun AnimeScreenLarge(
     val related = rememberRelatedSettings()
     // KMK: covers per line of the season grid (the list takes about half the width)
     val seasonColumns = (androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp / 2 / 120).coerceIn(2, 8)
+    // KMK (r137, item 17): the glass tablet page: cover behind, the episodes in a tinted panel with Start at its bottom
+    val glassTablet = remember { eu.kanade.presentation.components.TitleSheet.glass().get() }
     Scaffold(
-        containerColor = if (eu.kanade.presentation.manga.components.LocalTitleBanner.current != null) {
+        containerColor = if (eu.kanade.presentation.manga.components.LocalTitleBanner.current != null || glassTablet) {
             Color.Transparent
         } else {
             MaterialTheme.colorScheme.background
@@ -1153,7 +1169,7 @@ private fun AnimeScreenLarge(
         bottomBar = { EpisodeSelectionBar(actions) },
         floatingActionButton = {
             if (actions.selection.isEmpty()) {
-                StartFab(state, listState.shouldExpandFAB(), actions.onPlay)
+                if (!glassTablet) StartFab(state, listState.shouldExpandFAB(), actions.onPlay)
             } else {
                 EpisodeOptionsFab(actions)
             }
@@ -1185,7 +1201,51 @@ private fun AnimeScreenLarge(
                         )
                     }
                 },
-                endContent = {
+                endContent = animeEnd@{
+                    if (glassTablet) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(top = contentPadding.calculateTopPadding(), start = 12.dp, end = 12.dp)
+                                .frostedPanel(),
+                        ) {
+                            Box(modifier = Modifier.weight(1f)) {
+                                VerticalFastScroller(listState = listState) {
+                                    LazyColumn(
+                                        modifier = Modifier.fillMaxHeight(),
+                                        state = listState,
+                                        contentPadding = PaddingValues(
+                                            top = 4.dp,
+                                            bottom = contentPadding.calculateBottomPadding() + 72.dp,
+                                        ),
+                                    ) {
+                                        relatedItems(state, related, uppercaseTitle = false, dividerAbove = false, actions)
+                                        episodeItems(state, anime, source, actions, seasonColumns, episodeColumns = 2)
+                                    }
+                                }
+                                val next = state.nextEpisode
+                                if (next != null && actions.selection.isEmpty()) {
+                                    eu.kanade.presentation.components.GlassButton(
+                                        text = stringResource(
+                                            if (state.hasStarted) MR.strings.action_resume else MR.strings.action_start,
+                                        ),
+                                        primary = true,
+                                        onClick = { actions.onPlay(next) },
+                                        icon = GlassIcons.Play,
+                                        modifier = Modifier
+                                            .align(Alignment.BottomCenter)
+                                            .fillMaxWidth()
+                                            .padding(
+                                                start = 14.dp,
+                                                end = 14.dp,
+                                                bottom = contentPadding.calculateBottomPadding() + 12.dp,
+                                            ),
+                                    )
+                                }
+                            }
+                        }
+                        return@animeEnd
+                    }
                     VerticalFastScroller(
                         listState = listState,
                         topContentPadding = contentPadding.calculateTopPadding(),
@@ -1921,6 +1981,17 @@ private fun RichEpisodeItem(
                             .padding(end = 2.dp),
                     )
                 }
+                // KMK (r137): watched episodes show the eye next to the bookmark, like manga rows
+                if (seen && onToggleSeen == null) {
+                    Icon(
+                        imageVector = GlassIcons.Read,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .size(15.dp)
+                            .padding(end = 2.dp),
+                    )
+                }
                 Text(
                     text = info.orEmpty(),
                     style = MaterialTheme.typography.bodySmall,
@@ -2219,30 +2290,53 @@ private fun AnimeDuplicateDialog(
     onAddAnyway: () -> Unit,
     onOpen: (Anime) -> Unit,
 ) {
+    // KMK (r137, item 18): a tinted glass dialog, the titles in a faint card, glass buttons
     AlertDialog(
         onDismissRequest = onDismissRequest,
-        title = { Text(stringResource(KMR.strings.anime_duplicate_title)) },
+        containerColor = tachiyomi.presentation.core.components.tintedGlass(0.97f, Color(0xFF1C1E27), 0.24f),
+        shape = RoundedCornerShape(26.dp),
+        title = {
+            Text(
+                text = stringResource(KMR.strings.anime_duplicate_title),
+                fontWeight = FontWeight.SemiBold,
+            )
+        },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(stringResource(KMR.strings.anime_duplicate_text))
-                duplicates.forEach { other ->
-                    Text(
-                        text = "${other.title} • ${sourceName(other.source)}",
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { onOpen(other) }
-                            .padding(vertical = 8.dp),
-                    )
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color.White.copy(alpha = 0.07f))
+                        .padding(vertical = 4.dp),
+                ) {
+                    duplicates.forEach { other ->
+                        Text(
+                            text = "${other.title} • ${sourceName(other.source)}",
+                            color = tachiyomi.presentation.core.components.LocalGlassAccent.current,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onOpen(other) }
+                                .padding(horizontal = 12.dp, vertical = 9.dp),
+                        )
+                    }
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = onAddAnyway) { Text(stringResource(MR.strings.action_add_anyway)) }
+            eu.kanade.presentation.components.GlassButton(
+                text = stringResource(MR.strings.action_add_anyway),
+                primary = true,
+                onClick = onAddAnyway,
+            )
         },
         dismissButton = {
-            TextButton(onClick = onDismissRequest) { Text(stringResource(MR.strings.action_cancel)) }
+            eu.kanade.presentation.components.GlassButton(
+                text = stringResource(MR.strings.action_cancel),
+                primary = false,
+                onClick = onDismissRequest,
+            )
         },
     )
 }
@@ -2478,42 +2572,8 @@ private fun AnimeSheetHeader(
                     showShape = false,
                 )
             }
-        } else {
-            Box {
-                var displayMenu by remember { mutableStateOf(false) }
-                androidx.compose.material3.IconButton(onClick = { displayMenu = true }) {
-                    Icon(
-                        GlassIcons.LayoutList,
-                        contentDescription = stringResource(MR.strings.action_display),
-                    )
-                }
-                androidx.compose.material3.DropdownMenu(
-                    expanded = displayMenu,
-                    onDismissRequest = { displayMenu = false },
-                ) {
-                    DropdownMenuItem(
-                        text = { Text(stringResource(KMR.strings.anime_show_episode_thumbnail)) },
-                        trailingIcon = {
-                            androidx.compose.material3.Checkbox(checked = anime.showPreviews, onCheckedChange = null)
-                        },
-                        onClick = {
-                            displayMenu = false
-                            actions.onDisplay(true, !anime.showPreviews, true) // KMK (r125): no "which titles?" step
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(KMR.strings.anime_show_episode_summary)) },
-                        trailingIcon = {
-                            androidx.compose.material3.Checkbox(checked = anime.showSummaries, onCheckedChange = null)
-                        },
-                        onClick = {
-                            displayMenu = false
-                            actions.onDisplay(false, !anime.showSummaries, true)
-                        },
-                    )
-                }
-            }
         }
+        // KMK (r137): the thumbnail / summary button is gone (both are in the episode sheet's Display tab)
         Box {
             var downloadMenu by remember { mutableStateOf(false) }
             androidx.compose.material3.IconButton(onClick = { downloadMenu = true }) {
@@ -2522,17 +2582,19 @@ private fun AnimeSheetHeader(
                     contentDescription = stringResource(MR.strings.manga_download),
                 )
             }
-            androidx.compose.material3.DropdownMenu(
+            // KMK (r137): the glass menu, with icons
+            eu.kanade.presentation.components.DropdownMenu(
                 expanded = downloadMenu,
                 onDismissRequest = { downloadMenu = false },
             ) {
                 listOf(
-                    DownloadAction.UNREAD_CHAPTERS to stringResource(KMR.strings.anime_filter_unseen),
-                    DownloadAction.ALL_CHAPTERS to stringResource(KMR.strings.anime_download_all_episodes),
-                    DownloadAction.BOOKMARKED_CHAPTERS to stringResource(MR.strings.download_bookmarked),
-                ).forEach { (action, label) ->
+                    Triple(DownloadAction.UNREAD_CHAPTERS, stringResource(KMR.strings.anime_filter_unseen), GlassIcons.ReadOff),
+                    Triple(DownloadAction.ALL_CHAPTERS, stringResource(KMR.strings.anime_download_all_episodes), GlassIcons.LayoutList),
+                    Triple(DownloadAction.BOOKMARKED_CHAPTERS, stringResource(MR.strings.download_bookmarked), GlassIcons.Bookmark),
+                ).forEach { (action, label, icon) ->
                     DropdownMenuItem(
                         text = { Text(label) },
+                        leadingIcon = { Icon(icon, contentDescription = null) },
                         onClick = {
                             downloadMenu = false
                             actions.onDownload(action)

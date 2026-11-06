@@ -141,6 +141,10 @@ fun SourceFilterContent(
     // KMK (r135): in the phone side sheet the sheet has its own title / ✕, and Save, Clear and Apply sit in a bar at
     // the bottom (M4)
     val phoneSheet = eu.kanade.presentation.browse.components.LocalPhoneSheet.current
+    // KMK (r137, 4A): the tablet's glass panel also puts Save / Clear / Apply at the bottom; its header says how many
+    // filters are set
+    val glassPanel = eu.kanade.presentation.components.LocalGlassPanel.current
+    val bottomBar = phoneSheet || glassPanel
     val doClear = {
         resetDirectories(filters)
         onReset()
@@ -150,7 +154,22 @@ fun SourceFilterContent(
         onDismissRequest()
     }
     val listContent: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = {
-            if (!phoneSheet) stickyHeader(
+            if (glassPanel && !phoneSheet) item(key = "$STICKY_HEADER_KEY_PREFIX-glass-title") {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 18.dp, end = 16.dp, top = 14.dp, bottom = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Filters",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    FilterSetCount(countSet(filters))
+                }
+            }
+            if (!bottomBar) stickyHeader(
                 key = "$STICKY_HEADER_KEY_PREFIX-title",
             ) {
                 // KMK (r107): "Filters", then Clear (text), Save (when allowed) and Apply (filled)
@@ -264,7 +283,7 @@ fun SourceFilterContent(
             }
             // KMK <--
     }
-    if (phoneSheet) {
+    if (bottomBar) {
         Column(modifier = Modifier.fillMaxSize()) {
             LazyColumn(modifier = Modifier.weight(1f), content = listContent)
             Row(
@@ -492,10 +511,23 @@ private fun FilterItem(filter: Filter<*>, onUpdate: () -> Unit/* SY --> */, star
         // SY <--
         is Filter.Header -> {
             // KMK: a blank header is a hidden holder (a JS source's selected tab), not a title
-            if (filter.name.isNotBlank()) HeadingItem(filter.name)
+            if (filter.name.isNotBlank()) {
+                if (eu.kanade.presentation.components.LocalGlassPanel.current) {
+                    // KMK (r137, 4A): notes read as small grey text in the glass panel
+                    Text(
+                        text = filter.name,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
+                    )
+                } else {
+                    HeadingItem(filter.name)
+                }
+            }
         }
         is Filter.Separator -> {
-            HorizontalDivider()
+            // KMK (r137, 4A): no lines on glass
+            if (!eu.kanade.presentation.components.LocalGlassPanel.current) HorizontalDivider()
         }
         is Filter.CheckBox -> {
             CheckboxItem(
@@ -547,11 +579,15 @@ private fun FilterItem(filter: Filter<*>, onUpdate: () -> Unit/* SY --> */, star
             SortFilterField(filter, onUpdate, Modifier.fillMaxWidth().padding(horizontal = FilterCardPadding))
         }
         is Filter.Group<*> -> {
+            val glass = eu.kanade.presentation.components.LocalGlassPanel.current
             CollapsibleBox(
                 heading = filter.name,
                 // SY -->
                 startExpanded = startExpanded,
                 // SY <--
+                // KMK (r137, 4A): a glass row showing what is picked
+                glassRow = glass,
+                summary = if (glass) groupSummary(filter) else null,
             ) {
                 Column {
                     filter.state
@@ -562,6 +598,52 @@ private fun FilterItem(filter: Filter<*>, onUpdate: () -> Unit/* SY --> */, star
         }
     }
 }
+
+// KMK (r137, 4A) -->
+/** What is picked in a group of check boxes / tri-states, e.g. "Action, Fantasy, −Horror"; null when nothing is */
+private fun groupSummary(group: Filter.Group<*>): String? {
+    val picked = group.state.filterIsInstance<Filter<*>>().mapNotNull { f ->
+        when (f) {
+            is Filter.CheckBox -> f.name.takeIf { f.state }
+            is Filter.TriState -> when (f.state) {
+                Filter.TriState.STATE_INCLUDE -> f.name
+                Filter.TriState.STATE_EXCLUDE -> "\u2212" + f.name
+                else -> null
+            }
+            else -> null
+        }
+    }
+    return picked.takeIf { it.isNotEmpty() }?.joinToString(", ")
+}
+
+/** How many filters differ from their starting value (check boxes, tri-states, texts, drop-downs) */
+private fun countSet(filters: List<Filter<*>>): Int = filters.sumOf { f ->
+    when (f) {
+        is Filter.CheckBox -> if (f.state) 1 else 0
+        is Filter.TriState -> if (f.state != Filter.TriState.STATE_IGNORE) 1 else 0
+        is Filter.Text -> if (f.state.isNotBlank()) 1 else 0
+        is Filter.AutoComplete -> f.state.size
+        is Filter.Select<*> -> if (f.state != 0) 1 else 0
+        is Filter.Group<*> -> countSet(f.state.filterIsInstance<Filter<*>>())
+        else -> 0
+    }.toInt()
+}
+
+/** The header's "N set" pill (hidden when nothing is set) */
+@Composable
+private fun FilterSetCount(count: Int) {
+    if (count <= 0) return
+    val accent = tachiyomi.presentation.core.components.LocalGlassAccent.current
+    Text(
+        text = "$count set",
+        style = MaterialTheme.typography.labelMedium,
+        color = accent,
+        modifier = Modifier
+            .background(accent.copy(alpha = 0.18f), RoundedCornerShape(12.dp))
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+    )
+}
+// KMK (r137, 4A) <--
 
 private fun Int.toTriStateFilter(): TriState {
     return when (this) {

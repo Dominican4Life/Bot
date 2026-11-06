@@ -160,6 +160,7 @@ fun MangaInfoBox(
     // KMK (r124): header B (r123) taken out at the owner's request: the cover header is back to how it was
     // KMK <--
     val glassTop = glassTitleTop()
+    val backdropShown = LocalTitleBanner.current == null && !glassTop
     Box(modifier = modifier) {
         // Backdrop
         val backdropGradientColors = listOf(
@@ -183,6 +184,9 @@ fun MangaInfoBox(
                 .matchParentSize()
                 .drawWithContent {
                     drawContent()
+                    // KMK (r137): this fade to black also sits outside .alpha(), so it was the hard-edged dark box
+                    // under the cover; it's drawn only while the picture shows
+                    if (!backdropShown) return@drawWithContent
                     drawRect(
                         brush = Brush.verticalGradient(
                             colors = backdropGradientColors,
@@ -325,9 +329,16 @@ fun MangaActionRow(
             onLongClick = onEditCategory,
             tinted = favorite,
         )
+        // KMK (r137): a finished title says "Finished" (with a double tick) instead of "N/A"
+        val finished = nextUpdateDays == null &&
+            (status == SManga.COMPLETED.toLong() || status == SManga.PUBLISHING_FINISHED.toLong())
         MangaActionButton(
             title = when (nextUpdateDays) {
-                null -> stringResource(MR.strings.not_applicable)
+                null -> if (finished) {
+                    stringResource(tachiyomi.i18n.kmk.KMR.strings.next_update_finished)
+                } else {
+                    stringResource(MR.strings.not_applicable)
+                }
                 0 -> stringResource(MR.strings.manga_interval_expected_update_soon)
                 // KMK -->
                 FetchInterval.MANUAL_DISABLE -> stringResource(MR.strings.disabled)
@@ -338,10 +349,14 @@ fun MangaActionRow(
                     nextUpdateDays,
                 )
             },
-            icon = GlassIcons.NextUpdate
-                // KMK -->
-                .takeIf { nextUpdateDays != FetchInterval.MANUAL_DISABLE }
-                ?: GlassIcons.NextUpdateOff,
+            icon = if (finished) {
+                GlassIcons.Finished
+            } else {
+                GlassIcons.NextUpdate
+                    // KMK -->
+                    .takeIf { nextUpdateDays != FetchInterval.MANUAL_DISABLE }
+                    ?: GlassIcons.NextUpdateOff
+            },
             // KMK <--
             color = if (isUserIntervalMode ||
                 // KMK -->
@@ -775,7 +790,8 @@ private fun ColumnScope.MangaContentInfo(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
-            imageVector = Icons.Filled.PersonOutline,
+            // KMK (r137): anime pages put season / status / genres here, so they show the info icon instead
+            imageVector = LocalAuthorLineIcon.current ?: Icons.Filled.PersonOutline,
             contentDescription = null,
             modifier = Modifier.size(16.dp),
         )
@@ -1118,3 +1134,6 @@ private fun RowScope.MangaActionButton(
 @Composable
 private fun glassTitleTop(): Boolean =
     remember { eu.kanade.presentation.components.TitleSheet.glass().get() }
+
+/** KMK (r137): the icon of the author line; anime title pages provide the glass info icon */
+val LocalAuthorLineIcon = androidx.compose.runtime.compositionLocalOf<androidx.compose.ui.graphics.vector.ImageVector?> { null }

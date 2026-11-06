@@ -132,6 +132,7 @@ fun AnimeEpisodePanel(
     val tileColumns by remember { eu.kanade.presentation.components.TitleSheet.columns("anime") }.collectAsPrefState()
     SlidingSidePanel(
         glass = glass,
+        deepTint = 0.62f, // KMK (r137, item 15)
         // KMK (r127): drag to either side, ⇄, or tuck into the edge
         movable = true,
         tuckKey = preview.anime?.id,
@@ -381,63 +382,41 @@ fun AnimeEpisodePanel(
                             style = MaterialTheme.typography.titleMedium,
                             modifier = Modifier.weight(1f),
                         )
-                        // KMK (r123): thumbnails / summaries for this title's episodes
-                        var showDisplayMenu by remember { mutableStateOf(false) }
-                        Box {
-                            IconButton(onClick = { showDisplayMenu = true }) {
-                                Icon(
-                                    imageVector = GlassIcons.LayoutList, // KMK (r134): glass icon
-                                    contentDescription = null,
-                                )
-                            }
-                            DropdownMenu(expanded = showDisplayMenu, onDismissRequest = { showDisplayMenu = false }) {
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(KMR.strings.anime_show_episode_thumbnail)) },
-                                    trailingIcon = {
-                                        androidx.compose.material3.Checkbox(checked = showThumbs, onCheckedChange = null)
-                                    },
-                                    onClick = {
-                                        showDisplayMenu = false
-                                        applyDisplay(true, !showThumbs, true) // KMK (r125): straight to every title of the source
-                                    },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(KMR.strings.anime_show_episode_summary)) },
-                                    trailingIcon = {
-                                        androidx.compose.material3.Checkbox(checked = showSummaries, onCheckedChange = null)
-                                    },
-                                    onClick = {
-                                        showDisplayMenu = false
-                                        applyDisplay(false, !showSummaries, true)
-                                    },
-                                )
-                            }
-                        }
-                        // KMK (r88): the download menu, like the manga preview's
+                        // KMK (r137, item 14): download, then filter (thumbnails / summaries), then the
+                        // glass sort icon that shows the direction, the same order as the manga Chapters tab
                         var showDownloadMenu by remember { mutableStateOf(false) }
                         Box {
                             IconButton(onClick = { showDownloadMenu = true }, enabled = preview.episodes.isNotEmpty()) {
                                 Icon(
                                     imageVector = GlassIcons.Download,
                                     contentDescription = stringResource(MR.strings.manga_download),
-                                    tint = MaterialTheme.colorScheme.primary,
                                 )
                             }
-                            DropdownMenu(
+                            eu.kanade.presentation.components.DropdownMenu(
                                 expanded = showDownloadMenu,
                                 onDismissRequest = { showDownloadMenu = false },
                             ) {
-                                // KMK (r123): only Unseen / All episodes / Bookmarked here (the owner's choice), like the
-                                // manga preview panel
+                                // KMK (r123): only Unseen / All episodes / Bookmarked here (the owner's choice)
                                 listOf(
-                                    DownloadAction.UNREAD_CHAPTERS to stringResource(KMR.strings.anime_filter_unseen),
-                                    DownloadAction.ALL_CHAPTERS to
+                                    Triple(
+                                        DownloadAction.UNREAD_CHAPTERS,
+                                        stringResource(KMR.strings.anime_filter_unseen),
+                                        GlassIcons.ReadOff,
+                                    ),
+                                    Triple(
+                                        DownloadAction.ALL_CHAPTERS,
                                         stringResource(KMR.strings.anime_download_all_episodes),
-                                    DownloadAction.BOOKMARKED_CHAPTERS to
+                                        GlassIcons.LayoutList,
+                                    ),
+                                    Triple(
+                                        DownloadAction.BOOKMARKED_CHAPTERS,
                                         stringResource(MR.strings.download_bookmarked),
-                                ).forEach { (action, label) ->
+                                        GlassIcons.Bookmark,
+                                    ),
+                                ).forEach { (action, label, icon) ->
                                     DropdownMenuItem(
                                         text = { Text(text = label) },
+                                        leadingIcon = { Icon(icon, contentDescription = null) },
                                         onClick = {
                                             showDownloadMenu = false
                                             onDownloadMenu(action)
@@ -446,11 +425,44 @@ fun AnimeEpisodePanel(
                                 }
                             }
                         }
+                        var showDisplayMenu by remember { mutableStateOf(false) }
+                        Box {
+                            IconButton(onClick = { showDisplayMenu = true }) {
+                                Icon(
+                                    imageVector = GlassIcons.Filter,
+                                    contentDescription = null,
+                                )
+                            }
+                            eu.kanade.presentation.components.DropdownMenu(
+                                expanded = showDisplayMenu,
+                                onDismissRequest = { showDisplayMenu = false },
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(KMR.strings.anime_show_episode_thumbnail)) },
+                                    trailingIcon = { eu.kanade.presentation.components.GlassTick(checked = showThumbs) },
+                                    onClick = {
+                                        showDisplayMenu = false
+                                        applyDisplay(true, !showThumbs, true) // KMK (r125): every title of the source
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(KMR.strings.anime_show_episode_summary)) },
+                                    trailingIcon = { eu.kanade.presentation.components.GlassTick(checked = showSummaries) },
+                                    onClick = {
+                                        showDisplayMenu = false
+                                        applyDisplay(false, !showSummaries, true)
+                                    },
+                                )
+                            }
+                        }
                         IconButton(onClick = onToggleSort) {
                             Icon(
-                                imageVector = GlassIcons.SortDown,
+                                imageVector = if (preview.anime?.sortAscending == true) {
+                                    GlassIcons.SortOldest
+                                } else {
+                                    GlassIcons.SortNewest
+                                },
                                 contentDescription = stringResource(MR.strings.action_sort),
-                                tint = MaterialTheme.colorScheme.primary,
                             )
                         }
                     }

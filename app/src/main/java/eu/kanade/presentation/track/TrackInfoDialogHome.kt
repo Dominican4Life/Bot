@@ -315,18 +315,25 @@ private fun TrackInfoItemEmpty(
     tracker: Tracker,
     onNewSearch: () -> Unit,
 ) {
+    // KMK (r137, item 18): the whole row is a faint glass card, the label in white
     Row(
         verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
+            .background(androidx.compose.ui.graphics.Color.White.copy(alpha = 0.06f))
+            .clickable(onClick = onNewSearch)
+            .padding(8.dp),
     ) {
         TrackLogoIcon(tracker)
-        TextButton(
-            onClick = onNewSearch,
+        Text(
+            text = stringResource(MR.strings.add_tracking),
+            style = MaterialTheme.typography.titleSmall,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             modifier = Modifier
                 .padding(start = 16.dp)
                 .weight(1f),
-        ) {
-            Text(text = stringResource(MR.strings.add_tracking))
-        }
+        )
     }
 }
 

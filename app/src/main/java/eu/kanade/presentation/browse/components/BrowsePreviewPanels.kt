@@ -138,6 +138,7 @@ fun BrowseChapterPanel(
         squareTop = true,
         showHeader = false,
         glass = glass,
+        deepTint = 0.62f, // KMK (r137, item 15)
         // KMK (r127): drag to either side, ⇄, or tuck into the edge
         movable = true,
         tuckKey = state.manga?.id,

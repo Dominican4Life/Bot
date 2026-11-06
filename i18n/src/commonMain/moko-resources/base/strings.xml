@@ -166,7 +166,7 @@
     <string name="action_webview_close_tab">Close tab</string>
     <string name="action_start_downloading_now">Start downloading now</string>
     <string name="action_not_now">Not now</string>
-    <string name="action_add_anyway">Add anyway</string>
+    <string name="action_add_anyway">Add Anyway</string>
 
     <!-- Operations -->
     <string name="loading">Loading…</string>
@@ -724,7 +724,7 @@
     <!-- missing confirm menu after Compose rewrite #7901 -->
     <string name="remove_from_library">Remove from library</string>
     <string name="unknown_title">Unknown title</string>
-    <string name="possible_duplicates_title">Possible duplicates</string>
+    <string name="possible_duplicates_title">Possible Duplicates</string>
     <string name="possible_duplicates_summary">You have entries in your library with a similar name.\n\nSelect an entry to migrate or add anyway.</string>
     <string name="manga_added_library">Added to library</string>
     <string name="manga_removed_library">Removed from library</string>
@@ -777,7 +777,7 @@
 
     <!-- Tracking Screen -->
     <string name="manga_tracking_tab">Tracking</string>
-    <string name="add_tracking">Add tracking</string>
+    <string name="add_tracking">Add Tracking</string>
     <string name="action_track">Track</string>
     <string name="unread">Unread</string>
     <string name="reading">Reading</string>
@@ -796,8 +796,8 @@
     <string name="title">Title</string>
     <string name="status">Status</string>
     <string name="track_status">Status</string>
-    <string name="track_started_reading_date">Start date</string>
-    <string name="track_finished_reading_date">Finish date</string>
+    <string name="track_started_reading_date">Start Date</string>
+    <string name="track_finished_reading_date">Finish Date</string>
     <string name="tracked_privately">Tracked privately</string>
     <string name="action_toggle_private_on">Track privately</string>
     <string name="action_toggle_private_off">Track publicly</string>

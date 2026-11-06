@@ -56,6 +56,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.Clipboard
 import androidx.compose.ui.platform.LocalClipboard
@@ -105,16 +106,32 @@ fun TrackerSearch(
         focusManager.clearFocus()
     }
 
+    // KMK (r137, item 18): a tinted glass sheet (dark themes): no line under the bar, white ← / ✕, glass cards and buttons
+    val glass = MaterialTheme.colorScheme.surface.luminance() < 0.5f
     Scaffold(
+        containerColor = if (glass) {
+            tachiyomi.presentation.core.components.tintedGlass(1f, Color(0xFF16181F), 0.22f)
+        } else {
+            MaterialTheme.colorScheme.background
+        },
         topBar = {
             Column {
                 TopAppBar(
+                    colors = if (glass) {
+                        androidx.compose.material3.TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
+                    } else {
+                        androidx.compose.material3.TopAppBarDefaults.topAppBarColors()
+                    },
                     navigationIcon = {
                         IconButton(onClick = onDismissRequest) {
                             Icon(
-                                imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
+                                imageVector = if (glass) {
+                                    eu.kanade.presentation.components.GlassIcons.ArrowBack
+                                } else {
+                                    Icons.AutoMirrored.Outlined.ArrowBack
+                                },
                                 contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                tint = if (glass) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     },
@@ -152,15 +169,15 @@ fun TrackerSearch(
                                 },
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.Close,
+                                    imageVector = if (glass) eu.kanade.presentation.components.GlassIcons.Close else Icons.Default.Close,
                                     contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    tint = if (glass) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
                         }
                     },
                 )
-                HorizontalDivider()
+                if (!glass) HorizontalDivider()
             }
         },
         bottomBar = {
@@ -176,12 +193,21 @@ fun TrackerSearch(
                         .fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
                 ) {
-                    Button(
-                        onClick = { onConfirmSelection(false) },
-                        modifier = Modifier.weight(1f),
-                        elevation = ButtonDefaults.elevatedButtonElevation(),
-                    ) {
-                        Text(text = stringResource(MR.strings.action_track))
+                    if (glass) {
+                        eu.kanade.presentation.components.GlassButton(
+                            text = stringResource(MR.strings.action_track),
+                            primary = true,
+                            onClick = { onConfirmSelection(false) },
+                            modifier = Modifier.weight(1f),
+                        )
+                    } else {
+                        Button(
+                            onClick = { onConfirmSelection(false) },
+                            modifier = Modifier.weight(1f),
+                            elevation = ButtonDefaults.elevatedButtonElevation(),
+                        ) {
+                            Text(text = stringResource(MR.strings.action_track))
+                        }
                     }
                     if (supportsPrivateTracking) {
                         Button(
@@ -249,7 +275,13 @@ private fun SearchResultItem(
     val status = trackSearch.publishing_status.toLowerCase(Locale.current).capitalize(Locale.current)
     val description = trackSearch.summary.trim()
     val shape = RoundedCornerShape(16.dp)
-    val borderColor = if (selected) MaterialTheme.colorScheme.outline else Color.Transparent
+    // KMK (r137, item 18): faint glass cards on the glass sheet, the picked one outlined in the accent
+    val glass = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    val borderColor = when {
+        !selected -> Color.Transparent
+        glass -> tachiyomi.presentation.core.components.LocalGlassAccent.current
+        else -> MaterialTheme.colorScheme.outline
+    }
     var dropDownMenuExpanded by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     Box(
@@ -257,7 +289,7 @@ private fun SearchResultItem(
             .fillMaxWidth()
             .padding(horizontal = 12.dp)
             .clip(shape)
-            .background(MaterialTheme.colorScheme.surface)
+            .background(if (glass) Color.White.copy(alpha = 0.07f) else MaterialTheme.colorScheme.surface)
             .border(
                 width = 2.dp,
                 color = borderColor,

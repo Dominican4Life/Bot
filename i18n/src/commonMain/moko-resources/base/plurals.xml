@@ -52,8 +52,8 @@
     </plurals>
 
     <plurals name="manga_num_chapters">
-        <item quantity="one">%1$s chapter</item>
-        <item quantity="other">%1$s chapters</item>
+        <item quantity="one">%1$s Chapter</item>
+        <item quantity="other">%1$s Chapters</item>
     </plurals>
 
     <plurals name="download_amount">

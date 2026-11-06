@@ -284,7 +284,7 @@
     <string name="anime_extension_repos">Repos</string>
     <string name="anime_available">Available</string>
     <string name="anime_migrate_coming">Anime migration will be available once anime can be added to your library</string>
-    <string name="anime_episodes_count">%1$d episodes</string>
+    <string name="anime_episodes_count">%1$d Episodes</string>
     <string name="anime_episode_number">Episode %1$s</string>
     <string name="anime_seasons">Seasons</string>
     <string name="anime_seasons_count">%1$d seasons</string>
@@ -630,7 +630,7 @@
     <string name="anime_edit_info_hint">Your changes stay when the source updates this anime. Reset goes back to the source\'s info.</string>
     <string name="anime_set_default_text">Use this anime\'s episode sort, filters and display for anime you add from now on?</string>
     <string name="anime_set_default_library">Also apply to every anime in my library</string>
-    <string name="anime_duplicate_title">Already in your library</string>
+    <string name="anime_duplicate_title">Already in Your Library</string>
     <string name="anime_duplicate_text">You have an anime with the same title. Tap one to open it, or add this one anyway.</string>
     <!-- Episode options (pick a stream, then play, copy or download it) -->
     <string name="anime_episode_options">Episode options</string>
@@ -674,7 +674,7 @@
     <string name="pref_anime_download_ahead">Download ahead while watching</string>
     <string name="anime_download_ahead_next">Next %1$d unseen episodes</string>
     <string name="anime_download_next_one">Next unseen episode</string>
-    <string name="anime_download_all_episodes">All episodes</string>
+    <string name="anime_download_all_episodes">All Episodes</string>
     <string name="pref_anime_download_ahead_info">Only for anime in your library, once an episode counts as watched.</string>
     <string name="pref_anime_download_new">Download new episodes</string>
     <string name="pref_anime_download_new_categories_details">Anime in excluded categories won\'t be downloaded even if they\'re also in included categories.</string>
@@ -827,6 +827,7 @@
     <string name="title_sheet_shape_auto">Auto</string>
     <string name="title_sheet_shape_page">Page 2:3</string>
     <string name="title_sheet_shape_square">Square</string>
+    <string name="next_update_finished">Finished</string>
     <string name="filter_any">Any</string>
     <string name="browse_slow_title">Still Loading</string>
     <string name="browse_slow_text">Nothing has come back yet. The site may be showing a check the app can\'t see: open it in WebView to look, and solve it there if it asks. The list loads again when you come back.</string>
@@ -842,7 +843,7 @@
     <string name="title_sheet_read">Read</string>
     <string name="title_sheet_start_first">Start from the first</string>
     <string name="title_sheet_pick">Pick one…</string>
-    <string name="title_sheet_chapters">%1$d chapters</string>
+    <string name="title_sheet_chapters">%1$d Chapters</string>
     <string name="title_sheet_pick_chapter">Pick A Chapter</string>
     <string name="title_sheet_no_pages">No pages to show</string>
     <string name="title_sheet_download_all">All chapters</string>

@@ -4,6 +4,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.produceState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -245,6 +246,10 @@ fun MangaScreen(
     CompositionLocalProvider(eu.kanade.presentation.manga.components.LocalTitleBanner provides banner) {
     Box(modifier = Modifier.fillMaxSize()) {
         banner?.let { TitleBannerBackdrop(it) }
+        // KMK (r137, item 17): the glass tablet page without a banner shows its cover, blurred, behind everything
+        val glassPage = remember { eu.kanade.presentation.components.TitleSheet.glass().get() }
+        val glassTabletPage = isTabletUi && glassPage
+        if (banner == null && glassTabletPage) TitleCoverBackdrop(state.manga)
         if (!isTabletUi) {
             MangaScreenSmallImpl(
                 state = state,
@@ -1009,8 +1014,8 @@ private fun MangaScreenLargeImpl(
     })
 
     Scaffold(
-        // KMK (r132): see-through over the AniList banner
-        containerColor = if (eu.kanade.presentation.manga.components.LocalTitleBanner.current != null) {
+        // KMK (r132): see-through over the AniList banner; r137: and over the cover on the glass tablet page
+        containerColor = if (eu.kanade.presentation.manga.components.LocalTitleBanner.current != null || glassTablet) {
             Color.Transparent
         } else {
             MaterialTheme.colorScheme.background
@@ -1095,7 +1100,7 @@ private fun MangaScreenLargeImpl(
         floatingActionButton = {
             val isFABVisible = remember(chapters) {
                 chapters.fastAny { !it.chapter.read } && !isAnySelected
-            }
+            } && !glassTablet // KMK (r137, item 17): on the glass tablet page Start sits in the chapter panel
             SmallExtendedFloatingActionButton(
                 text = {
                     val isReading = remember(state.chapters) {
@@ -1279,6 +1284,19 @@ private fun MangaScreenLargeImpl(
                             onRelatedMangaLongClick = onRelatedMangaLongClick,
                             onFilterButtonClicked = onFilterButtonClicked,
                             onDownloadActionClicked = onDownloadActionClicked,
+                            // KMK (r137, item 17): Start / Resume at the bottom of the chapter panel
+                            continueLabel = if (chapters.fastAny { !it.chapter.read } && !isAnySelected) {
+                                stringResource(
+                                    if (state.chapters.fastAny { it.chapter.read }) {
+                                        MR.strings.action_resume
+                                    } else {
+                                        MR.strings.action_start
+                                    },
+                                )
+                            } else {
+                                null
+                            },
+                            onContinueReading = onContinueReading,
                             chapterItems = {
                                 sharedChapterItems(
                                     manga = state.manga,
@@ -1292,6 +1310,7 @@ private fun MangaScreenLargeImpl(
                                     onDownloadChapter = onDownloadChapter,
                                     onChapterSelected = onChapterSelected,
                                     onChapterSwipe = onChapterSwipe,
+                                    rowButtons = true,
                                 )
                             },
                         )
@@ -1448,6 +1467,8 @@ private fun LazyListScope.sharedChapterItems(
     onDownloadChapter: ((List<ChapterList.Item>, ChapterDownloadAction) -> Unit)?,
     onChapterSelected: (ChapterList.Item, Boolean, Boolean) -> Unit,
     onChapterSwipe: (ChapterList.Item, LibraryPreferences.ChapterSwipeAction) -> Unit,
+    // KMK (r137, item 17): eye and bookmark buttons on every row (the glass tablet page), before download
+    rowButtons: Boolean = false,
 ) {
     items(
         items = chapters,
@@ -1534,9 +1555,54 @@ private fun LazyListScope.sharedChapterItems(
                     onChapterSwipe = {
                         onChapterSwipe(item, it)
                     },
+                    trailing = if (rowButtons && !isAnyChapterSelected) {
+                        { ChapterRowButtons(item, onChapterSwipe) }
+                    } else {
+                        null
+                    },
                 )
             }
         }
+    }
+}
+
+/** KMK (r137, item 17): a row's glass eye and bookmark (lit in the cover colour when on), like the reader's list */
+@Composable
+private fun ChapterRowButtons(
+    item: ChapterList.Item,
+    onChapterSwipe: (ChapterList.Item, LibraryPreferences.ChapterSwipeAction) -> Unit,
+) {
+    val read = item.chapter.read
+    val bookmark = item.chapter.bookmark
+    androidx.compose.material3.IconButton(
+        onClick = { onChapterSwipe(item, LibraryPreferences.ChapterSwipeAction.ToggleRead) },
+        modifier = Modifier.size(40.dp),
+    ) {
+        Icon(
+            imageVector = if (read) {
+                eu.kanade.presentation.components.GlassIcons.Read
+            } else {
+                eu.kanade.presentation.components.GlassIcons.ReadOff
+            },
+            contentDescription = stringResource(if (read) MR.strings.action_mark_as_unread else MR.strings.action_mark_as_read),
+            tint = if (read) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.size(22.dp),
+        )
+    }
+    androidx.compose.material3.IconButton(
+        onClick = { onChapterSwipe(item, LibraryPreferences.ChapterSwipeAction.ToggleBookmark) },
+        modifier = Modifier.size(40.dp),
+    ) {
+        Icon(
+            imageVector = if (bookmark) {
+                eu.kanade.presentation.components.GlassIcons.Bookmark
+            } else {
+                eu.kanade.presentation.components.GlassIcons.BookmarkOff
+            },
+            contentDescription = stringResource(MR.strings.action_bookmark),
+            tint = if (bookmark) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.size(20.dp),
+        )
     }
 }
 
@@ -1590,6 +1656,33 @@ fun metadataDescription(source: Source): MetadataDescriptionComposable? {
 // SY <--
 
 /** KMK (r132): the AniList banner filling the page, lightly blurred and dimmed so text stays readable */
+@Composable
+internal fun TitleCoverBackdrop(cover: Any?) {
+    // KMK (r137, item 17): the cover, blurred and darkened, behind the glass tablet title page
+    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+        coil3.compose.AsyncImage(
+            model = cover,
+            contentDescription = null,
+            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            modifier = Modifier
+                .fillMaxSize()
+                .blur(28.dp)
+                .alpha(0.5f),
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    androidx.compose.ui.graphics.Brush.verticalGradient(
+                        0f to Color.Black.copy(alpha = 0.15f),
+                        0.6f to Color.Black.copy(alpha = 0.4f),
+                        1f to Color.Black.copy(alpha = 0.65f),
+                    ),
+                ),
+        )
+    }
+}
+
 @Composable
 internal fun TitleBannerBackdrop(url: String) {
     Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
