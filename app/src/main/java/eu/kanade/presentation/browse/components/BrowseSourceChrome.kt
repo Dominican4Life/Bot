@@ -38,6 +38,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.navigationBars
+import uy.kohesive.injekt.api.get
+import uy.kohesive.injekt.Injekt
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.util.collectAsState
 import androidx.compose.ui.input.pointer.pointerInput
@@ -307,7 +311,7 @@ val LocalPhoneSheet = androidx.compose.runtime.compositionLocalOf { false }
 
 /** KMK (r135): the phone sheet's height: full (under the buttons) or half; remembered */
 private val phoneSheetHalf by lazy {
-    uy.kohesive.injekt.Injekt.get<tachiyomi.core.common.preference.PreferenceStore>()
+    Injekt.get<tachiyomi.core.common.preference.PreferenceStore>()
         .getBoolean("browse_phone_sheet_half", false)
 }
 
@@ -386,7 +390,7 @@ private fun PhoneSideSheet(
                         modifier = Modifier
                             .fillMaxWidth()
                             .pointerInput(fullPx, half) {
-                                androidx.compose.foundation.gestures.detectDragGestures(
+                                detectDragGestures(
                                     onDragStart = {
                                         dragging = true
                                         dragX = 0f
