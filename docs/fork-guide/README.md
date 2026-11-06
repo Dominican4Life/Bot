@@ -1145,6 +1145,19 @@ One build for the whole glass list (24 items). Mockups are on the design canvas 
 - A string replace on a common block (`dismissButton = { … action_cancel …`) hit the **first** dialog in the file, not the one meant. Anchor such edits after the function name.
 - Adding a defaulted parameter **after** a lambda parameter steals callers' trailing lambdas (`getSwipeAction { … }` in AnimeScreen). New parameters go before the last lambda.
 
+## Changes in r133 (6 November 2026)
+
+- **Glass accent follows the cover** (`presentation-core/.../GlassAccent.kt`: `LocalGlassAccent`, `glassAccentFor`, `onGlassAccent`). `TachiyomiTheme(seedColor)` and `CoverSeedTheme` provide it, so title pages, source previews (manga and anime) and the reader light up in the cover's colour (brightened); gold (`GlassGold`) everywhere else and for colourless covers. Every r132 hard-coded `0xFFF2C94C` now reads the accent (the log's amber warning pill stays amber).
+- **Glass controls** (`components/GlassControls.kt`): `GlassStepSlider` (white capsule at rest, clear glass lens while held, stretch + spring, a buzz per tick), `GlassSliderRow`, `GlassColumnsSlider` (used by every Columns slider: library, anime library, browse display, MediaTabs), `GlassChoiceSwitch`, `GlassSwitch`, `GlassButton`, `LocalGlassPanel`.
+- **Shared rows restyled** (`SettingsItems.kt`): `SortItem` / `BaseSortItem` are lit glass rows with the accent arrow on the left and an optional per-sort icon (`icon` / `leadingIcon`, placed after `onClick`: callers use named args); `CheckboxItem` uses `GlassTriStateBox`; `RadioItem` (optional `icon`) and `IconItem` are pick-one rows with `GlassRoundTick`; `SelectItem` is a rounded glass box. This changes every sheet that uses them.
+- **Icons**: ~50 new `GlassIcons` (generator `kgen/icons.py` + `kgen/r133.py`), `ic_glass_anilist(_off).xml` (the existing brand_anilist mark, two-tone), glass `anim_incognito.xml` (same animation).
+- **Library**: ⋮ menu Title Case + icons, Update This Category removed (pull to refresh still updates the current category); sheet Sort with icons (`sortIconFor`), Display as pick-one rows + Wide Covers switch, Group with glass icons (`groupGlassIcon`).
+- **Title page**: Details icon, no collapse arrow, eye next to the bookmark, Suggestions in a frosted panel (`Modifier.suggestionsPanel()`), no header strip with glass, no edge lines on tags / description / panels, Suggestions toggle before Preview, play icon, Preview Size menu in glass, Preview tab capsules + glass Pick A Chapter, chapter sheet Sort/Display icons, ⋮ icons, glass Set As Default.
+- **Swipe** (`GlassChapterSwipe.kt`): triggers at a third of the row, clear glass with a lit rim, the pill melts back while the row returns.
+- **AniList Background** per title / per source (`AniListBanner.isOn/set/isOwn`, prefs `anilist_bg_<kind>_<id>` / `anilist_bg_src_<kind>_<source>`, fallback the Settings › Glass switch; `AniListBackgroundRows` in both Display tabs; anime pages now get the banner too via `findAnime`).
+- **Source browsing**: see-through bar with glass buttons and a glass source-name capsule, glass chips (`BrowseTabChip`), new chip / menu / catalog icons, panel button `PreviewPanel(On)`, Filter / Settings panels as glass cards (`LocalGlassPanel` → glass switches and filter fields).
+- **Coming Up** in glass with a Days Ahead slider (pref `coming_up_days_ahead`, default 7). **Log**: window can't leave the sides; bubble can go up to the status bar.
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
