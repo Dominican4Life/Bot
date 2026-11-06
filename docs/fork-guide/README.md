@@ -1174,6 +1174,20 @@ One build for the owner's r134 list (items 1–26). Mockups: canvas boards "r134
 - **Panel player:** glass icons (new `GlassIcons` Pause, SkipNext/Previous, Back10/Forward10, Close, Lock/LockOpen, Tune, Quality, Fullscreen, VolumeOn/Off, ChevronUp/Left/Right, SwapSides, DragHandle), `GlassChip` instead of `FilterChip`, glass quality/speed menus (max 380 dp, tick on the playing quality), the buffering spinner moves above the controls when they show.
 - **Anime:** panel episode rows use the glass eye / bookmark and header icons (`GlassPanelTop(authorIcon)`; anime pass `isAnime`); title page uses `MangaToolbar(glass)`; episode cards get eye / bookmark buttons; the AniList info line is brighter; sheet labels Title Case ("Filler Episodes", "Source Title").
 
+## Changes in r135 (6 November 2026)
+
+Owner's r135 list (15 items). Mockups: canvas boards "Phone Filter & Settings, M4", "Sliding top bar", "Icons and glass tint" (owner picked M4, C, W).
+
+- **Phone Filter / Settings (M4):** `BrowseOverlayPanel` on a phone (< 600 dp) with glass shows `PhoneSideSheet`: full width from just under the button row, Filter slides from the left and Settings from the right, dark frosted (0.78), handle drag for half / full height (remembered in `browse_phone_sheet_half`), sideways swipe, ✕ or a tap on the covers closes it. It provides `LocalPhoneSheet`; `SourceFilterContent` then drops its sticky header and puts Save / Clear / Apply (`GlassButton`) in a bottom bar. Imports: extension functions (`detectDragGestures`, `WindowInsets.navigationBars`, `Injekt.get`) can't be called fully qualified; the first r135 build failed on that.
+- **Filter widgets:** `AutoCompleteTextField` (Author / Artist / Genres / Tags) is a `FilterFieldBox` ("Any") in a glass panel; `FilterCard` is a dark glass card (black 0.25); `CollapsibleBox` draws a turning stroke chevron.
+- **Source settings:** `SourcePreferencesFragment` title-cases preference titles (`titleCase`) and, in a glass panel (`glassAccent`), paints switches with the accent.
+- **Top bar never moves (C):** the r134 `BrowseBarHide` is removed. With an empty query (Filter tab) the source capsule stays (`searchFieldOpen`); the search box opens only from the search button. The title capsule is 48 dp like the buttons.
+- **Title page:** the backdrop's `surfaceTint` layer sat outside `.alpha()` and was the dark box; it's now left out whenever the picture is hidden.
+- **⋮ menu:** `AppBar` glass capsules hide (`LocalOverflowOpen`) while their `AppBarActions` menu is open.
+- **Sliders:** `GlassStepSlider` tracks held and dragging separately (the tap detector cleared the lens when a drag started).
+- **Accent:** `appGlassAccent` (the app theme's primary, brightened) is provided by `TachiyomiTheme`; `glassAccentFor(seed, primary, fallback)` falls back to it for no / colourless covers. Gold is no longer used.
+- **Glass tint and white icons (W):** `tintedGlass()` (dark glass washed with the accent) for description, tags, frosted panels, action buttons and glass side panels; action buttons and preview round icons are white, the accent fills "on" states; the not-downloaded indicator is white.
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
