@@ -81,7 +81,7 @@ fun ChapterSettingsDialog(
             // KMK (r133): icons on the sheet's ⋮ menu
             DropdownMenuItem(
                 text = { Text(stringResource(MR.strings.set_chapter_settings_as_default)) },
-                leadingIcon = { Icon($G.SetDefault, contentDescription = null) },
+                leadingIcon = { Icon(eu.kanade.presentation.components.GlassIcons.SetDefault, contentDescription = null) },
                 onClick = {
                     showSetAsDefaultDialog = true
                     closeMenu()
@@ -89,7 +89,7 @@ fun ChapterSettingsDialog(
             )
             DropdownMenuItem(
                 text = { Text(stringResource(MR.strings.action_reset)) },
-                leadingIcon = { Icon($G.Reset, contentDescription = null) },
+                leadingIcon = { Icon(eu.kanade.presentation.components.GlassIcons.Reset, contentDescription = null) },
                 onClick = {
                     onResetToDefault()
                     closeMenu()
@@ -184,7 +184,7 @@ fun ScanlatorFilterItem(
         horizontalArrangement = Arrangement.spacedBy(24.dp),
     ) {
         Icon(
-            imageVector = $G.Scanlators,
+            imageVector = eu.kanade.presentation.components.GlassIcons.Scanlators,
             contentDescription = null,
             tint = if (active) {
                 tachiyomi.presentation.core.components.LocalGlassAccent.current
@@ -217,10 +217,10 @@ private fun ColumnScope.SortPage(
             onClick = { onItemSelected(mode) },
             // KMK (r133): each sort's own icon (globe, #, calendar, A)
             icon = when (mode) {
-                Manga.CHAPTER_SORTING_SOURCE -> $G.WebView
-                Manga.CHAPTER_SORTING_NUMBER -> $G.SortNumber
-                Manga.CHAPTER_SORTING_UPLOAD_DATE -> $G.SortUpload
-                else -> $G.SortAlpha
+                Manga.CHAPTER_SORTING_SOURCE -> eu.kanade.presentation.components.GlassIcons.WebView
+                Manga.CHAPTER_SORTING_NUMBER -> eu.kanade.presentation.components.GlassIcons.SortNumber
+                Manga.CHAPTER_SORTING_UPLOAD_DATE -> eu.kanade.presentation.components.GlassIcons.SortUpload
+                else -> eu.kanade.presentation.components.GlassIcons.SortAlpha
             },
         )
     }
@@ -239,7 +239,7 @@ private fun ColumnScope.DisplayPage(
             label = stringResource(titleRes),
             selected = displayMode == mode,
             onClick = { onItemSelected(mode) },
-            icon = if (mode == Manga.CHAPTER_DISPLAY_NAME) $G.ShowTitle else $G.SortNumber,
+            icon = if (mode == Manga.CHAPTER_DISPLAY_NAME) eu.kanade.presentation.components.GlassIcons.ShowTitle else eu.kanade.presentation.components.GlassIcons.SortNumber,
         )
     }
 }
