@@ -5,6 +5,7 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -106,38 +107,145 @@ fun IconItem(label: String, icon: ImageVector, onClick: () -> Unit) {
     )
 }
 
+/**
+ * KMK (r133): a glass sort row. The picked sort is a lit row with the accent arrow (↑ / ↓) in a small bubble on the
+ * left; the others show their own [icon] there (or nothing). Tap the picked one again to flip it.
+ */
 @Composable
-fun SortItem(label: String, sortDescending: Boolean?, onClick: () -> Unit) {
+fun SortItem(label: String, sortDescending: Boolean?, onClick: () -> Unit, icon: ImageVector? = null) {
     val arrowIcon = when (sortDescending) {
-        true -> Icons.Default.ArrowDownward
-        false -> Icons.Default.ArrowUpward
+        true -> GlassArrows.Down
+        false -> GlassArrows.Up
         null -> null
     }
-
-    BaseSortItem(
-        label = label,
-        icon = arrowIcon,
-        onClick = onClick,
-    )
+    BaseSortItem(label = label, icon = arrowIcon, onClick = onClick, leadingIcon = icon)
 }
 
+/** KMK (r133): see [SortItem]; [icon] non-null = this row is the picked one (shown in the accent bubble) */
 @Composable
-fun BaseSortItem(label: String, icon: ImageVector?, onClick: () -> Unit) {
-    BaseSettingsItem(
-        label = label,
-        widget = {
-            if (icon != null) {
-                Icon(
-                    imageVector = icon,
+fun BaseSortItem(label: String, icon: ImageVector?, onClick: () -> Unit, leadingIcon: ImageVector? = null) {
+    val accent = LocalGlassAccent.current
+    val picked = icon != null
+    val shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 1.dp)
+            .then(
+                if (picked) {
+                    Modifier
+                        .background(Color.White.copy(alpha = 0.09f), shape)
+                        .border(0.6.dp, Color.White.copy(alpha = 0.16f), shape)
+                } else {
+                    Modifier
+                },
+            )
+            .clip(shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        androidx.compose.foundation.layout.Box(
+            modifier = Modifier
+                .size(30.dp)
+                .then(
+                    if (picked) {
+                        Modifier.background(accent.copy(alpha = 0.18f), androidx.compose.foundation.shape.CircleShape)
+                    } else {
+                        Modifier
+                    },
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            when {
+                picked -> Icon(imageVector = icon!!, contentDescription = null, tint = accent, modifier = Modifier.size(18.dp))
+                leadingIcon != null -> Icon(
+                    imageVector = leadingIcon,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(20.dp),
                 )
-            } else {
-                Spacer(modifier = Modifier.size(24.dp))
             }
-        },
-        onClick = onClick,
-    )
+        }
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = if (picked) androidx.compose.ui.text.font.FontWeight.SemiBold else null,
+            modifier = Modifier.weight(1f),
+        )
+        if (picked && leadingIcon != null) {
+            Icon(
+                imageVector = leadingIcon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                modifier = Modifier.size(18.dp),
+            )
+        }
+    }
+}
+
+/** KMK (r133): the glass sort arrows */
+object GlassArrows {
+    val Up: ImageVector by lazy { arrow("Up", "M12 19V5M6.5 10.5L12 5l5.5 5.5") }
+    val Down: ImageVector by lazy { arrow("Down", "M12 5v14M6.5 13.5L12 19l5.5-5.5") }
+    val Check: ImageVector by lazy { arrow("Check", "M6 12.5l4 4 8-8.5", 2.6f) }
+
+    private fun arrow(name: String, d: String, width: Float = 2.4f): ImageVector =
+        ImageVector.Builder(
+            name = "GlassArrow.$name",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f,
+        ).apply {
+            addPath(
+                pathData = androidx.compose.ui.graphics.vector.PathParser().parsePathString(d).toNodes(),
+                stroke = androidx.compose.ui.graphics.SolidColor(Color.Black),
+                strokeLineWidth = width,
+                strokeLineCap = androidx.compose.ui.graphics.StrokeCap.Round,
+                strokeLineJoin = androidx.compose.ui.graphics.StrokeJoin.Round,
+            )
+        }.build()
+}
+
+/** KMK (r133): the round tick of pick-one rows: the accent with a check when picked, an empty ring when not */
+@Composable
+fun GlassRoundTick(checked: Boolean, modifier: Modifier = Modifier) {
+    val accent = LocalGlassAccent.current
+    androidx.compose.foundation.layout.Box(
+        modifier = modifier
+            .size(22.dp)
+            .then(
+                if (checked) {
+                    Modifier.background(accent, androidx.compose.foundation.shape.CircleShape)
+                } else {
+                    Modifier.border(2.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f), androidx.compose.foundation.shape.CircleShape)
+                },
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (checked) {
+            Icon(imageVector = GlassArrows.Check, contentDescription = null, tint = onGlassAccent(accent), modifier = Modifier.size(15.dp))
+        }
+    }
+}
+
+/** KMK (r133): a pick-one glass row: optional icon, the name, the round tick on the right */
+@Composable
+fun GlassPickRow(label: String, selected: Boolean, onClick: () -> Unit, icon: (@Composable () -> Unit)? = null) {
+    Row(
+        modifier = Modifier
+            .clickable(onClick = onClick)
+            .fillMaxWidth()
+            .padding(horizontal = SettingsItemsPaddings.Horizontal, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        icon?.invoke()
+        Text(text = label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        GlassRoundTick(selected)
+    }
 }
 
 @Composable
@@ -154,27 +262,20 @@ fun CheckboxItem(label: String, pref: Preference<Boolean>) {
 fun CheckboxItem(label: String, checked: Boolean, onClick: () -> Unit) {
     BaseSettingsItem(
         label = label,
-        widget = {
-            Checkbox(
-                checked = checked,
-                onCheckedChange = null,
-            )
-        },
+        // KMK (r133): the glass tick box (like the Filter tab)
+        widget = { GlassTriStateBox(if (checked) TriState.ENABLED_IS else TriState.DISABLED) },
         onClick = onClick,
     )
 }
 
 @Composable
-fun RadioItem(label: String, selected: Boolean, onClick: () -> Unit) {
-    BaseSettingsItem(
+fun RadioItem(label: String, selected: Boolean, onClick: () -> Unit, icon: ImageVector? = null) {
+    // KMK (r133): a pick-one glass row (round tick on the right)
+    GlassPickRow(
         label = label,
-        widget = {
-            RadioButton(
-                selected = selected,
-                onClick = null,
-            )
-        },
+        selected = selected,
         onClick = onClick,
+        icon = icon?.let { { Icon(imageVector = it, contentDescription = null, modifier = Modifier.size(22.dp)) } },
     )
 }
 
@@ -316,8 +417,14 @@ fun SelectItem(
                     expanded = expanded,
                 )
             },
-            colors = ExposedDropdownMenuDefaults.textFieldColors(
+            // KMK (r133): a rounded glass box instead of the outlined one
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+            colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
                 disabledTextColor = MaterialTheme.colorScheme.onSurface,
+                disabledBorderColor = Color.Transparent,
+                disabledContainerColor = Color.White.copy(alpha = 0.07f),
+                disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                disabledTrailingIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
             ),
         )
 
@@ -400,20 +507,19 @@ fun IconItem(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
-    BaseSettingsItem(
+    // KMK (r133): a pick-one glass row: icon (the accent when picked), name, round tick
+    GlassPickRow(
         label = label,
-        widget = {
+        selected = selected,
+        onClick = onClick,
+        icon = {
             Icon(
                 painter = icon,
-                contentDescription = label,
-                tint = if (selected) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.onSurface
-                },
+                contentDescription = null,
+                tint = if (selected) LocalGlassAccent.current else MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(22.dp),
             )
         },
-        onClick = onClick,
     )
 }
 // SY <--
@@ -493,7 +599,7 @@ fun GlassTriStateBox(state: TriState, alpha: Float = 1f) {
                         MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
                         shape,
                     )
-                    TriState.ENABLED_IS -> Modifier.background(androidx.compose.ui.graphics.Color(0xFFF2C94C), shape)
+                    TriState.ENABLED_IS -> Modifier.background(tachiyomi.presentation.core.components.LocalGlassAccent.current, shape)
                     TriState.ENABLED_NOT -> Modifier.background(androidx.compose.ui.graphics.Color(0xFFE5484D), shape)
                 },
             ),
@@ -503,7 +609,7 @@ fun GlassTriStateBox(state: TriState, alpha: Float = 1f) {
             TriState.ENABLED_IS -> Icon(
                 imageVector = Icons.Rounded.Check,
                 contentDescription = null,
-                tint = androidx.compose.ui.graphics.Color(0xFF2A2105),
+                tint = onGlassAccent(tachiyomi.presentation.core.components.LocalGlassAccent.current),
                 modifier = Modifier.size(17.dp),
             )
             TriState.ENABLED_NOT -> Icon(
@@ -516,3 +622,4 @@ fun GlassTriStateBox(state: TriState, alpha: Float = 1f) {
         }
     }
 }
+

@@ -85,7 +85,7 @@ object GlassMenuStyle {
 /** KMK (r132): the round tick used by the glass menus: gold with a check when on, an empty ring when off */
 @Composable
 fun GlassTick(checked: Boolean, modifier: Modifier = Modifier) {
-    val gold = androidx.compose.ui.graphics.Color(0xFFF2C94C)
+    val gold = tachiyomi.presentation.core.components.LocalGlassAccent.current
     Box(
         modifier = modifier
             .size(22.dp)

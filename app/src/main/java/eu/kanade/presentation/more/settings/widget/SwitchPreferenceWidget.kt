@@ -8,6 +8,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.tooling.preview.PreviewLightDark
@@ -33,12 +34,23 @@ fun SwitchPreferenceWidget(
         subtitle = subtitle,
         icon = icon,
         widget = {
-            Switch(
-                checked = checked,
-                onCheckedChange = null,
-                enabled = !locked, // KMK
-                modifier = Modifier.padding(start = TrailingWidgetBuffer),
-            )
+            // KMK (r133): a glass switch inside the glass browse panels
+            if (eu.kanade.presentation.components.LocalGlassPanel.current) {
+                eu.kanade.presentation.components.GlassSwitch(
+                    checked = checked,
+                    onCheckedChange = null,
+                    modifier = Modifier
+                        .padding(start = TrailingWidgetBuffer)
+                        .then(if (locked) Modifier.alpha(0.4f) else Modifier),
+                )
+            } else {
+                Switch(
+                    checked = checked,
+                    onCheckedChange = null,
+                    enabled = !locked, // KMK
+                    modifier = Modifier.padding(start = TrailingWidgetBuffer),
+                )
+            }
         },
         onPreferenceClick = { if (!locked) onCheckedChanged(!checked) },
     )

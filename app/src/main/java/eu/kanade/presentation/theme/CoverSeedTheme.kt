@@ -41,6 +41,13 @@ fun CoverSeedTheme(
         colorScheme = seededScheme ?: baseScheme,
         typography = MaterialTheme.typography,
         shapes = MaterialTheme.shapes,
-        content = content,
+        // KMK (r133): glass controls light up in the previewed cover's colour (gold again when nothing is previewed)
+        content = {
+            androidx.compose.runtime.CompositionLocalProvider(
+                tachiyomi.presentation.core.components.LocalGlassAccent provides
+                    tachiyomi.presentation.core.components.glassAccentFor(seedColor, MaterialTheme.colorScheme.primary),
+                content = content,
+            )
+        },
     )
 }

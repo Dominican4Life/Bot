@@ -535,7 +535,7 @@ private fun BrowseChapterRow(
         // Read / unread
         IconButton(onClick = onToggleRead, modifier = Modifier.size(36.dp)) {
             Icon(
-                imageVector = if (chapter.read) Icons.Filled.Visibility else Icons.Outlined.VisibilityOff,
+                imageVector = if (chapter.read) GlassIcons.Read else GlassIcons.ReadOff, // KMK (r133)
                 contentDescription = stringResource(
                     if (chapter.read) MR.strings.action_mark_as_unread else MR.strings.action_mark_as_read,
                 ),
@@ -550,7 +550,7 @@ private fun BrowseChapterRow(
         // Bookmark
         IconButton(onClick = onToggleBookmark, modifier = Modifier.size(36.dp)) {
             Icon(
-                imageVector = if (chapter.bookmark) GlassIcons.Bookmark else Icons.Outlined.BookmarkBorder,
+                imageVector = if (chapter.bookmark) GlassIcons.Bookmark else GlassIcons.BookmarkOff, // KMK (r133)
                 contentDescription = stringResource(
                     if (chapter.bookmark) MR.strings.action_remove_bookmark else MR.strings.action_bookmark,
                 ),
@@ -802,7 +802,7 @@ private fun PageThumbnailBox(
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    imageVector = Icons.Filled.PlayArrow,
+                    imageVector = eu.kanade.presentation.components.GlassIcons.Play,
                     contentDescription = null,
                     tint = Color.White,
                     modifier = Modifier.size(28.dp),

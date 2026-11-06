@@ -487,14 +487,8 @@ private fun ColumnScope.DisplayPage() {
             }
         }
         val columns by columnPreference.collectAsState()
-        SliderItem(
-            value = columns,
-            valueRange = 0..15,
-            label = stringResource(MR.strings.pref_library_columns),
-            valueString = if (columns > 0) columns.toString() else stringResource(MR.strings.label_auto),
-            onChange = columnPreference::set,
-            pillColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-        )
+        // KMK (r133): the stepped glass slider
+        eu.kanade.presentation.components.GlassColumnsSlider(columns = columns, onChange = columnPreference::set)
     }
     // KMK: the same badges as the manga library (Local source = anime from Device files)
     HeadingItem(MR.strings.overlay_header)

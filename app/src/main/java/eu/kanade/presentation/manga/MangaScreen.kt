@@ -50,6 +50,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.animateFloatingActionButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.MutableFloatState
 import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
@@ -236,7 +237,9 @@ fun MangaScreen(
     }
 
     // KMK (r132): the AniList banner behind the whole page (looked up once per title; null = the cover's colours)
-    val banner by produceState<String?>(null, state.manga.id) {
+    // KMK (r133): looked up again when its AniList Background switch changes
+    val bannerVersion by eu.kanade.presentation.manga.components.AniListBanner.changes.collectAsState()
+    val banner by produceState<String?>(null, state.manga.id, bannerVersion) {
         value = eu.kanade.presentation.manga.components.AniListBanner.find(state.manga)
     }
     CompositionLocalProvider(eu.kanade.presentation.manga.components.LocalTitleBanner provides banner) {
@@ -589,7 +592,7 @@ private fun MangaScreenSmallImpl(
                         text = stringResource(if (isReading) MR.strings.action_resume else MR.strings.action_start),
                     )
                 },
-                icon = { Icon(imageVector = Icons.Filled.PlayArrow, contentDescription = null) },
+                icon = { Icon(imageVector = eu.kanade.presentation.components.GlassIcons.Play, contentDescription = null) },
                 onClick = onContinueReading,
                 expanded = chapterListState.shouldExpandFAB(),
                 modifier = Modifier.animateFloatingActionButton(
@@ -740,7 +743,7 @@ private fun MangaScreenSmallImpl(
                             key = MangaScreenItem.RELATED_MANGAS,
                             contentType = MangaScreenItem.RELATED_MANGAS,
                         ) {
-                            Column {
+                            Column(modifier = Modifier.suggestionsPanel()) {
                                 RelatedMangaTitle(
                                     title = stringResource(KMR.strings.pref_source_related_mangas),
                                     subtitle = null,
@@ -1104,7 +1107,7 @@ private fun MangaScreenLargeImpl(
                         ),
                     )
                 },
-                icon = { Icon(imageVector = Icons.Filled.PlayArrow, contentDescription = null) },
+                icon = { Icon(imageVector = eu.kanade.presentation.components.GlassIcons.Play, contentDescription = null) },
                 onClick = onContinueReading,
                 expanded = chapterListState.shouldExpandFAB(),
                 modifier = Modifier.animateFloatingActionButton(
@@ -1136,8 +1139,8 @@ private fun MangaScreenLargeImpl(
                         }
                     },
                 // KMK (r132): the glass tablet page: a tinted Resume capsule
-                containerColor = if (glassTablet) Color(0xFFF2C94C).copy(alpha = 0.88f) else MaterialTheme.colorScheme.primary,
-                contentColor = if (glassTablet) Color(0xFF2A2105) else MaterialTheme.colorScheme.onPrimary,
+                containerColor = if (glassTablet) tachiyomi.presentation.core.components.LocalGlassAccent.current.copy(alpha = 0.88f) else MaterialTheme.colorScheme.primary,
+                contentColor = if (glassTablet) tachiyomi.presentation.core.components.onGlassAccent(tachiyomi.presentation.core.components.LocalGlassAccent.current) else MaterialTheme.colorScheme.onPrimary,
                 shape = RoundedCornerShape(if (glassTablet) 27.dp else 16.dp),
                 // KMK <--
             )
@@ -1317,7 +1320,7 @@ private fun MangaScreenLargeImpl(
                                             key = MangaScreenItem.RELATED_MANGAS,
                                             contentType = MangaScreenItem.RELATED_MANGAS,
                                         ) {
-                                            Column {
+                                            Column(modifier = Modifier.suggestionsPanel()) {
                                                 RelatedMangaTitle(
                                                     title = stringResource(KMR.strings.pref_source_related_mangas)
                                                         .uppercase(),
@@ -1588,7 +1591,7 @@ fun metadataDescription(source: Source): MetadataDescriptionComposable? {
 
 /** KMK (r132): the AniList banner filling the page, lightly blurred and dimmed so text stays readable */
 @Composable
-private fun TitleBannerBackdrop(url: String) {
+internal fun TitleBannerBackdrop(url: String) {
     Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         coil3.compose.AsyncImage(
             model = url,

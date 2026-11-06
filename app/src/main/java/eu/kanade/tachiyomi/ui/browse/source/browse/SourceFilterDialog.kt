@@ -146,7 +146,14 @@ fun SourceFilterContent(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.background)
+                        // KMK (r133): see-through in the glass panel
+                        .background(
+                            if (eu.kanade.presentation.components.LocalGlassPanel.current) {
+                                Color.Black.copy(alpha = 0.18f)
+                            } else {
+                                MaterialTheme.colorScheme.background
+                            },
+                        )
                         .padding(start = 16.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -181,9 +188,9 @@ fun SourceFilterContent(
                             onClick = onSave,
                             modifier = Modifier.size(36.dp),
                             shape = RoundedCornerShape(18.dp),
-                            color = Color.Transparent,
-                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                            color = Color.White.copy(alpha = 0.09f),
+                            contentColor = MaterialTheme.colorScheme.onSurface,
+                            border = null,
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
@@ -195,16 +202,15 @@ fun SourceFilterContent(
                         }
                         // SY <--
                     }
-                    androidx.compose.material3.Button(
+                    // KMK (r133): Apply as the accent glass button
+                    eu.kanade.presentation.components.GlassButton(
+                        text = stringResource(MR.strings.action_apply),
+                        primary = true,
                         onClick = {
                             onFilter()
                             onDismissRequest()
                         },
-                        shape = RoundedCornerShape(20.dp),
-                        contentPadding = PaddingValues(horizontal = 22.dp, vertical = 8.dp),
-                    ) {
-                        Text(stringResource(MR.strings.action_apply))
-                    }
+                    )
                 }
             }
 

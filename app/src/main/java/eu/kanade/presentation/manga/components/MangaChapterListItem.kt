@@ -105,17 +105,27 @@ fun MangaChapterListItem(
     }
 
     var rootX by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+    // KMK (r133): the glass swipe triggers about a third of the way across, so the stretch can be seen
+    var rootW by remember { androidx.compose.runtime.mutableIntStateOf(0) }
     var rowDx by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
     val density = androidx.compose.ui.platform.LocalDensity.current
     androidx.compose.foundation.layout.Box(
         modifier = modifier
             .clipToBounds()
-            .onGloballyPositioned { rootX = it.positionInWindow().x },
+            .onGloballyPositioned {
+                rootX = it.positionInWindow().x
+                rootW = it.size.width
+            },
     ) {
+    val glassThreshold = if (glassSwipe && rootW > 0) {
+        maxOf(swipeActionThreshold, with(density) { (rootW / 3f).toDp() })
+    } else {
+        swipeActionThreshold
+    }
     if (glassSwipe) {
         GlassSwipeLayer(
             dx = { rowDx },
-            thresholdPx = with(density) { swipeActionThreshold.toPx() },
+            thresholdPx = with(density) { glassThreshold.toPx() },
             startIcon = swipeIconFor(chapterSwipeStartAction, read, bookmark, downloadStateProvider()),
             startLabel = swipeLabelFor(chapterSwipeStartAction, read, bookmark, downloadStateProvider()),
             endIcon = swipeIconFor(chapterSwipeEndAction, read, bookmark, downloadStateProvider()),
@@ -125,7 +135,7 @@ fun MangaChapterListItem(
     SwipeableActionsBox(
         startActions = listOfNotNull(swipeStart),
         endActions = listOfNotNull(swipeEnd),
-        swipeThreshold = swipeActionThreshold,
+        swipeThreshold = glassThreshold,
         backgroundUntilSwipeThreshold = if (glassSwipe) Color.Transparent else MaterialTheme.colorScheme.surfaceContainerLowest,
     ) {
         Row(
@@ -155,6 +165,17 @@ fun MangaChapterListItem(
                                 .height(8.dp)
                                 .padding(end = 4.dp),
                             tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                    // KMK (r133): read chapters show the eye next to the bookmark, in the cover colour
+                    if (read) {
+                        Icon(
+                            imageVector = GlassIcons.Read,
+                            contentDescription = null,
+                            modifier = Modifier
+                                .padding(end = 2.dp)
+                                .sizeIn(maxHeight = with(LocalDensity.current) { textHeight.toDp() - 2.dp }),
+                            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
                         )
                     }
                     if (bookmark) {
@@ -227,15 +248,6 @@ fun MangaChapterListItem(
             }
 
             trailing?.invoke()
-            // KMK (r132): read chapters show the eye (the glass icon set)
-            if (read) {
-                Icon(
-                    imageVector = GlassIcons.Read,
-                    contentDescription = null,
-                    modifier = Modifier.padding(start = 4.dp).size(18.dp),
-                    tint = LocalContentColor.current.copy(alpha = DISABLED_ALPHA),
-                )
-            }
             ChapterDownloadIndicator(
                 enabled = downloadIndicatorEnabled,
                 modifier = Modifier.padding(start = 4.dp),

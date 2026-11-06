@@ -26,6 +26,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.background
 import androidx.compose.ui.unit.dp
 import eu.kanade.domain.base.BasePreferences
 import eu.kanade.domain.manga.model.downloadedFilter
@@ -76,8 +78,10 @@ fun ChapterSettingsDialog(
             stringResource(MR.strings.action_display),
         ),
         tabOverflowMenuContent = { closeMenu ->
+            // KMK (r133): icons on the sheet's ⋮ menu
             DropdownMenuItem(
                 text = { Text(stringResource(MR.strings.set_chapter_settings_as_default)) },
+                leadingIcon = { Icon($G.SetDefault, contentDescription = null) },
                 onClick = {
                     showSetAsDefaultDialog = true
                     closeMenu()
@@ -85,6 +89,7 @@ fun ChapterSettingsDialog(
             )
             DropdownMenuItem(
                 text = { Text(stringResource(MR.strings.action_reset)) },
+                leadingIcon = { Icon($G.Reset, contentDescription = null) },
                 onClick = {
                     onResetToDefault()
                     closeMenu()
@@ -123,6 +128,10 @@ fun ChapterSettingsDialog(
                         displayMode = manga?.displayMode ?: 0,
                         onItemSelected = onDisplayModeChanged,
                     )
+                    // KMK (r133): the AniList background for this title / its source
+                    if (manga != null) {
+                        eu.kanade.presentation.manga.components.AniListBackgroundRows("manga", manga.id, manga.source)
+                    }
                 }
             }
         }
@@ -175,10 +184,10 @@ fun ScanlatorFilterItem(
         horizontalArrangement = Arrangement.spacedBy(24.dp),
     ) {
         Icon(
-            imageVector = Icons.Outlined.PeopleAlt,
+            imageVector = $G.Scanlators,
             contentDescription = null,
             tint = if (active) {
-                MaterialTheme.colorScheme.active
+                tachiyomi.presentation.core.components.LocalGlassAccent.current
             } else {
                 LocalContentColor.current
             },
@@ -206,6 +215,13 @@ private fun ColumnScope.SortPage(
             label = stringResource(titleRes),
             sortDescending = sortDescending.takeIf { sortingMode == mode },
             onClick = { onItemSelected(mode) },
+            // KMK (r133): each sort's own icon (globe, #, calendar, A)
+            icon = when (mode) {
+                Manga.CHAPTER_SORTING_SOURCE -> $G.WebView
+                Manga.CHAPTER_SORTING_NUMBER -> $G.SortNumber
+                Manga.CHAPTER_SORTING_UPLOAD_DATE -> $G.SortUpload
+                else -> $G.SortAlpha
+            },
         )
     }
 }
@@ -223,6 +239,7 @@ private fun ColumnScope.DisplayPage(
             label = stringResource(titleRes),
             selected = displayMode == mode,
             onClick = { onItemSelected(mode) },
+            icon = if (mode == Manga.CHAPTER_DISPLAY_NAME) $G.ShowTitle else $G.SortNumber,
         )
     }
 }
@@ -234,36 +251,50 @@ private fun SetAsDefaultDialog(
 ) {
     var optionalChecked by rememberSaveable { mutableStateOf(false) }
 
+    // KMK (r133): a glass window like the category one: glass tick box, Cancel and the accent OK
     AlertDialog(
         onDismissRequest = onDismissRequest,
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp),
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.97f),
         title = { Text(text = stringResource(MR.strings.chapter_settings)) },
         text = {
             Column(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text(text = stringResource(MR.strings.confirm_set_chapter_settings))
-
-                LabeledCheckbox(
-                    label = stringResource(MR.strings.also_set_chapter_settings_for_library),
-                    checked = optionalChecked,
-                    onCheckedChange = { optionalChecked = it },
-                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(14.dp))
+                        .background(androidx.compose.ui.graphics.Color.White.copy(alpha = 0.06f))
+                        .clickable { optionalChecked = !optionalChecked }
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    tachiyomi.presentation.core.components.GlassTriStateBox(
+                        if (optionalChecked) TriState.ENABLED_IS else TriState.DISABLED,
+                    )
+                    Text(text = stringResource(MR.strings.also_set_chapter_settings_for_library), style = MaterialTheme.typography.bodyMedium)
+                }
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismissRequest) {
-                Text(text = stringResource(MR.strings.action_cancel))
-            }
+            eu.kanade.presentation.category.components.GlassDialogButton(
+                text = stringResource(MR.strings.action_cancel),
+                primary = false,
+                onClick = onDismissRequest,
+            )
         },
         confirmButton = {
-            TextButton(
+            eu.kanade.presentation.category.components.GlassDialogButton(
+                text = stringResource(MR.strings.action_ok),
+                primary = true,
                 onClick = {
                     onConfirmed(optionalChecked)
                     onDismissRequest()
                 },
-            ) {
-                Text(text = stringResource(MR.strings.action_ok))
-            }
+            )
         },
     )
 }

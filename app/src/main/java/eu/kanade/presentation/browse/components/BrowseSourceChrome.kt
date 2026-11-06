@@ -16,6 +16,10 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -62,69 +66,59 @@ fun BrowseTabChip(
     var animatedAtEnd by remember { mutableStateOf(false) }
     LaunchedEffect(selected) { animatedAtEnd = selected }
     val animatedPainter = animatedIcon?.let { rememberAnimatedVectorPainter(it, animatedAtEnd) }
-    // KMK: not selected, a button with an icon is a square the size of the Left / Right Panel buttons
+    // KMK (r133): glass chips: a round glass button with just the icon when not picked, an accent capsule with the
+    // (filled) icon and the name when picked
+    val accent = tachiyomi.presentation.core.components.LocalGlassAccent.current
+    val onAccent = tachiyomi.presentation.core.components.onGlassAccent(accent)
     if (!showLabel) {
-        Surface(
-            onClick = onClick,
-            modifier = modifier.size(PanelButtonSize),
-            shape = FilterChipDefaults.shape,
-            color = Color.Transparent,
-            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        Box(
+            modifier = modifier
+                .size(PanelButtonSize)
+                .clip(androidx.compose.foundation.shape.CircleShape)
+                .background(Color.White.copy(alpha = 0.09f))
+                .clickable(onClick = onClick),
+            contentAlignment = Alignment.Center,
         ) {
-            Box(contentAlignment = Alignment.Center) {
-                if (animatedPainter != null) {
-                    Icon(
-                        painter = animatedPainter,
-                        contentDescription = label,
-                        modifier = Modifier.size(FilterChipDefaults.IconSize),
-                    )
-                } else {
-                    Icon(
-                        imageVector = icon!!,
-                        contentDescription = label,
-                        modifier = Modifier.size(FilterChipDefaults.IconSize),
-                    )
-                }
+            if (animatedPainter != null) {
+                Icon(painter = animatedPainter, contentDescription = label, modifier = Modifier.size(19.dp))
+            } else {
+                Icon(imageVector = icon!!, contentDescription = label, modifier = Modifier.size(19.dp))
             }
         }
         return
     }
-    FilterChip(
-        selected = selected,
-        onClick = onClick,
-        modifier = modifier.animateContentSize(),
-        leadingIcon = if (showLabel && icon != null) {
-            {
-                if (animatedPainter != null) {
-                    Icon(
-                        painter = animatedPainter,
-                        contentDescription = null,
-                        modifier = Modifier.size(FilterChipDefaults.IconSize),
-                    )
-                } else {
-                    Icon(
-                        imageVector = if (selected) filledIcon ?: icon else icon,
-                        contentDescription = null,
-                        modifier = Modifier.size(FilterChipDefaults.IconSize),
-                    )
-                }
-            }
-        } else {
-            null
-        },
-        label = {
-            if (showLabel) {
-                Text(text = label)
+    Row(
+        modifier = modifier
+            .animateContentSize()
+            .height(PanelButtonSize)
+            .clip(androidx.compose.foundation.shape.CircleShape)
+            .background(if (selected) accent else Color.White.copy(alpha = 0.09f))
+            .clickable(onClick = onClick)
+            .padding(start = if (icon != null) 10.dp else 14.dp, end = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val fg = if (selected) onAccent else MaterialTheme.colorScheme.onSurface
+        if (icon != null) {
+            if (animatedPainter != null) {
+                Icon(painter = animatedPainter, contentDescription = null, tint = fg, modifier = Modifier.size(17.dp))
             } else {
                 Icon(
-                    imageVector = icon!!,
-                    contentDescription = label,
-                    modifier = Modifier.size(FilterChipDefaults.IconSize),
+                    imageVector = if (selected) filledIcon ?: icon else icon,
+                    contentDescription = null,
+                    tint = fg,
+                    modifier = Modifier.size(17.dp),
                 )
             }
-        },
-    )
+            Spacer(modifier = Modifier.width(7.dp))
+        }
+        Text(
+            text = label,
+            color = fg,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = if (selected) androidx.compose.ui.text.font.FontWeight.Bold else null,
+            maxLines = 1,
+        )
+    }
 }
 
 /**
@@ -147,7 +141,7 @@ fun RowScope.PreviewPanelButtons(
             onLeftChange(checked)
             if (!checked && rightOn) onRightChange(false)
         },
-        icon = GlassIcons.Preview,
+        icon = if (on) GlassIcons.PreviewPanelOn else GlassIcons.PreviewPanel,
         label = stringResource(KMR.strings.preview_glass_pref),
     )
 }
@@ -159,33 +153,26 @@ private fun PanelToggleButton(
     icon: ImageVector,
     label: String,
 ) {
-    run {
-        // Same height, corner and icon size as the chips beside it; square, and filled like a selected chip when on
-        Surface(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            modifier = Modifier.size(PanelButtonSize),
-            shape = FilterChipDefaults.shape,
-            color = if (checked) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
-            contentColor = if (checked) {
-                MaterialTheme.colorScheme.onSecondaryContainer
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            },
-            border = if (checked) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = label,
-                    modifier = Modifier.size(FilterChipDefaults.IconSize),
-                )
-            }
-        }
+    // KMK (r133): a round glass button, the accent when the panel is on (like the Suggestions toggle)
+    val accent = tachiyomi.presentation.core.components.LocalGlassAccent.current
+    Box(
+        modifier = Modifier
+            .size(PanelButtonSize)
+            .clip(androidx.compose.foundation.shape.CircleShape)
+            .background(if (checked) accent else Color.White.copy(alpha = 0.09f))
+            .clickable { onCheckedChange(!checked) },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = if (checked) tachiyomi.presentation.core.components.onGlassAccent(accent) else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.size(20.dp),
+        )
     }
 }
 
-private val PanelButtonSize = 32.dp
+private val PanelButtonSize = 36.dp
 
 /**
  * KMK: Filter (from the left) or source settings (from the right), slid in over the covers and the preview panels
@@ -200,6 +187,7 @@ fun BrowseOverlayPanel(
     actions: @Composable RowScope.() -> Unit = {},
     content: @Composable () -> Unit,
 ) {
+    val glassPanel = remember { eu.kanade.presentation.components.TitleSheet.glass().get() }
     Box(modifier = Modifier.fillMaxSize()) {
         AnimatedVisibility(visible = visible, enter = fadeIn(), exit = fadeOut()) {
             Box(
@@ -224,7 +212,14 @@ fun BrowseOverlayPanel(
             // KMK: no title bar: the Filter / Settings button that opened it is selected up top
             showHeader = false,
             actions = actions,
-            content = content,
+            // KMK (r133): a glass card with the glass design on; switches and fields inside turn glass too
+            glass = glassPanel,
+            content = {
+                androidx.compose.runtime.CompositionLocalProvider(
+                    eu.kanade.presentation.components.LocalGlassPanel provides glassPanel,
+                    content = content,
+                )
+            },
         )
     }
 }

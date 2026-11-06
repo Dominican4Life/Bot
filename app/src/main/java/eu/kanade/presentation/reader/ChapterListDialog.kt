@@ -183,15 +183,16 @@ fun ChapterListContent(
                     {
                         IconButton(onClick = { onToggleRead(chapterItem.chapter) }) {
                             Icon(
-                                imageVector = if (chapterItem.chapter.read) {
-                                    Icons.Outlined.VisibilityOff
-                                } else {
-                                    Icons.Outlined.Visibility
-                                },
+                                // KMK (r133): the glass eye, lit in the cover colour when read
+                                imageVector = if (chapterItem.chapter.read) GlassIcons.Read else GlassIcons.ReadOff,
                                 contentDescription = stringResource(
                                     if (chapterItem.chapter.read) MR.strings.action_mark_as_unread else MR.strings.action_mark_as_read,
                                 ),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                tint = if (chapterItem.chapter.read) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
                             )
                         }
                         IconButton(onClick = { onBookmark(chapterItem.chapter) }) {
@@ -199,7 +200,7 @@ fun ChapterListContent(
                                 imageVector = if (chapterItem.chapter.bookmark) {
                                     GlassIcons.Bookmark
                                 } else {
-                                    Icons.Outlined.BookmarkBorder
+                                    GlassIcons.BookmarkOff
                                 },
                                 contentDescription = stringResource(MR.strings.action_bookmark),
                                 tint = if (chapterItem.chapter.bookmark) {

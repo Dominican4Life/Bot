@@ -218,7 +218,8 @@ private fun FloatingWindow(parent: IntSize) {
     fun clamp(r: IntArray): IntArray {
         val w = r[2].coerceIn(minW, maxW)
         val h = r[3].coerceIn(minH, maxH)
-        val x = r[0].coerceIn(safe.left - w + keep, (parent.width - safe.right - keep).coerceAtLeast(safe.left - w + keep))
+        // KMK (r133): the left and right edges stay fully on screen too (it can't be pushed off a side any more)
+        val x = r[0].coerceIn(safe.left, (parent.width - safe.right - w).coerceAtLeast(safe.left))
         // KMK (r132): top and bottom stay fully between the status bar and the navigation bar / taskbar (with gesture
         // navigation that's the thin gesture line); left and right stay free
         val y = r[1].coerceIn(safe.top, (parent.height - safe.bottom - h).coerceAtLeast(safe.top))
@@ -620,8 +621,8 @@ private fun FloatingBubble(parent: IntSize) {
     val minX = safe.left + margin
     // KMK (r132): room for the counts inside the capsule
     val maxX = (parent.width - safe.right - sizePx - with(density) { 44.dp.roundToPx() } - margin).coerceAtLeast(minX)
-    // KMK (r132): clear of the top bar's buttons
-    val minY = safe.top + with(density) { 64.dp.roundToPx() } + margin
+    // KMK (r133): it can go up to just under the status bar
+    val minY = safe.top + margin / 2
     val maxY = (parent.height - safe.bottom - sizePx - margin).coerceAtLeast(minY)
     val errors by FloatingLogState.errorsSinceSeen.collectAsState()
     val warnings by FloatingLogState.warningsSinceSeen.collectAsState()

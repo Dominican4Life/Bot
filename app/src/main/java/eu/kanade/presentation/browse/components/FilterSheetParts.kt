@@ -90,7 +90,10 @@ fun FilterCard(
 
 /** The background of a field box: tinted while open or set to something */
 @Composable
-fun filterFieldColor(highlighted: Boolean): Color = if (highlighted) {
+fun filterFieldColor(highlighted: Boolean): Color = if (eu.kanade.presentation.components.LocalGlassPanel.current) {
+    // KMK (r133): glass boxes in the glass Filter panel
+    if (highlighted) tachiyomi.presentation.core.components.LocalGlassAccent.current.copy(alpha = 0.16f) else Color.White.copy(alpha = 0.08f)
+} else if (highlighted) {
     MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f)
 } else {
     MaterialTheme.colorScheme.surfaceContainerLowest

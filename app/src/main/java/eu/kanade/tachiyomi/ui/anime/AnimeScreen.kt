@@ -12,6 +12,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -461,10 +463,20 @@ class AnimeScreen(private val animeId: Long) : Screen() {
                     },
                 )
             }
-            if (isTabletUi()) {
-                AnimeScreenLarge(state, anime, actions, screenModel.source, listState)
-            } else {
-                AnimeScreenSmall(state, anime, actions, screenModel.source, listState)
+            // KMK (r133): the AniList background (when switched on in the Display tab and AniList has one)
+            val bannerVersion by eu.kanade.presentation.manga.components.AniListBanner.changes.collectAsState()
+            val banner by androidx.compose.runtime.produceState<String?>(null, anime.id, bannerVersion) {
+                value = eu.kanade.presentation.manga.components.AniListBanner.findAnime(anime.id, anime.source, anime.title, null)
+            }
+            androidx.compose.runtime.CompositionLocalProvider(eu.kanade.presentation.manga.components.LocalTitleBanner provides banner) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    banner?.let { eu.kanade.presentation.manga.TitleBannerBackdrop(it) }
+                    if (isTabletUi()) {
+                        AnimeScreenLarge(state, anime, actions, screenModel.source, listState)
+                    } else {
+                        AnimeScreenSmall(state, anime, actions, screenModel.source, listState)
+                    }
+                }
             }
 
             VideoDialogs(
@@ -854,6 +866,8 @@ private fun AnimeEpisodeSettingsDialog(
                         checked = anime.showSummaries,
                         onClick = { onDisplayForSource(false, !anime.showSummaries) },
                     )
+                    // KMK (r133): the AniList background for this anime / its source
+                    eu.kanade.presentation.manga.components.AniListBackgroundRows("anime", anime.id, anime.source)
 
                     HorizontalDivider(
                         modifier = Modifier.padding(vertical = 8.dp),
@@ -1041,6 +1055,11 @@ private fun AnimeScreenSmall(
     val sheetEnabled by remember { TitleSheet.enabled() }.collectAsState()
     val sheetState = rememberTitleSheetState()
     Scaffold(
+        containerColor = if (eu.kanade.presentation.manga.components.LocalTitleBanner.current != null) {
+            Color.Transparent
+        } else {
+            MaterialTheme.colorScheme.background
+        },
         topBar = {
             val isFirstItemVisible by remember { derivedStateOf { listState.firstVisibleItemIndex == 0 } }
             val isFirstItemScrolled by remember { derivedStateOf { listState.firstVisibleItemScrollOffset > 0 } }
@@ -1115,6 +1134,11 @@ private fun AnimeScreenLarge(
     // KMK: covers per line of the season grid (the list takes about half the width)
     val seasonColumns = (androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp / 2 / 120).coerceIn(2, 8)
     Scaffold(
+        containerColor = if (eu.kanade.presentation.manga.components.LocalTitleBanner.current != null) {
+            Color.Transparent
+        } else {
+            MaterialTheme.colorScheme.background
+        },
         topBar = {
             AnimeToolbar(
                 title = anime.title,

@@ -375,7 +375,7 @@ fun GlassDialogButton(text: String, primary: Boolean, modifier: Modifier = Modif
             .clip(shape)
             .background(
                 if (primary) {
-                    androidx.compose.ui.graphics.Color(0xFFF2C94C).copy(alpha = 0.92f)
+                    tachiyomi.presentation.core.components.LocalGlassAccent.current.copy(alpha = 0.92f)
                 } else {
                     androidx.compose.ui.graphics.Color.White.copy(alpha = 0.10f)
                 },

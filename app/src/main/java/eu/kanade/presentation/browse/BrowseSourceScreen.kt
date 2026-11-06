@@ -143,7 +143,7 @@ fun BrowseSourceContent(
                 persistentListOf(
                     EmptyScreenAction(
                         stringRes = MR.strings.local_source_help_guide,
-                        icon = Icons.AutoMirrored.Outlined.HelpOutline,
+                        icon = eu.kanade.presentation.components.GlassIcons.Help,
                         onClick = onLocalSourceHelpClick,
                     ),
                 )
@@ -151,7 +151,7 @@ fun BrowseSourceContent(
                 listOfNotNull(
                     EmptyScreenAction(
                         stringRes = MR.strings.action_retry,
-                        icon = Icons.Outlined.Refresh,
+                        icon = eu.kanade.presentation.components.GlassIcons.Retry,
                         onClick = mangaList::refresh,
                     ),
                     // SY -->
@@ -167,7 +167,7 @@ fun BrowseSourceContent(
                     if (onHelpClick != null) {
                         EmptyScreenAction(
                             MR.strings.label_help,
-                            icon = Icons.AutoMirrored.Outlined.HelpOutline,
+                            icon = eu.kanade.presentation.components.GlassIcons.Help,
                             onClick = onHelpClick,
                         )
                     } else {

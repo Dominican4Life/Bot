@@ -14,6 +14,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -139,20 +140,21 @@ private fun LibraryRegularToolbar(
                         iconTint = filterTint,
                         onClick = onClickFilter,
                     ),
+                    // KMK (r133): Title Case names with icons; "Update category" is gone (pulling down updates the
+                    // category you're in)
                     AppBar.OverflowAction(
-                        title = stringResource(MR.strings.action_update_library),
+                        title = stringResource(KMR.strings.lib_menu_update_library),
+                        icon = GlassIcons.UpdateLibrary,
                         onClick = onClickGlobalUpdate,
                     ),
                     AppBar.OverflowAction(
-                        title = stringResource(MR.strings.action_update_category),
-                        onClick = onClickRefresh,
-                    ),
-                    AppBar.OverflowAction(
-                        title = stringResource(MR.strings.action_open_random_manga),
+                        title = stringResource(KMR.strings.lib_menu_random),
+                        icon = GlassIcons.RandomTitle,
                         onClick = onClickOpenRandomManga,
                     ),
                     AppBar.OverflowAction(
-                        title = stringResource(MR.strings.pref_invalidate_download_cache),
+                        title = stringResource(KMR.strings.lib_menu_reindex),
+                        icon = GlassIcons.ReindexDownloads,
                         onClick = {
                             onInvalidateDownloadCache(context)
                         },
@@ -163,7 +165,8 @@ private fun LibraryRegularToolbar(
                     if (isSyncEnabled) {
                         add(
                             AppBar.OverflowAction(
-                                title = stringResource(SYMR.strings.sync_library),
+                                title = stringResource(KMR.strings.lib_menu_sync),
+                                icon = GlassIcons.SyncLibrary,
                                 onClick = onClickSyncNow,
                             ),
                         )
@@ -175,6 +178,7 @@ private fun LibraryRegularToolbar(
                             0,
                             AppBar.OverflowAction(
                                 title = stringResource(MR.strings.label_migration),
+                                icon = androidx.compose.material.icons.Icons.Outlined.SwapHoriz,
                                 onClick = onClickMigrate,
                             ),
                         )
@@ -183,7 +187,8 @@ private fun LibraryRegularToolbar(
                     if (onClickComingUp != null) {
                         add(
                             AppBar.OverflowAction(
-                                title = stringResource(KMR.strings.anime_coming_up),
+                                title = stringResource(KMR.strings.lib_menu_coming_up),
+                                icon = GlassIcons.ComingUp,
                                 onClick = onClickComingUp,
                             ),
                         )
@@ -191,7 +196,8 @@ private fun LibraryRegularToolbar(
                     if (onClickRefreshMissingCovers != null) {
                         add(
                             AppBar.OverflowAction(
-                                title = stringResource(KMR.strings.action_refresh_missing_covers),
+                                title = stringResource(KMR.strings.lib_menu_refresh_covers),
+                                icon = GlassIcons.RefreshCovers,
                                 onClick = onClickRefreshMissingCovers,
                             ),
                         )

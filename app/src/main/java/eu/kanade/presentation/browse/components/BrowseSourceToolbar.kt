@@ -41,6 +41,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.dp
@@ -118,15 +121,30 @@ fun BrowseSourceToolbar(
 
     var selectingDisplayMode by remember { mutableStateOf(false) }
 
+    // KMK (r133): floating glass (design A): see-through bar, the source name in a glass capsule, glass buttons
+    val glass = remember { eu.kanade.presentation.components.TitleSheet.glass().get() }
     SearchToolbar(
         navigateUp = navigateUp,
+        glassButtons = glass,
+        backgroundColor = if (glass) Color.Transparent else null,
         titleContent = {
             // KMK: the source's icon and language next to its name
-            SourceTitle(
-                title = title,
-                subtitle = subtitleOverride ?: source?.lang?.let { LocaleHelper.getLocalizedDisplayName(it) },
-                sourceId = iconSourceId ?: source?.id,
-            )
+            androidx.compose.foundation.layout.Box(
+                modifier = if (glass) {
+                    Modifier
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .background(Color.White.copy(alpha = 0.08f))
+                        .padding(start = 6.dp, end = 16.dp, top = 4.dp, bottom = 4.dp)
+                } else {
+                    Modifier
+                },
+            ) {
+                SourceTitle(
+                    title = title,
+                    subtitle = subtitleOverride ?: source?.lang?.let { LocaleHelper.getLocalizedDisplayName(it) },
+                    sourceId = iconSourceId ?: source?.id,
+                )
+            }
         },
         searchQuery = searchQuery,
         onChangeSearchQuery = onSearchQueryChange,
@@ -173,7 +191,7 @@ fun BrowseSourceToolbar(
                                 AppBar.OverflowAction(
                                     title = stringResource(KMR.strings.browse_menu_source_info_only),
                                     onClick = onToggleSourceInfoOnly,
-                                    icon = if (sourceInfoOnly) Icons.Outlined.SearchOff else Icons.Outlined.Search,
+                                    icon = ImageVector.vectorResource(if (sourceInfoOnly) R.drawable.ic_glass_anilist_off else R.drawable.ic_glass_anilist), // KMK (r133): the AniList mark
                                     checked = !sourceInfoOnly,
                                 ),
                             )
@@ -190,7 +208,7 @@ fun BrowseSourceToolbar(
                                         },
                                     ),
                                     onClick = editAction.onClick,
-                                    icon = if (editAction.copy) Icons.Outlined.ContentCopy else Icons.Outlined.Edit,
+                                    icon = if (editAction.copy) GlassIcons.EditableCopy else GlassIcons.EditSource,
                                 ),
                             )
                         }
@@ -201,7 +219,7 @@ fun BrowseSourceToolbar(
                                     title = stringResource(MR.strings.label_help),
                                     onClick = onHelpClick,
                                     // KMK -->
-                                    icon = Icons.AutoMirrored.Outlined.HelpOutline,
+                                    icon = GlassIcons.Help,
                                     // KMK <--
                                 ),
                             )
@@ -222,7 +240,7 @@ fun BrowseSourceToolbar(
                                 AppBar.OverflowAction(
                                     title = stringResource(KMR.strings.browse_menu_bulk_selection),
                                     onClick = toggleSelectionMode,
-                                    icon = Icons.Outlined.Checklist,
+                                    icon = GlassIcons.BulkSelect,
                                 ),
                             )
                         }
@@ -282,18 +300,8 @@ fun BrowseSourceToolbar(
                 if (columns != null && displayMode != LibraryDisplayMode.List) {
                     HorizontalDivider()
                     Box(modifier = Modifier.width(300.dp)) {
-                        SliderItem(
-                            value = columns,
-                            valueRange = 0..15,
-                            label = stringResource(MR.strings.pref_library_columns),
-                            valueString = if (columns > 0) {
-                                columns.toString()
-                            } else {
-                                stringResource(MR.strings.label_auto)
-                            },
-                            onChange = onColumnsChange,
-                            pillColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                        )
+                        // KMK (r133): the stepped glass slider
+                        eu.kanade.presentation.components.GlassColumnsSlider(columns = columns, onChange = onColumnsChange)
                     }
                 }
                 // KMK <--

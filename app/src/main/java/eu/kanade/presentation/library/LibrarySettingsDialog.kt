@@ -68,6 +68,7 @@ import tachiyomi.presentation.core.components.IconItem
 import tachiyomi.presentation.core.components.SettingsChipRow
 import tachiyomi.presentation.core.components.SettingsItemsPaddings
 import tachiyomi.presentation.core.components.SliderItem
+import tachiyomi.presentation.core.components.RadioItem
 import tachiyomi.presentation.core.components.SortItem
 import tachiyomi.presentation.core.components.TriStateItem
 import tachiyomi.presentation.core.components.material.TextButton
@@ -285,16 +286,18 @@ private fun ColumnScope.SortPage(
         if (mode == LibrarySort.Type.Random) {
             BaseSortItem(
                 label = stringResource(titleRes),
-                icon = Icons.Default.Refresh
+                icon = eu.kanade.presentation.components.GlassIcons.SortShuffle
                     .takeIf { sortingMode == LibrarySort.Type.Random },
                 onClick = {
                     screenModel.setSort(category, mode, LibrarySort.Direction.Ascending)
                 },
+                leadingIcon = sortIconFor(mode),
             )
             return@map
         }
         SortItem(
             label = stringResource(titleRes),
+            icon = sortIconFor(mode),
             sortDescending = sortDescending.takeIf { sortingMode == mode },
             onClick = {
                 val isTogglingDirection = sortingMode == mode
@@ -314,6 +317,21 @@ private fun ColumnScope.SortPage(
             },
         )
     }
+}
+
+/** KMK (r133): each library sort's own icon (it turns into the accent arrow when picked) */
+internal fun sortIconFor(type: LibrarySort.Type): androidx.compose.ui.graphics.vector.ImageVector = when (type) {
+    LibrarySort.Type.Alphabetical -> eu.kanade.presentation.components.GlassIcons.SortAlpha
+    LibrarySort.Type.TotalChapters -> eu.kanade.presentation.components.GlassIcons.SortTotal
+    LibrarySort.Type.LastRead -> eu.kanade.presentation.components.GlassIcons.SortLastRead
+    LibrarySort.Type.LastUpdate -> eu.kanade.presentation.components.GlassIcons.UpdateLibrary
+    LibrarySort.Type.UnreadCount -> eu.kanade.presentation.components.GlassIcons.SortUnread
+    LibrarySort.Type.LatestChapter -> eu.kanade.presentation.components.GlassIcons.SortLatest
+    LibrarySort.Type.ChapterFetchDate -> eu.kanade.presentation.components.GlassIcons.SortFetched
+    LibrarySort.Type.DateAdded -> eu.kanade.presentation.components.GlassIcons.SortAdded
+    LibrarySort.Type.TrackerMean -> eu.kanade.presentation.components.GlassIcons.SortScore
+    LibrarySort.Type.Random -> eu.kanade.presentation.components.GlassIcons.SortRandom
+    else -> eu.kanade.presentation.components.GlassIcons.Category
 }
 
 private val displayModes = listOf(
@@ -340,35 +358,35 @@ private fun ColumnScope.DisplayPage(
     val panoramaStylePref = remember { Injekt.get<UiPreferences>().libraryPanoramaStyle() }
     val panoramaStyle by panoramaStylePref.collectAsState()
     // KMK <--
-    SettingsChipRow(MR.strings.action_display_mode) {
-        displayModes.map { (titleRes, mode) ->
-            FilterChip(
-                selected = displayMode == mode,
-                onClick = { screenModel.setDisplayMode(mode) },
-                label = { Text(stringResource(titleRes)) },
-            )
-        }
-        // KMK -->
-        panoramaStyles.map { (titleRes, style) ->
-            FilterChip(
-                selected = displayMode == LibraryDisplayMode.ComfortableGridPanorama && panoramaStyle == style,
-                onClick = {
-                    // KMK (r115): through WideCoverSync, so "Same everywhere" copies it to the other places
-                    WideCoverSync.pick(WideCoverPlace.LIBRARY, WideCoverStyle.of(style))
-                    screenModel.setDisplayMode(LibraryDisplayMode.ComfortableGridPanorama)
-                },
-                label = { Text(stringResource(titleRes)) },
-                leadingIcon = {
-                    Icon(
-                        imageVector = PanoramaIcons.of(style),
-                        contentDescription = null,
-                        modifier = Modifier.size(FilterChipDefaults.IconSize),
-                    )
-                },
-            )
-        }
-        // KMK <--
+    // KMK (r133): layouts as pick-one glass rows (like the browse display menu), then the Wide Covers switch
+    HeadingItem(MR.strings.action_display_mode)
+    displayModes.forEach { (titleRes, mode) ->
+        RadioItem(
+            label = stringResource(titleRes),
+            selected = displayMode == mode,
+            onClick = { screenModel.setDisplayMode(mode) },
+            icon = when (mode) {
+                LibraryDisplayMode.CompactGrid -> eu.kanade.presentation.components.GlassIcons.LayoutCompact
+                LibraryDisplayMode.ComfortableGrid -> eu.kanade.presentation.components.GlassIcons.LayoutComfortable
+                LibraryDisplayMode.List -> eu.kanade.presentation.components.GlassIcons.LayoutList
+                else -> eu.kanade.presentation.components.GlassIcons.LayoutCovers
+            },
+        )
     }
+    HeadingItem(KMR.strings.wide_covers_panorama)
+    eu.kanade.presentation.components.GlassChoiceSwitch<PanoramaStyle?>(
+        choices = panoramaStyles.map { (titleRes, style) -> style to stringResource(titleRes) },
+        selected = panoramaStyle.takeIf { displayMode == LibraryDisplayMode.ComfortableGridPanorama },
+        onSelect = { style ->
+            if (style != null) {
+                // KMK (r115): through WideCoverSync, so "Same everywhere" copies it to the other places
+                WideCoverSync.pick(WideCoverPlace.LIBRARY, WideCoverStyle.of(style))
+                screenModel.setDisplayMode(LibraryDisplayMode.ComfortableGridPanorama)
+            }
+        },
+        icons = panoramaStyles.associate { (_, style) -> Pair<PanoramaStyle?, androidx.compose.ui.graphics.vector.ImageVector>(style, PanoramaIcons.of(style)) },
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+    )
 
     if (displayMode != LibraryDisplayMode.List) {
         val configuration = LocalConfiguration.current
@@ -381,19 +399,8 @@ private fun ColumnScope.DisplayPage(
         }
 
         val columns by columnPreference.collectAsState()
-        SliderItem(
-            value = columns,
-            // KMK: up to 15 covers per row
-            valueRange = 0..15,
-            label = stringResource(MR.strings.pref_library_columns),
-            valueString = if (columns > 0) {
-                columns.toString()
-            } else {
-                stringResource(MR.strings.label_auto)
-            },
-            onChange = columnPreference::set,
-            pillColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-        )
+        // KMK (r133): the stepped glass slider
+        eu.kanade.presentation.components.GlassColumnsSlider(columns = columns, onChange = columnPreference::set)
     }
 
     HeadingItem(MR.strings.overlay_header)
@@ -465,6 +472,15 @@ private fun groupTypeDrawableRes(type: Int): Int {
     }
 }
 
+/** KMK (r133): tag, globe, clock, tracker ring, scattered squares */
+private fun groupGlassIcon(type: Int): androidx.compose.ui.graphics.vector.ImageVector = when (type) {
+    LibraryGroup.BY_STATUS -> eu.kanade.presentation.components.GlassIcons.Status
+    LibraryGroup.BY_TRACK_STATUS -> eu.kanade.presentation.components.GlassIcons.Tracker
+    LibraryGroup.BY_SOURCE -> eu.kanade.presentation.components.GlassIcons.WebView
+    LibraryGroup.UNGROUPED -> eu.kanade.presentation.components.GlassIcons.Ungrouped
+    else -> eu.kanade.presentation.components.GlassIcons.Category
+}
+
 @Suppress("UnusedReceiverParameter")
 @Composable
 private fun ColumnScope.GroupPage(
@@ -495,7 +511,8 @@ private fun ColumnScope.GroupPage(
     groups.fastForEach {
         IconItem(
             label = stringResource(it.nameRes),
-            icon = painterResource(it.drawableRes),
+            // KMK (r133): the glass group icons
+            icon = androidx.compose.ui.graphics.vector.rememberVectorPainter(groupGlassIcon(it.int)),
             selected = it.int == screenModel.grouping,
             onClick = {
                 screenModel.setGrouping(it.int)

@@ -228,7 +228,7 @@ internal fun GlassPanelTabs(
             if (showPreview) {
                 add(Triple(PreviewPanelTab.PREVIEW, GlassIcons.Preview, stringResource(KMR.strings.title_sheet_preview)))
             }
-            add(Triple(PreviewPanelTab.DETAILS, Icons.Outlined.Info, stringResource(KMR.strings.preview_glass_details)))
+            add(Triple(PreviewPanelTab.DETAILS, GlassIcons.Details, stringResource(KMR.strings.preview_glass_details)))
         }
         tabs.forEach { (value, icon, label) ->
             val on = value == tab
@@ -272,7 +272,7 @@ internal fun GlassPanelPlay(label: String, onClick: () -> Unit, modifier: Modifi
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(Icons.Filled.PlayArrow, null, tint = MaterialTheme.colorScheme.onPrimary)
+            Icon(GlassIcons.Play, null, tint = MaterialTheme.colorScheme.onPrimary)
             Spacer(modifier = Modifier.width(6.dp))
             Text(
                 text = label,

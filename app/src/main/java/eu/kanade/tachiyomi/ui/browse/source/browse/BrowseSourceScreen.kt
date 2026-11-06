@@ -308,7 +308,14 @@ data class BrowseSourceScreen(
                 topBar = {
                     Column(
                         modifier = Modifier
-                            .background(MaterialTheme.colorScheme.surface)
+                            // KMK (r133): see-through with the glass design (the buttons float)
+                            .background(
+                                if (eu.kanade.presentation.components.TitleSheet.glass().get()) {
+                                    androidx.compose.ui.graphics.Color.Transparent
+                                } else {
+                                    MaterialTheme.colorScheme.surface
+                                },
+                            )
                             .pointerInput(Unit) {},
                     ) {
                         // KMK -->
@@ -397,8 +404,9 @@ data class BrowseSourceScreen(
                                     BrowseTabChip(
                                         selected = !panelOpen && state.listing == Listing.Popular,
                                         label = sourceTabs?.popularName ?: stringResource(MR.strings.popular),
-                                        icon = GlassIcons.AddToLibrary,
-                                        filledIcon = GlassIcons.InLibrary,
+                                        // KMK (r133): empty heart, full heart when picked (P2)
+                                        icon = GlassIcons.Popular,
+                                        filledIcon = GlassIcons.PopularOn,
                                         onClick = {
                                             if (!panelOpen && state.listing == Listing.Popular) {
                                                 // Tapping the selected tab loads it again from page 1
@@ -413,9 +421,9 @@ data class BrowseSourceScreen(
                                         BrowseTabChip(
                                             selected = !panelOpen && state.listing == Listing.Latest,
                                             label = sourceTabs?.latestName ?: stringResource(MR.strings.latest),
-                                            icon = Icons.Outlined.NewReleases,
-                                            // KMK: no animation here (only the nav bar animates): the filled icon when picked
-                                            filledIcon = Icons.Filled.NewReleases,
+                                            // KMK (r133): glass badge, solid badge when picked (T2)
+                                            icon = GlassIcons.Latest,
+                                            filledIcon = GlassIcons.LatestOn,
                                             onClick = {
                                                 if (!panelOpen && state.listing == Listing.Latest) {
                                                     screenModel.reloadListing()
@@ -463,7 +471,7 @@ data class BrowseSourceScreen(
                                     BrowseTabChip(
                                         selected = settingsPanelOpen,
                                         label = stringResource(MR.strings.action_settings),
-                                        icon = Icons.Outlined.Settings,
+                                        icon = GlassIcons.SourceSettings,
                                         onClick = {
                                             when {
                                                 // E-Hentai's settings are a whole section of the app's settings

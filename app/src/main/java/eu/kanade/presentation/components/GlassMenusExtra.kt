@@ -45,7 +45,7 @@ fun GlassSnackbar(data: SnackbarData) {
             Icon(
                 imageVector = GlassIcons.Tracker,
                 contentDescription = null,
-                tint = Color(0xFFF2C94C),
+                tint = tachiyomi.presentation.core.components.LocalGlassAccent.current,
                 modifier = Modifier.size(18.dp),
             )
             Text(

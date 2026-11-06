@@ -820,25 +820,25 @@
     <string name="title_sheet_pref_summary">Chapters and episodes in a sheet you drag up, with a ▦ Preview and a Play dock. Off: the classic list</string>
     <string name="title_sheet_list">List</string>
     <string name="title_sheet_preview">Preview</string>
-    <string name="title_sheet_size">Preview size</string>
+    <string name="title_sheet_size">Preview Size</string>
     <string name="title_sheet_columns">Columns</string>
     <string name="title_sheet_shape">Shape</string>
     <string name="title_sheet_shape_auto">Auto</string>
     <string name="title_sheet_shape_page">Page 2:3</string>
     <string name="title_sheet_shape_square">Square</string>
-    <string name="title_sheet_shape_strip">Strip slices</string>
-    <string name="title_sheet_opens_at">Sheet opens at</string>
+    <string name="title_sheet_shape_strip">Strip Slices</string>
+    <string name="title_sheet_opens_at">Sheet Opens At</string>
     <string name="title_sheet_peek">Peek</string>
     <string name="title_sheet_half">Half</string>
     <string name="title_sheet_full">Full</string>
-    <string name="title_sheet_last_used">Last used</string>
+    <string name="title_sheet_last_used">Last Used</string>
     <string name="title_sheet_size_note">Pinch the grid to change columns too. Saved separately for manga, long strips and anime.</string>
-    <string name="title_sheet_long_strip">Long strip</string>
+    <string name="title_sheet_long_strip">Long Strip</string>
     <string name="title_sheet_read">Read</string>
     <string name="title_sheet_start_first">Start from the first</string>
     <string name="title_sheet_pick">Pick one…</string>
     <string name="title_sheet_chapters">%1$d chapters</string>
-    <string name="title_sheet_pick_chapter">Pick a chapter</string>
+    <string name="title_sheet_pick_chapter">Pick A Chapter</string>
     <string name="title_sheet_no_pages">No pages to show</string>
     <string name="title_sheet_download_all">All chapters</string>
     <!-- KMK (r125): glass reader bars -->
@@ -889,4 +889,19 @@
     <string name="panorama_short_fill">Color Fill</string>
     <string name="panorama_short_wide">Wide</string>
     <string name="title_anilist_banner_pref">AniList banner behind title pages</string>
+    <!-- KMK (r133): library ⋮ menu (Title Case) -->
+    <string name="lib_menu_update_library">Update Library</string>
+    <string name="lib_menu_random">Open Random Title</string>
+    <string name="lib_menu_reindex">Reindex Downloads</string>
+    <string name="lib_menu_sync">Sync Library</string>
+    <string name="lib_menu_coming_up">Coming Up</string>
+    <string name="lib_menu_refresh_covers">Refresh Missing Covers</string>
+    <!-- KMK (r133): the AniList background switch in a title's Display tab -->
+    <string name="anilist_bg_heading">Background</string>
+    <string name="anilist_bg_title">AniList Background</string>
+    <string name="anilist_bg_just_title">Just This Title</string>
+    <string name="anilist_bg_all_source">All From This Source</string>
+    <string name="anilist_bg_note">Uses the wide AniList picture behind the page when AniList has one; otherwise the cover as now.</string>
+    <!-- KMK (r133): Coming Up -->
+    <string name="coming_up_days_ahead">Days Ahead</string>
 </resources>

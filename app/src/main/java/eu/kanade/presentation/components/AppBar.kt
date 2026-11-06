@@ -395,11 +395,16 @@ fun SearchToolbar(
     scrollBehavior: TopAppBarScrollBehavior? = null,
     visualTransformation: VisualTransformation = VisualTransformation.None,
     interactionSource: MutableInteractionSource = remember { MutableInteractionSource() },
+    // KMK (r133): floating glass buttons and a see-through bar (source browsing)
+    glassButtons: Boolean = false,
+    backgroundColor: Color? = null,
 ) {
     val focusRequester = remember { FocusRequester() }
 
     AppBar(
         modifier = modifier,
+        glassButtons = glassButtons && searchQuery == null,
+        backgroundColor = backgroundColor,
         titleContent = {
             if (searchQuery == null) return@AppBar titleContent()
 
@@ -480,8 +485,9 @@ fun SearchToolbar(
                         IconButton(
                             onClick = onClick,
                         ) {
+                            // KMK (r133): the glass magnifier (Q1)
                             Icon(
-                                Icons.Outlined.Search,
+                                GlassIcons.Search,
                                 contentDescription = stringResource(MR.strings.action_search),
                             )
                         }

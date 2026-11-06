@@ -254,13 +254,8 @@ fun TagsChip(
                     containerColor = androidx.compose.ui.graphics.Color(0xFF181A22).copy(alpha = 0.58f),
                     labelColor = androidx.compose.ui.graphics.Color(0xFFECEEF2),
                 ),
-                border = BorderStroke(
-                    1.dp,
-                    androidx.compose.ui.graphics.Brush.verticalGradient(
-                        0f to androidx.compose.ui.graphics.Color.White.copy(alpha = 0.32f),
-                        1f to androidx.compose.ui.graphics.Color.White.copy(alpha = 0.08f),
-                    ),
-                ),
+                // KMK (r133): no edge line, just the frost
+                border = null,
             )
             // KMK <--
         } else {

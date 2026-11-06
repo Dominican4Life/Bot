@@ -1,6 +1,22 @@
 package eu.kanade.tachiyomi.ui.anime
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material3.Icon
+import tachiyomi.presentation.core.util.collectAsState
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import eu.kanade.presentation.components.GlassSliderRow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -78,41 +94,126 @@ class AnimeComingUpScreen : Screen() {
             }
         }
 
+        // KMK (r133): glass version: floating back button, a Days Ahead slider, day names as glass pills and each
+        // day's shows in a frosted panel with the countdown in an accent pill
+        val daysPref = remember {
+            Injekt.get<tachiyomi.core.common.preference.PreferenceStore>().getInt("coming_up_days_ahead", 7)
+        }
+        val daysAhead by daysPref.collectAsState()
         Scaffold(
-            topBar = { scrollBehavior ->
-                AppBar(
-                    title = stringResource(KMR.strings.anime_coming_up),
-                    navigateUp = navigator::pop,
-                    scrollBehavior = scrollBehavior,
-                )
+            topBar = {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .windowInsetsPadding(WindowInsets.statusBars)
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.10f))
+                            .clickable { navigator.pop() },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = null)
+                    }
+                    Text(
+                        text = stringResource(KMR.strings.lib_menu_coming_up),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(start = 12.dp),
+                    )
+                }
             },
         ) { contentPadding ->
             val list = items
             when {
                 list == null -> LoadingScreen(Modifier.padding(contentPadding))
-                list.isEmpty() -> EmptyScreen(
-                    message = stringResource(KMR.strings.anime_coming_up_empty),
-                    modifier = Modifier.padding(contentPadding),
-                )
                 else -> {
                     val zone = remember { ZoneId.systemDefault() }
-                    val byDay = remember(list) {
-                        list.groupBy { LocalDate.ofInstant(Instant.ofEpochMilli(it.airing.airingAt), zone) }
+                    val today = remember(now) { LocalDate.ofInstant(Instant.ofEpochMilli(now), zone) }
+                    val shown = remember(list, daysAhead, today) {
+                        list.filter {
+                            !LocalDate.ofInstant(Instant.ofEpochMilli(it.airing.airingAt), zone)
+                                .isAfter(today.plusDays(daysAhead.toLong() - 1))
+                        }
                     }
-                    LazyColumn(contentPadding = contentPadding) {
-                        byDay.forEach { (day, dayItems) ->
-                            item(key = "day-$day") {
-                                val weekday = day.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.getDefault())
-                                ListGroupHeader(text = "$weekday · ${relativeDateText(day)}")
-                            }
-                            items(dayItems, key = { "anime-${it.anime.id}" }) { item ->
-                                ComingUpRow(
-                                    item = item,
-                                    now = now,
-                                    onClick = { navigator.push(AnimeScreen(item.anime.id)) },
+                    val byDay = remember(shown) {
+                        shown.groupBy { LocalDate.ofInstant(Instant.ofEpochMilli(it.airing.airingAt), zone) }
+                    }
+                    LazyColumn(
+                        contentPadding = contentPadding,
+                        modifier = Modifier.padding(horizontal = 12.dp),
+                    ) {
+                        item(key = "days") {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(20.dp))
+                                    .background(Color.White.copy(alpha = 0.07f))
+                                    .padding(vertical = 8.dp),
+                            ) {
+                                GlassSliderRow(
+                                    label = stringResource(KMR.strings.coming_up_days_ahead),
+                                    value = daysAhead,
+                                    range = 1..14,
+                                    onValueChange = { daysPref.set(it) },
+                                    modifier = Modifier.padding(horizontal = 10.dp),
                                 )
                             }
                         }
+                        if (byDay.isEmpty()) {
+                            item(key = "empty") {
+                                Text(
+                                    text = stringResource(KMR.strings.anime_coming_up_empty),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(24.dp),
+                                )
+                            }
+                        }
+                        byDay.forEach { (day, dayItems) ->
+                            item(key = "day-$day") {
+                                val weekday = day.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.getDefault())
+                                Text(
+                                    text = "${relativeDateText(day)} · $weekday",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier
+                                        .padding(start = 4.dp, top = 14.dp, bottom = 8.dp)
+                                        .clip(CircleShape)
+                                        .background(Color.White.copy(alpha = 0.10f))
+                                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                                )
+                            }
+                            item(key = "panel-$day") {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(20.dp))
+                                        .background(Color.White.copy(alpha = 0.07f)),
+                                ) {
+                                    dayItems.forEachIndexed { index, item ->
+                                        if (index > 0) {
+                                            Box(
+                                                Modifier
+                                                    .fillMaxWidth()
+                                                    .height(1.dp)
+                                                    .background(Color.White.copy(alpha = 0.06f)),
+                                            )
+                                        }
+                                        ComingUpRow(
+                                            item = item,
+                                            now = now,
+                                            onClick = { navigator.push(AnimeScreen(item.anime.id)) },
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        item(key = "end") { Box(Modifier.height(24.dp)) }
                     }
                 }
             }
@@ -130,7 +231,7 @@ private fun ComingUpRow(item: ComingUpItem, now: Long, onClick: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -153,10 +254,17 @@ private fun ComingUpRow(item: ComingUpItem, now: Long, onClick: () -> Unit) {
         }
         val left = item.airing.airingAt - now
         if (left > 0) {
+            // KMK (r133): the countdown in an accent pill
+            val accent = tachiyomi.presentation.core.components.LocalGlassAccent.current
             Text(
                 text = airingCountdown(left),
                 style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Bold,
+                color = accent,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(accent.copy(alpha = 0.18f))
+                    .padding(horizontal = 9.dp, vertical = 5.dp),
             )
         }
     }

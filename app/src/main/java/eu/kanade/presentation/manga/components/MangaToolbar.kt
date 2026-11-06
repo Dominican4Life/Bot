@@ -118,7 +118,8 @@ fun MangaToolbar(
         modifier = modifier,
         backgroundColor = MaterialTheme.colorScheme
             .surfaceColorAtElevation(3.dp)
-            .copy(alpha = if (isActionMode) 1f else backgroundAlphaProvider()),
+            // KMK (r133): with glass, no header strip even when scrolled (the buttons just float)
+            .copy(alpha = if (isActionMode) 1f else if (glass) 0f else backgroundAlphaProvider()),
         // KMK -->
         goHome = { onHomeClicked() }.takeIf {
             isHomeEnabled &&
@@ -168,23 +169,24 @@ fun MangaToolbar(
                         )
                         return@apply
                     }
-                    // KMK (r132): Preview / Suggestions toggles (gold when on)
-                    previewToggle?.let { (on, toggle) ->
-                        add(
-                            AppBar.Action(
-                                title = stringResource(KMR.strings.title_sheet_preview),
-                                icon = GlassIcons.Preview,
-                                iconTint = if (on) androidx.compose.ui.graphics.Color(0xFFF2C94C) else null,
-                                onClick = toggle,
-                            ),
-                        )
-                    }
+                    // KMK (r132): Preview / Suggestions toggles (the accent when on)
+                    // KMK (r133): Suggestions first, then the Preview panel
                     suggestionsToggle?.let { (on, toggle) ->
                         add(
                             AppBar.Action(
                                 title = stringResource(KMR.strings.pref_source_related_mangas),
                                 icon = GlassIcons.Suggestions,
-                                iconTint = if (on) androidx.compose.ui.graphics.Color(0xFFF2C94C) else null,
+                                iconTint = if (on) tachiyomi.presentation.core.components.LocalGlassAccent.current else null,
+                                onClick = toggle,
+                            ),
+                        )
+                    }
+                    previewToggle?.let { (on, toggle) ->
+                        add(
+                            AppBar.Action(
+                                title = stringResource(KMR.strings.title_sheet_preview),
+                                icon = GlassIcons.Preview,
+                                iconTint = if (on) tachiyomi.presentation.core.components.LocalGlassAccent.current else null,
                                 onClick = toggle,
                             ),
                         )

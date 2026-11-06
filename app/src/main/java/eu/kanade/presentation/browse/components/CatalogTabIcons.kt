@@ -19,30 +19,30 @@ import androidx.compose.material.icons.outlined.Whatshot
 import androidx.compose.ui.graphics.vector.ImageVector
 
 /**
- * KMK (r107): the icon of a source's catalog tab in Browse, picked from its name, so catalog tabs show as icon
+ * KMK (r107, glass set in r133): the icon of a source's catalog tab in Browse, picked from its name, so catalog tabs show as icon
  * chips like Popular and Latest (icon only, the name too when selected). A name with no match gets a list icon.
  */
 object CatalogTabIcons {
 
     private val rules: List<Pair<Regex, ImageVector>> = listOf(
-        Regex("trend|rising") to Icons.AutoMirrored.Outlined.TrendingUp,
-        Regex("""\bhot|fire|viral""") to Icons.Outlined.Whatshot,
-        Regex("random|shuffle|surprise|lucky") to Icons.Outlined.Shuffle,
-        Regex("""\btop\b|best|rank|award|chart""") to Icons.Outlined.EmojiEvents,
-        Regex("today|daily|week|month|year|season|calendar|schedule") to Icons.Outlined.CalendarMonth,
-        Regex("""\bnew|latest|fresh|release""") to Icons.Outlined.NewReleases,
-        Regex("recent|updated|update|added|ago") to Icons.Outlined.Schedule,
-        Regex("popular|views?|viewed|watched") to Icons.Outlined.Visibility,
-        Regex("favou?rite|loved|liked|likes") to GlassIcons.AddToLibrary,
+        Regex("trend|rising") to GlassIcons.TabTrending,
+        Regex("""\bhot|fire|viral""") to GlassIcons.TabHot,
+        Regex("random|shuffle|surprise|lucky") to GlassIcons.SortRandom,
+        Regex("""\btop\b|best|rank|award|chart""") to GlassIcons.TabTop,
+        Regex("today|daily|week|month|year|season|calendar|schedule") to GlassIcons.TabCalendar,
+        Regex("""\bnew|latest|fresh|release""") to GlassIcons.TabNew,
+        Regex("recent|updated|update|added|ago") to GlassIcons.TabRecent,
+        Regex("popular|views?|viewed|watched") to GlassIcons.Read,
+        Regex("favou?rite|loved|liked|likes") to GlassIcons.TabFavourite,
         // KMK (r107) fix: people before the star rule ("Pornstars" is people), with the directory's people words
-        Regex("actress|actor|model|performer|cast|idol|people|person|creator|artist|pornstar") to Icons.Outlined.PersonOutline,
-        Regex("featured|pick|recommend|star|rated|rating") to Icons.Outlined.StarBorder,
-        Regex("""\bsub|\bdub|caption""") to Icons.Outlined.Subtitles,
-        Regex("movie|film|video|clip|episode") to Icons.Outlined.Movie,
+        Regex("actress|actor|model|performer|cast|idol|people|person|creator|artist|pornstar") to GlassIcons.TabPeople,
+        Regex("featured|pick|recommend|star|rated|rating") to GlassIcons.TabFeatured,
+        Regex("""\bsub|\bdub|caption""") to GlassIcons.TabSubtitles,
+        Regex("movie|film|video|clip|episode") to GlassIcons.TabMovie,
     )
 
     fun of(name: String): ImageVector {
         val lower = name.lowercase()
-        return rules.firstOrNull { (regex, _) -> regex.containsMatchIn(lower) }?.second ?: Icons.AutoMirrored.Outlined.List
+        return rules.firstOrNull { (regex, _) -> regex.containsMatchIn(lower) }?.second ?: GlassIcons.LayoutList
     }
 }

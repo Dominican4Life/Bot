@@ -220,14 +220,8 @@ fun MediaDisplayDialog(
             }
             if (displayMode != LibraryDisplayMode.List) {
                 val columns by columnsPref.collectAsState()
-                SliderItem(
-                    value = columns,
-                    valueRange = 0..15,
-                    label = stringResource(MR.strings.pref_library_columns),
-                    valueString = if (columns > 0) columns.toString() else stringResource(MR.strings.label_auto),
-                    onChange = columnsPref::set,
-                    pillColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                )
+                // KMK (r133): the stepped glass slider
+                eu.kanade.presentation.components.GlassColumnsSlider(columns = columns, onChange = columnsPref::set)
             }
         }
     }

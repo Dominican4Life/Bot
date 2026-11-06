@@ -404,7 +404,6 @@ fun ExpandableMangaDescription(
                 .padding(horizontal = 16.dp)
                 .clip(RoundedCornerShape(18.dp))
                 .background(Color(0xFF181A22).copy(alpha = 0.55f))
-                .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(18.dp))
                 .padding(horizontal = 14.dp, vertical = 10.dp)
                 .clickableNoIndication { onExpanded(!expanded) },
         )
@@ -984,7 +983,8 @@ private fun MangaSummary(
                     contentAlignment = Alignment.Center,
                 ) {
                     val image = AnimatedImageVector.animatedVectorResource(R.drawable.anim_caret_down)
-                    Icon(
+                    // KMK (r133): no collapse arrow once open; tapping the box closes it
+                    if (!expanded) Icon(
                         painter = rememberAnimatedVectorPainter(image, !expanded),
                         contentDescription = stringResource(
                             if (expanded) MR.strings.manga_info_collapse else MR.strings.manga_info_expand,

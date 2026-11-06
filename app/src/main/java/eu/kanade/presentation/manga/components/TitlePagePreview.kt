@@ -114,36 +114,47 @@ fun TitlePagePreview(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            AssistChip(
-                onClick = { pickChapter = true },
-                label = {
-                    Text(
-                        text = chapter?.name ?: stringResource(KMR.strings.title_sheet_pick_chapter),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.widthIn(max = 180.dp),
-                    )
-                },
-                trailingIcon = { Icon(Icons.Filled.ArrowDropDown, contentDescription = null) },
-            )
+            // KMK (r133): glass capsules for the chapter, the Long Strip tag and the size button
+            val accent = tachiyomi.presentation.core.components.LocalGlassAccent.current
+            Row(
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.10f))
+                    .clickable { pickChapter = true }
+                    .padding(start = 12.dp, end = 8.dp, top = 7.dp, bottom = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(eu.kanade.presentation.components.GlassIcons.Chapters, contentDescription = null, modifier = Modifier.size(15.dp))
+                Text(
+                    text = chapter?.name ?: stringResource(KMR.strings.title_sheet_pick_chapter),
+                    style = MaterialTheme.typography.labelLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = 6.dp).widthIn(max = 170.dp),
+                )
+                Icon(eu.kanade.presentation.components.GlassIcons.ChevronDown, contentDescription = null, modifier = Modifier.size(16.dp))
+            }
             if (detectedStrip) {
                 Box(
                     modifier = Modifier
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.tertiaryContainer)
-                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                        .background(accent.copy(alpha = 0.22f))
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
                 ) {
                     Text(
                         text = stringResource(KMR.strings.title_sheet_long_strip),
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                        color = accent,
                     )
                 }
             }
             Spacer(modifier = Modifier.weight(1f))
             Box {
-                IconButton(onClick = { sizeMenu = true }) {
-                    Icon(Icons.Outlined.AspectRatio, contentDescription = stringResource(KMR.strings.title_sheet_size))
+                IconButton(
+                    onClick = { sizeMenu = true },
+                    modifier = Modifier.padding(end = 4.dp).size(38.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.10f)),
+                ) {
+                    Icon(eu.kanade.presentation.components.GlassIcons.PreviewSize, contentDescription = stringResource(KMR.strings.title_sheet_size), modifier = Modifier.size(20.dp))
                 }
                 TitleSheetSizeMenu(
                     expanded = sizeMenu,
@@ -315,7 +326,7 @@ private fun PreviewTileBox(
                     .border(BorderStroke(1.5.dp, Color.White.copy(alpha = 0.8f)), CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = Color.White)
+                Icon(eu.kanade.presentation.components.GlassIcons.Play, contentDescription = null, tint = Color.White)
             }
         }
         Box(
@@ -345,37 +356,68 @@ private fun ChapterPickerDialog(
     onDismissRequest: () -> Unit,
     onPick: (Chapter) -> Unit,
 ) {
+    // KMK (r133): a glass window: your chapter is a lit row with a tick, read ones dimmed with the eye, bookmarks shown
+    val accent = tachiyomi.presentation.core.components.LocalGlassAccent.current
     AlertDialog(
         onDismissRequest = onDismissRequest,
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp),
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.97f),
         title = { Text(stringResource(KMR.strings.title_sheet_pick_chapter)) },
         text = {
             val start = chapters.indexOfFirst { it.id == selectedId }.coerceAtLeast(0)
             val listState = rememberLazyListState(initialFirstVisibleItemIndex = (start - 3).coerceAtLeast(0))
             LazyColumn(state = listState, modifier = Modifier.heightIn(max = 460.dp)) {
                 items(chapters, key = { it.id }) { chapter ->
-                    Text(
-                        text = chapter.name,
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = if (chapter.id == selectedId) FontWeight.Bold else FontWeight.Normal,
-                        color = if (chapter.id == selectedId) {
-                            MaterialTheme.colorScheme.primary
-                        } else if (chapter.read) {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        } else {
-                            MaterialTheme.colorScheme.onSurface
-                        },
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
+                    val current = chapter.id == selectedId
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(14.dp))
+                            .background(if (current) Color.White.copy(alpha = 0.10f) else Color.Transparent)
                             .clickable { onPick(chapter) }
-                            .padding(vertical = 10.dp),
-                    )
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = chapter.name,
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = if (current) FontWeight.Bold else FontWeight.Normal,
+                            color = if (chapter.read && !current) {
+                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            },
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (chapter.bookmark) {
+                            Icon(eu.kanade.presentation.components.GlassIcons.Bookmark, contentDescription = null, tint = accent, modifier = Modifier.padding(start = 6.dp).size(16.dp))
+                        }
+                        if (chapter.read && !current) {
+                            Icon(
+                                eu.kanade.presentation.components.GlassIcons.Read,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                                modifier = Modifier.padding(start = 6.dp).size(16.dp),
+                            )
+                        }
+                        if (current) {
+                            tachiyomi.presentation.core.components.GlassRoundTick(true, Modifier.padding(start = 8.dp))
+                        }
+                    }
                 }
             }
         },
         confirmButton = {},
-        dismissButton = { TextButton(onClick = onDismissRequest) { Text(stringResource(MR.strings.action_cancel)) } },
+        dismissButton = {
+            eu.kanade.presentation.category.components.GlassDialogButton(
+                text = stringResource(MR.strings.action_cancel),
+                primary = false,
+                modifier = Modifier.fillMaxWidth(),
+                onClick = onDismissRequest,
+            )
+        },
     )
 }
 

@@ -500,56 +500,63 @@ fun TitleSheetSizeMenu(
         val shape by shapePref.collectAsState()
         val openAtPref = remember { TitleSheet.openAt() }
         val openAt by openAtPref.collectAsState()
-        Column(modifier = Modifier.width(300.dp).padding(horizontal = 16.dp, vertical = 8.dp)) {
+        // KMK (r133): glass version: stepped glass slider, glass switches with pictures for the shape
+        Column(modifier = Modifier.width(320.dp).padding(horizontal = 16.dp, vertical = 8.dp)) {
             Text(
                 text = stringResource(KMR.strings.title_sheet_size),
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(bottom = 6.dp),
             )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(text = stringResource(KMR.strings.title_sheet_columns), style = MaterialTheme.typography.bodyMedium)
-                Slider(
-                    value = columns.toFloat(),
-                    onValueChange = { columnsPref.set(it.roundToInt().coerceIn(1, 6)) },
-                    valueRange = 1f..6f,
-                    steps = 4,
-                    modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
-                )
-                Text(text = columns.toString(), style = MaterialTheme.typography.bodyMedium)
-            }
+            GlassSliderRow(
+                label = stringResource(KMR.strings.title_sheet_columns),
+                value = columns,
+                range = 1..6,
+                onValueChange = { columnsPref.set(it) },
+            )
             if (showShape) {
-                Text(text = stringResource(KMR.strings.title_sheet_shape), style = MaterialTheme.typography.bodyMedium)
-                ChoiceChips(
-                    selected = shape,
+                Text(
+                    text = stringResource(KMR.strings.title_sheet_shape),
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(top = 10.dp, bottom = 6.dp),
+                )
+                GlassChoiceSwitch(
                     choices = listOf(
                         TitleSheet.SHAPE_AUTO to stringResource(KMR.strings.title_sheet_shape_auto),
                         TitleSheet.SHAPE_PAGE to stringResource(KMR.strings.title_sheet_shape_page),
                         TitleSheet.SHAPE_SQUARE to stringResource(KMR.strings.title_sheet_shape_square),
                         TitleSheet.SHAPE_STRIP to stringResource(KMR.strings.title_sheet_shape_strip),
                     ),
+                    selected = shape,
                     onSelect = { shapePref.set(it) },
+                    icons = mapOf(
+                        TitleSheet.SHAPE_AUTO to GlassIcons.ShapeAuto,
+                        TitleSheet.SHAPE_PAGE to GlassIcons.ShapePage,
+                        TitleSheet.SHAPE_SQUARE to GlassIcons.ShapeSquare,
+                        TitleSheet.SHAPE_STRIP to GlassIcons.ShapeStrip,
+                    ),
                 )
             }
             Text(
                 text = stringResource(KMR.strings.title_sheet_opens_at),
                 style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(top = 6.dp),
+                modifier = Modifier.padding(top = 10.dp, bottom = 6.dp),
             )
-            ChoiceChips(
-                selected = openAt,
+            GlassChoiceSwitch(
                 choices = listOf(
                     TitleSheet.PEEK to stringResource(KMR.strings.title_sheet_peek),
                     TitleSheet.HALF to stringResource(KMR.strings.title_sheet_half),
                     TitleSheet.FULL to stringResource(KMR.strings.title_sheet_full),
                     TitleSheet.LAST_USED to stringResource(KMR.strings.title_sheet_last_used),
                 ),
+                selected = openAt,
                 onSelect = { openAtPref.set(it) },
             )
             Text(
                 text = stringResource(KMR.strings.title_sheet_size_note),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 8.dp),
+                modifier = Modifier.padding(top = 10.dp),
             )
         }
     }

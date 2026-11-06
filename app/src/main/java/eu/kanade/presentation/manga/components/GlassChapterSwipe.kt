@@ -39,7 +39,9 @@ import kotlin.math.abs
 import kotlin.math.min
 
 /**
- * KMK (r132): the liquid-glass chapter swipe (idea J2). While the row is swiped, it becomes a glass bar; a piece stays
+ * KMK (r132, r133): the liquid-glass chapter swipe (idea J2). r133: clear glass with a lit rim, a later trigger
+ * point (about a third of the row, so the stretch shows) and the pill melts back into the bar when the row returns.
+ * While the row is swiped, it becomes a glass bar; a piece stays
  * stuck to the edge the swipe started from and a thick waist of glass stretches between them, narrowing as you pull.
  * At the trigger point it lets go: both ends are round straight away and ease back into their own side (no thread, no
  * tips); the piece on the edge swells into the gold action pill (Mark as read, Bookmark …). When the row springs back
@@ -61,13 +63,18 @@ fun BoxScope.GlassSwipeLayer(
     var size by remember { mutableStateOf(Size.Zero) }
     // Latched once the swipe crossed the trigger point, until the row is back home
     val latch = remember { BooleanArray(1) }
+    // KMK (r133): the last pull, to know when the row is springing back (the pill then melts back into the bar)
+    val last = remember { FloatArray(1) }
     val d = dx()
     if (abs(d) < 2f) latch[0] = false else if (abs(d) >= thresholdPx) latch[0] = true
     val snapped = latch[0]
+    val returning = abs(d) < last[0] - 0.5f
+    last[0] = abs(d)
     if (abs(d) < 1f) return
     val goo = with(density) { 8.dp.toPx() }
-    val glass = Color(0xFF2A2D38)
-    val gold = Color(0xFFF2C94C)
+    // KMK (r133): clear glass (a light frost) instead of the dark grey bar
+    val glass = Color(0xFFE6ECF7)
+    val gold = tachiyomi.presentation.core.components.LocalGlassAccent.current
     val toRight = d > 0
     val pillMax = with(density) { 168.dp.toPx() }
     val inset = with(density) { 10.dp.toPx() }
@@ -76,7 +83,7 @@ fun BoxScope.GlassSwipeLayer(
             .matchParentSize()
             .onSizeChanged { size = Size(it.width.toFloat(), it.height.toFloat()) }
             .graphicsLayer {
-                alpha = 0.92f
+                alpha = 0.22f
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     val blur = RenderEffect.createBlurEffect(goo, goo, Shader.TileMode.DECAL)
                     val threshold = RenderEffect.createColorFilterEffect(
@@ -117,6 +124,23 @@ fun BoxScope.GlassSwipeLayer(
             if (pillW > h * 0.5f) {
                 if (toRight) drawPiece(inset, inset + pillW, h, h * 0.72f, gold) else drawPiece(w - inset - pillW, w - inset, h, h * 0.72f, gold)
             }
+            // KMK (r133): springing back, a glass neck joins the pill to the bar again so they melt together
+            if (returning && pillW > h * 0.5f) {
+                val neck = h * (0.35f + 0.5f * (1f - progress))
+                if (toRight) drawPiece(inset + pillW - h * 0.4f, pull + h * 0.4f, h, neck, glass) else drawPiece(w - pull - h * 0.4f, w - inset - pillW + h * 0.4f, h, neck, glass)
+            }
+        }
+    }
+    // KMK (r133): a lit rim along the bar's top and bottom edges (the glass catching the light)
+    Canvas(modifier = Modifier.matchParentSize()) {
+        val w = this.size.width
+        val h = this.size.height
+        val pull = abs(d)
+        val (from, to) = if (toRight) pull to w else 0f to (w - pull)
+        if (to - from > 1f) {
+            val px = with(density) { 1.dp.toPx() }
+            drawRect(Color.White.copy(alpha = 0.55f), topLeft = Offset(from, 0f), size = Size(to - from, px))
+            drawRect(Color.White.copy(alpha = 0.18f), topLeft = Offset(from, h - px), size = Size(to - from, px))
         }
     }
     // The pill's icon and name (not part of the merging layer)
@@ -135,11 +159,11 @@ fun BoxScope.GlassSwipeLayer(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
             ) {
-                Icon(icon, contentDescription = null, tint = Color(0xFF2A2105), modifier = Modifier.size(18.dp))
+                Icon(icon, contentDescription = null, tint = tachiyomi.presentation.core.components.onGlassAccent(gold), modifier = Modifier.size(18.dp))
                 if (label != null && pillW > with(density) { 140.dp.toPx() }) {
                     Text(
                         text = label,
-                        color = Color(0xFF2A2105),
+                        color = tachiyomi.presentation.core.components.onGlassAccent(gold),
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,

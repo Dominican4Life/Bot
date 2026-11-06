@@ -73,7 +73,14 @@ fun TachiyomiTheme(
             style = uiPreferences.themeCoverBasedStyle().get(),
             typography = typography,
             animate = true,
-            content = content,
+            // KMK (r133): glass controls light up in the cover's colour on this page
+            content = {
+                androidx.compose.runtime.CompositionLocalProvider(
+                    tachiyomi.presentation.core.components.LocalGlassAccent provides
+                        tachiyomi.presentation.core.components.glassAccentFor(seedColor, MaterialTheme.colorScheme.primary),
+                    content = content,
+                )
+            },
         )
     }
 }

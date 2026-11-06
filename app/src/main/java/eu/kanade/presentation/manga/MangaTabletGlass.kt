@@ -32,6 +32,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -58,7 +59,20 @@ internal val GlassPanelShape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.
 internal fun Modifier.frostedPanel(shape: androidx.compose.ui.graphics.Shape = GlassPanelShape): Modifier = this
     .clip(shape)
     .background(Color(0xFF181A22).copy(alpha = 0.62f))
-    .border(1.dp, Color.White.copy(alpha = 0.14f), shape)
+// KMK (r133): no edge line, just the frost
+
+/** KMK (r133): Suggestions in their own frosted panel (like the chapters) when the glass design is on */
+internal fun Modifier.suggestionsPanel(): Modifier = composed {
+    val glass = remember { eu.kanade.presentation.components.TitleSheet.glass().get() }
+    if (glass) {
+        this
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .frostedPanel(RoundedCornerShape(20.dp))
+            .padding(top = 2.dp, bottom = 8.dp)
+    } else {
+        this
+    }
+}
 
 /**
  * KMK (r132): the right side of the glass tablet title page: Suggestions across the top (toggle), then the chapters in
@@ -93,6 +107,7 @@ internal fun GlassTabletEnd(
             .padding(top = topPadding),
     ) {
         if (showSuggestions) {
+          Column(modifier = Modifier.suggestionsPanel()) {
             RelatedMangaTitle(
                 title = stringResource(KMR.strings.pref_source_related_mangas),
                 subtitle = null,
@@ -106,7 +121,8 @@ internal fun GlassTabletEnd(
                 onMangaClick = onRelatedMangaClick,
                 onMangaLongClick = onRelatedMangaLongClick,
             )
-            Spacer(Modifier.padding(top = 8.dp))
+          }
+            Spacer(Modifier.padding(top = 4.dp))
         }
         Row(
             modifier = Modifier
@@ -214,7 +230,7 @@ private fun GlassChaptersHeader(
             Icon(
                 GlassIcons.Filter,
                 contentDescription = stringResource(MR.strings.action_filter),
-                tint = if (state.filterActive) Color(0xFFF2C94C) else LocalContentColor.current,
+                tint = if (state.filterActive) tachiyomi.presentation.core.components.LocalGlassAccent.current else LocalContentColor.current,
             )
         }
     }

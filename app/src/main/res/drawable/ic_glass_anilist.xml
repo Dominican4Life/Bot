@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- KMK (r133): the AniList mark (from brand_anilist) as a glass menu icon: solid A, lighter L. Tinted like other icons. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <group
+        android:translateX="-2.47"
+        android:translateY="-2.44"
+        android:scaleX="0.15"
+        android:scaleY="0.15">
+        <path
+            android:fillAlpha="0.45"
+            android:fillColor="#000"
+            android:fillType="evenOdd"
+            android:pathData="M127,148.5h32.5q6.3,0 6.4,-6.3v-14q-0.1,-6.4 -6.4,-6.5h-37.6V50q-0.1,-6.3 -6.4,-6.4h-14q-6.3,0.1 -6.4,6.4v7.8c-3.2,-9.8 31.8,90.7 32,90.7" />
+        <path
+            android:fillColor="#000"
+            android:fillType="evenOdd"
+            android:pathData="m63.6,43.6 l-36.8,105h28.6l6.2,-18.2h31.2l6.1,18.1h28.5L90.7,43.6zM68.2,107.1 L77.1,78.1 86.9,107.1z" />
+    </group>
+</vector>

@@ -161,13 +161,13 @@ fun SetIntervalDialog(
                     modifier = Modifier
                         .size(44.dp)
                         .clip(androidx.compose.foundation.shape.CircleShape)
-                        .background(androidx.compose.ui.graphics.Color(0xFFF2C94C).copy(alpha = 0.18f)),
+                        .background(tachiyomi.presentation.core.components.LocalGlassAccent.current.copy(alpha = 0.18f)),
                     contentAlignment = Alignment.Center,
                 ) {
                     androidx.compose.material3.Icon(
                         imageVector = eu.kanade.presentation.components.GlassIcons.NextUpdate,
                         contentDescription = null,
-                        tint = androidx.compose.ui.graphics.Color(0xFFF2C94C),
+                        tint = tachiyomi.presentation.core.components.LocalGlassAccent.current,
                     )
                 }
                 Column(modifier = Modifier.padding(start = 12.dp)) {
@@ -195,7 +195,7 @@ fun SetIntervalDialog(
                 if (nextUpdateDays != null && nextUpdateDays >= 0 && interval >= 0) {
                     val total = interval.absoluteValue.coerceAtLeast(1)
                     val fraction = ((total - nextUpdateDays).toFloat() / total).coerceIn(0.05f, 0.95f)
-                    val gold = androidx.compose.ui.graphics.Color(0xFFF2C94C)
+                    val gold = tachiyomi.presentation.core.components.LocalGlassAccent.current
                     BoxWithConstraints(modifier = Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 6.dp)) {
                         val w = maxWidth
                         Box(
