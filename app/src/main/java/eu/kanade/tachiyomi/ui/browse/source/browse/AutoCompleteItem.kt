@@ -362,9 +362,10 @@ fun AutoCompleteTextField(
             // KMK (r135): in the glass Filter panel, the same filled glass box as Order By (name small above,
             // "Any" until something is picked) instead of the outlined Material box
             if (eu.kanade.presentation.components.LocalGlassPanel.current) {
-                eu.kanade.presentation.browse.components.FilterFieldBox(
+                // KMK (r136): on its filled glass background, like Order By
+                eu.kanade.presentation.browse.components.FilledFilterField(
                     label = label.orEmpty(),
-                    value = placeholder ?: stringResource(KMR.strings.filter_any),
+                    value = stringResource(KMR.strings.filter_any),
                     open = expanded,
                     set = false,
                     onClick = {},

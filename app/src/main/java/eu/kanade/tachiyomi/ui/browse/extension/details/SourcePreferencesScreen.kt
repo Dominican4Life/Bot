@@ -260,16 +260,15 @@ class SourcePreferencesFragment : PreferenceFragmentCompat() {
         }
     }
 
-    // KMK (r135): in the glass panel the switches are glass ones: the accent when on, faint glass when off
-    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
-        super.onViewCreated(view, savedInstanceState)
-        val accent = glassAccent ?: return
-        listView.addOnChildAttachStateChangeListener(
-            object : androidx.recyclerview.widget.RecyclerView.OnChildAttachStateChangeListener {
-                override fun onChildViewAttachedToWindow(child: View) = styleSwitches(child, accent)
-                override fun onChildViewDetachedFromWindow(child: View) = Unit
-            },
-        )
+    // KMK (r136): in the glass panel the switches are painted on every bind (the r135 attach listener didn't take)
+    override fun onCreateAdapter(preferenceScreen: PreferenceScreen): androidx.recyclerview.widget.RecyclerView.Adapter<*> {
+        val accent = glassAccent ?: return super.onCreateAdapter(preferenceScreen)
+        return object : androidx.preference.PreferenceGroupAdapter(preferenceScreen) {
+            override fun onBindViewHolder(holder: androidx.preference.PreferenceViewHolder, position: Int) {
+                super.onBindViewHolder(holder, position)
+                styleSwitches(holder.itemView, accent)
+            }
+        }
     }
 
     private fun styleSwitches(view: View, accent: Int) {

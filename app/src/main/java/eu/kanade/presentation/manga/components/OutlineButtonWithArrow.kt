@@ -45,7 +45,8 @@ fun OutlinedButtonWithArrow(
             )
             .height(50.dp)
             .clip(shape)
-            .liquidGlass(shape)
+            // KMK (r136, W): cover-tinted glass like the other panels
+            .liquidGlass(shape, tachiyomi.presentation.core.components.tintedGlass(1f, androidx.compose.ui.graphics.Color(0xFF12141B)))
             .clickable(onClick = onClick)
             .padding(start = 22.dp, end = 18.dp),
         verticalAlignment = Alignment.CenterVertically,

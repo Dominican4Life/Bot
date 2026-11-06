@@ -128,7 +128,8 @@ private fun MoreMenu(
                 contentDescription = stringResource(MR.strings.label_more),
             )
         }
-        DropdownMenu(
+        // KMK (r136): the menu's top lines up with the top of the tabs row (it hung over the window's edge)
+        TopAlignedGlassMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
         ) {

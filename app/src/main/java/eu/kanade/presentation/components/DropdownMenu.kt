@@ -22,6 +22,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.PopupProperties
@@ -160,6 +164,64 @@ fun NestedMenuItem(
             modifier = modifier,
         ) {
             children(closeMenu)
+        }
+    }
+}
+
+/**
+ * KMK (r136): a glass menu whose top-right corner sits on its anchor's top-right corner (the composable it's placed in),
+ * so it lines up with the row it opens from instead of hanging over or below it.
+ */
+@Composable
+fun TopAlignedGlassMenu(
+    expanded: Boolean,
+    onDismissRequest: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    if (!expanded) return
+    val position = remember {
+        object : androidx.compose.ui.window.PopupPositionProvider {
+            override fun calculatePosition(
+                anchorBounds: androidx.compose.ui.unit.IntRect,
+                windowSize: androidx.compose.ui.unit.IntSize,
+                layoutDirection: androidx.compose.ui.unit.LayoutDirection,
+                popupContentSize: androidx.compose.ui.unit.IntSize,
+            ): androidx.compose.ui.unit.IntOffset {
+                val x = (anchorBounds.right - popupContentSize.width).coerceIn(0, (windowSize.width - popupContentSize.width).coerceAtLeast(0))
+                val y = anchorBounds.top.coerceIn(0, (windowSize.height - popupContentSize.height).coerceAtLeast(0))
+                return androidx.compose.ui.unit.IntOffset(x, y)
+            }
+        }
+    }
+    androidx.compose.ui.window.Popup(
+        popupPositionProvider = position,
+        onDismissRequest = onDismissRequest,
+        properties = androidx.compose.ui.window.PopupProperties(focusable = true),
+    ) {
+        val shown = remember { androidx.compose.animation.core.MutableTransitionState(false) }.apply { targetState = true }
+        androidx.compose.animation.AnimatedVisibility(
+            visibleState = shown,
+            enter = androidx.compose.animation.fadeIn() +
+                androidx.compose.animation.scaleIn(
+                    initialScale = 0.9f,
+                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 0f),
+                ),
+        ) {
+            androidx.compose.material3.Surface(
+                shape = GlassMenuStyle.shape,
+                color = GlassMenuStyle.container(),
+                border = GlassMenuStyle.rim(),
+                shadowElevation = 18.dp,
+            ) {
+                androidx.compose.foundation.layout.Column(
+                    modifier = Modifier
+                        .width(196.dp)
+                        .heightIn(max = 480.dp)
+                        .verticalScroll(androidx.compose.foundation.rememberScrollState())
+                        .padding(vertical = 8.dp),
+                    content = content,
+                )
+            }
         }
     }
 }

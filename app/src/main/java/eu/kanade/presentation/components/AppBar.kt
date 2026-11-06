@@ -46,6 +46,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -251,6 +254,24 @@ fun AppBarTitle(
     }
 }
 
+/**
+ * KMK (r136): the ⋮ menu. [onTopRow]: a glass popup whose top-right corner sits on the capsule's (the anchor this is
+ * composed in), so it lines up with the top row; otherwise the usual glass [DropdownMenu].
+ */
+@Composable
+private fun AppBarOverflowMenu(
+    expanded: Boolean,
+    onDismissRequest: () -> Unit,
+    onTopRow: Boolean,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+) {
+    if (!onTopRow) {
+        DropdownMenu(expanded = expanded, onDismissRequest = onDismissRequest, content = content)
+        return
+    }
+    TopAlignedGlassMenu(expanded = expanded, onDismissRequest = onDismissRequest, content = content)
+}
+
 /** KMK (r135): set while an [AppBarActions] ⋮ menu inside a glass capsule is open */
 private val LocalOverflowOpen =
     androidx.compose.runtime.compositionLocalOf<androidx.compose.runtime.MutableState<Boolean>?> { null }
@@ -333,9 +354,11 @@ fun AppBarActions(
             }
         }
 
-        DropdownMenu(
+        // KMK (r136): inside a glass capsule the menu opens on the top row itself, in place of the capsule
+        AppBarOverflowMenu(
             expanded = showMenu,
             onDismissRequest = { showMenu = false },
+            onTopRow = overflowOpen != null,
         ) {
             overflowActions.forEachIndexed { index, it ->
                 // KMK (r132): no dividers; only a small gap before the destructive item (Clear Data)

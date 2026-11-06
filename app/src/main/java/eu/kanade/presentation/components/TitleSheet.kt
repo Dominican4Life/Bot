@@ -467,7 +467,7 @@ private fun SplitPlayButton(
                     .padding(start = 14.dp, end = 18.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(imageVector = Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
+                Icon(imageVector = GlassIcons.Play, contentDescription = null, modifier = Modifier.size(20.dp)) // KMK (r136): glass play
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
                     text = label,

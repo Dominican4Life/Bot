@@ -178,11 +178,9 @@ fun RelatedMangaTitle(
             }
         }
         if (showArrow) {
-            // KMK (r132): the new arrow on its own in a small round glass button
+            // KMK (r132): the new arrow. KMK (r136): just the arrow, no round button behind it (owner asked)
             Box(
-                modifier = Modifier
-                    .size(38.dp)
-                    .liquidGlass(androidx.compose.foundation.shape.CircleShape),
+                modifier = Modifier.size(38.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(imageVector = GlassIcons.Arrow, contentDescription = null, modifier = Modifier.size(20.dp))

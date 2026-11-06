@@ -38,7 +38,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.navigationBars
 import uy.kohesive.injekt.api.get
 import uy.kohesive.injekt.Injekt
@@ -316,14 +316,15 @@ private val phoneSheetHalf by lazy {
 }
 
 /**
- * KMK (r135): Filter / Source Settings on a phone (M4): dark frosted glass, full width, from just under the button row
- * to the bottom. Filter slides in from the left, Settings from the right. Drag the handle down for half height (or
- * further to close) and up again for full; swipe it sideways, tap ✕ or the covers to close.
+ * KMK (r135/r136): Filter / Source Settings on a phone. r136: built like a title page's chapter sheet: fixed to the
+ * bottom edge, full width, rounded top corners, a handle, washed with the accent. It slides up to just under the button
+ * row; it moves only up and down: drag to snap between full and half height (remembered), or down to close. Tapping
+ * the covers closes it too.
  */
 @Composable
 private fun PhoneSideSheet(
     visible: Boolean,
-    fromStart: Boolean,
+    @Suppress("UNUSED_PARAMETER") fromStart: Boolean,
     title: String,
     onDismiss: () -> Unit,
     content: @Composable () -> Unit,
@@ -345,18 +346,17 @@ private fun PhoneSideSheet(
         }
         AnimatedVisibility(
             visible = visible,
-            enter = androidx.compose.animation.slideInHorizontally { if (fromStart) -it else it },
-            exit = androidx.compose.animation.slideOutHorizontally { if (fromStart) -it else it },
+            enter = androidx.compose.animation.slideInVertically { it },
+            exit = androidx.compose.animation.slideOutVertically { it },
             modifier = Modifier.fillMaxSize(),
         ) {
             androidx.compose.foundation.layout.BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                 val fullPx = constraints.maxHeight.toFloat()
                 var dragY by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
-                var dragX by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
                 var dragging by remember { mutableStateOf(false) }
                 val targetPx = if (half) fullPx * 0.5f else fullPx
                 val heightPx by androidx.compose.animation.core.animateFloatAsState(
-                    targetValue = (targetPx - dragY).coerceIn(fullPx * 0.2f, fullPx),
+                    targetValue = (targetPx - dragY).coerceIn(fullPx * 0.15f, fullPx),
                     animationSpec = if (dragging) {
                         androidx.compose.animation.core.snap<Float>()
                     } else {
@@ -364,95 +364,67 @@ private fun PhoneSideSheet(
                     },
                     label = "phoneSheetHeight",
                 )
-                val shape = RoundedCornerShape(26.dp)
+                val shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+                val tint = tachiyomi.presentation.core.components.tintedGlass(0.9f, Color(0xFF151820), 0.3f)
                 Column(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
                         .height(with(density) { heightPx.toDp() })
-                        .graphicsLayer { translationX = dragX }
+                        .shadow(16.dp, shape)
+                        .liquidGlass(shape)
+                        .drawBehind { drawOutline(shape.createOutline(size, layoutDirection, this), tint) }
                         .windowInsetsPadding(
                             androidx.compose.foundation.layout.WindowInsets.navigationBars.only(
                                 androidx.compose.foundation.layout.WindowInsetsSides.Bottom,
                             ),
                         )
-                        .padding(start = 6.dp, end = 6.dp, top = 4.dp, bottom = 6.dp)
-                        .shadow(14.dp, shape)
-                        .liquidGlass(shape)
-                        .drawBehind {
-                            drawOutline(shape.createOutline(size, layoutDirection, this), Color(0xFF0E0F13).copy(alpha = 0.78f))
-                        }
                         // Keep touches on the sheet from reaching the covers
                         .pointerInput(Unit) {},
                 ) {
-                    // The handle and title: drag up / down for the height, sideways to close
+                    // Handle and title: drag up / down only
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .pointerInput(fullPx, half) {
-                                detectDragGestures(
+                                detectVerticalDragGestures(
                                     onDragStart = {
                                         dragging = true
-                                        dragX = 0f
                                         dragY = 0f
                                     },
                                     onDragEnd = {
                                         dragging = false
-                                        val sideways = kotlin.math.abs(dragX) > kotlin.math.abs(dragY)
-                                        val now = (targetPx - dragY)
+                                        val now = targetPx - dragY
                                         when {
-                                            sideways && kotlin.math.abs(dragX) > 96.dp.toPx() -> onDismiss()
-                                            !sideways && now < fullPx * 0.3f -> onDismiss()
-                                            !sideways -> phoneSheetHalf.set(now < fullPx * 0.75f)
+                                            now < fullPx * 0.3f -> onDismiss()
+                                            else -> phoneSheetHalf.set(now < fullPx * 0.75f)
                                         }
-                                        dragX = 0f
                                         dragY = 0f
                                     },
                                     onDragCancel = {
                                         dragging = false
-                                        dragX = 0f
                                         dragY = 0f
                                     },
-                                    onDrag = { change, amount ->
+                                    onVerticalDrag = { change, amount ->
                                         change.consume()
-                                        dragX += amount.x
-                                        dragY += amount.y
+                                        dragY += amount
                                     },
                                 )
                             },
                     ) {
                         Box(
                             modifier = Modifier
-                                .padding(top = 8.dp, bottom = 2.dp)
+                                .padding(top = 10.dp, bottom = 4.dp)
                                 .align(Alignment.CenterHorizontally)
                                 .size(width = 40.dp, height = 5.dp)
                                 .clip(androidx.compose.foundation.shape.CircleShape)
                                 .background(Color.White.copy(alpha = 0.35f)),
                         )
-                        androidx.compose.foundation.layout.Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth().padding(start = 18.dp, end = 10.dp, bottom = 4.dp),
-                        ) {
-                            Text(
-                                text = title,
-                                style = MaterialTheme.typography.titleLarge,
-                                modifier = Modifier.weight(1f),
-                            )
-                            Box(
-                                contentAlignment = Alignment.Center,
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(androidx.compose.foundation.shape.CircleShape)
-                                    .background(Color.White.copy(alpha = 0.10f))
-                                    .clickable(onClick = onDismiss),
-                            ) {
-                                Icon(
-                                    imageVector = GlassIcons.Close,
-                                    contentDescription = stringResource(MR.strings.action_close),
-                                    modifier = Modifier.size(20.dp),
-                                )
-                            }
-                        }
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.titleLarge,
+                            modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 8.dp),
+                        )
                     }
                     Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                         androidx.compose.runtime.CompositionLocalProvider(
