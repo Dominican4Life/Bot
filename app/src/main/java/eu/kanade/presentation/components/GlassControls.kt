@@ -302,7 +302,10 @@ fun <T> GlassChoiceSwitch(
                             fontSize = 12.5.sp,
                             fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
                             color = if (on) Color.White else Color.White.copy(alpha = 0.78f),
-                            maxLines = 1,
+                            // KMK (r134): long names ("Strip Slices") wrap onto a second line instead of being cut off
+                            maxLines = 2,
+                            lineHeight = 14.sp,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                             overflow = TextOverflow.Ellipsis,
                         )
                     }

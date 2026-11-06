@@ -159,6 +159,7 @@ fun MangaInfoBox(
     val topAlignCover by Injekt.get<UiPreferences>().topAlignCover().collectAsState()
     // KMK (r124): header B (r123) taken out at the owner's request: the cover header is back to how it was
     // KMK <--
+    val glassTop = glassTitleTop()
     Box(modifier = modifier) {
         // Backdrop
         val backdropGradientColors = listOf(
@@ -196,9 +197,19 @@ fun MangaInfoBox(
                 .blur(7.dp)
                 // .blur(4.dp)
                 // KMK <--
-                // KMK (r132): hidden when the AniList banner is behind the page (still loads for the cover ratio)
-                .alpha(if (LocalTitleBanner.current == null) 0.2f else 0f),
+                // KMK (r132): hidden when the AniList banner is behind the page (still loads for the cover ratio).
+                // KMK (r134): hidden with glass too: no dark box behind the top of the title page
+                .alpha(if (LocalTitleBanner.current == null && !glassTop) 0.2f else 0f),
         )
+        if (glassTop) {
+            // KMK (r134): a soft fade at the very top keeps the status bar and the floating buttons readable
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(appBarPadding + 36.dp)
+                    .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.45f), Color.Transparent))),
+            )
+        }
 
         // Manga & source info
         CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
@@ -427,7 +438,9 @@ fun ExpandableMangaDescription(
                 val onTagHold: (String) -> Unit = { doSearch(holdSearches[it] ?: it, true) }
                 // KMK (r87): double tap copies it (Copy tag had no way in since the tag menu went, e6daf49d)
                 val onTagDoubleTap: (String) -> Unit = { onCopyTagToClipboard(it) }
-                if (expanded) {
+                // KMK (r134): where it opens expanded (the preview panel's Details tab) the tags always wrap, even
+                // after the description is folded, instead of running off the edge in one row
+                if (expanded || defaultExpandState) {
                     // SY -->
                     if (searchMetadataChips != null) {
                         NamespaceTags(
@@ -722,7 +735,14 @@ private fun ColumnScope.MangaContentInfo(
     Text(
         text = title.ifBlank { stringResource(MR.strings.unknown_title) },
         // KMK (r123): header B passes its own style and line cap
-        style = titleStyle ?: MaterialTheme.typography.titleLarge,
+        style = (titleStyle ?: MaterialTheme.typography.titleLarge).let {
+            // KMK (r134): with glass, a soft shadow behind the title (no dark header box behind it any more)
+            if (glassTitleTop()) {
+                it.copy(shadow = androidx.compose.ui.graphics.Shadow(Color.Black.copy(alpha = 0.6f), blurRadius = 12f))
+            } else {
+                it
+            }
+        },
         maxLines = titleMaxLines,
         overflow = TextOverflow.Ellipsis,
         modifier = Modifier.clickableNoIndication(
@@ -755,6 +775,9 @@ private fun ColumnScope.MangaContentInfo(
             text = author?.takeIf { it.isNotBlank() }
                 ?: stringResource(MR.strings.unknown_author),
             style = MaterialTheme.typography.titleSmall,
+            // KMK (r134): a long line (anime sources put genres, studios and networks here) stops at two lines
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier
                 .clickableNoIndication(
                     onLongClick = {
@@ -983,8 +1006,10 @@ private fun MangaSummary(
                     contentAlignment = Alignment.Center,
                 ) {
                     val image = AnimatedImageVector.animatedVectorResource(R.drawable.anim_caret_down)
-                    // KMK (r133): no collapse arrow once open; tapping the box closes it
-                    if (!expanded) Icon(
+                    // KMK (r133): no collapse arrow once open; tapping the box closes it.
+                    // KMK (r134): no arrow at all (the owner asked); tapping the box opens and closes it
+
+                    if (false) Icon(
                         painter = rememberAnimatedVectorPainter(image, !expanded),
                         contentDescription = stringResource(
                             if (expanded) MR.strings.manga_info_collapse else MR.strings.manga_info_expand,
@@ -1073,3 +1098,8 @@ private fun RowScope.MangaActionButton(
     }
 }
 
+
+/** KMK (r134): the glass title page has no dark header box (the owner picked "remove", H1) */
+@Composable
+private fun glassTitleTop(): Boolean =
+    remember { eu.kanade.presentation.components.TitleSheet.glass().get() }

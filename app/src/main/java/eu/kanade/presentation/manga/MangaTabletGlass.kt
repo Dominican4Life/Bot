@@ -62,6 +62,10 @@ internal fun Modifier.frostedPanel(shape: androidx.compose.ui.graphics.Shape = G
 // KMK (r133): no edge line, just the frost
 
 /** KMK (r133): Suggestions in their own frosted panel (like the chapters) when the glass design is on */
+/** KMK (r134): with glass on, the suggestions sit in their own panel, so the lines above and below them are dropped */
+internal val glassSuggestions: Boolean
+    get() = eu.kanade.presentation.components.TitleSheet.glass().get()
+
 internal fun Modifier.suggestionsPanel(): Modifier = composed {
     val glass = remember { eu.kanade.presentation.components.TitleSheet.glass().get() }
     if (glass) {

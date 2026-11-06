@@ -79,6 +79,8 @@ fun BrowsePreviewInfoHeader(
     onWebView: () -> Unit,
     onOpenDetails: () -> Unit,
     onSearch: (query: String, global: Boolean) -> Unit,
+    /** KMK (r134): true for anime (their "author" line holds season, status and genres) */
+    isAnime: Boolean = false,
 ) {
     // KMK (r125): the glass panel draws only its top here, or only the description and tags (Details tab)
     when (LocalInfoHeaderPart.current) {
@@ -89,6 +91,7 @@ fun BrowsePreviewInfoHeader(
                 onAddToLibrary = onAddToLibrary,
                 onWebView = onWebView,
                 onOpenDetails = onOpenDetails,
+                authorIcon = if (isAnime) eu.kanade.presentation.components.GlassIcons.Details else Icons.Outlined.PersonOutline,
             )
             return
         }

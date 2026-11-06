@@ -61,6 +61,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -435,41 +436,58 @@ fun GlassSliderThumb(
     val pressed by interactionSource.collectIsDraggedAsState()
     val pressedToo by interactionSource.collectIsPressedAsState()
     val active = pressed || pressedToo
-    if (style == eu.kanade.presentation.browse.components.GlassStyle.KNOB_GLASS) {
-        GlassLensKnob(active = active, fraction = fraction)
-        return
-    }
     val large = style == eu.kanade.presentation.browse.components.GlassStyle.KNOB_LARGE
-    val width by animateDpAsState(
-        if (active) (if (large) 54.dp else 44.dp) else (if (large) 42.dp else 34.dp),
-        label = "glassKnobWidth",
+    // KMK (r134): same feel as the r133 glass sliders: a white capsule while still, a clear lens while held,
+    // springing (squishing) between the two
+    val lens by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (active) 1f else 0f,
+        animationSpec = androidx.compose.animation.core.spring(
+            dampingRatio = 0.55f,
+            stiffness = androidx.compose.animation.core.Spring.StiffnessMedium,
+        ),
+        label = "glassKnobLens",
     )
-    val height by animateDpAsState(
-        if (active) (if (large) 34.dp else 28.dp) else (if (large) 26.dp else 22.dp),
-        label = "glassKnobHeight",
-    )
+    val restW = if (large) 42.dp else 36.dp
+    val restH = if (large) 26.dp else 22.dp
     Box(
-        modifier = Modifier
-            .size(width = width, height = height)
-            .shadow(if (active) 10.dp else 6.dp, CircleShape)
-            .clip(CircleShape)
-            .background(
-                Brush.verticalGradient(
-                    0f to Color.White.copy(alpha = if (active) 0.75f else 0.97f),
-                    1f to Color(0xFFDCE3F0).copy(alpha = if (active) 0.55f else 0.90f),
-                ),
-            )
-            .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.85f)), CircleShape),
+        modifier = Modifier.size(width = restW + 14.dp, height = restH + 10.dp),
+        contentAlignment = Alignment.Center,
     ) {
-        // The bright line along the top, like light catching the glass
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = 2.dp)
-                .size(width = width * 0.55f, height = 3.dp)
-                .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.9f)),
-        )
+        if (lens > 0.02f) {
+            Box(Modifier.graphicsLayer { alpha = lens.coerceIn(0f, 1f) }) {
+                GlassLensKnob(active = true, fraction = fraction)
+            }
+        }
+        if (lens < 0.98f) {
+            val squish = 1f + 0.25f * lens
+            Box(
+                modifier = Modifier
+                    .graphicsLayer {
+                        alpha = (1f - lens).coerceIn(0f, 1f)
+                        scaleX = squish
+                        scaleY = 2f - squish
+                    }
+                    .size(width = restW, height = restH)
+                    .shadow(6.dp, CircleShape)
+                    .clip(CircleShape)
+                    .background(
+                        Brush.verticalGradient(
+                            0f to Color.White.copy(alpha = 0.97f),
+                            1f to Color(0xFFDCE3F0).copy(alpha = 0.90f),
+                        ),
+                    )
+                    .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.85f)), CircleShape),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 2.dp)
+                        .size(width = restW * 0.55f, height = 3.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.9f)),
+                )
+            }
+        }
     }
 }
 

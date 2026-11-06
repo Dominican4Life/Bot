@@ -106,6 +106,8 @@ internal fun GlassPanelTop(
     onAddToLibrary: () -> Unit,
     onWebView: () -> Unit,
     onOpenDetails: () -> Unit,
+    // KMK (r134): anime sources put season / status / genres in this line, so they show an info icon, not a person
+    authorIcon: ImageVector = Icons.Outlined.PersonOutline,
 ) {
     Box(modifier = Modifier.fillMaxWidth()) {
         // The cover's own colours, blurred, behind the top
@@ -146,9 +148,9 @@ internal fun GlassPanelTop(
                     .filter { it.isNotBlank() }
                     .joinToString(", ")
                 if (author.isNotEmpty()) {
-                    SmallLine(Icons.Outlined.PersonOutline, author)
+                    SmallLine(authorIcon, author)
                 }
-                if (statusLine.isNotEmpty()) SmallLine(Icons.Outlined.Schedule, statusLine)
+                if (statusLine.isNotEmpty()) SmallLine(GlassIcons.Status, statusLine) // KMK (r134): glass icon
                 Spacer(modifier = Modifier.weight(1f))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     RoundIcon(

@@ -235,7 +235,8 @@ internal fun AniListEpisodeInfoLine(
         Text(
             text = text,
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            // KMK (r134): readable over the page (it was too faint)
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),

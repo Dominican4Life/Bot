@@ -33,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
@@ -128,7 +129,7 @@ fun MangaCompactGridItem(
                             .fillMaxWidth(),
                         data = coverData,
                         // KMK -->
-                        alpha = if (isSelected) GRID_SELECTED_COVER_ALPHA else coverAlpha,
+                        alpha = if (isSelected && !LocalGlowSelected.current) GRID_SELECTED_COVER_ALPHA else coverAlpha,
                         bgColor = bgColor ?: MaterialTheme.colorScheme.surface.takeIf { isSelected },
                         tint = onBgColor,
                         // KMK <--
@@ -283,7 +284,7 @@ fun MangaComfortableGridItem(
                                     // KMK <--
                                 data = coverData,
                                 // KMK -->
-                                alpha = if (isSelected) GRID_SELECTED_COVER_ALPHA else coverAlpha,
+                                alpha = if (isSelected && !LocalGlowSelected.current) GRID_SELECTED_COVER_ALPHA else coverAlpha,
                                 bgColor = bgColor ?: MaterialTheme.colorScheme.surface.takeIf { isSelected },
                                 tint = onBgColor,
                                 // A wide cover is exactly as tall as the covers beside it (see wideCoverHeight)
@@ -305,7 +306,7 @@ fun MangaComfortableGridItem(
                                     .fillMaxWidth(),
                                 data = coverData,
                                 // KMK -->
-                                alpha = if (isSelected) GRID_SELECTED_COVER_ALPHA else coverAlpha,
+                                alpha = if (isSelected && !LocalGlowSelected.current) GRID_SELECTED_COVER_ALPHA else coverAlpha,
                                 // Color fill: the cover's own color around a wide cover
                                 bgColor = fillColor ?: bgColor ?: MaterialTheme.colorScheme.surface.takeIf { isSelected }
                                     ?: MaterialTheme.colorScheme.surfaceContainerHighest.takeIf { showWide },
@@ -387,11 +388,15 @@ private fun MangaGridCover(
     // KMK <--
     content: @Composable (BoxScope.() -> Unit)? = null,
 ) {
+    val glow = LocalGlowSelected.current
+    val ring = tachiyomi.presentation.core.components.LocalGlassAccent.current
     Box(
         modifier = modifier
             .fillMaxWidth()
             // KMK -->
-            .then(if (wide) Modifier.wideCoverHeight() else Modifier.aspectRatio(ratio)),
+            .then(if (wide) Modifier.wideCoverHeight() else Modifier.aspectRatio(ratio))
+            // KMK (r134): the glowing ring of the picked cover (glass)
+            .then(if (glow) Modifier.glowRing(ring) else Modifier),
         // KMK <--
     ) {
         cover()
@@ -472,6 +477,8 @@ private fun GridItemSelectable(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
+    // KMK (r134): with glass, the picked cover gets a thin glowing ring in the cover colour (S1) instead of a block
+    val glassRing = remember { eu.kanade.presentation.components.TitleSheet.glass().get() }
     Box(
         modifier = modifier
             .clip(MaterialTheme.shapes.small)
@@ -479,9 +486,13 @@ private fun GridItemSelectable(
                 onClick = onClick,
                 onLongClick = onLongClick,
             )
-            .selectedOutline(isSelected = isSelected, color = MaterialTheme.colorScheme.secondary)
+            .selectedOutline(isSelected = isSelected && !glassRing, color = MaterialTheme.colorScheme.secondary)
             .padding(4.dp),
     ) {
+        if (glassRing) {
+            CompositionLocalProvider(LocalGlowSelected provides isSelected) { content() }
+            return@Box
+        }
         val contentColor = if (isSelected) {
             MaterialTheme.colorScheme.onSecondary
         } else {
@@ -491,6 +502,33 @@ private fun GridItemSelectable(
             content()
         }
     }
+}
+
+/** KMK (r134): true inside the picked item of a grid with glass on: its cover draws [glowRing] */
+private val LocalGlowSelected = androidx.compose.runtime.compositionLocalOf { false }
+
+/** KMK (r134): a soft glow and a thin ring in [color] around a cover */
+private fun Modifier.glowRing(color: Color) = drawBehind {
+    val r = 8.dp.toPx()
+    for (i in 1..3) {
+        val spread = i * 2.dp.toPx()
+        drawRoundRect(
+            color = color.copy(alpha = 0.16f / i),
+            topLeft = androidx.compose.ui.geometry.Offset(-spread, -spread),
+            size = androidx.compose.ui.geometry.Size(size.width + spread * 2, size.height + spread * 2),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(r + spread),
+        )
+    }
+}.drawWithContent {
+    drawContent()
+    val w = 2.5.dp.toPx()
+    drawRoundRect(
+        color = color,
+        topLeft = androidx.compose.ui.geometry.Offset(-w / 2, -w / 2),
+        size = androidx.compose.ui.geometry.Size(size.width + w, size.height + w),
+        cornerRadius = androidx.compose.ui.geometry.CornerRadius(8.dp.toPx()),
+        style = androidx.compose.ui.graphics.drawscope.Stroke(width = w),
+    )
 }
 
 /**

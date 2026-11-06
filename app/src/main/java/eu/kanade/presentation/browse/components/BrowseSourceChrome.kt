@@ -28,7 +28,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -75,7 +77,8 @@ fun BrowseTabChip(
             modifier = modifier
                 .size(PanelButtonSize)
                 .clip(androidx.compose.foundation.shape.CircleShape)
-                .background(Color.White.copy(alpha = 0.09f))
+                // KMK (r134): dark frosted glass so it reads over busy covers
+                .liquidGlass(androidx.compose.foundation.shape.CircleShape, BrowseGlassBase)
                 .clickable(onClick = onClick),
             contentAlignment = Alignment.Center,
         ) {
@@ -92,7 +95,13 @@ fun BrowseTabChip(
             .animateContentSize()
             .height(PanelButtonSize)
             .clip(androidx.compose.foundation.shape.CircleShape)
-            .background(if (selected) accent else Color.White.copy(alpha = 0.09f))
+            .then(
+                if (selected) {
+                    Modifier.background(accent)
+                } else {
+                    Modifier.liquidGlass(androidx.compose.foundation.shape.CircleShape, BrowseGlassBase)
+                },
+            )
             .clickable(onClick = onClick)
             .padding(start = if (icon != null) 10.dp else 14.dp, end = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -159,7 +168,13 @@ private fun PanelToggleButton(
         modifier = Modifier
             .size(PanelButtonSize)
             .clip(androidx.compose.foundation.shape.CircleShape)
-            .background(if (checked) accent else Color.White.copy(alpha = 0.09f))
+            .then(
+                if (checked) {
+                    Modifier.background(accent)
+                } else {
+                    Modifier.liquidGlass(androidx.compose.foundation.shape.CircleShape, BrowseGlassBase)
+                },
+            )
             .clickable { onCheckedChange(!checked) },
         contentAlignment = Alignment.Center,
     ) {
@@ -193,7 +208,8 @@ fun BrowseOverlayPanel(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.4f))
+                    // KMK (r134): only lightly dimmed with glass (the panel itself is dark frosted, P1)
+                    .background(Color.Black.copy(alpha = if (glassPanel) 0.2f else 0.4f))
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
@@ -214,6 +230,8 @@ fun BrowseOverlayPanel(
             actions = actions,
             // KMK (r133): a glass card with the glass design on; switches and fields inside turn glass too
             glass = glassPanel,
+            // KMK (r134): dark frosted (P1) so Filter and Source Settings read over the covers
+            glassDim = 0.78f,
             content = {
                 androidx.compose.runtime.CompositionLocalProvider(
                     eu.kanade.presentation.components.LocalGlassPanel provides glassPanel,
@@ -266,3 +284,40 @@ object PanelToggleIcons {
         }.build()
     }
 }
+
+/**
+ * KMK (r134): the floating top of a source's Browse screen slides away while scrolling down through the covers and
+ * comes back on the way up; the covers pass under it. [keepShown] (a panel is open, glass is off) holds it in place.
+ */
+@androidx.compose.runtime.Stable
+class BrowseBarHide {
+    var height by androidx.compose.runtime.mutableIntStateOf(0)
+    var offset by androidx.compose.runtime.mutableFloatStateOf(0f)
+    var enabled = true
+
+    val connection = object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
+        override fun onPreScroll(
+            available: androidx.compose.ui.geometry.Offset,
+            source: androidx.compose.ui.input.nestedscroll.NestedScrollSource,
+        ): androidx.compose.ui.geometry.Offset {
+            if (enabled && height > 0) {
+                offset = (offset + available.y).coerceIn(-height.toFloat(), 0f)
+            }
+            return androidx.compose.ui.geometry.Offset.Zero
+        }
+    }
+}
+
+@Composable
+fun rememberBrowseBarHide(keepShown: Boolean): BrowseBarHide {
+    val glass = remember { eu.kanade.presentation.components.TitleSheet.glass().get() }
+    val hide = remember { BrowseBarHide() }
+    hide.enabled = glass && !keepShown
+    LaunchedEffect(hide.enabled) { if (!hide.enabled) hide.offset = 0f }
+    return hide
+}
+
+/** KMK (r134): put on the top bar's Column */
+fun Modifier.browseBarHide(hide: BrowseBarHide): Modifier = this
+    .onSizeChanged { hide.height = it.height }
+    .offset { androidx.compose.ui.unit.IntOffset(0, kotlin.math.round(hide.offset).toInt()) }

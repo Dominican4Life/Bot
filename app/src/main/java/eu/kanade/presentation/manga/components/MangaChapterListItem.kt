@@ -147,6 +147,8 @@ fun MangaChapterListItem(
                     onLongClick = onLongClick,
                 )
                 .padding(start = 16.dp, top = 12.dp, end = 8.dp, bottom = 12.dp),
+            // KMK (r134): the eye, bookmark and download buttons line up on the row's middle
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(
                 modifier = Modifier.weight(1f),
@@ -167,8 +169,9 @@ fun MangaChapterListItem(
                             tint = MaterialTheme.colorScheme.primary,
                         )
                     }
-                    // KMK (r133): read chapters show the eye next to the bookmark, in the cover colour
-                    if (read) {
+                    // KMK (r133): read chapters show the eye next to the bookmark, in the cover colour.
+                    // KMK (r134): not when the row has its own eye / bookmark buttons (the reader's list)
+                    if (read && trailing == null) {
                         Icon(
                             imageVector = GlassIcons.Read,
                             contentDescription = null,
@@ -178,7 +181,7 @@ fun MangaChapterListItem(
                             tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
                         )
                     }
-                    if (bookmark) {
+                    if (bookmark && trailing == null) {
                         Icon(
                             imageVector = GlassIcons.Bookmark,
                             contentDescription = stringResource(MR.strings.action_filter_bookmarked),

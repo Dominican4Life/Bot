@@ -41,7 +41,34 @@ object BotCheckReporter {
         return if (CHALLENGE.containsMatchIn(body)) Kind.BOT_CHECK else null
     }
 
+    /**
+     * KMK (r134): some sites answer a bot check with a normal "200 OK" page, so the list only got an empty or broken
+     * page and never asked. True for an HTML reply that is a check page (Cloudflare / DDoS-Guard markers). Only
+     * looked at when the reply says it came through one of them, and only the first bytes are read.
+     */
+    fun isCheckPage(response: Response): Boolean {
+        if (!response.isSuccessful) return false
+        if (response.header("cf-mitigated").equals("challenge", ignoreCase = true)) return true
+        val type = response.header("Content-Type").orEmpty().lowercase()
+        if ("html" !in type) return false
+        val server = response.header("Server").orEmpty().lowercase()
+        if ("cloudflare" !in server && "ddos-guard" !in server) return false
+        val body = try {
+            response.peekBody(SMALL_PEEK_BYTES).string()
+        } catch (_: Exception) {
+            return false
+        }
+        return CHECK_PAGE.containsMatchIn(body)
+    }
+
     private const val PEEK_BYTES = 64L * 1024
+    private const val SMALL_PEEK_BYTES = 16L * 1024
+
+    /** Markers only a check page has (not "Just a moment", which a normal page could contain) */
+    private val CHECK_PAGE = Regex(
+        "cf_chl_opt|/cdn-cgi/challenge-platform/|challenge-error-title|ddos-guard/js-challenge|__ddg1_",
+        RegexOption.IGNORE_CASE,
+    )
 
     private val CHALLENGE = Regex(
         "challenge-platform|cf-chl|cf_chl_opt|challenge-error-title|Just a moment|Attention Required|" +
@@ -65,12 +92,21 @@ class BotCheckInterceptor : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
         val response = chain.proceed(request)
+        // KMK (r134): a check page sent back as "200 OK" is a bot check too (asked for, never solved by the app)
+        if (BotCheckReporter.isCheckPage(response)) {
+            response.close()
+            return BotCheckGate.waitAndRetry(chain, request) {
+                BotCheckReporter.isCheckPage(it) ||
+                    (!it.isSuccessful && BotCheckReporter.classify(it) == BotCheckReporter.Kind.BOT_CHECK)
+            }
+        }
         if (!response.isSuccessful) {
             val kind = BotCheckReporter.classify(response) ?: return response
             if (kind == BotCheckReporter.Kind.BOT_CHECK) {
                 response.close()
                 return BotCheckGate.waitAndRetry(chain, request) {
-                    !it.isSuccessful && BotCheckReporter.classify(it) == BotCheckReporter.Kind.BOT_CHECK
+                    (!it.isSuccessful && BotCheckReporter.classify(it) == BotCheckReporter.Kind.BOT_CHECK) ||
+                        BotCheckReporter.isCheckPage(it)
                 }
             }
             BotCheckReporter.report(request.url.toString(), kind)

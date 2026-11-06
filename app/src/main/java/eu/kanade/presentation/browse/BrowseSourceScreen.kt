@@ -3,6 +3,13 @@ package eu.kanade.presentation.browse
 import eu.kanade.presentation.components.GlassIcons
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
+import tachiyomi.i18n.kmk.KMR
+import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyGridState
@@ -127,8 +134,33 @@ fun BrowseSourceContent(
         return
     }
 
+    // KMK (r134): back from WebView (opened from here), the list loads again by itself
+    val openedWebView = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME && openedWebView.value) {
+                openedWebView.value = false
+                if (mangaList.itemCount == 0 || mangaList.loadState.refresh is LoadState.Error) mangaList.refresh()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    val openWebView: (() -> Unit)? = onWebViewClick?.let { open ->
+        {
+            openedWebView.value = true
+            open()
+        }
+    }
+
     if (mangaList.itemCount == 0 && mangaList.loadState.refresh is LoadState.Loading) {
-        LoadingScreen(Modifier.padding(contentPadding))
+        // KMK (r134): still nothing after a while: the site may be showing a check the app can't see, so offer
+        // WebView (you look and solve it there yourself) or to keep waiting
+        SlowLoadingScreen(
+            contentPadding = contentPadding,
+            onWebViewClick = openWebView,
+        )
         return
     }
 
@@ -155,11 +187,11 @@ fun BrowseSourceContent(
                         onClick = mangaList::refresh,
                     ),
                     // SY -->
-                    if (onWebViewClick != null) {
+                    if (openWebView != null) {
                         EmptyScreenAction(
                             MR.strings.action_open_in_web_view,
                             icon = GlassIcons.WebView,
-                            onClick = onWebViewClick,
+                            onClick = openWebView,
                         )
                     } else {
                         null
@@ -289,5 +321,64 @@ internal fun MissingSourceScreen(
             message = stringResource(MR.strings.source_not_installed, source.toString()),
             modifier = Modifier.padding(paddingValues),
         )
+    }
+}
+
+/**
+ * KMK (r134): the spinner, and after [delayMs] without anything a card: "Still loading", with Open In WebView (to see
+ * whether the site wants a check; you solve it there yourself) and Keep Waiting. Nothing is solved or clicked for you.
+ */
+@Composable
+fun SlowLoadingScreen(
+    contentPadding: PaddingValues,
+    onWebViewClick: (() -> Unit)?,
+    delayMs: Long = 8_000L,
+) {
+    var slow by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    var dismissed by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(delayMs)
+        slow = true
+    }
+    if (!slow || dismissed || onWebViewClick == null) {
+        LoadingScreen(Modifier.padding(contentPadding))
+        return
+    }
+    androidx.compose.foundation.layout.Column(
+        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+        verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(contentPadding)
+            .padding(horizontal = 24.dp),
+    ) {
+        androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(36.dp))
+        androidx.compose.foundation.layout.Spacer(Modifier.height(16.dp))
+        androidx.compose.material3.Text(
+            text = stringResource(KMR.strings.browse_slow_title),
+            style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
+        )
+        androidx.compose.foundation.layout.Spacer(Modifier.height(6.dp))
+        androidx.compose.material3.Text(
+            text = stringResource(KMR.strings.browse_slow_text),
+            style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.widthIn(max = 420.dp),
+        )
+        androidx.compose.foundation.layout.Spacer(Modifier.height(16.dp))
+        androidx.compose.foundation.layout.Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)) {
+            eu.kanade.presentation.components.GlassButton(
+                text = stringResource(KMR.strings.browse_slow_keep_waiting),
+                primary = false,
+                onClick = { dismissed = true },
+            )
+            eu.kanade.presentation.components.GlassButton(
+                text = stringResource(MR.strings.action_open_in_web_view),
+                primary = true,
+                onClick = onWebViewClick,
+                icon = GlassIcons.WebView,
+            )
+        }
     }
 }

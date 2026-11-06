@@ -127,13 +127,15 @@ fun BrowseSourceToolbar(
         navigateUp = navigateUp,
         glassButtons = glass,
         backgroundColor = if (glass) Color.Transparent else null,
+        // KMK (r134): dark frosted glass so the buttons read over busy covers
+        glassBase = BrowseGlassBase,
         titleContent = {
             // KMK: the source's icon and language next to its name
             androidx.compose.foundation.layout.Box(
                 modifier = if (glass) {
                     Modifier
                         .clip(androidx.compose.foundation.shape.CircleShape)
-                        .background(Color.White.copy(alpha = 0.08f))
+                        .liquidGlass(androidx.compose.foundation.shape.CircleShape, BrowseGlassBase)
                         .padding(start = 6.dp, end = 16.dp, top = 4.dp, bottom = 4.dp)
                 } else {
                     Modifier
@@ -141,7 +143,8 @@ fun BrowseSourceToolbar(
             ) {
                 SourceTitle(
                     title = title,
-                    subtitle = subtitleOverride ?: source?.lang?.let { LocaleHelper.getLocalizedDisplayName(it) },
+                    // KMK (r134): no language line, so the name sits centred in its capsule
+                    subtitle = null,
                     sourceId = iconSourceId ?: source?.id,
                 )
             }
@@ -310,6 +313,9 @@ fun BrowseSourceToolbar(
         scrollBehavior = scrollBehavior,
     )
 }
+
+/** KMK (r134): the dark frosted tint of every floating glass piece while browsing a source */
+val BrowseGlassBase = Color(0xFF14161C)
 
 /** KMK: A source's icon, name and language, for the top of a source's pages */
 @Composable

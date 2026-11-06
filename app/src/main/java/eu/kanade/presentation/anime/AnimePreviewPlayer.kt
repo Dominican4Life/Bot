@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -66,6 +67,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -254,6 +256,19 @@ fun AnimePreviewSection(
         }.onFailure { e -> context.logcat(LogPriority.WARN, e) { "Preview filters failed" } }
     }
 
+    /** KMK (r134): the full player's rule (PlayerActivity.playsThroughApp): a plain http(s) file of a JS source */
+    fun playsThroughApp(video: Video): Boolean {
+        val url = video.videoUrl
+        if (!url.startsWith("http://") && !url.startsWith("https://")) return false
+        if (url.startsWith("http://127.0.0.1") || url.startsWith("http://localhost")) return false
+        if (source !is eu.kanade.tachiyomi.jssource.JsAnimeSource) return false
+        val path = url.substringBefore('?').lowercase()
+        val stream = video.type == eu.kanade.tachiyomi.animesource.model.VideoType.HLS ||
+            video.type == eu.kanade.tachiyomi.animesource.model.VideoType.DASH ||
+            path.endsWith(".mpd") || url.contains("m3u8", ignoreCase = true)
+        return !stream
+    }
+
     fun startVideo(index: Int, list: List<Video>, ep: Episode) {
         loadJob?.cancel()
         loadJob = scope.launch {
@@ -270,15 +285,35 @@ fun AnimePreviewSection(
                     // KMK (r87): Code editor sources send their headers too, as in the player
                     ?: (source as? eu.kanade.tachiyomi.jssource.JsAnimeSource)?.headers
                 if (headers != null) {
-                    val headerString = headers.toMultimap()
-                        .map { (name, values) -> name + ": " + (values.firstOrNull() ?: "").replace(",", "\\,") }
+                    // KMK (r134): as in the full player, the User-Agent goes in mpv's own user-agent option (mpv
+                    // sends one of its own too); the rest as extra headers
+                    val map = headers.toMultimap().mapValues { it.value.firstOrNull() ?: "" }.toMutableMap()
+                    map.keys.firstOrNull { it.equals("User-Agent", ignoreCase = true) }?.let { key ->
+                        map.remove(key)?.takeIf { it.isNotBlank() }?.let { instance.setOptionString("user-agent", it) }
+                    }
+                    val headerString = map
+                        .map { (name, value) -> name + ": " + value.replace(",", "\\,") }
                         .joinToString(",")
                     instance.setOptionString("http-header-fields", headerString)
+                }
+                // KMK (r134): a Code editor source's plain video file plays through the app's connection (HlsRelay),
+                // like the full player, so it gets the source's cookies (hosts answer mpv's own request with 403)
+                val url = if (playsThroughApp(video)) {
+                    withIOContext {
+                        runCatching {
+                            eu.kanade.tachiyomi.jssource.HlsRelay.wrapFile(
+                                video.videoUrl,
+                                headers ?: okhttp3.Headers.Builder().build(),
+                            )
+                        }.getOrNull()
+                    } ?: video.videoUrl
+                } else {
+                    video.videoUrl
                 }
                 videoIndex = index
                 playingEpisode = ep
                 phase = PreviewPhase.Playing
-                instance.command("loadfile", video.videoUrl, "replace")
+                instance.command("loadfile", url, "replace")
                 instance.setPropertyBoolean("pause", false)
                 applyView(instance)
             } catch (e: Throwable) {
@@ -445,7 +480,19 @@ fun AnimePreviewSection(
                 modifier = Modifier.padding(16.dp),
             )
                 PreviewPhase.Playing -> {
-                    if (buffering && !paused) CircularProgressIndicator(color = Color.White)
+                    // KMK (r134): with the controls up, a small spinner above them instead of one over the pause button
+                    if (buffering && !paused) {
+                        val controlsUp = showControls || locked
+                        CircularProgressIndicator(
+                            color = Color.White,
+                            strokeWidth = if (controlsUp) 2.dp else 4.dp,
+                            modifier = if (controlsUp) {
+                                Modifier.align(Alignment.BottomCenter).padding(bottom = 64.dp).size(20.dp)
+                            } else {
+                                Modifier
+                            },
+                        )
+                    }
                 }
             }
             androidx.compose.animation.AnimatedVisibility(
@@ -541,7 +588,7 @@ fun AnimePreviewSection(
                     modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().then(dragHandle)
                         .padding(start = 10.dp, end = 4.dp),
                 ) {
-                    Icon(Icons.Outlined.DragIndicator, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                    Icon(eu.kanade.presentation.components.GlassIcons.DragHandle, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
                     Text(
                         text = anime.title,
                         color = Color.White,
@@ -552,7 +599,7 @@ fun AnimePreviewSection(
                     )
                     if (onClose != null) {
                         IconButton(onClick = onClose) {
-                            Icon(Icons.Outlined.Close, contentDescription = stringResource(MR.strings.action_close), tint = Color.White)
+                            Icon(eu.kanade.presentation.components.GlassIcons.Close, contentDescription = stringResource(MR.strings.action_close), tint = Color.White)
                         }
                     }
                 }
@@ -578,7 +625,7 @@ fun AnimePreviewSection(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp),
                     ) {
-                        Icon(Icons.Outlined.Tune, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Icon(eu.kanade.presentation.components.GlassIcons.Tune, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Text(
                             text = stringResource(KMR.strings.anime_preview_video_settings),
                             style = MaterialTheme.typography.titleSmall,
@@ -587,7 +634,7 @@ fun AnimePreviewSection(
                             modifier = Modifier.weight(1f).padding(start = 12.dp),
                         )
                         IconButton(onClick = { settingsOpen = false }) {
-                            Icon(Icons.Outlined.ExpandMore, contentDescription = null, tint = Color.White)
+                            Icon(eu.kanade.presentation.components.GlassIcons.ChevronDown, contentDescription = null, tint = Color.White)
                         }
                     }
                     Column(modifier = Modifier.verticalScroll(rememberScrollState()).padding(bottom = 12.dp)) {
@@ -620,7 +667,7 @@ fun AnimePreviewSection(
                 .clickable { settingsOpen = !settingsOpen }
                 .padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
         ) {
-            Icon(Icons.Outlined.Tune, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            Icon(eu.kanade.presentation.components.GlassIcons.Tune, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
             Text(
                 text = stringResource(KMR.strings.anime_preview_video_settings),
                 style = MaterialTheme.typography.titleSmall,
@@ -630,7 +677,7 @@ fun AnimePreviewSection(
                     .padding(start = 12.dp),
             )
             Icon(
-                imageVector = if (settingsOpen) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                imageVector = if (settingsOpen) eu.kanade.presentation.components.GlassIcons.ChevronUp else eu.kanade.presentation.components.GlassIcons.ChevronDown,
                 contentDescription = null,
             )
         }
@@ -650,7 +697,7 @@ private fun QualityButton(videos: List<Video>, servers: List<String?>, videoInde
         var open by remember { mutableStateOf(false) }
         IconButton(onClick = { open = true }) {
             Icon(
-                Icons.Outlined.HighQuality,
+                eu.kanade.presentation.components.GlassIcons.Quality,
                 contentDescription = stringResource(KMR.strings.anime_preview_quality),
                 tint = Color.White,
             )
@@ -664,14 +711,24 @@ private fun QualityButton(videos: List<Video>, servers: List<String?>, videoInde
                 server to QualityOrder.of(members.map { videos[it] }).map { members[it] }
             }
         }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+        DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+            // KMK (r134): the glass menu look, and no taller than the screen allows comfortably (it scrolls)
+            modifier = Modifier.heightIn(max = 380.dp),
+            shape = eu.kanade.presentation.components.GlassMenuStyle.shape,
+            containerColor = eu.kanade.presentation.components.GlassMenuStyle.container(),
+            tonalElevation = 0.dp,
+            shadowElevation = 18.dp,
+            border = eu.kanade.presentation.components.GlassMenuStyle.rim(),
+        ) {
             groups.forEachIndexed { groupIndex, (server, indexes) ->
                 if (server != null) {
-                    if (groupIndex > 0) HorizontalDivider()
+                    if (groupIndex > 0) Spacer(Modifier.height(6.dp))
                     Text(
                         text = server,
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = tachiyomi.presentation.core.components.LocalGlassAccent.current,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -689,6 +746,8 @@ private fun QualityButton(videos: List<Video>, servers: List<String?>, videoInde
                                 overflow = TextOverflow.Ellipsis,
                             )
                         },
+                        // KMK (r134): a tick on the quality that's playing
+                        trailingIcon = { eu.kanade.presentation.components.GlassTick(checked = index == videoIndex) },
                         onClick = {
                             open = false
                             onPickVideo(index)
@@ -758,7 +817,7 @@ private fun FloatingControls(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.weight(1f).then(dragHandle).padding(vertical = 6.dp),
             ) {
-                Icon(Icons.Outlined.DragIndicator, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                Icon(eu.kanade.presentation.components.GlassIcons.DragHandle, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
                 Column(modifier = Modifier.padding(start = 6.dp)) {
                     Text(
                         text = title,
@@ -785,7 +844,17 @@ private fun FloatingControls(
                     TextButton(onClick = { open = true }) {
                         Text("${formatSpeed(speed)}×", color = Color.White, style = MaterialTheme.typography.labelMedium)
                     }
-                    DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                    DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+            // KMK (r134): the glass menu look, and no taller than the screen allows comfortably (it scrolls)
+            modifier = Modifier.heightIn(max = 380.dp),
+            shape = eu.kanade.presentation.components.GlassMenuStyle.shape,
+            containerColor = eu.kanade.presentation.components.GlassMenuStyle.container(),
+            tonalElevation = 0.dp,
+            shadowElevation = 18.dp,
+            border = eu.kanade.presentation.components.GlassMenuStyle.rim(),
+        ) {
                         listOf(0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0).forEach { value ->
                             DropdownMenuItem(
                                 text = {
@@ -805,21 +874,21 @@ private fun FloatingControls(
             }
             IconButton(onClick = onToggleSettings) {
                 Icon(
-                    Icons.Outlined.Tune,
+                    eu.kanade.presentation.components.GlassIcons.Tune,
                     contentDescription = stringResource(KMR.strings.anime_preview_video_settings),
                     tint = if (settingsOpen) MaterialTheme.colorScheme.primary else Color.White,
                 )
             }
             IconButton(onClick = onToggleLock) {
                 Icon(
-                    imageVector = if (locked) Icons.Outlined.Lock else Icons.Outlined.LockOpen,
+                    imageVector = if (locked) eu.kanade.presentation.components.GlassIcons.Lock else eu.kanade.presentation.components.GlassIcons.LockOpen,
                     contentDescription = null,
                     tint = if (locked) MaterialTheme.colorScheme.primary else Color.White,
                 )
             }
             if (onClose != null) {
                 IconButton(onClick = onClose) {
-                    Icon(Icons.Outlined.Close, contentDescription = stringResource(MR.strings.action_close), tint = Color.White)
+                    Icon(eu.kanade.presentation.components.GlassIcons.Close, contentDescription = stringResource(MR.strings.action_close), tint = Color.White)
                 }
             }
         }
@@ -829,11 +898,11 @@ private fun FloatingControls(
             horizontalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 14.dp),
             modifier = Modifier.align(Alignment.Center),
         ) {
-            if (onPrevious != null) RoundButton(Icons.Filled.SkipPrevious, 40.dp, onPrevious)
-            RoundButton(Icons.Outlined.Replay10, 44.dp) { onSkip(-10.0) }
-            RoundButton(if (paused) Icons.Filled.PlayArrow else Icons.Filled.Pause, 58.dp, onTogglePause)
-            RoundButton(Icons.Outlined.Forward10, 44.dp) { onSkip(10.0) }
-            if (onNext != null) RoundButton(Icons.Filled.SkipNext, 40.dp, onNext)
+            if (onPrevious != null) RoundButton(eu.kanade.presentation.components.GlassIcons.SkipPrevious, 40.dp, onPrevious)
+            RoundButton(eu.kanade.presentation.components.GlassIcons.Back10, 44.dp) { onSkip(-10.0) }
+            RoundButton(if (paused) eu.kanade.presentation.components.GlassIcons.Play else eu.kanade.presentation.components.GlassIcons.Pause, 58.dp, onTogglePause)
+            RoundButton(eu.kanade.presentation.components.GlassIcons.Forward10, 44.dp) { onSkip(10.0) }
+            if (onNext != null) RoundButton(eu.kanade.presentation.components.GlassIcons.SkipNext, 40.dp, onNext)
         }
         // Bottom: time and seek bar; mute, View, full player
         Column(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 8.dp)) {
@@ -862,7 +931,7 @@ private fun FloatingControls(
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 4.dp, end = 18.dp)) {
                     IconButton(onClick = onToggleMute) {
                         Icon(
-                            imageVector = if (muted) Icons.AutoMirrored.Outlined.VolumeOff else Icons.AutoMirrored.Outlined.VolumeUp,
+                            imageVector = if (muted) eu.kanade.presentation.components.GlassIcons.VolumeOff else eu.kanade.presentation.components.GlassIcons.VolumeOn,
                             contentDescription = stringResource(
                                 if (muted) KMR.strings.anime_preview_unmute else KMR.strings.anime_preview_mute,
                             ),
@@ -878,16 +947,16 @@ private fun FloatingControls(
                             PreviewView.Original to KMR.strings.anime_preview_original,
                             PreviewView.Split to KMR.strings.anime_preview_split,
                         ).forEach { (option, label) ->
-                            FilterChip(
+                            GlassChip(
                                 selected = view == option,
                                 onClick = { onView(option) },
-                                label = { Text(stringResource(label), color = Color.White) },
+                                label = { Text(stringResource(label)) },
                             )
                         }
                     }
                     IconButton(onClick = onOpenPlayer) {
                         Icon(
-                            Icons.Outlined.Fullscreen,
+                            eu.kanade.presentation.components.GlassIcons.Fullscreen,
                             contentDescription = stringResource(KMR.strings.anime_preview_open_player),
                             tint = Color.White,
                         )
@@ -931,7 +1000,7 @@ private fun IdleOverlay(episodeName: String?, onClick: () -> Unit) {
                 .border(androidx.compose.foundation.BorderStroke(1.5.dp, Color.White.copy(alpha = 200f / 255f)), CircleShape),
         ) {
             Icon(
-                imageVector = Icons.Filled.PlayArrow,
+                imageVector = eu.kanade.presentation.components.GlassIcons.Play,
                 contentDescription = null,
                 tint = Color.White,
                 modifier = Modifier.size(36.dp),
@@ -1001,7 +1070,7 @@ private fun PlayerControls(
             QualityButton(videos, servers, videoIndex, onPickVideo)
             IconButton(onClick = onToggleMute) {
                 Icon(
-                    imageVector = if (muted) Icons.AutoMirrored.Outlined.VolumeOff else Icons.AutoMirrored.Outlined.VolumeUp,
+                    imageVector = if (muted) eu.kanade.presentation.components.GlassIcons.VolumeOff else eu.kanade.presentation.components.GlassIcons.VolumeOn,
                     contentDescription = stringResource(
                         if (muted) KMR.strings.anime_preview_unmute else KMR.strings.anime_preview_mute,
                     ),
@@ -1010,7 +1079,7 @@ private fun PlayerControls(
             }
             IconButton(onClick = onOpenPlayer) {
                 Icon(
-                    Icons.Outlined.Fullscreen,
+                    eu.kanade.presentation.components.GlassIcons.Fullscreen,
                     contentDescription = stringResource(KMR.strings.anime_preview_open_player),
                     tint = Color.White,
                 )
@@ -1027,7 +1096,7 @@ private fun PlayerControls(
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Icon(
-                    imageVector = if (paused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
+                    imageVector = if (paused) eu.kanade.presentation.components.GlassIcons.Play else eu.kanade.presentation.components.GlassIcons.Pause,
                     contentDescription = null,
                     tint = Color.White,
                     modifier = Modifier.size(32.dp),
@@ -1091,7 +1160,7 @@ private fun VideoSettings(
                 PreviewView.Original to KMR.strings.anime_preview_original,
                 PreviewView.Split to KMR.strings.anime_preview_split,
             ).forEach { (option, label) ->
-                FilterChip(
+                GlassChip(
                     selected = view == option,
                     onClick = { onViewChange(option) },
                     label = { Text(stringResource(label)) },
@@ -1108,7 +1177,7 @@ private fun VideoSettings(
             modifier = Modifier.horizontalScroll(rememberScrollState()),
         ) {
             VideoFilterTheme.entries.forEachIndexed { index, theme ->
-                FilterChip(
+                GlassChip(
                     selected = themeIndex == index,
                     onClick = {
                         themeIndex = index
@@ -1187,7 +1256,7 @@ private fun VideoSettings(
                 modifier = Modifier.horizontalScroll(rememberScrollState()),
             ) {
                 Anime4KManager.Mode.entries.filter { it != Anime4KManager.Mode.OFF }.forEach { option ->
-                    FilterChip(
+                    GlassChip(
                         selected = mode == option.name,
                         onClick = {
                             mode = option.name
@@ -1204,7 +1273,7 @@ private fun VideoSettings(
                     Anime4KManager.Quality.BALANCED to AMR.strings.anime4k_quality_balanced,
                     Anime4KManager.Quality.HIGH to AMR.strings.anime4k_quality_high,
                 ).forEach { (option, label) ->
-                    FilterChip(
+                    GlassChip(
                         selected = quality == option.name,
                         onClick = {
                             quality = option.name
@@ -1226,7 +1295,7 @@ private fun VideoSettings(
             modifier = Modifier.horizontalScroll(rememberScrollState()),
         ) {
             listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f).forEach { option ->
-                FilterChip(
+                GlassChip(
                     selected = speed == option,
                     onClick = {
                         speed = option
@@ -1249,7 +1318,7 @@ private fun VideoSettings(
                     onFiltersChanged()
                 },
             ) {
-                Icon(Icons.Outlined.RestartAlt, contentDescription = null, modifier = Modifier.size(18.dp))
+                Icon(eu.kanade.presentation.components.GlassIcons.Reset, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(4.dp))
                 Text(stringResource(KMR.strings.anime_preview_reset))
             }
@@ -1284,7 +1353,7 @@ private fun SettingsGroup(
     ) {
         SectionLabel(title, modifier = Modifier.weight(1f))
         Icon(
-            imageVector = if (open) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+            imageVector = if (open) eu.kanade.presentation.components.GlassIcons.ChevronUp else eu.kanade.presentation.components.GlassIcons.ChevronDown,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 8.dp),
@@ -1345,4 +1414,27 @@ private fun formatSeconds(seconds: Double): String {
     val m = (total % 3600) / 60
     val s = total % 60
     return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+}
+
+/** KMK (r134): a glass chip for the preview player (accent when picked, dark glass otherwise) */
+@Composable
+private fun GlassChip(selected: Boolean, onClick: () -> Unit, label: @Composable () -> Unit) {
+    val accent = tachiyomi.presentation.core.components.LocalGlassAccent.current
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .height(32.dp)
+            .clip(CircleShape)
+            .background(if (selected) accent else Color.White.copy(alpha = 0.12f))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp),
+    ) {
+        CompositionLocalProvider(
+            androidx.compose.material3.LocalContentColor provides
+                if (selected) tachiyomi.presentation.core.components.onGlassAccent(accent) else Color.White,
+            androidx.compose.material3.LocalTextStyle provides MaterialTheme.typography.labelLarge,
+        ) {
+            label()
+        }
+    }
 }

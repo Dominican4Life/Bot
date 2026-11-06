@@ -50,6 +50,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import eu.kanade.presentation.browse.components.browseBarHide
+import eu.kanade.presentation.browse.components.rememberBrowseBarHide
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
@@ -302,12 +305,16 @@ data class BrowseSourceScreen(
 
         // KMK -->
         // The whole screen takes on the selected cover's colors, like the details page
+        // KMK (r134): the floating top slides away while scrolling down, back on the way up
+        val barHide = rememberBrowseBarHide(keepShown = filterPanelOpen || settingsPanelOpen || bulkFavoriteState.selectionMode)
         CoverSeedTheme(seedColor = previewState.seedColor) {
         // KMK <--
             Scaffold(
+                modifier = Modifier.nestedScroll(barHide.connection),
                 topBar = {
                     Column(
                         modifier = Modifier
+                            .browseBarHide(barHide)
                             // KMK (r133): see-through with the glass design (the buttons float)
                             .background(
                                 if (eu.kanade.presentation.components.TitleSheet.glass().get()) {
@@ -545,7 +552,8 @@ data class BrowseSourceScreen(
                         }
                         // KMK <--
 
-                        HorizontalDivider()
+                        // KMK (r134): no line under the buttons with glass
+                        if (!eu.kanade.presentation.components.TitleSheet.glass().get()) HorizontalDivider()
                     }
                 },
                 snackbarHost = { SnackbarHost(hostState = snackbarHostState) },

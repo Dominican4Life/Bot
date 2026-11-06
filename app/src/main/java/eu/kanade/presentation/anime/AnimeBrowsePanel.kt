@@ -292,6 +292,7 @@ fun AnimeEpisodePanel(
                             onWebView = { onWebView(anime) },
                             onOpenDetails = { onOpenDetails(anime) },
                             onSearch = { query, _ -> onSearch(query) },
+                            isAnime = true,
                         )
                     }
                 }
@@ -320,9 +321,8 @@ fun AnimeEpisodePanel(
                                     var sizeMenu by remember { mutableStateOf(false) }
                                     IconButton(onClick = { sizeMenu = true }) {
                                         Icon(
-                                            imageVector = Icons.Outlined.AspectRatio,
+                                            imageVector = eu.kanade.presentation.components.GlassIcons.PreviewSize,
                                             contentDescription = stringResource(KMR.strings.title_sheet_size),
-                                            tint = MaterialTheme.colorScheme.primary,
                                         )
                                     }
                                     eu.kanade.presentation.components.TitleSheetSizeMenu(
@@ -364,6 +364,7 @@ fun AnimeEpisodePanel(
                                     onWebView = { onWebView(anime) },
                                     onOpenDetails = { onOpenDetails(anime) },
                                     onSearch = { query, _ -> onSearch(query) },
+                                    isAnime = true,
                                 )
                             }
                         }
@@ -385,9 +386,8 @@ fun AnimeEpisodePanel(
                         Box {
                             IconButton(onClick = { showDisplayMenu = true }) {
                                 Icon(
-                                    imageVector = Icons.Outlined.ViewAgenda,
+                                    imageVector = GlassIcons.LayoutList, // KMK (r134): glass icon
                                     contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
                                 )
                             }
                             DropdownMenu(expanded = showDisplayMenu, onDismissRequest = { showDisplayMenu = false }) {
@@ -448,7 +448,7 @@ fun AnimeEpisodePanel(
                         }
                         IconButton(onClick = onToggleSort) {
                             Icon(
-                                imageVector = Icons.AutoMirrored.Outlined.Sort,
+                                imageVector = GlassIcons.SortDown,
                                 contentDescription = stringResource(MR.strings.action_sort),
                                 tint = MaterialTheme.colorScheme.primary,
                             )
@@ -618,24 +618,24 @@ private fun AnimePanelEpisodeRow(
     val icons: @Composable () -> Unit = {
         IconButton(onClick = onToggleSeen, modifier = Modifier.size(36.dp)) {
             Icon(
-                imageVector = if (episode.seen) Icons.Filled.Visibility else Icons.Outlined.VisibilityOff,
+                imageVector = if (episode.seen) GlassIcons.Read else GlassIcons.ReadOff, // KMK (r134): glass eye
                 contentDescription = stringResource(
                     if (episode.seen) MR.strings.action_mark_as_unread else MR.strings.action_mark_as_read,
                 ),
-                tint = if (episode.seen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = if (episode.seen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.size(20.dp),
             )
         }
         IconButton(onClick = onToggleBookmark, modifier = Modifier.size(36.dp)) {
             Icon(
-                imageVector = if (episode.bookmark) GlassIcons.Bookmark else Icons.Outlined.BookmarkBorder,
+                imageVector = if (episode.bookmark) GlassIcons.Bookmark else GlassIcons.BookmarkOff,
                 contentDescription = stringResource(
                     if (episode.bookmark) MR.strings.action_remove_bookmark else MR.strings.action_bookmark,
                 ),
                 tint = if (episode.bookmark) {
                     MaterialTheme.colorScheme.primary
                 } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
+                    MaterialTheme.colorScheme.onSurface
                 },
                 modifier = Modifier.size(20.dp),
             )

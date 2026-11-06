@@ -152,9 +152,9 @@ fun TitlePagePreview(
             Box {
                 IconButton(
                     onClick = { sizeMenu = true },
-                    modifier = Modifier.padding(end = 4.dp).size(38.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.10f)),
+                    modifier = Modifier.padding(end = 4.dp).size(38.dp),
                 ) {
-                    Icon(eu.kanade.presentation.components.GlassIcons.PreviewSize, contentDescription = stringResource(KMR.strings.title_sheet_size), modifier = Modifier.size(20.dp))
+                    Icon(eu.kanade.presentation.components.GlassIcons.PreviewSize, contentDescription = stringResource(KMR.strings.title_sheet_size), modifier = Modifier.size(22.dp))
                 }
                 TitleSheetSizeMenu(
                     expanded = sizeMenu,

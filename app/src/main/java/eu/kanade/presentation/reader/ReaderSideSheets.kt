@@ -78,6 +78,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -400,7 +402,7 @@ fun ReaderGlassSheet(
                         if (sideMode) {
                             IconButton(onClick = { leftPref.set(!onLeft) }) {
                                 Icon(
-                                    Icons.Outlined.SwapHoriz,
+                                    eu.kanade.presentation.components.GlassIcons.SwapSides,
                                     contentDescription = null,
                                     tint = eu.kanade.presentation.reader.appbars.ReaderGlass.content,
                                 )
@@ -574,6 +576,8 @@ fun SlidingSidePanel(
     movable: Boolean = false,
     tuckKey: Any? = null,
     tuckCover: (@Composable () -> Unit)? = null,
+    /** KMK (r134): extra dark tint over the glass (0..1) so text reads over busy covers (Filter / Source Settings) */
+    glassDim: Float = 0f,
     content: @Composable () -> Unit,
 ) {
     val canMove = glass && movable
@@ -631,7 +635,7 @@ fun SlidingSidePanel(
             ) {
                 IconButton(onClick = { sidePref.set(!start) }, modifier = Modifier.size(30.dp)) {
                     Icon(
-                        imageVector = Icons.Outlined.SwapHoriz,
+                        imageVector = eu.kanade.presentation.components.GlassIcons.SwapSides,
                         contentDescription = null,
                         tint = Color.White.copy(alpha = 0.85f),
                         modifier = Modifier.size(18.dp),
@@ -647,7 +651,7 @@ fun SlidingSidePanel(
                 }
                 IconButton(onClick = { tucked = true }, modifier = Modifier.size(30.dp)) {
                     Icon(
-                        imageVector = if (start) Icons.Outlined.ChevronLeft else Icons.Outlined.ChevronRight,
+                        imageVector = if (start) eu.kanade.presentation.components.GlassIcons.ChevronLeft else eu.kanade.presentation.components.GlassIcons.ChevronRight,
                         contentDescription = null,
                         tint = Color.White.copy(alpha = 0.85f),
                         modifier = Modifier.size(20.dp),
@@ -723,7 +727,7 @@ fun SlidingSidePanel(
                     ) { tuckCover() }
                 }
                 Icon(
-                    imageVector = if (start) Icons.Outlined.ChevronRight else Icons.Outlined.ChevronLeft,
+                    imageVector = if (start) eu.kanade.presentation.components.GlassIcons.ChevronRight else eu.kanade.presentation.components.GlassIcons.ChevronLeft,
                     contentDescription = null,
                     tint = Color.White,
                 )
@@ -764,6 +768,18 @@ fun SlidingSidePanel(
                             Modifier
                                 .shadow(14.dp, glassShape)
                                 .liquidGlass(glassShape)
+                                .then(
+                                    if (glassDim > 0f) {
+                                        Modifier.drawBehind {
+                                            drawOutline(
+                                                glassShape.createOutline(size, layoutDirection, this),
+                                                Color(0xFF0E0F13).copy(alpha = glassDim),
+                                            )
+                                        }
+                                    } else {
+                                        Modifier
+                                    },
+                                )
                         } else {
                             Modifier
                         },

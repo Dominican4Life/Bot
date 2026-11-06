@@ -493,7 +493,16 @@ fun TitleSheetSizeMenu(
     kind: String,
     showShape: Boolean,
 ) {
-    DropdownMenu(expanded = expanded, onDismissRequest = onDismissRequest) {
+    // KMK (r134): the glass menu look (rounded, lit rim, dark glass), wider than the 196 dp glass DropdownMenu
+    DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismissRequest,
+        shape = GlassMenuStyle.shape,
+        containerColor = GlassMenuStyle.container(),
+        tonalElevation = 0.dp,
+        shadowElevation = 18.dp,
+        border = GlassMenuStyle.rim(),
+    ) {
         val columnsPref = remember(kind) { TitleSheet.columns(kind) }
         val columns by columnsPref.collectAsState()
         val shapePref = remember(kind) { TitleSheet.shape(kind) }
@@ -501,7 +510,7 @@ fun TitleSheetSizeMenu(
         val openAtPref = remember { TitleSheet.openAt() }
         val openAt by openAtPref.collectAsState()
         // KMK (r133): glass version: stepped glass slider, glass switches with pictures for the shape
-        Column(modifier = Modifier.width(320.dp).padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Column(modifier = Modifier.width(340.dp).padding(horizontal = 16.dp, vertical = 8.dp)) {
             Text(
                 text = stringResource(KMR.strings.title_sheet_size),
                 style = MaterialTheme.typography.titleMedium,

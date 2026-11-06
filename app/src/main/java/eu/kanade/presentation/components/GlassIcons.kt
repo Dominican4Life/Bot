@@ -499,24 +499,152 @@ object GlassIcons {
 
     val ReadOff: ImageVector by lazy {
         icon("ReadOff") {
-            fill("M2.5 12c2.6-4.4 5.8-6.6 9.5-6.6s6.9 2.2 9.5 6.6c-2.6 4.4-5.8 6.6-9.5 6.6S5.1 16.4 2.5 12z", alpha = 0.2f)
-            fill("M8.4 12a3.6 3.6 0 1 0 7.2 0a3.6 3.6 0 1 0 -7.2 0z", alpha = 0.55f)
+            fill("M2.5 12c2.6-4.4 5.8-6.6 9.5-6.6s6.9 2.2 9.5 6.6c-2.6 4.4-5.8 6.6-9.5 6.6S5.1 16.4 2.5 12z", alpha = 0.3f)
+            line("M2.5 12c2.6-4.4 5.8-6.6 9.5-6.6s6.9 2.2 9.5 6.6c-2.6 4.4-5.8 6.6-9.5 6.6S5.1 16.4 2.5 12z", width = 1.4f, alpha = 0.7f)
+            fill("M8.4 12a3.6 3.6 0 1 0 7.2 0a3.6 3.6 0 1 0 -7.2 0z", alpha = 0.75f)
         }
     }
 
     val BookmarkOff: ImageVector by lazy {
         icon("BookmarkOff") {
-            fill("M6.5 3.5h11a1 1 0 0 1 1 1v16.2l-6.5-4.2-6.5 4.2V4.5a1 1 0 0 1 1-1z", alpha = 0.2f)
-            line("M6.5 3.5h11a1 1 0 0 1 1 1v16.2l-6.5-4.2-6.5 4.2V4.5a1 1 0 0 1 1-1z", width = 1.6f, alpha = 0.6f)
+            fill("M6.5 3.5h11a1 1 0 0 1 1 1v16.2l-6.5-4.2-6.5 4.2V4.5a1 1 0 0 1 1-1z", alpha = 0.3f)
+            line("M6.5 3.5h11a1 1 0 0 1 1 1v16.2l-6.5-4.2-6.5 4.2V4.5a1 1 0 0 1 1-1z", width = 1.7f, alpha = 0.85f)
         }
     }
 
     val PreviewSize: ImageVector by lazy {
         icon("PreviewSize") {
-            fill("M4.6 4h4.3a1.6 1.6 0 0 1 1.6 1.6v3.8a1.6 1.6 0 0 1 -1.6 1.6h-4.3a1.6 1.6 0 0 1 -1.6 -1.6v-3.8a1.6 1.6 0 0 1 1.6 -1.6z")
-            fill("M15.1 4h4.3a1.6 1.6 0 0 1 1.6 1.6v3.8a1.6 1.6 0 0 1 -1.6 1.6h-4.3a1.6 1.6 0 0 1 -1.6 -1.6v-3.8a1.6 1.6 0 0 1 1.6 -1.6z", alpha = 0.5f)
-            fill("M4.6 13.5h4.3a1.6 1.6 0 0 1 1.6 1.6v3.8a1.6 1.6 0 0 1 -1.6 1.6h-4.3a1.6 1.6 0 0 1 -1.6 -1.6v-3.8a1.6 1.6 0 0 1 1.6 -1.6z", alpha = 0.5f)
-            fill("M15.1 13.5h4.3a1.6 1.6 0 0 1 1.6 1.6v3.8a1.6 1.6 0 0 1 -1.6 1.6h-4.3a1.6 1.6 0 0 1 -1.6 -1.6v-3.8a1.6 1.6 0 0 1 1.6 -1.6z", alpha = 0.3f)
+            line("M5.2 4h13.6a3.2 3.2 0 0 1 3.2 3.2v9.6a3.2 3.2 0 0 1 -3.2 3.2h-13.6a3.2 3.2 0 0 1 -3.2 -3.2v-9.6a3.2 3.2 0 0 1 3.2 -3.2z", width = 1.8f)
+            line("M6 11V8.5h3.5M18 13v2.5h-3.5", width = 2.4f)
+        }
+    }
+
+    // KMK (r134): the preview player's controls
+    val Pause: ImageVector by lazy {
+        icon("Pause") {
+            fill("M7.5 5h2.2a1.3 1.3 0 0 1 1.3 1.3v11.4a1.3 1.3 0 0 1 -1.3 1.3h-2.2a1.3 1.3 0 0 1 -1.3 -1.3v-11.4a1.3 1.3 0 0 1 1.3 -1.3z")
+            fill("M14.3 5h2.2a1.3 1.3 0 0 1 1.3 1.3v11.4a1.3 1.3 0 0 1 -1.3 1.3h-2.2a1.3 1.3 0 0 1 -1.3 -1.3v-11.4a1.3 1.3 0 0 1 1.3 -1.3z")
+        }
+    }
+
+    val SkipNext: ImageVector by lazy {
+        icon("SkipNext") {
+            fill("M6.8 5.8c-.8-.5-1.8.1-1.8 1v10.4c0 .9 1 1.5 1.8 1l7.9-5.2c.7-.4.7-1.4 0-1.9z")
+            fill("M17.2 5.5h1.3a1 1 0 0 1 1 1v11a1 1 0 0 1 -1 1h-1.3a1 1 0 0 1 -1 -1v-11a1 1 0 0 1 1 -1z", alpha = 0.6f)
+        }
+    }
+
+    val SkipPrevious: ImageVector by lazy {
+        icon("SkipPrevious") {
+            fill("M17.2 5.8c.8-.5 1.8.1 1.8 1v10.4c0 .9-1 1.5-1.8 1l-7.9-5.2c-.7-.4-.7-1.4 0-1.9z")
+            fill("M5.5 5.5h1.3a1 1 0 0 1 1 1v11a1 1 0 0 1 -1 1h-1.3a1 1 0 0 1 -1 -1v-11a1 1 0 0 1 1 -1z", alpha = 0.6f)
+        }
+    }
+
+    val Back10: ImageVector by lazy {
+        icon("Back10") {
+            line("M6 7.5A8 8 0 1 1 4 12.5", width = 1.9f, alpha = 0.55f)
+            line("M6 3.8v3.7h3.7", width = 1.9f)
+            line("M9.6 10.3l1.2-.8v5.6", width = 1.7f)
+            line("M15 9.5a1.6 2.8 0 1 1 0 5.6a1.6 2.8 0 1 1 0 -5.6z", width = 1.7f)
+        }
+    }
+
+    val Forward10: ImageVector by lazy {
+        icon("Forward10") {
+            line("M18 7.5A8 8 0 1 0 20 12.5", width = 1.9f, alpha = 0.55f)
+            line("M18 3.8v3.7h-3.7", width = 1.9f)
+            line("M8.6 10.3l1.2-.8v5.6", width = 1.7f)
+            line("M14 9.5a1.6 2.8 0 1 1 0 5.6a1.6 2.8 0 1 1 0 -5.6z", width = 1.7f)
+        }
+    }
+
+    val Close: ImageVector by lazy {
+        icon("Close") {
+            line("M6.5 6.5l11 11M17.5 6.5l-11 11", width = 2.2f)
+        }
+    }
+
+    val Lock: ImageVector by lazy {
+        icon("Lock") {
+            line("M8 10.5V8a4 4 0 0 1 8 0v2.5", width = 2f)
+            fill("M6.8 10.5h10.4a1.8 1.8 0 0 1 1.8 1.8v6.4a1.8 1.8 0 0 1 -1.8 1.8h-10.4a1.8 1.8 0 0 1 -1.8 -1.8v-6.4a1.8 1.8 0 0 1 1.8 -1.8z")
+        }
+    }
+
+    val LockOpen: ImageVector by lazy {
+        icon("LockOpen") {
+            line("M8 10.5V8a4 4 0 0 1 7.6-1.7", width = 2f, alpha = 0.6f)
+            fill("M6.8 10.5h10.4a1.8 1.8 0 0 1 1.8 1.8v6.4a1.8 1.8 0 0 1 -1.8 1.8h-10.4a1.8 1.8 0 0 1 -1.8 -1.8v-6.4a1.8 1.8 0 0 1 1.8 -1.8z", alpha = 0.4f)
+        }
+    }
+
+    val Tune: ImageVector by lazy {
+        icon("Tune") {
+            line("M4 7h16M4 12h16M4 17h16", width = 1.6f, alpha = 0.45f)
+            fill("M9 7m-2.3 0a2.3 2.3 0 1 0 4.6 0a2.3 2.3 0 1 0 -4.6 0")
+            fill("M15.5 12m-2.3 0a2.3 2.3 0 1 0 4.6 0a2.3 2.3 0 1 0 -4.6 0")
+            fill("M7.5 17m-2.3 0a2.3 2.3 0 1 0 4.6 0a2.3 2.3 0 1 0 -4.6 0")
+        }
+    }
+
+    val Quality: ImageVector by lazy {
+        icon("Quality") {
+            fill("M5.2 5h13.6a3.2 3.2 0 0 1 3.2 3.2v7.6a3.2 3.2 0 0 1 -3.2 3.2h-13.6a3.2 3.2 0 0 1 -3.2 -3.2v-7.6a3.2 3.2 0 0 1 3.2 -3.2z", alpha = 0.38f)
+            line("M6.5 9v6M6.5 12h3.6M10.1 9v6", width = 1.8f)
+            line("M13.3 9h1.6a3 3 0 0 1 0 6h-1.6z", width = 1.8f)
+        }
+    }
+
+    val Fullscreen: ImageVector by lazy {
+        icon("Fullscreen") {
+            line("M4 9V5.5A1.5 1.5 0 0 1 5.5 4H9M15 4h3.5A1.5 1.5 0 0 1 20 5.5V9M20 15v3.5a1.5 1.5 0 0 1 -1.5 1.5H15M9 20H5.5A1.5 1.5 0 0 1 4 18.5V15", width = 2.1f)
+        }
+    }
+
+    val VolumeOn: ImageVector by lazy {
+        icon("VolumeOn") {
+            fill("M4.5 9h3l4.3-3.6c.7-.6 1.7-.1 1.7.8v11.6c0 .9-1 1.4-1.7.8L7.5 15h-3a1 1 0 0 1 -1 -1v-4a1 1 0 0 1 1 -1z")
+            line("M16 9.2a4 4 0 0 1 0 5.6M18.5 6.8a7.4 7.4 0 0 1 0 10.4", width = 1.8f, alpha = 0.6f)
+        }
+    }
+
+    val VolumeOff: ImageVector by lazy {
+        icon("VolumeOff") {
+            fill("M4.5 9h3l4.3-3.6c.7-.6 1.7-.1 1.7.8v11.6c0 .9-1 1.4-1.7.8L7.5 15h-3a1 1 0 0 1 -1 -1v-4a1 1 0 0 1 1 -1z", alpha = 0.55f)
+            line("M16.5 9.5l5 5M21.5 9.5l-5 5", width = 2f)
+        }
+    }
+
+    val ChevronUp: ImageVector by lazy {
+        icon("ChevronUp") {
+            line("M6 14.5l6-6 6 6", width = 2.2f)
+        }
+    }
+
+    val DragHandle: ImageVector by lazy {
+        icon("DragHandle") {
+            fill("M9 6m-1.5 0a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0M15 6m-1.5 0a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0M9 12m-1.5 0a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0M15 12m-1.5 0a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0M9 18m-1.5 0a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0M15 18m-1.5 0a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0", alpha = 0.7f)
+        }
+    }
+
+    // KMK (r134): panel header buttons (swap sides, tuck away)
+    val SwapSides: ImageVector by lazy {
+        icon("SwapSides") {
+            line("M4 8.5h14.5M15 5l3.5 3.5L15 12", width = 2.1f)
+            line("M20 15.5H5.5M9 12l-3.5 3.5L9 19", width = 2.1f, alpha = 0.55f)
+        }
+    }
+
+    val ChevronLeft: ImageVector by lazy {
+        icon("ChevronLeft") {
+            line("M14.5 6l-6 6 6 6", width = 2.2f)
+        }
+    }
+
+    val ChevronRight: ImageVector by lazy {
+        icon("ChevronRight") {
+            line("M9.5 6l6 6-6 6", width = 2.2f)
         }
     }
 

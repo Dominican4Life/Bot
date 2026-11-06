@@ -58,6 +58,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import eu.kanade.presentation.browse.components.browseBarHide
+import eu.kanade.presentation.browse.components.rememberBrowseBarHide
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
@@ -204,6 +207,19 @@ class AnimeSourceScreen(
         val previewPanels = if (panelsAllowed) savedPreviewPanels else SourcePreferences.PREVIEW_PANELS_NONE
 
         val openWebView: (String, String) -> Unit = { url, title -> navigator.push(WebViewScreen(url, title)) }
+        // KMK (r134): back from WebView opened while the list was stuck: load it again
+        val reloadOnReturn = remember { mutableStateOf(false) }
+        val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+        androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+            val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME && reloadOnReturn.value) {
+                    reloadOnReturn.value = false
+                    screenModel.reloadListing()
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        }
         val playEpisode: (eu.kanade.tachiyomi.data.anime.Episode) -> Unit = { episode ->
             if (playerPreferences.alwaysUseExternalPlayer().get()) {
                 navigator.push(AnimeScreen(episode.animeId))
@@ -212,12 +228,23 @@ class AnimeSourceScreen(
             }
         }
 
+        // KMK (r134): the floating top slides away while scrolling down, back on the way up
+        val barHide = rememberBrowseBarHide(keepShown = showFilters || showSettings || state.selectionMode)
         CoverSeedTheme(seedColor = preview.seedColor) {
             Scaffold(
+                modifier = Modifier.nestedScroll(barHide.connection),
                 topBar = {
                     Column(
                         modifier = Modifier
-                            .background(MaterialTheme.colorScheme.surface)
+                            .browseBarHide(barHide)
+                            // KMK (r134): see-through with glass, like manga sources (the buttons float)
+                            .background(
+                                if (eu.kanade.presentation.components.TitleSheet.glass().get()) {
+                                    androidx.compose.ui.graphics.Color.Transparent
+                                } else {
+                                    MaterialTheme.colorScheme.surface
+                                },
+                            )
                             .pointerInput(Unit) {},
                     ) {
                         // KMK: picking several titles to add at once
@@ -346,7 +373,8 @@ class AnimeSourceScreen(
                             },
                             onSavedSearch = openSavedSearch,
                         )
-                        HorizontalDivider()
+                        // KMK (r134): no line under the buttons with glass
+                        if (!eu.kanade.presentation.components.TitleSheet.glass().get()) HorizontalDivider()
                     }
                 },
             ) { paddingValues ->
@@ -460,7 +488,16 @@ class AnimeSourceScreen(
                                     },
                                     contentPadding = paddingValues,
                                 )
-                            state.items.isEmpty() && state.isLoading -> LoadingScreen(Modifier.padding(paddingValues))
+                            // KMK (r134): after a while without anything, offer WebView (you look / solve it there)
+                            state.items.isEmpty() && state.isLoading -> eu.kanade.presentation.browse.SlowLoadingScreen(
+                                contentPadding = paddingValues,
+                                onWebViewClick = {
+                                    reloadOnReturn.value = true
+                                    (source as? AnimeHttpSource)?.let { openWebView(it.baseUrl, it.name) }
+                                        ?: (source as? eu.kanade.tachiyomi.jssource.JsAnimeSource)
+                                            ?.let { openWebView(it.baseUrl, it.name) }
+                                },
+                            )
                             state.items.isEmpty() && state.error != null -> ErrorWithRetry(
                                 message = state.error!!,
                                 onRetry = screenModel::retry,

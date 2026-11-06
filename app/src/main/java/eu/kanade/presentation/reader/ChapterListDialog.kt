@@ -18,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.foundation.layout.size
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -181,7 +182,7 @@ fun ChapterListContent(
                 },
                 trailing = if (onToggleRead != null) {
                     {
-                        IconButton(onClick = { onToggleRead(chapterItem.chapter) }) {
+                        IconButton(onClick = { onToggleRead(chapterItem.chapter) }, modifier = Modifier.size(40.dp)) {
                             Icon(
                                 // KMK (r133): the glass eye, lit in the cover colour when read
                                 imageVector = if (chapterItem.chapter.read) GlassIcons.Read else GlassIcons.ReadOff,
@@ -191,11 +192,13 @@ fun ChapterListContent(
                                 tint = if (chapterItem.chapter.read) {
                                     MaterialTheme.colorScheme.primary
                                 } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                    // KMK (r134): brighter when off so it can be seen
+                                    MaterialTheme.colorScheme.onSurface
                                 },
+                                modifier = Modifier.size(22.dp),
                             )
                         }
-                        IconButton(onClick = { onBookmark(chapterItem.chapter) }) {
+                        IconButton(onClick = { onBookmark(chapterItem.chapter) }, modifier = Modifier.size(40.dp)) {
                             Icon(
                                 imageVector = if (chapterItem.chapter.bookmark) {
                                     GlassIcons.Bookmark
@@ -206,8 +209,9 @@ fun ChapterListContent(
                                 tint = if (chapterItem.chapter.bookmark) {
                                     MaterialTheme.colorScheme.primary
                                 } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                    MaterialTheme.colorScheme.onSurface
                                 },
+                                modifier = Modifier.size(22.dp),
                             )
                         }
                     }

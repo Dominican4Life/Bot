@@ -711,6 +711,8 @@ private fun AnimeToolbar(
         titleAlphaProvider = titleAlphaProvider,
         backgroundAlphaProvider = backgroundAlphaProvider,
         onPaletteScreenClick = {},
+        // KMK (r134): glass like the manga page: no black bar or title, the buttons float on glass capsules
+        glass = remember { TitleSheet.glass().get() },
     )
 }
 
@@ -840,7 +842,7 @@ private fun AnimeEpisodeSettingsDialog(
                 }
                 2 -> {
                     RadioItem(
-                        label = stringResource(MR.strings.show_title),
+                        label = stringResource(KMR.strings.anime_show_source_title),
                         selected = !anime.displayNumber,
                         onClick = { onDisplayNumberChanged(false) },
                     )
@@ -932,7 +934,7 @@ private fun StartFab(state: AnimeScreenModel.State, expanded: Boolean, onPlay: (
     val next = state.nextEpisode
     SmallExtendedFloatingActionButton(
         text = { Text(stringResource(if (state.hasStarted) MR.strings.action_resume else MR.strings.action_start)) },
-        icon = { Icon(imageVector = Icons.Filled.PlayArrow, contentDescription = null) },
+        icon = { Icon(imageVector = GlassIcons.Play, contentDescription = null) },
         onClick = { next?.let(onPlay) },
         expanded = expanded,
         modifier = Modifier.animateFloatingActionButton(visible = next != null, alignment = Alignment.BottomEnd),
@@ -1787,6 +1789,8 @@ private fun EpisodeItem(
             swipeStartAction = swipeStart,
             swipeEndAction = swipeEnd,
             onSwipe = onSwipe,
+            onToggleSeen = onToggleSeen,
+            onToggleBookmark = onToggleBookmark,
         )
         return
     }
@@ -1833,6 +1837,9 @@ private fun RichEpisodeItem(
     swipeStartAction: LibraryPreferences.ChapterSwipeAction,
     swipeEndAction: LibraryPreferences.ChapterSwipeAction,
     onSwipe: (LibraryPreferences.ChapterSwipeAction) -> Unit,
+    // KMK (r134): the glass eye and bookmark buttons beside the download one
+    onToggleSeen: (() -> Unit)? = null,
+    onToggleBookmark: (() -> Unit)? = null,
 ) {
     val alpha = if (seen) tachiyomi.presentation.core.components.material.DISABLED_ALPHA else 1f
     var expanded by remember { mutableStateOf(false) }
@@ -1904,7 +1911,7 @@ private fun RichEpisodeItem(
                     .fillMaxWidth()
                     .padding(top = 4.dp),
             ) {
-                if (bookmark) {
+                if (bookmark && onToggleBookmark == null) {
                     Icon(
                         imageVector = GlassIcons.Bookmark,
                         contentDescription = null,
@@ -1922,6 +1929,26 @@ private fun RichEpisodeItem(
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha),
                     modifier = Modifier.weight(1f),
                 )
+                if (onToggleSeen != null) {
+                    androidx.compose.material3.IconButton(onClick = onToggleSeen, modifier = Modifier.size(36.dp)) {
+                        Icon(
+                            imageVector = if (seen) GlassIcons.Read else GlassIcons.ReadOff,
+                            contentDescription = null,
+                            tint = if (seen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                }
+                if (onToggleBookmark != null) {
+                    androidx.compose.material3.IconButton(onClick = onToggleBookmark, modifier = Modifier.size(36.dp)) {
+                        Icon(
+                            imageVector = if (bookmark) GlassIcons.Bookmark else GlassIcons.BookmarkOff,
+                            contentDescription = null,
+                            tint = if (bookmark) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                }
                 eu.kanade.presentation.manga.components.ChapterDownloadIndicator(
                     enabled = true,
                     downloadStateProvider = { downloadState },
@@ -2031,7 +2058,7 @@ private fun EpisodeOptionsFab(actions: AnimeActions) {
     val episode = actions.selectedEpisodes.singleOrNull()
     SmallExtendedFloatingActionButton(
         text = { Text(stringResource(KMR.strings.anime_episode_options)) },
-        icon = { Icon(imageVector = Icons.Outlined.Tune, contentDescription = null) },
+        icon = { Icon(imageVector = GlassIcons.Tune, contentDescription = null) },
         onClick = { episode?.let(actions.onEpisodeOptions) },
         expanded = true,
         modifier = Modifier.animateFloatingActionButton(visible = episode != null, alignment = Alignment.BottomEnd),
@@ -2440,7 +2467,7 @@ private fun AnimeSheetHeader(
                 var sizeMenu by remember { mutableStateOf(false) }
                 androidx.compose.material3.IconButton(onClick = { sizeMenu = true }) {
                     Icon(
-                        Icons.Outlined.AspectRatio,
+                        eu.kanade.presentation.components.GlassIcons.PreviewSize,
                         contentDescription = stringResource(KMR.strings.title_sheet_size),
                     )
                 }
@@ -2456,7 +2483,7 @@ private fun AnimeSheetHeader(
                 var displayMenu by remember { mutableStateOf(false) }
                 androidx.compose.material3.IconButton(onClick = { displayMenu = true }) {
                     Icon(
-                        Icons.Outlined.ViewAgenda,
+                        GlassIcons.LayoutList,
                         contentDescription = stringResource(MR.strings.action_display),
                     )
                 }

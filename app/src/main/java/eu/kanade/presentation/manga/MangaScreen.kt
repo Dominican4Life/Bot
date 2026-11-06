@@ -738,7 +738,7 @@ private fun MangaScreenSmallImpl(
             ) {
                 if (expandRelatedMangas) {
                     if (state.relatedMangasSorted?.isNotEmpty() != false) {
-                        item { HorizontalDivider() }
+                        if (!glassSuggestions) item { HorizontalDivider() }
                         item(
                             key = MangaScreenItem.RELATED_MANGAS,
                             contentType = MangaScreenItem.RELATED_MANGAS,
@@ -760,7 +760,7 @@ private fun MangaScreenSmallImpl(
                                 )
                             }
                         }
-                        item { HorizontalDivider() }
+                        if (!glassSuggestions) item { HorizontalDivider() }
                     }
                 } else if (!showRelatedMangasInOverflow) {
                     item(
@@ -1338,7 +1338,7 @@ private fun MangaScreenLargeImpl(
                                                 )
                                             }
                                         }
-                                        item { HorizontalDivider() }
+                                        if (!glassSuggestions) item { HorizontalDivider() }
                                     }
                                 } else if (!showRelatedMangasInOverflow) {
                                     item(

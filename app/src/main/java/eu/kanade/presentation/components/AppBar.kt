@@ -144,6 +144,8 @@ fun AppBar(
     goHome: (() -> Boolean?)? = null,
     // KMK (r129): the up / home buttons and the actions sit on floating glass capsules (the phone title page)
     glassButtons: Boolean = false,
+    // KMK (r134): the glass tint of those capsules (source browsing uses dark frosted glass); null = the theme's
+    glassBase: Color? = null,
     // KMK <--
 
     scrollBehavior: TopAppBarScrollBehavior? = null,
@@ -167,7 +169,7 @@ fun AppBar(
                             Modifier
                                 .padding(start = 4.dp)
                                 .clip(androidx.compose.foundation.shape.CircleShape)
-                                .liquidGlass(androidx.compose.foundation.shape.CircleShape, MaterialTheme.colorScheme.surfaceContainerHigh)
+                                .liquidGlass(androidx.compose.foundation.shape.CircleShape, glassBase ?: MaterialTheme.colorScheme.surfaceContainerHigh)
                         } else {
                             Modifier
                         },
@@ -196,7 +198,7 @@ fun AppBar(
                         modifier = Modifier
                             .padding(end = 8.dp)
                             .clip(androidx.compose.foundation.shape.CircleShape)
-                            .liquidGlass(androidx.compose.foundation.shape.CircleShape, MaterialTheme.colorScheme.surfaceContainerHigh),
+                            .liquidGlass(androidx.compose.foundation.shape.CircleShape, glassBase ?: MaterialTheme.colorScheme.surfaceContainerHigh),
                         content = actions,
                     )
                 } else {
@@ -398,12 +400,14 @@ fun SearchToolbar(
     // KMK (r133): floating glass buttons and a see-through bar (source browsing)
     glassButtons: Boolean = false,
     backgroundColor: Color? = null,
+    glassBase: Color? = null,
 ) {
     val focusRequester = remember { FocusRequester() }
 
     AppBar(
         modifier = modifier,
         glassButtons = glassButtons && searchQuery == null,
+        glassBase = glassBase,
         backgroundColor = backgroundColor,
         titleContent = {
             if (searchQuery == null) return@AppBar titleContent()
