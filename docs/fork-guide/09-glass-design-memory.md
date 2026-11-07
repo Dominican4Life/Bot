@@ -62,7 +62,7 @@ Rules that every icon follows:
 | Catalog tabs (Family A) | TabTrending, TabHot, TabTop, TabCalendar, TabNew, TabRecent, TabFavourite, TabPeople, TabFeatured, TabSubtitles, TabMovie |
 | Preview player (r134) | Pause, SkipNext / SkipPrevious, Back10 / Forward10, Close, Lock / LockOpen, Tune, Quality ("HD" in a faint frame), Fullscreen, VolumeOn / VolumeOff, DragHandle |
 | Navigation bits | ChevronUp / Down / Left / Right, SwapSides, ArrowBack (mirror of Arrow), Home (HC, r137) |
-| r138 | OpenWith (SH3: faint box, solid arrow up; Open in Another Player) |
+| r143 | WatchOnCar (F1: Material Cast with its frame swapped for the outlined Material car, cut at the bottom-left for the arcs; matches the outlined Cast button). OpenWith (r138) removed. |
 | r137 | SortNewest / SortOldest (SF: rounded sort bars with the direction arrow on the left), Finished (double tick) |
 | Drawables | AniList (N9: the A solid and the L faint; faint with a slash when off), incognito (G1) |
 

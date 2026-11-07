@@ -1252,6 +1252,17 @@ Owner's r136 list. Mockups: canvas boards "r136 phone sheets" and "r136 item 8".
   - The SH3 button opens `OpenWithMenu` (glass, two rows with hints) on such episodes, in the full player (`PlayerButtons`), the floating window and the inline preview; otherwise it hands off at once.
 - Plain video plays from the start; skipping ahead mostly can't work (no file length).
 
+## Changes in r143 (7 November 2026)
+
+- **Watch on Car replaces Open in Another Player (Phone + Tablet; shows only where the Android Auto video player is installed).**
+  - Removed everything r138–r142 added for the hand-off: the SH3 button and `GlassIcons.OpenWith`, `OpenWithMenu`, `ExternalPlayer.handOff` / `canSendPlain`, and the relay's plain-video mode (`wrapContinuous` / `serveContinuous`).
+  - New `GlassIcons.WatchOnCar` (F1): built like Material's Cast icon. The outlined Material car sits where Cast's frame is, its bottom-left is cut away by a circular clip, and Cast's three arcs sit in the gap.
+  - `WatchOnCar` (ui/anime) finds the player's share screen by its class name (`…ShareFromWatchLocalAppActivity`), because AA Store gives the app a random package name; the manifest has `<queries>` for SEND `video/*` and `text/plain`. It sends an explicit `ACTION_SEND`:
+    - downloads: `EXTRA_STREAM` with a content:// link (with read grant and ClipData);
+    - streams: `EXTRA_TEXT` with a link. HLS goes through `HlsRelay.wrap`; a code editor source is re-wrapped from `HlsRelay.original`. DASH goes as itself, and plain files go through `wrapFile`.
+  - Full player: `PlayerButton.WatchOnCar` → `PlayerActivity.watchOnCar()`. `addWatchOnCarButton()` renames a saved `OpenWith` once, or adds it before ⋮. The button is also in the floating window's and the inline preview's top row.
+- **Relay links end in `.m3u8` / `.ts` / `.video.ext`** in the path (`/p/<id>/list.m3u8?u=…`), because ExoPlayer-based players guess the type from the path only. `HlsRelay.original` accepts both forms.
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
