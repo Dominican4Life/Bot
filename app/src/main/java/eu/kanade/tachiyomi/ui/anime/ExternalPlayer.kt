@@ -97,7 +97,7 @@ object ExternalPlayer {
      * app's file provider). KMK (r140): streams go through the app's local relay ([HlsRelay]), which fetches them
      * with the source's headers and cookies, so any player can play them without knowing about either; the relay
      * keeps working while this app runs in the background. A DASH manifest goes as its own link. Types are lower
-     * case ("video/*" for streams), since Android matches them letter for letter. Null when there is nothing another
+     * case (any video type for streams), since Android matches them letter for letter. Null when there is nothing another
      * app could open (an mpv "fd://" handle or no link yet). Call from a coroutine (the relay opens on IO).
      */
     suspend fun handOff(
