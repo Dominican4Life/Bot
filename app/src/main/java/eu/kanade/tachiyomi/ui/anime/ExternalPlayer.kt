@@ -107,12 +107,24 @@ object ExternalPlayer {
         startPositionMs: Long,
         sourceHeaders: Headers?,
         chooserTitle: String,
+        // KMK (r142): the HLS stream as one plain video stream, for players that can't read HLS
+        plain: Boolean = false,
     ): Intent? {
         val raw = video.videoUrl
         if (raw.isBlank() || raw == "null" || raw.startsWith("fd://")) return null
         val headers = video.headers ?: sourceHeaders ?: Headers.Builder().build()
         val remote = raw.startsWith("http://") || raw.startsWith("https://")
         val uri = when {
+            plain && canSendPlain(video) -> tachiyomi.core.common.util.lang.withIOContext {
+                // A code editor source's video is already a relay address: its original playlist is used
+                val source = if (isAppOnly(raw)) {
+                    eu.kanade.tachiyomi.jssource.HlsRelay.original(raw).takeUnless(::isAppOnly)
+                        ?: raw.toUri().getQueryParameter("u")
+                } else {
+                    raw
+                }
+                source?.let { runCatching { eu.kanade.tachiyomi.jssource.HlsRelay.wrapContinuous(it, headers) }.getOrNull() }
+            }?.toUri() ?: return null
             !remote -> videoUri(context, video)
             isAppOnly(raw) -> raw.toUri()
             video.type == eu.kanade.tachiyomi.animesource.model.VideoType.DASH ||
@@ -137,7 +149,8 @@ object ExternalPlayer {
         }
         val intent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndTypeAndNormalize(uri, type)
-            addCommonExtras(title, startPositionMs)
+            // A plain stream has no length to jump in, so it starts from the beginning
+            addCommonExtras(title, if (plain) 0L else startPositionMs)
             // Through the relay the headers are already used; a DASH link still carries them for players that read them
             if (!local && !isAppOnly(uri.toString())) addHeaders(headers.takeIf { it.size > 0 }, supported = false)
             addSubtitles(video)
@@ -145,6 +158,15 @@ object ExternalPlayer {
         return Intent.createChooser(intent, chooserTitle).apply {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
+    }
+
+    /** KMK (r142): a streamed HLS video (not a download, not DASH), which can also go as one plain video stream */
+    fun canSendPlain(video: Video): Boolean {
+        val raw = video.videoUrl
+        if (!raw.startsWith("http://") && !raw.startsWith("https://")) return false
+        if (raw.substringBefore('?').lowercase().endsWith(".mpd")) return false
+        if (isAppOnly(raw)) return raw.contains("/p/") // the relay's playlist addresses
+        return video.type == eu.kanade.tachiyomi.animesource.model.VideoType.HLS || raw.contains("m3u8", ignoreCase = true)
     }
 
     /** KMK (r138): a link that only works inside this app (its local relay) */

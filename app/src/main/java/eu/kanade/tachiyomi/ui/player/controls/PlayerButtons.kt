@@ -40,6 +40,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -316,10 +318,26 @@ fun RenderPlayerButton(
         // KMK (r138): open in another app
         PlayerButton.OpenWith -> {
             val activity = androidx.compose.ui.platform.LocalContext.current as? eu.kanade.tachiyomi.ui.player.PlayerActivity
-            ControlsButton(
-                icon = button.getIcon(),
-                onClick = { activity?.openInAnotherApp() },
-            )
+            val video by viewModel.currentVideo.collectAsState()
+            var menu by remember { mutableStateOf(false) }
+            // KMK (r142): a streamed HLS episode asks first: normal, or as one plain video for simple players
+            androidx.compose.foundation.layout.Box {
+                ControlsButton(
+                    icon = button.getIcon(),
+                    onClick = {
+                        if (video?.let(eu.kanade.tachiyomi.ui.anime.ExternalPlayer::canSendPlain) == true) {
+                            menu = true
+                        } else {
+                            activity?.openInAnotherApp()
+                        }
+                    },
+                )
+                eu.kanade.presentation.anime.OpenWithMenu(
+                    expanded = menu,
+                    onDismiss = { menu = false },
+                    onPick = { plain -> activity?.openInAnotherApp(plain) },
+                )
+            }
         }
     }
 }

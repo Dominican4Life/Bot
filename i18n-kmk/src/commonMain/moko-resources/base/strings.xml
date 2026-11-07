@@ -299,6 +299,9 @@
     <string name="anime_loading_videos">Loading videos…</string>
     <string name="anime_no_videos">No videos found for this episode</string>
     <string name="open_with_player">Open in Another Player</string>
+    <string name="open_with_plain">Open as Plain Video</string>
+    <string name="open_with_plain_hint">For simple players without stream support. Plays from the start; skipping ahead may not work</string>
+    <string name="open_with_stream_hint">The normal way: skipping works. For players like mpv, VLC and MX</string>
     <string name="open_with_unavailable">This video can\'t be opened in another app</string>
     <string name="anime_no_player">No video player app found. Install one (like mpv or VLC) to play episodes.</string>
     <string name="anime_source_not_loaded">This anime\'s source isn\'t installed</string>

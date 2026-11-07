@@ -93,6 +93,21 @@ object HlsRelay {
     }
 
     /**
+     * KMK (r142): the address of [url] (an HLS playlist) as ONE plain video stream, for players that can't read HLS:
+     * the relay picks the best quality, then sends every piece one after the other (fake picture headers removed) as
+     * a single MPEG-TS (or fragmented MP4) stream with no length. It plays from the start; seeking ahead mostly can't
+     * work (there is no file to jump in). Encrypted streams can't be sent this way. Call off the main thread.
+     */
+    @Synchronized
+    fun wrapContinuous(url: String, headers: Headers): String {
+        val id = nextId.getAndIncrement().toString()
+        sessions[id] = headers
+        originals[id] = url
+        lastUsed[id] = System.currentTimeMillis()
+        return "http://127.0.0.1:${port()}/c/$id?u=${Uri.encode(url)}&x=video.ts"
+    }
+
+    /**
      * KMK (r118): the address mpv should open instead of [url], a plain video file (mp4, mkv, webm…) fetched with
      * [headers] through the app's client, so it gets the same cookies the source's own requests and downloads get.
      * Hosts that answer mpv's direct request with 403 (no cookies) play this way. Range is passed on, so seeking
@@ -139,7 +154,7 @@ object HlsRelay {
             val target = parsed.getQueryParameter("u")
             val headers = id?.let { sessions[it] }
             val out = socket.getOutputStream()
-            if (target == null || headers == null || (kind != "p" && kind != "s" && kind != "f")) {
+            if (target == null || headers == null || (kind != "p" && kind != "s" && kind != "f" && kind != "c")) {
                 respond(out, 404, "text/plain", "Not found".toByteArray())
                 return
             }
@@ -148,6 +163,11 @@ object HlsRelay {
             // KMK (r118): a plain video file: passed through as it comes (Range kept), with the app client's cookies
             if (kind == "f") {
                 serveFile(out, target, headers, range)
+                return
+            }
+            // KMK (r142): the whole HLS stream as one plain video stream (players without HLS)
+            if (kind == "c") {
+                serveContinuous(out, id!!, target, headers)
                 return
             }
             // KMK (r95): pieces go through the stream client too (no 120 s call deadline, no 5 MiB HTTP cache that
@@ -355,6 +375,114 @@ object HlsRelay {
             passThrough(out, it)
         }
     }
+
+    // KMK (r142) --> [wrapContinuous]: one plain stream made of every piece of the playlist
+
+    /** A playlist's text and its final address (after redirects); null when it can't be fetched */
+    private fun fetchText(url: String, headers: Headers): Pair<String, String>? = runCatching {
+        execute(Request.Builder().url(url).headers(headers).build()).use { r ->
+            if (!r.isSuccessful) null else String(r.body.bytes(), Charsets.UTF_8) to r.request.url.toString()
+        }
+    }.getOrNull()
+
+    /** One piece's bytes (the source's headers, then only the user agent), fake picture header removed */
+    private fun fetchPiece(url: String, headers: Headers): ByteArray? {
+        fun get(h: Headers): ByteArray? = runCatching {
+            execute(Request.Builder().url(url).headers(h).tag(NoNetLog::class.java, NoNetLog).build(), stream = true)
+                .use { r -> if (r.isSuccessful) r.body.bytes() else null }
+        }.getOrNull()
+        val bytes = get(headers) ?: get(
+            Headers.Builder().apply {
+                headers["User-Agent"]?.let { add("User-Agent", it) }
+                add("Accept", "*" + "/" + "*")
+            }.build(),
+        ) ?: return null
+        return stripFakeImage(bytes)
+    }
+
+    private fun serveContinuous(out: OutputStream, id: String, target: String, headers: Headers) {
+        val host = target.toHttpUrlOrNull()?.host ?: target
+        val first = fetchText(target, headers) ?: run {
+            AppLog.add('W', "hls", "Plain video: couldn't load the playlist from $host")
+            respond(out, 502, "text/plain", ByteArray(0))
+            return
+        }
+        var text = first.first
+        var base = first.second
+        // A master playlist: the quality with the highest bandwidth
+        if (text.contains("#EXT-X-STREAM-INF")) {
+            val lines = text.lines().map { it.trim() }
+            var best: String? = null
+            var bestRate = -1L
+            lines.forEachIndexed { i, line ->
+                if (!line.startsWith("#EXT-X-STREAM-INF")) return@forEachIndexed
+                val rate = Regex("""(?<![A-Z-])BANDWIDTH=(\d+)""").find(line)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
+                val uri = lines.drop(i + 1).firstOrNull { it.isNotEmpty() && !it.startsWith("#") } ?: return@forEachIndexed
+                if (rate > bestRate) {
+                    bestRate = rate
+                    best = uri
+                }
+            }
+            val variant = best?.let { base.toHttpUrlOrNull()?.resolve(it)?.toString() ?: it } ?: run {
+                respond(out, 502, "text/plain", ByteArray(0))
+                return
+            }
+            val media = fetchText(variant, headers) ?: run {
+                AppLog.add('W', "hls", "Plain video: couldn't load the quality playlist from $host")
+                respond(out, 502, "text/plain", ByteArray(0))
+                return
+            }
+            text = media.first
+            base = media.second
+        }
+        val baseUrl = base.toHttpUrlOrNull()
+        fun absolute(u: String): String = baseUrl?.resolve(u)?.toString() ?: u
+        val encrypted = text.lineSequence().any { it.startsWith("#EXT-X-KEY") && !it.contains("METHOD=NONE") }
+        if (encrypted) {
+            AppLog.add('W', "hls", "Plain video: $host's stream is encrypted, so it can't be sent as one plain video")
+            respond(out, 415, "text/plain", ByteArray(0))
+            return
+        }
+        val map = text.lineSequence().firstOrNull { it.startsWith("#EXT-X-MAP") }
+            ?.let { URI_ATTRIBUTE.find(it)?.groupValues?.get(1) }?.let(::absolute)
+        val pieces = text.lineSequence().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }
+            .map(::absolute).toList()
+        if (pieces.isEmpty()) {
+            respond(out, 502, "text/plain", ByteArray(0))
+            return
+        }
+        val type = if (map != null) "video/mp4" else "video/mp2t"
+        AppLog.add('I', "hls", "Plain video: sending ${pieces.size} pieces from $host as one stream ($type)")
+        try {
+            out.write(
+                ("HTTP/1.1 200 OK\r\nContent-Type: $type\r\nConnection: close\r\n" +
+                    "Access-Control-Allow-Origin: *\r\n\r\n").toByteArray(),
+            )
+            if (map != null) {
+                val init = fetchPiece(map, headers) ?: run {
+                    AppLog.add('W', "hls", "Plain video: the stream's start piece didn't load")
+                    return
+                }
+                out.write(init)
+            }
+            var missed = 0
+            for ((i, piece) in pieces.withIndex()) {
+                lastUsed[id] = System.currentTimeMillis()
+                val bytes = fetchPiece(piece, headers)
+                if (bytes == null) {
+                    missed++
+                    AppLog.add('W', "hls", "Plain video: piece ${i + 1} of ${pieces.size} didn't load, skipped")
+                    if (missed >= 5) return
+                    continue
+                }
+                out.write(bytes)
+                out.flush()
+            }
+        } catch (_: java.io.IOException) {
+            // The player closed the stream (stopped, or jumped and opened it again): nothing to do
+        }
+    }
+    // KMK (r142) <--
 
     /** Points every playlist, piece, key and map of a playlist at the relay (keys go direct) */
     private fun rewrite(id: String, base: String, playlist: String): String {

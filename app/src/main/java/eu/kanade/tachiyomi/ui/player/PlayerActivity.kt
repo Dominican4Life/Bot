@@ -1517,7 +1517,7 @@ class PlayerActivity : BaseActivity() {
         if (!back.completed && seconds > 0) viewModel.seekTo(seconds)
     }
 
-    fun openInAnotherApp() {
+    fun openInAnotherApp(plain: Boolean = false) {
         val video = viewModel.currentVideo.value
         val anime = viewModel.currentAnime.value
         val episode = viewModel.currentEpisode.value
@@ -1531,6 +1531,7 @@ class PlayerActivity : BaseActivity() {
                     startPositionMs = positionMs,
                     sourceHeaders = fileHeaders(it).takeIf { h -> h.size > 0 },
                     chooserTitle = stringResource(tachiyomi.i18n.kmk.KMR.strings.open_with_player),
+                    plain = plain,
                 )
             }
             if (intent == null) {

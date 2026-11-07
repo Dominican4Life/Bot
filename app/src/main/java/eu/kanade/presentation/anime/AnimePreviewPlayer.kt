@@ -436,7 +436,7 @@ fun AnimePreviewSection(
         val back = eu.kanade.tachiyomi.ui.anime.ExternalPlayer.parseResult(result.data) ?: return@rememberLauncherForActivityResult
         if (!back.completed && back.positionMs > 0) runCatching { mpv?.command("seek", (back.positionMs / 1000.0).toString(), "absolute") }
     }
-    val openWith: () -> Unit = {
+    val openWith: (Boolean) -> Unit = { plain ->
         val video = handOffVideo
         val headers = video?.headers ?: (source as? AnimeHttpSource)?.headers
             ?: (source as? eu.kanade.tachiyomi.jssource.JsAnimeSource)?.headers
@@ -451,6 +451,7 @@ fun AnimePreviewSection(
                     startPositionMs = startMs,
                     sourceHeaders = headers,
                     chooserTitle = context.stringResource(KMR.strings.open_with_player),
+                    plain = plain,
                 )
             }
             if (intent == null) {
@@ -618,6 +619,7 @@ fun AnimePreviewSection(
                         onToggleSettings = { settingsOpen = !settingsOpen },
                         onOpenPlayer = openFull,
                         onOpenWith = openWith,
+                        openWithPlain = handOffVideo?.let(eu.kanade.tachiyomi.ui.anime.ExternalPlayer::canSendPlain) == true,
                         onClose = onClose,
                         onPrevious = onPrevious,
                         onNext = onNext,
@@ -637,6 +639,7 @@ fun AnimePreviewSection(
                         onPickVideo = pickVideo,
                         onOpenPlayer = openFull,
                         onOpenWith = openWith,
+                        openWithPlain = handOffVideo?.let(eu.kanade.tachiyomi.ui.anime.ExternalPlayer::canSendPlain) == true,
                     )
                 }
             }
@@ -879,7 +882,8 @@ private fun FloatingControls(
     onView: (PreviewView) -> Unit,
     onToggleSettings: () -> Unit,
     onOpenPlayer: () -> Unit,
-    onOpenWith: () -> Unit,
+    onOpenWith: (Boolean) -> Unit,
+    openWithPlain: Boolean,
     onClose: (() -> Unit)?,
     onPrevious: (() -> Unit)?,
     onNext: (() -> Unit)?,
@@ -962,13 +966,17 @@ private fun FloatingControls(
                     }
                 }
             }
-            // KMK (r138): Open in Another Player (SH3)
-            IconButton(onClick = onOpenWith) {
-                Icon(
-                    eu.kanade.presentation.components.GlassIcons.OpenWith,
-                    contentDescription = stringResource(KMR.strings.open_with_player),
-                    tint = Color.White,
-                )
+            // KMK (r138): Open in Another Player (SH3); r142: a streamed HLS episode asks first (plain video or not)
+            Box {
+                var openWithMenu by remember { mutableStateOf(false) }
+                IconButton(onClick = { if (openWithPlain) openWithMenu = true else onOpenWith(false) }) {
+                    Icon(
+                        eu.kanade.presentation.components.GlassIcons.OpenWith,
+                        contentDescription = stringResource(KMR.strings.open_with_player),
+                        tint = Color.White,
+                    )
+                }
+                OpenWithMenu(expanded = openWithMenu, onDismiss = { openWithMenu = false }, onPick = onOpenWith)
             }
             IconButton(onClick = onToggleSettings) {
                 Icon(
@@ -1157,7 +1165,8 @@ private fun PlayerControls(
     onSeek: (Double) -> Unit,
     onPickVideo: (Int) -> Unit,
     onOpenPlayer: () -> Unit,
-    onOpenWith: () -> Unit,
+    onOpenWith: (Boolean) -> Unit,
+    openWithPlain: Boolean,
 ) {
     Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f))) {
         // Top: quality, mute, full player
@@ -1167,13 +1176,17 @@ private fun PlayerControls(
                 .padding(4.dp),
         ) {
             QualityButton(videos, servers, videoIndex, onPickVideo)
-            // KMK (r138): Open in Another Player (SH3)
-            IconButton(onClick = onOpenWith) {
-                Icon(
-                    eu.kanade.presentation.components.GlassIcons.OpenWith,
-                    contentDescription = stringResource(KMR.strings.open_with_player),
-                    tint = Color.White,
-                )
+            // KMK (r138): Open in Another Player (SH3); r142: a streamed HLS episode asks first (plain video or not)
+            Box {
+                var openWithMenu by remember { mutableStateOf(false) }
+                IconButton(onClick = { if (openWithPlain) openWithMenu = true else onOpenWith(false) }) {
+                    Icon(
+                        eu.kanade.presentation.components.GlassIcons.OpenWith,
+                        contentDescription = stringResource(KMR.strings.open_with_player),
+                        tint = Color.White,
+                    )
+                }
+                OpenWithMenu(expanded = openWithMenu, onDismiss = { openWithMenu = false }, onPick = onOpenWith)
             }
             IconButton(onClick = onToggleMute) {
                 Icon(
