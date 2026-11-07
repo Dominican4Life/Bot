@@ -336,6 +336,11 @@ internal class DiagnosticsEngine(private val app: Application) : Diagnostics {
 
     override fun clearLog() = AppLog.clear()
 
+    override fun clearEverything() {
+        AppLog.clear()
+        Health.clearAll(app)
+    }
+
     override fun mark(note: String?) {
         AppLog.mark(note)
         val text = note?.trim().orEmpty()

@@ -147,6 +147,7 @@ internal class DiagnosticsScreen(
                                     keepOn = keepOn,
                                     onKeepOn = { keepOn = it },
                                     onClearLog = { model.diag.clearLog() },
+                                    onClearEverything = { model.diag.clearEverything() },
                                 )
                             },
                         )
@@ -182,6 +183,7 @@ internal class DiagnosticsScreen(
                                         keepOn = keepOn,
                                         onKeepOn = { keepOn = it },
                                         onClearLog = { model.diag.clearLog() },
+                                    onClearEverything = { model.diag.clearEverything() },
                                     )
                                 },
                             )
@@ -306,7 +308,33 @@ private fun OverflowMenu(
     keepOn: Boolean,
     onKeepOn: (Boolean) -> Unit,
     onClearLog: () -> Unit,
+    onClearEverything: () -> Unit,
 ) {
+    // KMK (r140): Clear everything asks first (it can't be undone)
+    var confirmClear by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
+    if (confirmClear) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirmClear = false },
+            title = { Text("Clear Everything?") },
+            text = {
+                Text(
+                    "Deletes the log, every Health event, the saved crash and freeze reports and old report files. " +
+                        "New ones start from zero. This can't be undone.",
+                )
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(
+                    onClick = {
+                        confirmClear = false
+                        onClearEverything()
+                    },
+                ) { Text("Clear Everything") }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { confirmClear = false }) { Text("Cancel") }
+            },
+        )
+    }
     DropdownMenu(expanded = open, onDismissRequest = onDismiss) {
         DropdownMenuItem(
             text = { Text("Floating log") },
@@ -329,6 +357,13 @@ private fun OverflowMenu(
             onClick = {
                 onClearLog()
                 onDismiss()
+            },
+        )
+        DropdownMenuItem(
+            text = { Text("Clear Everything") },
+            onClick = {
+                onDismiss()
+                confirmClear = true
             },
         )
     }

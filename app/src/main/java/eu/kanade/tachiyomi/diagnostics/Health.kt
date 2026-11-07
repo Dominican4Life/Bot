@@ -237,6 +237,31 @@ internal object Health {
         }
     }
 
+    /**
+     * KMK (r140): back to zero: every event, the Previous run card, the saved crash / freeze traces and the report
+     * zips (with their keys files). Exits Android still remembers stay seen, so they don't come back on next start.
+     */
+    fun clearAll(context: Context) {
+        synchronized(lock) {
+            events.clear()
+            extraMarkers.clear()
+        }
+        previousRun = null
+        publish()
+        publishMarkers()
+        DiagIo.post {
+            save()
+            runCatching { File(context.cacheDir, DiagPaths.HEALTH_DIR).deleteRecursively() }
+            runCatching {
+                context.cacheDir.listFiles { f -> f.name.startsWith(DiagPaths.REPORT_PREFIX) }?.forEach { it.delete() }
+            }
+            runCatching {
+                context.getSharedPreferences(DiagKeys.PREFS_FILE, Context.MODE_PRIVATE).edit()
+                    .putLong(DiagKeys.LAST_EXIT_SEEN, System.currentTimeMillis()).apply()
+            }
+        }
+    }
+
     fun events(): List<HealthEvent> = synchronized(lock) { events.toList() }
 
     fun previousRun(): PreviousRun? = previousRun

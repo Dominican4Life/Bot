@@ -94,11 +94,13 @@ object ExternalPlayer {
     /**
      * KMK (r138): hands what is playing to another app: Android's own list of every app that plays video, so the
      * person picks one (no app is named here). Downloads go as a readable content:// link (file paths through the
-     * app's file provider); streams go as their own link with the source's headers in the extras the common
-     * players read, never in the link. Null when there is nothing another app could open (an mpv
-     * "fd://" handle or no link yet). The app's 127.0.0.1 relay link is handed over as it is (r139).
+     * app's file provider). KMK (r140): streams go through the app's local relay ([HlsRelay]), which fetches them
+     * with the source's headers and cookies, so any player can play them without knowing about either; the relay
+     * keeps working while this app runs in the background. A DASH manifest goes as its own link. Types are lower
+     * case ("video/*" for streams), since Android matches them letter for letter. Null when there is nothing another
+     * app could open (an mpv "fd://" handle or no link yet). Call from a coroutine (the relay opens on IO).
      */
-    fun handOff(
+    suspend fun handOff(
         context: Context,
         video: Video,
         title: String,
@@ -107,22 +109,37 @@ object ExternalPlayer {
         chooserTitle: String,
     ): Intent? {
         val raw = video.videoUrl
-        // KMK (r139): the app's local relay link is handed over as it is: it only exists on this device, and it gives
-        // the other player the source's cookies and the fixed pieces (code editor sources play only through it). It
-        // keeps working while this app runs in the background.
         if (raw.isBlank() || raw == "null" || raw.startsWith("fd://")) return null
-        val uri = videoUri(context, video)
+        val headers = video.headers ?: sourceHeaders ?: Headers.Builder().build()
+        val remote = raw.startsWith("http://") || raw.startsWith("https://")
+        val uri = when {
+            !remote -> videoUri(context, video)
+            isAppOnly(raw) -> raw.toUri()
+            video.type == eu.kanade.tachiyomi.animesource.model.VideoType.DASH ||
+                raw.substringBefore('?').lowercase().endsWith(".mpd") -> raw.toUri()
+            else -> tachiyomi.core.common.util.lang.withIOContext {
+                runCatching {
+                    val hls = video.type == eu.kanade.tachiyomi.animesource.model.VideoType.HLS ||
+                        raw.contains("m3u8", ignoreCase = true)
+                    if (hls) {
+                        eu.kanade.tachiyomi.jssource.HlsRelay.wrap(raw, headers)
+                    } else {
+                        eu.kanade.tachiyomi.jssource.HlsRelay.wrapFile(raw, headers)
+                    }
+                }.getOrDefault(raw)
+            }.toUri()
+        }
         val local = uri.scheme == "content"
+        val type = if (local) {
+            runCatching { context.contentResolver.getType(uri) }.getOrNull() ?: mimeOf(uri)
+        } else {
+            "video/*"
+        }
         val intent = Intent(Intent.ACTION_VIEW).apply {
-            val type = when {
-                local -> runCatching { context.contentResolver.getType(uri) }.getOrNull() ?: mimeOf(uri)
-                video.type == eu.kanade.tachiyomi.animesource.model.VideoType.HLS -> "application/x-mpegURL"
-                video.type == eu.kanade.tachiyomi.animesource.model.VideoType.DASH -> "application/dash+xml"
-                else -> mimeOf(uri)
-            }
-            setDataAndType(uri, type)
+            setDataAndTypeAndNormalize(uri, type)
             addCommonExtras(title, startPositionMs)
-            if (!local) addHeaders(video.headers ?: sourceHeaders, supported = false)
+            // Through the relay the headers are already used; a DASH link still carries them for players that read them
+            if (!local && !isAppOnly(uri.toString())) addHeaders(headers.takeIf { it.size > 0 }, supported = false)
             addSubtitles(video)
         }
         return Intent.createChooser(intent, chooserTitle).apply {

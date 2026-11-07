@@ -1522,25 +1522,27 @@ class PlayerActivity : BaseActivity() {
         val anime = viewModel.currentAnime.value
         val episode = viewModel.currentEpisode.value
         val positionMs = viewModel.pos.value?.let { it * 1000L } ?: 0L
-        val intent = video?.let {
-            eu.kanade.tachiyomi.ui.anime.ExternalPlayer.handOff(
-                context = this,
-                video = it,
-                title = listOfNotNull(anime?.title, episode?.name).joinToString(" - "),
-                startPositionMs = positionMs,
-                sourceHeaders = fileHeaders(it).takeIf { h -> h.size > 0 },
-                chooserTitle = stringResource(tachiyomi.i18n.kmk.KMR.strings.open_with_player),
-            )
-        }
-        if (intent == null) {
-            toast(tachiyomi.i18n.kmk.KMR.strings.open_with_unavailable)
-            return
-        }
-        viewModel.pause()
-        try {
-            openWithLauncher.launch(intent)
-        } catch (_: android.content.ActivityNotFoundException) {
-            toast(tachiyomi.i18n.kmk.KMR.strings.anime_no_player)
+        lifecycleScope.launch {
+            val intent = video?.let {
+                eu.kanade.tachiyomi.ui.anime.ExternalPlayer.handOff(
+                    context = this@PlayerActivity,
+                    video = it,
+                    title = listOfNotNull(anime?.title, episode?.name).joinToString(" - "),
+                    startPositionMs = positionMs,
+                    sourceHeaders = fileHeaders(it).takeIf { h -> h.size > 0 },
+                    chooserTitle = stringResource(tachiyomi.i18n.kmk.KMR.strings.open_with_player),
+                )
+            }
+            if (intent == null) {
+                toast(tachiyomi.i18n.kmk.KMR.strings.open_with_unavailable)
+                return@launch
+            }
+            viewModel.pause()
+            try {
+                openWithLauncher.launch(intent)
+            } catch (_: android.content.ActivityNotFoundException) {
+                toast(tachiyomi.i18n.kmk.KMR.strings.anime_no_player)
+            }
         }
     }
     // KMK <--

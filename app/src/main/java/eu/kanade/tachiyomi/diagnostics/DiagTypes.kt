@@ -976,6 +976,9 @@ internal interface Diagnostics {
 
     fun clearLog()
 
+    /** KMK (r140): the log, Health events, saved traces and report files, all back to zero */
+    fun clearEverything()
+
     fun mark(note: String?)
 
     // --- capture ----------------------------------------------------------------------------------------------------

@@ -334,9 +334,12 @@ fun AnimePreviewSection(
         loadJob = scope.launch {
             phase = PreviewPhase.Loading
             // Downloaded: play the file, no need to ask the site
-            val localFile = withIOContext { Injekt.get<AnimeDownloadManager>().findEpisodeFile(anime, ep) }
-            val localUrl = localFile?.uri?.resolveUri(context)
-            if (localUrl != null) {
+            // KMK (r140): found and opened on IO, as before r138 (r138 opened it on the main thread: native crash)
+            val (localFile, localUrl) = withIOContext {
+                val file = Injekt.get<AnimeDownloadManager>().findEpisodeFile(anime, ep)
+                file to file?.uri?.resolveUri(context)
+            }
+            if (localFile != null && localUrl != null) {
                 handOffVideo = Video(videoUrl = localFile.uri.toString(), videoTitle = "Downloaded", initialized = true)
                 videos = listOf(Video(videoUrl = localUrl, videoTitle = "Downloaded", initialized = true))
                 servers = listOf(null)
@@ -417,30 +420,34 @@ fun AnimePreviewSection(
         val back = eu.kanade.tachiyomi.ui.anime.ExternalPlayer.parseResult(result.data) ?: return@rememberLauncherForActivityResult
         if (!back.completed && back.positionMs > 0) runCatching { mpv?.command("seek", (back.positionMs / 1000.0).toString(), "absolute") }
     }
-    val openWith: () -> Unit = openWith@{
+    val openWith: () -> Unit = {
         val video = handOffVideo
         val headers = video?.headers ?: (source as? AnimeHttpSource)?.headers
             ?: (source as? eu.kanade.tachiyomi.jssource.JsAnimeSource)?.headers
-        val intent = video?.let {
-            eu.kanade.tachiyomi.ui.anime.ExternalPlayer.handOff(
-                context = context,
-                video = it,
-                title = listOfNotNull(anime.title, (playingEpisode ?: episode)?.name).joinToString(" - "),
-                startPositionMs = (position * 1000).toLong(),
-                sourceHeaders = headers,
-                chooserTitle = context.stringResource(KMR.strings.open_with_player),
-            )
-        }
-        if (intent == null) {
-            context.toast(KMR.strings.open_with_unavailable)
-            return@openWith
-        }
-        paused = true
-        runCatching { mpv?.setPropertyBoolean("pause", true) }
-        try {
-            openWithLauncher.launch(intent)
-        } catch (_: android.content.ActivityNotFoundException) {
-            context.toast(KMR.strings.anime_no_player)
+        val title = listOfNotNull(anime.title, (playingEpisode ?: episode)?.name).joinToString(" - ")
+        val startMs = (position * 1000).toLong()
+        scope.launch {
+            val intent = video?.let {
+                eu.kanade.tachiyomi.ui.anime.ExternalPlayer.handOff(
+                    context = context,
+                    video = it,
+                    title = title,
+                    startPositionMs = startMs,
+                    sourceHeaders = headers,
+                    chooserTitle = context.stringResource(KMR.strings.open_with_player),
+                )
+            }
+            if (intent == null) {
+                context.toast(KMR.strings.open_with_unavailable)
+                return@launch
+            }
+            paused = true
+            runCatching { mpv?.setPropertyBoolean("pause", true) }
+            try {
+                openWithLauncher.launch(intent)
+            } catch (_: android.content.ActivityNotFoundException) {
+                context.toast(KMR.strings.anime_no_player)
+            }
         }
     }
     val togglePause = {
