@@ -115,6 +115,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 import logcat.LogPriority
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
@@ -196,10 +197,15 @@ fun AnimePreviewSection(
     var speed by remember { mutableDoubleStateOf(playerPreferences.playerSpeed().get().toDouble()) }
     // KMK (r138): what is playing, as another app should get it (a download's own content:// link, not mpv's fd://)
     var handOffVideo by remember { mutableStateOf<Video?>(null) }
+    // KMK (r141): true once the video view's surface is attached to mpv. mpv must not open a file before that: with
+    // vo=gpu and no surface it aborts (vo_android_init: "WinID != 0" assertion). Streams always took long enough to
+    // load; a downloaded file opens at once and crashed the app.
+    var surfaceReady by remember { mutableStateOf(false) }
 
     fun releasePlayer() {
         val instance = mpv ?: return
         mpv = null
+        surfaceReady = false
         runCatching { instance.command("stop") }
         // Let the video surface detach first (it happens when the view leaves the screen), then free mpv
         Handler(Looper.getMainLooper()).post { runCatching { instance.close() } }
@@ -229,6 +235,7 @@ fun AnimePreviewSection(
                 it.setOptionString("tls-ca-file", caFile.path)
             }
         }.also {
+            surfaceReady = false
             it.setPropertyBoolean("mute", muted)
             it.setPropertyDouble("speed", playerPreferences.playerSpeed().get().toDouble())
             mpv = it
@@ -314,6 +321,15 @@ fun AnimePreviewSection(
                     } ?: video.videoUrl
                 } else {
                     video.videoUrl
+                }
+                // KMK (r141): wait for the video surface (the view appears the frame after the player is made)
+                if (!surfaceReady) {
+                    kotlinx.coroutines.withTimeoutOrNull(5_000) {
+                        androidx.compose.runtime.snapshotFlow { surfaceReady }.first { it }
+                    } ?: run {
+                        phase = PreviewPhase.Failed("The video view isn't ready")
+                        return@launch
+                    }
                 }
                 videoIndex = index
                 playingEpisode = ep
@@ -482,7 +498,33 @@ fun AnimePreviewSection(
         if (instance != null) {
             key(instance) {
                 AndroidView(
-                    factory = { ctx -> BaseMPVView(ctx, null).also { it.mpv = instance; it.setVo("gpu") } },
+                    factory = { ctx ->
+                        BaseMPVView(ctx, null).also { v ->
+                            v.mpv = instance
+                            v.setVo("gpu")
+                            // KMK (r141): runs after the view's own callback (which attaches the surface to mpv)
+                            v.holder.addCallback(
+                                object : android.view.SurfaceHolder.Callback {
+                                    override fun surfaceCreated(holder: android.view.SurfaceHolder) {
+                                        // Posted, so every surface callback (the view's attach) has run first
+                                        v.post { surfaceReady = holder.surface?.isValid == true }
+                                    }
+
+                                    override fun surfaceChanged(
+                                        holder: android.view.SurfaceHolder,
+                                        format: Int,
+                                        width: Int,
+                                        height: Int,
+                                    ) = Unit
+
+                                    override fun surfaceDestroyed(holder: android.view.SurfaceHolder) {
+                                        surfaceReady = false
+                                    }
+                                },
+                            )
+                            v.post { if (v.holder.surface?.isValid == true) surfaceReady = true }
+                        }
+                    },
                     modifier = Modifier.fillMaxSize(),
                 )
             }
