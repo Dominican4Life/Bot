@@ -1219,9 +1219,13 @@ Owner's r136 list. Mockups: canvas boards "r136 phone sheets" and "r136 item 8".
   - Preview player: the button sits in the floating window's top row (before ⚙) and in the inline preview's top row.
   - `ExternalPlayer.handOff()` builds an `ACTION_VIEW` wrapped in `Intent.createChooser`, so Android lists every video app; no package is named.
     - Downloads go as their own `content://` link (file paths through the app's FileProvider) with `FLAG_GRANT_READ_URI_PERMISSION`. The preview keeps the download's real link (`handOffVideo`), never mpv's `fd://` handle.
-    - Streams go as the source's own link with HLS / DASH types. Headers travel only in the extras the common players read, never in the link. The app's 127.0.0.1 relay is never handed over.
+    - Streams go as the source's own link with HLS / DASH types. Headers travel only in the extras the common players read, never in the link.
     - Title, start position and subtitles are passed. The in-app video pauses, and when the other player reports a position, playback here seeks to it.
   - No manifest changes or permissions were needed.
+
+## Changes in r139 (7 November 2026)
+
+- **Open in Another Player fix (Phone + Tablet):** code editor (JS) sources store their streams as the app's 127.0.0.1 relay link (`HlsRelay.wrap`), and r138 refused those, so every episode from such a source showed "This video can't be opened in another app". `ExternalPlayer.handOff()` now hands the relay link over as it is: it stays on the device and gives the other player the source's cookies and fixed pieces. It works while the app is alive in the background. Only an mpv `fd://` handle or an empty link is refused now.
 
 ## How to use this guide when adding a feature
 
