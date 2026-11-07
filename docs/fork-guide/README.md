@@ -1212,6 +1212,17 @@ Owner's r136 list. Mockups: canvas boards "r136 phone sheets" and "r136 item 8".
 - **Dialogs (Phone + Tablet):** `AdaptiveSheet` is tinted dark glass in dark themes (light themes keep the surface); Possible Duplicates (manga + anime) with glass buttons; Add Tracking is a glass row; the tracker search (AniList info) sheet is glass with white ← / ✕, no line, glass cards and a glass Track button.
 - **Strings:** Title Case for "N Chapters", "N Episodes", "Add Anyway", "Possible Duplicates", "Add Tracking", "Start Date", "Finish Date", "Already in Your Library", "All Episodes".
 
+## Changes in r138 (6 November 2026)
+
+- **Open in Another Player (Phone + Tablet):** a new glass icon `GlassIcons.OpenWith` (SH3: faint box, solid arrow up).
+  - Full player: new `PlayerButton.OpenWith`, in the default top-right layout before ⋮; `PlayerPreferences.addOpenWithButton()` adds it once to saved layouts (top right and portrait). It calls `PlayerActivity.openInAnotherApp()`.
+  - Preview player: the button sits in the floating window's top row (before ⚙) and in the inline preview's top row.
+  - `ExternalPlayer.handOff()` builds an `ACTION_VIEW` wrapped in `Intent.createChooser`, so Android lists every video app; no package is named.
+    - Downloads go as their own `content://` link (file paths through the app's FileProvider) with `FLAG_GRANT_READ_URI_PERMISSION`. The preview keeps the download's real link (`handOffVideo`), never mpv's `fd://` handle.
+    - Streams go as the source's own link with HLS / DASH types. Headers travel only in the extras the common players read, never in the link. The app's 127.0.0.1 relay is never handed over.
+    - Title, start position and subtitles are passed. The in-app video pauses, and when the other player reports a position, playback here seeks to it.
+  - No manifest changes or permissions were needed.
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
