@@ -95,8 +95,8 @@ object ExternalPlayer {
      * KMK (r138): hands what is playing to another app: Android's own list of every app that plays video, so the
      * person picks one (no app is named here). Downloads go as a readable content:// link (file paths through the
      * app's file provider); streams go as their own link with the source's headers in the extras the common
-     * players read, never in the link. Null when there is nothing another app could open (the app's own
-     * 127.0.0.1 relay or an mpv "fd://" handle); [video] is then the original and its link is used instead.
+     * players read, never in the link. Null when there is nothing another app could open (an mpv
+     * "fd://" handle or no link yet). The app's 127.0.0.1 relay link is handed over as it is (r139).
      */
     fun handOff(
         context: Context,
@@ -107,7 +107,10 @@ object ExternalPlayer {
         chooserTitle: String,
     ): Intent? {
         val raw = video.videoUrl
-        if (raw.isBlank() || raw == "null" || raw.startsWith("fd://") || isAppOnly(raw)) return null
+        // KMK (r139): the app's local relay link is handed over as it is: it only exists on this device, and it gives
+        // the other player the source's cookies and the fixed pieces (code editor sources play only through it). It
+        // keeps working while this app runs in the background.
+        if (raw.isBlank() || raw == "null" || raw.startsWith("fd://")) return null
         val uri = videoUri(context, video)
         val local = uri.scheme == "content"
         val intent = Intent(Intent.ACTION_VIEW).apply {
