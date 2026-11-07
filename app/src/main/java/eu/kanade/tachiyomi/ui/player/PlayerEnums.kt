@@ -378,6 +378,8 @@ enum class PlayerButton(
     VideoZoom(AMR.strings.player_button_video_zoom),
     SkipIntro(AMR.strings.player_button_skip_intro),
     CustomButton(AMR.strings.player_button_custom_button),
+    // KMK (r138): hands what is playing to another video app (Android's list of players)
+    OpenWith(AMR.strings.player_button_open_with),
 }
 
 fun PlayerButton.getIcon(): ImageVector = when (this) {
@@ -399,6 +401,7 @@ fun PlayerButton.getIcon(): ImageVector = when (this) {
     PlayerButton.VideoZoom -> Icons.Outlined.ZoomIn
     PlayerButton.SkipIntro -> Icons.Outlined.FastForward
     PlayerButton.CustomButton -> Icons.Outlined.TouchApp
+    PlayerButton.OpenWith -> eu.kanade.presentation.components.GlassIcons.OpenWith
 }
 
 val allPlayerButtons = PlayerButton.entries.filter { 

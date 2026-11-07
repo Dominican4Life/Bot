@@ -285,6 +285,7 @@
     <string name="player_button_cast">Cast</string>
     <string name="player_button_current_chapter">Current chapter</string>
     <string name="player_button_custom_button">Custom button</string>
+    <string name="player_button_open_with">Open in Another Player</string>
     <string name="player_button_lock_controls">Lock controls</string>
     <string name="player_button_more_options">More options</string>
     <string name="player_button_picture_in_picture">Picture in picture</string>

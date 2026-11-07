@@ -92,6 +92,46 @@ object ExternalPlayer {
     }
 
     /**
+     * KMK (r138): hands what is playing to another app: Android's own list of every app that plays video, so the
+     * person picks one (no app is named here). Downloads go as a readable content:// link (file paths through the
+     * app's file provider); streams go as their own link with the source's headers in the extras the common
+     * players read, never in the link. Null when there is nothing another app could open (the app's own
+     * 127.0.0.1 relay or an mpv "fd://" handle); [video] is then the original and its link is used instead.
+     */
+    fun handOff(
+        context: Context,
+        video: Video,
+        title: String,
+        startPositionMs: Long,
+        sourceHeaders: Headers?,
+        chooserTitle: String,
+    ): Intent? {
+        val raw = video.videoUrl
+        if (raw.isBlank() || raw == "null" || raw.startsWith("fd://") || isAppOnly(raw)) return null
+        val uri = videoUri(context, video)
+        val local = uri.scheme == "content"
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            val type = when {
+                local -> runCatching { context.contentResolver.getType(uri) }.getOrNull() ?: mimeOf(uri)
+                video.type == eu.kanade.tachiyomi.animesource.model.VideoType.HLS -> "application/x-mpegURL"
+                video.type == eu.kanade.tachiyomi.animesource.model.VideoType.DASH -> "application/dash+xml"
+                else -> mimeOf(uri)
+            }
+            setDataAndType(uri, type)
+            addCommonExtras(title, startPositionMs)
+            if (!local) addHeaders(video.headers ?: sourceHeaders, supported = false)
+            addSubtitles(video)
+        }
+        return Intent.createChooser(intent, chooserTitle).apply {
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+    }
+
+    /** KMK (r138): a link that only works inside this app (its local relay) */
+    fun isAppOnly(url: String): Boolean =
+        url.startsWith("http://127.0.0.1") || url.startsWith("http://localhost")
+
+    /**
      * Intent for a download manager app (1DM, ADM and the like), with the headers each of them reads.
      * Wrapped in a chooser so any downloader can be picked.
      */
@@ -186,7 +226,8 @@ object ExternalPlayer {
     /** Downloaded files are shared through the app's file provider, so the player is allowed to read them */
     private fun videoUri(context: Context, video: Video): Uri {
         val uri = video.videoUrl.toUri()
-        if (uri.scheme != "file") return uri
+        // KMK (r138): a bare file path (no scheme) is a local file too
+        if (uri.scheme != "file" && !(uri.scheme == null && video.videoUrl.startsWith("/"))) return uri
         val path = uri.path ?: return uri
         return runCatching {
             FileProvider.getUriForFile(context, context.applicationContext.packageName + ".provider", File(path))

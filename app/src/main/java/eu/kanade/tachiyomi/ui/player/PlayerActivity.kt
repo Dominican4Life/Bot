@@ -1507,6 +1507,44 @@ class PlayerActivity : BaseActivity() {
         return !stream
     }
 
+    // KMK (r138) --> Open in Another Player: Android's list of video apps, whatever is playing handed over
+    private val openWithLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        // When the other player says how far it got, carry on from there here (progress saves as usual)
+        val back = eu.kanade.tachiyomi.ui.anime.ExternalPlayer.parseResult(result.data) ?: return@registerForActivityResult
+        val seconds = (back.positionMs / 1000).toInt()
+        if (!back.completed && seconds > 0) viewModel.seekTo(seconds)
+    }
+
+    fun openInAnotherApp() {
+        val video = viewModel.currentVideo.value
+        val anime = viewModel.currentAnime.value
+        val episode = viewModel.currentEpisode.value
+        val positionMs = viewModel.pos.value?.let { it * 1000L } ?: 0L
+        val intent = video?.let {
+            eu.kanade.tachiyomi.ui.anime.ExternalPlayer.handOff(
+                context = this,
+                video = it,
+                title = listOfNotNull(anime?.title, episode?.name).joinToString(" - "),
+                startPositionMs = positionMs,
+                sourceHeaders = fileHeaders(it).takeIf { h -> h.size > 0 },
+                chooserTitle = stringResource(tachiyomi.i18n.kmk.KMR.strings.open_with_player),
+            )
+        }
+        if (intent == null) {
+            toast(tachiyomi.i18n.kmk.KMR.strings.open_with_unavailable)
+            return
+        }
+        viewModel.pause()
+        try {
+            openWithLauncher.launch(intent)
+        } catch (_: android.content.ActivityNotFoundException) {
+            toast(tachiyomi.i18n.kmk.KMR.strings.anime_no_player)
+        }
+    }
+    // KMK <--
+
     /** KMK (r118): the headers the relay fetches a file with: the same ones mpv would have sent ([setHttpOptions]) */
     private fun fileHeaders(video: Video): okhttp3.Headers =
         video.headers

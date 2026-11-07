@@ -94,6 +94,8 @@ import coil3.compose.AsyncImage
 import eu.kanade.tachiyomi.animesource.AnimeSource
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
+import eu.kanade.tachiyomi.util.system.toast
+import tachiyomi.core.common.i18n.stringResource
 import eu.kanade.tachiyomi.data.anime.Anime
 import eu.kanade.tachiyomi.data.anime.AnimeVideoFetcher
 import eu.kanade.tachiyomi.data.anime.Episode
@@ -192,6 +194,8 @@ fun AnimePreviewSection(
     var playingEpisode by remember { mutableStateOf<Episode?>(null) }
     var locked by remember { mutableStateOf(false) }
     var speed by remember { mutableDoubleStateOf(playerPreferences.playerSpeed().get().toDouble()) }
+    // KMK (r138): what is playing, as another app should get it (a download's own content:// link, not mpv's fd://)
+    var handOffVideo by remember { mutableStateOf<Video?>(null) }
 
     fun releasePlayer() {
         val instance = mpv ?: return
@@ -280,6 +284,7 @@ fun AnimePreviewSection(
                     phase = PreviewPhase.NoVideos
                     return@launch
                 }
+                if (!video.videoUrl.startsWith("fd://")) handOffVideo = video
                 val instance = ensurePlayer()
                 val headers = video.headers ?: (source as? AnimeHttpSource)?.headers
                     // KMK (r87): Code editor sources send their headers too, as in the player
@@ -329,10 +334,10 @@ fun AnimePreviewSection(
         loadJob = scope.launch {
             phase = PreviewPhase.Loading
             // Downloaded: play the file, no need to ask the site
-            val localUrl = withIOContext {
-                Injekt.get<AnimeDownloadManager>().findEpisodeFile(anime, ep)?.uri?.resolveUri(context)
-            }
+            val localFile = withIOContext { Injekt.get<AnimeDownloadManager>().findEpisodeFile(anime, ep) }
+            val localUrl = localFile?.uri?.resolveUri(context)
             if (localUrl != null) {
+                handOffVideo = Video(videoUrl = localFile.uri.toString(), videoTitle = "Downloaded", initialized = true)
                 videos = listOf(Video(videoUrl = localUrl, videoTitle = "Downloaded", initialized = true))
                 servers = listOf(null)
                 startVideo(0, videos, ep)
@@ -405,6 +410,39 @@ fun AnimePreviewSection(
         }
     }
 
+    // KMK (r138): Open in Another Player: Android's list of video apps; what is playing is handed over
+    val openWithLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        val back = eu.kanade.tachiyomi.ui.anime.ExternalPlayer.parseResult(result.data) ?: return@rememberLauncherForActivityResult
+        if (!back.completed && back.positionMs > 0) runCatching { mpv?.command("seek", (back.positionMs / 1000.0).toString(), "absolute") }
+    }
+    val openWith: () -> Unit = openWith@{
+        val video = handOffVideo
+        val headers = video?.headers ?: (source as? AnimeHttpSource)?.headers
+            ?: (source as? eu.kanade.tachiyomi.jssource.JsAnimeSource)?.headers
+        val intent = video?.let {
+            eu.kanade.tachiyomi.ui.anime.ExternalPlayer.handOff(
+                context = context,
+                video = it,
+                title = listOfNotNull(anime.title, (playingEpisode ?: episode)?.name).joinToString(" - "),
+                startPositionMs = (position * 1000).toLong(),
+                sourceHeaders = headers,
+                chooserTitle = context.stringResource(KMR.strings.open_with_player),
+            )
+        }
+        if (intent == null) {
+            context.toast(KMR.strings.open_with_unavailable)
+            return@openWith
+        }
+        paused = true
+        runCatching { mpv?.setPropertyBoolean("pause", true) }
+        try {
+            openWithLauncher.launch(intent)
+        } catch (_: android.content.ActivityNotFoundException) {
+            context.toast(KMR.strings.anime_no_player)
+        }
+    }
     val togglePause = {
         showControls = true
         runCatching { mpv?.setPropertyBoolean("pause", !paused) }
@@ -530,6 +568,7 @@ fun AnimePreviewSection(
                         onView = { view = it },
                         onToggleSettings = { settingsOpen = !settingsOpen },
                         onOpenPlayer = openFull,
+                        onOpenWith = openWith,
                         onClose = onClose,
                         onPrevious = onPrevious,
                         onNext = onNext,
@@ -548,6 +587,7 @@ fun AnimePreviewSection(
                         onSeek = seekTo,
                         onPickVideo = pickVideo,
                         onOpenPlayer = openFull,
+                        onOpenWith = openWith,
                     )
                 }
             }
@@ -790,6 +830,7 @@ private fun FloatingControls(
     onView: (PreviewView) -> Unit,
     onToggleSettings: () -> Unit,
     onOpenPlayer: () -> Unit,
+    onOpenWith: () -> Unit,
     onClose: (() -> Unit)?,
     onPrevious: (() -> Unit)?,
     onNext: (() -> Unit)?,
@@ -871,6 +912,14 @@ private fun FloatingControls(
                         }
                     }
                 }
+            }
+            // KMK (r138): Open in Another Player (SH3)
+            IconButton(onClick = onOpenWith) {
+                Icon(
+                    eu.kanade.presentation.components.GlassIcons.OpenWith,
+                    contentDescription = stringResource(KMR.strings.open_with_player),
+                    tint = Color.White,
+                )
             }
             IconButton(onClick = onToggleSettings) {
                 Icon(
@@ -1059,6 +1108,7 @@ private fun PlayerControls(
     onSeek: (Double) -> Unit,
     onPickVideo: (Int) -> Unit,
     onOpenPlayer: () -> Unit,
+    onOpenWith: () -> Unit,
 ) {
     Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f))) {
         // Top: quality, mute, full player
@@ -1068,6 +1118,14 @@ private fun PlayerControls(
                 .padding(4.dp),
         ) {
             QualityButton(videos, servers, videoIndex, onPickVideo)
+            // KMK (r138): Open in Another Player (SH3)
+            IconButton(onClick = onOpenWith) {
+                Icon(
+                    eu.kanade.presentation.components.GlassIcons.OpenWith,
+                    contentDescription = stringResource(KMR.strings.open_with_player),
+                    tint = Color.White,
+                )
+            }
             IconButton(onClick = onToggleMute) {
                 Icon(
                     imageVector = if (muted) eu.kanade.presentation.components.GlassIcons.VolumeOff else eu.kanade.presentation.components.GlassIcons.VolumeOn,

@@ -602,6 +602,18 @@ object GlassIcons {
         }
     }
 
+    /** KMK (r138, SH3): open in another app: Material's box-and-arrow share, the box faint, the arrow solid */
+    val OpenWith: ImageVector by lazy {
+        icon("OpenWith") {
+            fill(
+                "M6.5 9.5h2.2v2H7v8.8h10v-8.8h-1.7v-2h2.2a1.5 1.5 0 0 1 1.5 1.5v9.8a1.5 1.5 0 0 1-1.5 1.5h-11" +
+                    "a1.5 1.5 0 0 1-1.5-1.5V11a1.5 1.5 0 0 1 1.5-1.5z",
+                alpha = 0.42f,
+            )
+            line("M12 15V3.5M8.3 7.2L12 3.5l3.7 3.7", width = 2.3f)
+        }
+    }
+
     val Close: ImageVector by lazy {
         icon("Close") {
             line("M6.5 6.5l11 11M17.5 6.5l-11 11", width = 2.2f)

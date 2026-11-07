@@ -313,5 +313,13 @@ fun RenderPlayerButton(
         // The skip intro prompt and custom action button render above the seekbar in PlayerControls
         PlayerButton.SkipIntro -> Unit
         PlayerButton.CustomButton -> Unit
+        // KMK (r138): open in another app
+        PlayerButton.OpenWith -> {
+            val activity = androidx.compose.ui.platform.LocalContext.current as? eu.kanade.tachiyomi.ui.player.PlayerActivity
+            ControlsButton(
+                icon = button.getIcon(),
+                onClick = { activity?.openInAnotherApp() },
+            )
+        }
     }
 }

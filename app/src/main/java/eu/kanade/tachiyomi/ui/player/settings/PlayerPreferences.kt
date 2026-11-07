@@ -158,7 +158,7 @@ class PlayerPreferences(
     )
     fun topRightControls() = preferenceStore.getString(
         "pref_top_right_controls",
-        "AutoPlay,Cast,SubtitleTracks,AudioTracks,QualityTracks,MoreOptions",
+        "AutoPlay,Cast,SubtitleTracks,AudioTracks,QualityTracks,OpenWith,MoreOptions",
     )
     fun bottomLeftControls() = preferenceStore.getString(
         "pref_bottom_left_controls",
@@ -170,7 +170,7 @@ class PlayerPreferences(
     )
     fun portraitBottomControls() = preferenceStore.getString(
         "pref_portrait_bottom_controls",
-        "Episodes,ScreenRotation,AudioTracks,SubtitleTracks,CurrentChapter,PlaybackSpeed,VideoZoom,SkipIntro,AspectRatio,PictureInPicture,LockControls,MoreOptions",
+        "Episodes,ScreenRotation,AudioTracks,SubtitleTracks,CurrentChapter,PlaybackSpeed,VideoZoom,SkipIntro,AspectRatio,PictureInPicture,LockControls,OpenWith,MoreOptions",
     )
 
     /** KMK: puts the new Episodes button in layouts saved before it existed (once) */
@@ -183,6 +183,28 @@ class PlayerPreferences(
         }
         addTo(bottomLeftControls(), "Episodes")
         addTo(portraitBottomControls(), "Episodes")
+        done.set(true)
+    }
+
+    /** KMK (r138): puts the new Open in Another Player button in layouts saved before it existed (once) */
+    fun addOpenWithButton() {
+        val done = preferenceStore.getBoolean("kmk_player_open_with_button", false)
+        if (done.get()) return
+        fun names(pref: tachiyomi.core.common.preference.Preference<String>) =
+            pref.get().split(',').map { it.trim() }.filter { it.isNotEmpty() }
+        val prefs = listOf(topLeftControls(), topRightControls(), bottomLeftControls(), bottomRightControls())
+        if (prefs.none { "OpenWith" in names(it) }) {
+            val top = names(topRightControls()).toMutableList()
+            val at = top.indexOf("MoreOptions").takeIf { it >= 0 } ?: top.size
+            top.add(at, "OpenWith")
+            topRightControls().set(top.joinToString(","))
+        }
+        val portrait = names(portraitBottomControls()).toMutableList()
+        if ("OpenWith" !in portrait) {
+            val at = portrait.indexOf("MoreOptions").takeIf { it >= 0 } ?: portrait.size
+            portrait.add(at, "OpenWith")
+            portraitBottomControls().set(portrait.joinToString(","))
+        }
         done.set(true)
     }
 }

@@ -918,7 +918,10 @@ fun PlayerControls(
                 onDismissRequest = { viewModel.showDialog(Dialogs.None) },
             )
         }
-        LaunchedEffect(Unit) { playerPreferences.addEpisodesButton() }
+        LaunchedEffect(Unit) {
+            playerPreferences.addEpisodesButton()
+            playerPreferences.addOpenWithButton() // KMK (r138)
+        }
 
         // ANZ -->
         val advancedPlayerPreferences = remember { Injekt.get<AdvancedPlayerPreferences>() }

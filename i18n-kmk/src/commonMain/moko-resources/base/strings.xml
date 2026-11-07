@@ -298,6 +298,8 @@
     <string name="anime_choose_video">Choose video</string>
     <string name="anime_loading_videos">Loading videos…</string>
     <string name="anime_no_videos">No videos found for this episode</string>
+    <string name="open_with_player">Open in Another Player</string>
+    <string name="open_with_unavailable">This video can\'t be opened in another app</string>
     <string name="anime_no_player">No video player app found. Install one (like mpv or VLC) to play episodes.</string>
     <string name="anime_source_not_loaded">This anime\'s source isn\'t installed</string>
     <string name="anime_library_empty">Your anime library is empty. Add anime from Browse.</string>
