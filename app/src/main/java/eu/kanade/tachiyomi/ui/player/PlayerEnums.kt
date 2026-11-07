@@ -378,8 +378,8 @@ enum class PlayerButton(
     VideoZoom(AMR.strings.player_button_video_zoom),
     SkipIntro(AMR.strings.player_button_skip_intro),
     CustomButton(AMR.strings.player_button_custom_button),
-    // KMK (r138): hands what is playing to another video app (Android's list of players)
-    OpenWith(AMR.strings.player_button_open_with),
+    // KMK (r143): sends what is playing to the car screen (Android Auto video player); r138-r142 had OpenWith here
+    WatchOnCar(AMR.strings.player_button_watch_on_car),
 }
 
 fun PlayerButton.getIcon(): ImageVector = when (this) {
@@ -401,7 +401,7 @@ fun PlayerButton.getIcon(): ImageVector = when (this) {
     PlayerButton.VideoZoom -> Icons.Outlined.ZoomIn
     PlayerButton.SkipIntro -> Icons.Outlined.FastForward
     PlayerButton.CustomButton -> Icons.Outlined.TouchApp
-    PlayerButton.OpenWith -> eu.kanade.presentation.components.GlassIcons.OpenWith
+    PlayerButton.WatchOnCar -> eu.kanade.presentation.components.GlassIcons.WatchOnCar
 }
 
 val allPlayerButtons = PlayerButton.entries.filter { 

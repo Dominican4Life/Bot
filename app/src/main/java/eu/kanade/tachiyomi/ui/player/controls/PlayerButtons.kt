@@ -315,27 +315,14 @@ fun RenderPlayerButton(
         // The skip intro prompt and custom action button render above the seekbar in PlayerControls
         PlayerButton.SkipIntro -> Unit
         PlayerButton.CustomButton -> Unit
-        // KMK (r138): open in another app
-        PlayerButton.OpenWith -> {
-            val activity = androidx.compose.ui.platform.LocalContext.current as? eu.kanade.tachiyomi.ui.player.PlayerActivity
-            val video by viewModel.currentVideo.collectAsState()
-            var menu by remember { mutableStateOf(false) }
-            // KMK (r142): a streamed HLS episode asks first: normal, or as one plain video for simple players
-            androidx.compose.foundation.layout.Box {
+        PlayerButton.WatchOnCar -> {
+            // KMK (r143): shown only when the Android Auto video player is installed
+            val context = androidx.compose.ui.platform.LocalContext.current
+            val available = remember { eu.kanade.tachiyomi.ui.anime.WatchOnCar.available(context) }
+            if (available) {
                 ControlsButton(
                     icon = button.getIcon(),
-                    onClick = {
-                        if (video?.let(eu.kanade.tachiyomi.ui.anime.ExternalPlayer::canSendPlain) == true) {
-                            menu = true
-                        } else {
-                            activity?.openInAnotherApp()
-                        }
-                    },
-                )
-                eu.kanade.presentation.anime.OpenWithMenu(
-                    expanded = menu,
-                    onDismiss = { menu = false },
-                    onPick = { plain -> activity?.openInAnotherApp(plain) },
+                    onClick = { (context as? eu.kanade.tachiyomi.ui.player.PlayerActivity)?.watchOnCar() },
                 )
             }
         }

@@ -429,41 +429,28 @@ fun AnimePreviewSection(
         }
     }
 
-    // KMK (r138): Open in Another Player: Android's list of video apps; what is playing is handed over
-    val openWithLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult(),
-    ) { result ->
-        val back = eu.kanade.tachiyomi.ui.anime.ExternalPlayer.parseResult(result.data) ?: return@rememberLauncherForActivityResult
-        if (!back.completed && back.positionMs > 0) runCatching { mpv?.command("seek", (back.positionMs / 1000.0).toString(), "absolute") }
-    }
-    val openWith: (Boolean) -> Unit = { plain ->
+    // KMK (r143): Watch on Car: what is playing goes to the car screen (Android Auto video player)
+    val carAvailable = remember { eu.kanade.tachiyomi.ui.anime.WatchOnCar.available(context) }
+    val watchOnCar: () -> Unit = {
         val video = handOffVideo
         val headers = video?.headers ?: (source as? AnimeHttpSource)?.headers
             ?: (source as? eu.kanade.tachiyomi.jssource.JsAnimeSource)?.headers
         val title = listOfNotNull(anime.title, (playingEpisode ?: episode)?.name).joinToString(" - ")
-        val startMs = (position * 1000).toLong()
         scope.launch {
             val intent = video?.let {
-                eu.kanade.tachiyomi.ui.anime.ExternalPlayer.handOff(
-                    context = context,
-                    video = it,
-                    title = title,
-                    startPositionMs = startMs,
-                    sourceHeaders = headers,
-                    chooserTitle = context.stringResource(KMR.strings.open_with_player),
-                    plain = plain,
-                )
+                eu.kanade.tachiyomi.ui.anime.WatchOnCar.intent(context, it, title, headers)
             }
             if (intent == null) {
-                context.toast(KMR.strings.open_with_unavailable)
+                context.toast(KMR.strings.watch_on_car_unavailable)
                 return@launch
             }
             paused = true
             runCatching { mpv?.setPropertyBoolean("pause", true) }
             try {
-                openWithLauncher.launch(intent)
+                context.startActivity(intent)
+                context.toast(KMR.strings.watch_on_car_sent)
             } catch (_: android.content.ActivityNotFoundException) {
-                context.toast(KMR.strings.anime_no_player)
+                context.toast(KMR.strings.watch_on_car_missing)
             }
         }
     }
@@ -618,8 +605,7 @@ fun AnimePreviewSection(
                         onView = { view = it },
                         onToggleSettings = { settingsOpen = !settingsOpen },
                         onOpenPlayer = openFull,
-                        onOpenWith = openWith,
-                        openWithPlain = handOffVideo?.let(eu.kanade.tachiyomi.ui.anime.ExternalPlayer::canSendPlain) == true,
+                        onWatchOnCar = watchOnCar.takeIf { carAvailable },
                         onClose = onClose,
                         onPrevious = onPrevious,
                         onNext = onNext,
@@ -638,8 +624,7 @@ fun AnimePreviewSection(
                         onSeek = seekTo,
                         onPickVideo = pickVideo,
                         onOpenPlayer = openFull,
-                        onOpenWith = openWith,
-                        openWithPlain = handOffVideo?.let(eu.kanade.tachiyomi.ui.anime.ExternalPlayer::canSendPlain) == true,
+                        onWatchOnCar = watchOnCar.takeIf { carAvailable },
                     )
                 }
             }
@@ -882,8 +867,7 @@ private fun FloatingControls(
     onView: (PreviewView) -> Unit,
     onToggleSettings: () -> Unit,
     onOpenPlayer: () -> Unit,
-    onOpenWith: (Boolean) -> Unit,
-    openWithPlain: Boolean,
+    onWatchOnCar: (() -> Unit)?,
     onClose: (() -> Unit)?,
     onPrevious: (() -> Unit)?,
     onNext: (() -> Unit)?,
@@ -966,17 +950,15 @@ private fun FloatingControls(
                     }
                 }
             }
-            // KMK (r138): Open in Another Player (SH3); r142: a streamed HLS episode asks first (plain video or not)
-            Box {
-                var openWithMenu by remember { mutableStateOf(false) }
-                IconButton(onClick = { if (openWithPlain) openWithMenu = true else onOpenWith(false) }) {
+            // KMK (r143): Watch on Car (only when the Android Auto video player is installed)
+            if (onWatchOnCar != null) {
+                IconButton(onClick = onWatchOnCar) {
                     Icon(
-                        eu.kanade.presentation.components.GlassIcons.OpenWith,
-                        contentDescription = stringResource(KMR.strings.open_with_player),
+                        eu.kanade.presentation.components.GlassIcons.WatchOnCar,
+                        contentDescription = stringResource(KMR.strings.watch_on_car),
                         tint = Color.White,
                     )
                 }
-                OpenWithMenu(expanded = openWithMenu, onDismiss = { openWithMenu = false }, onPick = onOpenWith)
             }
             IconButton(onClick = onToggleSettings) {
                 Icon(
@@ -1165,8 +1147,7 @@ private fun PlayerControls(
     onSeek: (Double) -> Unit,
     onPickVideo: (Int) -> Unit,
     onOpenPlayer: () -> Unit,
-    onOpenWith: (Boolean) -> Unit,
-    openWithPlain: Boolean,
+    onWatchOnCar: (() -> Unit)?,
 ) {
     Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f))) {
         // Top: quality, mute, full player
@@ -1176,17 +1157,15 @@ private fun PlayerControls(
                 .padding(4.dp),
         ) {
             QualityButton(videos, servers, videoIndex, onPickVideo)
-            // KMK (r138): Open in Another Player (SH3); r142: a streamed HLS episode asks first (plain video or not)
-            Box {
-                var openWithMenu by remember { mutableStateOf(false) }
-                IconButton(onClick = { if (openWithPlain) openWithMenu = true else onOpenWith(false) }) {
+            // KMK (r143): Watch on Car (only when the Android Auto video player is installed)
+            if (onWatchOnCar != null) {
+                IconButton(onClick = onWatchOnCar) {
                     Icon(
-                        eu.kanade.presentation.components.GlassIcons.OpenWith,
-                        contentDescription = stringResource(KMR.strings.open_with_player),
+                        eu.kanade.presentation.components.GlassIcons.WatchOnCar,
+                        contentDescription = stringResource(KMR.strings.watch_on_car),
                         tint = Color.White,
                     )
                 }
-                OpenWithMenu(expanded = openWithMenu, onDismiss = { openWithMenu = false }, onPick = onOpenWith)
             }
             IconButton(onClick = onToggleMute) {
                 Icon(

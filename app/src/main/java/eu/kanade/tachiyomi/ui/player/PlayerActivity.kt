@@ -1507,42 +1507,34 @@ class PlayerActivity : BaseActivity() {
         return !stream
     }
 
-    // KMK (r138) --> Open in Another Player: Android's list of video apps, whatever is playing handed over
-    private val openWithLauncher = registerForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult(),
-    ) { result ->
-        // When the other player says how far it got, carry on from there here (progress saves as usual)
-        val back = eu.kanade.tachiyomi.ui.anime.ExternalPlayer.parseResult(result.data) ?: return@registerForActivityResult
-        val seconds = (back.positionMs / 1000).toInt()
-        if (!back.completed && seconds > 0) viewModel.seekTo(seconds)
-    }
-
-    fun openInAnotherApp(plain: Boolean = false) {
+    // KMK (r143) --> Watch on Car: what is playing goes to the car screen (Android Auto video player)
+    fun watchOnCar() {
         val video = viewModel.currentVideo.value
         val anime = viewModel.currentAnime.value
         val episode = viewModel.currentEpisode.value
-        val positionMs = viewModel.pos.value?.let { it * 1000L } ?: 0L
         lifecycleScope.launch {
+            if (!eu.kanade.tachiyomi.ui.anime.WatchOnCar.available(this@PlayerActivity)) {
+                toast(tachiyomi.i18n.kmk.KMR.strings.watch_on_car_missing)
+                return@launch
+            }
             val intent = video?.let {
-                eu.kanade.tachiyomi.ui.anime.ExternalPlayer.handOff(
+                eu.kanade.tachiyomi.ui.anime.WatchOnCar.intent(
                     context = this@PlayerActivity,
                     video = it,
                     title = listOfNotNull(anime?.title, episode?.name).joinToString(" - "),
-                    startPositionMs = positionMs,
                     sourceHeaders = fileHeaders(it).takeIf { h -> h.size > 0 },
-                    chooserTitle = stringResource(tachiyomi.i18n.kmk.KMR.strings.open_with_player),
-                    plain = plain,
                 )
             }
             if (intent == null) {
-                toast(tachiyomi.i18n.kmk.KMR.strings.open_with_unavailable)
+                toast(tachiyomi.i18n.kmk.KMR.strings.watch_on_car_unavailable)
                 return@launch
             }
             viewModel.pause()
             try {
-                openWithLauncher.launch(intent)
+                startActivity(intent)
+                toast(tachiyomi.i18n.kmk.KMR.strings.watch_on_car_sent)
             } catch (_: android.content.ActivityNotFoundException) {
-                toast(tachiyomi.i18n.kmk.KMR.strings.anime_no_player)
+                toast(tachiyomi.i18n.kmk.KMR.strings.watch_on_car_missing)
             }
         }
     }

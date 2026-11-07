@@ -920,7 +920,7 @@ fun PlayerControls(
         }
         LaunchedEffect(Unit) {
             playerPreferences.addEpisodesButton()
-            playerPreferences.addOpenWithButton() // KMK (r138)
+            playerPreferences.addWatchOnCarButton() // KMK (r143)
         }
 
         // ANZ -->

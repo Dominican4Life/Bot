@@ -92,88 +92,6 @@ object ExternalPlayer {
     }
 
     /**
-     * KMK (r138): hands what is playing to another app: Android's own list of every app that plays video, so the
-     * person picks one (no app is named here). Downloads go as a readable content:// link (file paths through the
-     * app's file provider). KMK (r140): streams go through the app's local relay ([HlsRelay]), which fetches them
-     * with the source's headers and cookies, so any player can play them without knowing about either; the relay
-     * keeps working while this app runs in the background. A DASH manifest goes as its own link. Types are lower
-     * case (any video type for streams), since Android matches them letter for letter. Null when there is nothing another
-     * app could open (an mpv "fd://" handle or no link yet). Call from a coroutine (the relay opens on IO).
-     */
-    suspend fun handOff(
-        context: Context,
-        video: Video,
-        title: String,
-        startPositionMs: Long,
-        sourceHeaders: Headers?,
-        chooserTitle: String,
-        // KMK (r142): the HLS stream as one plain video stream, for players that can't read HLS
-        plain: Boolean = false,
-    ): Intent? {
-        val raw = video.videoUrl
-        if (raw.isBlank() || raw == "null" || raw.startsWith("fd://")) return null
-        val headers = video.headers ?: sourceHeaders ?: Headers.Builder().build()
-        val remote = raw.startsWith("http://") || raw.startsWith("https://")
-        val uri = when {
-            plain && canSendPlain(video) -> tachiyomi.core.common.util.lang.withIOContext {
-                // A code editor source's video is already a relay address: its original playlist is used
-                val source = if (isAppOnly(raw)) {
-                    eu.kanade.tachiyomi.jssource.HlsRelay.original(raw).takeUnless(::isAppOnly)
-                        ?: raw.toUri().getQueryParameter("u")
-                } else {
-                    raw
-                }
-                source?.let { runCatching { eu.kanade.tachiyomi.jssource.HlsRelay.wrapContinuous(it, headers) }.getOrNull() }
-            }?.toUri() ?: return null
-            !remote -> videoUri(context, video)
-            isAppOnly(raw) -> raw.toUri()
-            video.type == eu.kanade.tachiyomi.animesource.model.VideoType.DASH ||
-                raw.substringBefore('?').lowercase().endsWith(".mpd") -> raw.toUri()
-            else -> tachiyomi.core.common.util.lang.withIOContext {
-                runCatching {
-                    val hls = video.type == eu.kanade.tachiyomi.animesource.model.VideoType.HLS ||
-                        raw.contains("m3u8", ignoreCase = true)
-                    if (hls) {
-                        eu.kanade.tachiyomi.jssource.HlsRelay.wrap(raw, headers)
-                    } else {
-                        eu.kanade.tachiyomi.jssource.HlsRelay.wrapFile(raw, headers)
-                    }
-                }.getOrDefault(raw)
-            }.toUri()
-        }
-        val local = uri.scheme == "content"
-        val type = if (local) {
-            runCatching { context.contentResolver.getType(uri) }.getOrNull() ?: mimeOf(uri)
-        } else {
-            "video/*"
-        }
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndTypeAndNormalize(uri, type)
-            // A plain stream has no length to jump in, so it starts from the beginning
-            addCommonExtras(title, if (plain) 0L else startPositionMs)
-            // Through the relay the headers are already used; a DASH link still carries them for players that read them
-            if (!local && !isAppOnly(uri.toString())) addHeaders(headers.takeIf { it.size > 0 }, supported = false)
-            addSubtitles(video)
-        }
-        return Intent.createChooser(intent, chooserTitle).apply {
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-    }
-
-    /** KMK (r142): a streamed HLS video (not a download, not DASH), which can also go as one plain video stream */
-    fun canSendPlain(video: Video): Boolean {
-        val raw = video.videoUrl
-        if (!raw.startsWith("http://") && !raw.startsWith("https://")) return false
-        if (raw.substringBefore('?').lowercase().endsWith(".mpd")) return false
-        if (isAppOnly(raw)) return raw.contains("/p/") // the relay's playlist addresses
-        return video.type == eu.kanade.tachiyomi.animesource.model.VideoType.HLS || raw.contains("m3u8", ignoreCase = true)
-    }
-
-    /** KMK (r138): a link that only works inside this app (its local relay) */
-    fun isAppOnly(url: String): Boolean =
-        url.startsWith("http://127.0.0.1") || url.startsWith("http://localhost")
-
-    /**
      * Intent for a download manager app (1DM, ADM and the like), with the headers each of them reads.
      * Wrapped in a chooser so any downloader can be picked.
      */
@@ -266,7 +184,7 @@ object ExternalPlayer {
     private fun Headers.toFlatArray(): Array<String> = flatMap { (name, value) -> listOf(name, value) }.toTypedArray()
 
     /** Downloaded files are shared through the app's file provider, so the player is allowed to read them */
-    private fun videoUri(context: Context, video: Video): Uri {
+    internal fun videoUri(context: Context, video: Video): Uri {
         val uri = video.videoUrl.toUri()
         // KMK (r138): a bare file path (no scheme) is a local file too
         if (uri.scheme != "file" && !(uri.scheme == null && video.videoUrl.startsWith("/"))) return uri

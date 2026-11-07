@@ -7,6 +7,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
+import androidx.compose.ui.graphics.vector.group
 import androidx.compose.ui.unit.dp
 
 /**
@@ -602,16 +603,48 @@ object GlassIcons {
         }
     }
 
-    /** KMK (r138, SH3): open in another app: Material's box-and-arrow share, the box faint, the arrow solid */
-    val OpenWith: ImageVector by lazy {
-        icon("OpenWith") {
-            fill(
-                "M6.5 9.5h2.2v2H7v8.8h10v-8.8h-1.7v-2h2.2a1.5 1.5 0 0 1 1.5 1.5v9.8a1.5 1.5 0 0 1-1.5 1.5h-11" +
-                    "a1.5 1.5 0 0 1-1.5-1.5V11a1.5 1.5 0 0 1 1.5-1.5z",
-                alpha = 0.42f,
+    /**
+     * KMK (r143, F1): Watch on Car. Built like Material's Cast icon: Material's outlined car where Cast's screen frame
+     * is (scaled 1.13, moved -1.2 / -3.3), its bottom-left cut away by a circle (r 12.6 around 1,21), and Cast's three
+     * signal arcs in that gap.
+     */
+    val WatchOnCar: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "Glass.WatchOnCar",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f,
+        ).apply {
+            group(
+                name = "car",
+                // The whole square minus the circle around the arcs (drawn the other way round, so it is a hole)
+                clipPathData = PathParser().parsePathString(
+                    "M0 0H24V24H0Z M-11.6 21a12.6 12.6 0 1 0 25.2 0a12.6 12.6 0 1 0 -25.2 0Z",
+                ).toNodes(),
+            ) {
+                group(scaleX = 1.13f, scaleY = 1.13f, translationX = -1.2f, translationY = -3.3f) {
+                    addPath(
+                        pathData = PathParser().parsePathString(
+                            "M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1" +
+                                "c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99z" +
+                                "M6.85 7h10.29l1.08 3.11H5.77L6.85 7zM19 17H5v-5h14v5z" +
+                                "M7.5 13a1.5 1.5 0 1 0 0 3a1.5 1.5 0 0 0 0-3z" +
+                                "M16.5 13a1.5 1.5 0 1 0 0 3a1.5 1.5 0 0 0 0-3z",
+                        ).toNodes(),
+                        pathFillType = PathFillType.EvenOdd,
+                        fill = SolidColor(Color.Black),
+                    )
+                }
+            }
+            addPath(
+                pathData = PathParser().parsePathString(
+                    "M1 18v3h3c0-1.66-1.34-3-3-3zm0-4v2c2.76 0 5 2.24 5 5h2c0-3.87-3.13-7-7-7z" +
+                        "m0-4v2c4.97 0 9 4.03 9 9h2c0-6.08-4.93-11-11-11z",
+                ).toNodes(),
+                fill = SolidColor(Color.Black),
             )
-            line("M12 15V3.5M8.3 7.2L12 3.5l3.7 3.7", width = 2.3f)
-        }
+        }.build()
     }
 
     val Close: ImageVector by lazy {
