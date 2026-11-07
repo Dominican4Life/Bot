@@ -1227,6 +1227,17 @@ Owner's r136 list. Mockups: canvas boards "r136 phone sheets" and "r136 item 8".
 
 - **Open in Another Player fix (Phone + Tablet):** code editor (JS) sources store their streams as the app's 127.0.0.1 relay link (`HlsRelay.wrap`), and r138 refused those, so every episode from such a source showed "This video can't be opened in another app". `ExternalPlayer.handOff()` now hands the relay link over as it is: it stays on the device and gives the other player the source's cookies and fixed pieces. It works while the app is alive in the background. Only an mpv `fd://` handle or an empty link is refused now.
 
+## Changes in r140 (7 November 2026)
+
+- **Open in Another Player, streams (Phone + Tablet):** r138/r139 labelled HLS as `application/x-mpegURL`. Android matches types letter for letter and players register lower case, so the chooser said "No apps can perform this action". `ExternalPlayer.handOff()` is now `suspend`:
+  - every http(s) stream (except DASH) goes through `HlsRelay.wrap` / `wrapFile` with the source's headers, so any player can play it without header support;
+  - streams are typed `video/*`, set with `setDataAndTypeAndNormalize`;
+  - downloads keep their `content://` link with the provider's own type;
+  - callers launch it in a coroutine (`lifecycleScope` / the preview's scope).
+- **Downloaded-episode crash (Phone + Tablet):** r138 moved `resolveUri()` (opening the download's file descriptor) out of `withIOContext` in `AnimePreviewPlayer.loadEpisode`; downloaded episodes in the library's floating / preview player then crashed natively. It is back on IO, as before.
+- **Clear Everything (Phone + Tablet):** Diagnostics ⋮ › Clear Everything, with a confirm dialog. It runs `Diagnostics.clearEverything()` → `AppLog.clear()` + `Health.clearAll()`, which drops every event and Previous run, deletes `diag/health` (saved traces) and the report zips with their keys files, and moves `LAST_EXIT_SEEN` to now so old exits aren't read back.
+- **Build note:** a KDoc containing `"video/*"` opens a nested comment in Kotlin and swallows the rest of the file (first r140 build failed). Don't write `/*` inside comments.
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
