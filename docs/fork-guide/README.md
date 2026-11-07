@@ -1243,6 +1243,15 @@ Owner's r136 list. Mockups: canvas boards "r136 phone sheets" and "r136 item 8".
 - **Downloaded-episode crash, the real cause (Phone + Tablet):** the native crash report (Health › report zip › `health/anr-*-native.txt`) showed `vo_android_init: assertion "WinID != 0 && WinID != -1" failed`. The preview player's `BaseMPVView.setVo("gpu")` runs in the view's factory, before the surface exists. A downloaded file opens at once, so mpv started the GPU output with no surface and aborted; streams always took long enough to load. `AnimePreviewSection` now tracks `surfaceReady` with its own `SurfaceHolder.Callback`, posted so the view's attach runs first. `startVideo` waits for it (up to 5 s, else an error in the player) before `loadfile`. The r140 change (opening the file on IO) stays, but it wasn't the cause.
 - **Lesson:** for native crashes, read the tombstone in the report zip before guessing.
 
+## Changes in r142 (7 November 2026)
+
+- **Open as Plain Video (Phone + Tablet):** for players that can't read HLS (simple or Android Auto players).
+  - `HlsRelay.wrapContinuous()` hands out `/c/<id>` addresses. `serveContinuous()` picks the master playlist's highest-bandwidth quality and writes the init map (fMP4) plus every piece in order as one stream with no length (`video/mp2t`, or `video/mp4` for fMP4). Pieces are fetched with the source's headers (then user agent only) and fake picture headers removed; up to 5 missing pieces are skipped.
+  - Encrypted playlists (`#EXT-X-KEY` other than NONE) get 415 and a log line. A quality with separate audio would come out silent (not handled).
+  - `ExternalPlayer.handOff(plain = true)` uses it, for a code editor source via its original playlist (`HlsRelay.original` / the `u=` parameter), and starts at 0. `canSendPlain()` is true for streamed HLS (not downloads, not DASH).
+  - The SH3 button opens `OpenWithMenu` (glass, two rows with hints) on such episodes, in the full player (`PlayerButtons`), the floating window and the inline preview; otherwise it hands off at once.
+- Plain video plays from the start; skipping ahead mostly can't work (no file length).
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
