@@ -1238,6 +1238,11 @@ Owner's r136 list. Mockups: canvas boards "r136 phone sheets" and "r136 item 8".
 - **Clear Everything (Phone + Tablet):** Diagnostics ⋮ › Clear Everything, with a confirm dialog. It runs `Diagnostics.clearEverything()` → `AppLog.clear()` + `Health.clearAll()`, which drops every event and Previous run, deletes `diag/health` (saved traces) and the report zips with their keys files, and moves `LAST_EXIT_SEEN` to now so old exits aren't read back.
 - **Build note:** a KDoc containing `"video/*"` opens a nested comment in Kotlin and swallows the rest of the file (first r140 build failed). Don't write `/*` inside comments.
 
+## Changes in r141 (7 November 2026)
+
+- **Downloaded-episode crash, the real cause (Phone + Tablet):** the native crash report (Health › report zip › `health/anr-*-native.txt`) showed `vo_android_init: assertion "WinID != 0 && WinID != -1" failed`. The preview player's `BaseMPVView.setVo("gpu")` runs in the view's factory, before the surface exists. A downloaded file opens at once, so mpv started the GPU output with no surface and aborted; streams always took long enough to load. `AnimePreviewSection` now tracks `surfaceReady` with its own `SurfaceHolder.Callback`, posted so the view's attach runs first. `startVideo` waits for it (up to 5 s, else an error in the player) before `loadfile`. The r140 change (opening the file on IO) stays, but it wasn't the cause.
+- **Lesson:** for native crashes, read the tombstone in the report zip before guessing.
+
 ## How to use this guide when adding a feature
 
 1. Find the section for the area you're changing, and read its feature entry, invariants and impact map.
